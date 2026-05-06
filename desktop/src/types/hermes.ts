@@ -8,6 +8,7 @@ export type HermesRuntimeConfig = {
   remoteUrl: string;
   gatewayUrl: string;
   managementApiUrl: string;
+  agentuiGatewayUrls?: Record<string, string>;
   profileApiUrls: Record<string, string>;
   profileSidecarUrls: Record<string, string>;
 };
@@ -31,6 +32,79 @@ export type HermesProfile = {
   sessionCount: number;
   estimatedCostUsd: number | null;
   gatewayRunning: boolean;
+};
+
+export type HermesModelProvider = {
+  slug: string;
+  name: string;
+  isCurrent: boolean;
+  isUserDefined: boolean;
+  models: string[];
+  totalModels: number;
+  source: string;
+};
+
+export type HermesModelSelection = {
+  provider: string;
+  model: string;
+  providerName?: string;
+};
+
+export type HermesModelCatalog = {
+  ok: boolean;
+  profile: string;
+  current: HermesModelSelection | null;
+  providers: HermesModelProvider[];
+  generatedAt: number;
+  url?: string;
+  status?: number;
+  error?: string;
+};
+
+export type HermesSlashCommandSource =
+  | "hermes"
+  | "skill"
+  | "quick-command"
+  | "plugin";
+
+export type HermesSlashCommand = {
+  id: string;
+  name: string;
+  text: string;
+  label: string;
+  description: string;
+  category: string;
+  source: HermesSlashCommandSource;
+  aliases: string[];
+  argsHint: string;
+  subcommands: string[];
+  requiresArgument: boolean;
+};
+
+export type HermesSlashCommandsResult = {
+  ok: boolean;
+  profile: string;
+  commands: HermesSlashCommand[];
+  generatedAt: number;
+  url?: string;
+  status?: number;
+  warning?: string;
+  error?: string;
+};
+
+export type HermesSlashCompletionItem = {
+  text: string;
+  display: string;
+  meta?: string;
+};
+
+export type HermesSlashCompletionResult = {
+  ok: boolean;
+  items: HermesSlashCompletionItem[];
+  replaceFrom: number;
+  url?: string;
+  status?: number;
+  error?: string;
 };
 
 export type HermesStatus = {
@@ -101,6 +175,8 @@ export type HermesConversation = {
   model: string;
   title: string;
   preview: string;
+  chatId?: string;
+  origin?: Record<string, unknown>;
   startedAt: number | null;
   endedAt: number | null;
   lastActiveAt: number | null;
@@ -224,6 +300,58 @@ export type HermesMessageResult = {
   profile: string;
   sessionId?: string;
   events?: HermesParsedEvents;
+  error?: string;
+};
+
+export type HermesJobStatus = "active" | "paused" | "completed" | "error" | "unknown";
+
+export type HermesJob = {
+  id: string;
+  name: string;
+  schedule: string;
+  prompt: string;
+  deliver: string;
+  status: HermesJobStatus;
+  nextRunAt: number | null;
+  lastRunAt: number | null;
+  lastStatus: string;
+  lastError: string;
+  lastDeliveryError: string;
+  runCount: number;
+  repeat: number | null;
+  createdAt: number | null;
+  raw: Record<string, unknown>;
+};
+
+export type HermesJobsResult = {
+  ok: boolean;
+  jobs: HermesJob[];
+  error?: string;
+};
+
+export type HermesJobResult = {
+  ok: boolean;
+  job?: HermesJob;
+  error?: string;
+};
+
+export type HermesInboxMessage = {
+  cursor: number;
+  id: string;
+  source: string;
+  platform: string;
+  profile: string;
+  chatId: string;
+  content: string;
+  metadata: Record<string, unknown>;
+  createdAt: number;
+  acknowledgedAt: number | null;
+};
+
+export type HermesInboxMessagesResult = {
+  ok: boolean;
+  messages: HermesInboxMessage[];
+  cursor: number;
   error?: string;
 };
 

@@ -29,3 +29,61 @@ def test_auth_is_disabled_without_token(tmp_path):
 
     assert response.status_code == 200
     assert response.json()["ok"] is True
+
+
+def test_device_pairing_token_auth_and_revocation(tmp_path):
+    app = create_app(Settings(hermes_home=str(tmp_path / ".hermes"), token="admin-token"))
+    client = TestClient(app)
+    admin_headers = {"Authorization": "Bearer admin-token"}
+
+    paired = client.post(
+        "/v1/devices/pair",
+        json={"name": "Scott's MacBook", "kind": "desktop", "metadata": {"tailnet": "test"}},
+        headers=admin_headers,
+    )
+    payload = paired.json()
+    token = payload["token"]
+    device_id = payload["device"]["id"]
+
+    assert paired.status_code == 200
+    assert token.startswith("agui_")
+    assert payload["tokenShownOnce"] is True
+    assert "tokenHash" not in payload["device"]
+    assert payload["device"]["name"] == "Scott's MacBook"
+
+    device_headers = {"Authorization": f"Bearer {token}"}
+    health = client.get("/v1/health", headers=device_headers)
+    current = client.get("/v1/devices/me", headers=device_headers)
+    cursor = client.post(
+        "/v1/devices/me/cursors",
+        json={"streamName": "global", "lastCursor": 42},
+        headers=device_headers,
+    )
+    devices = client.get("/v1/devices", headers=admin_headers).json()["devices"]
+
+    assert health.status_code == 200
+    assert current.json()["device"]["id"] == device_id
+    assert cursor.json()["cursor"]["lastCursor"] == 42
+    assert next(device for device in devices if device["id"] == device_id)["lastSeenAt"] is not None
+
+    revoked = client.delete(f"/v1/devices/{device_id}", headers=admin_headers)
+    blocked = client.get("/v1/health", headers=device_headers)
+
+    assert revoked.status_code == 200
+    assert revoked.json()["device"]["revokedAt"] is not None
+    assert blocked.status_code == 401
+    assert blocked.json() == {"ok": False, "error": "Bearer token is invalid."}
+
+
+def test_non_loopback_bind_requires_bearer_auth(tmp_path):
+    app = create_app(Settings(hermes_home=str(tmp_path / ".hermes"), host="0.0.0.0"))
+    client = TestClient(app)
+
+    missing = client.get("/health")
+    invalid = client.get("/health", headers={"Authorization": "Bearer nope"})
+    status = client.get("/v1/status", headers={"Authorization": "Bearer nope"})
+
+    assert missing.status_code == 401
+    assert missing.json() == {"ok": False, "error": "Bearer token is required."}
+    assert invalid.status_code == 401
+    assert status.status_code == 401

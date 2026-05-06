@@ -222,15 +222,15 @@ pub fn run() {
         .setup(|app| {
             install_crash_logging(app.handle().clone());
 
-            let show = MenuItem::with_id(app, "show", "Show Hermes Agent", true, None::<&str>)?;
+            let show = MenuItem::with_id(app, "show", "Show Iris", true, None::<&str>)?;
             let refresh =
                 MenuItem::with_id(app, "refresh", "Refresh Connection", true, None::<&str>)?;
             let separator = PredefinedMenuItem::separator(app)?;
-            let quit = MenuItem::with_id(app, "quit", "Quit Hermes Agent", true, None::<&str>)?;
+            let quit = MenuItem::with_id(app, "quit", "Quit Iris", true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&show, &refresh, &separator, &quit])?;
 
             let mut tray = TrayIconBuilder::with_id("main")
-                .tooltip("Hermes Agent")
+                .tooltip("Iris")
                 .menu(&menu)
                 .show_menu_on_left_click(true);
             if let Some(icon) = app.default_window_icon() {
@@ -261,6 +261,8 @@ pub fn run() {
             })
             .build(app)?;
 
+            show_main_window(app.handle());
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -283,7 +285,7 @@ fn install_crash_logging(app: tauri::AppHandle) {
     let log_path = app
         .path()
         .app_log_dir()
-        .unwrap_or_else(|_| std::env::temp_dir().join("Hermes Agent"))
+        .unwrap_or_else(|_| std::env::temp_dir().join("Iris"))
         .join("crash.log");
 
     panic::set_hook(Box::new(move |info| {

@@ -227,7 +227,7 @@ export function AppShell({
             <Sparkles size={18} />
           </div>
           <div>
-            <p className="brand-name">Hermes Agent</p>
+            <p className="brand-name">Iris</p>
             <p className="brand-status">
               <span className={connected ? "status-dot connected" : "status-dot"} />
               {connected ? "Chat route online" : "Route offline"}

@@ -3,13 +3,13 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "hermes-agent-sidecar"
+name = "iris-core"
 version = "0.1.0"
-description = "Read-only FastAPI sidecar for local Hermes Agent profiles."
+description = "Local-first Iris Core service with a Hermes runtime adapter."
 readme = "README.md"
 requires-python = ">=3.11"
 authors = [
-  { name = "Hermes Management Server Contributors" }
+  { name = "Iris Core Contributors" }
 ]
 dependencies = [
   "fastapi>=0.110",
@@ -27,6 +27,7 @@ yaml = [
 ]
 
 [project.scripts]
+iris-core = "hermes_management_server.main:cli"
 hermes-sidecar = "hermes_management_server.main:cli"
 hermes-management-server = "hermes_management_server.main:cli"
 

@@ -23,7 +23,7 @@ const fallbackSkills: HermesSkill[] = [
   makeVirtualSkill({
     name: "Skill authoring",
     category: "bundled",
-    description: "Create and edit Hermes procedural memory from successful workflows.",
+    description: "Create and edit Iris procedural memory from successful workflows.",
     path: "hub://bundled/skill-authoring",
     source: "bundled",
     version: "0.1.0",
@@ -156,7 +156,7 @@ export function SkillsView({
       makeVirtualSkill({
         name: "Untitled skill",
         category: "personal",
-        description: "Draft a new Hermes skill.",
+        description: "Draft a new Iris skill.",
         path: `draft://${Date.now()}`,
         source: "installed",
         version: "0.1.0",
@@ -200,7 +200,7 @@ export function SkillsView({
       <ViewHeader
         icon={<Sparkles size={19} />}
         eyebrow="Skill browser"
-        title="Curate, edit, and version Hermes workflows."
+        title="Curate, edit, and version Iris workflows."
         action="New skill"
         onAction={createNewSkill}
       />

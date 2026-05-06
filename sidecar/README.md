@@ -1,10 +1,10 @@
-# AgentUI Sidecar
+# Iris Core
 
-Small read-only FastAPI sidecar for AgentUI profile metadata. Hermes itself remains untouched: the desktop app can keep sending chat traffic to Hermes' existing `/v1/responses` API, while this service exposes profile, memory, skill, status, and conversation metadata over HTTP from the machine where Hermes is running.
+Iris Core is the local-first control plane for Iris. It owns Iris agents, conversations, messages, automations, devices, auth, and runtime routing, and connects to Hermes through the Iris Hermes Adapter. Hermes itself remains untouched: normal Iris chat enters Hermes through the `agentui` compatibility platform adapter, while this service exposes profile, memory, skill, status, conversation metadata, and delivered platform messages over HTTP from the machine where Hermes is running.
 
-This service lives in the `sidecar/` workspace of the AgentUI monorepo.
+This service lives in the `sidecar/` workspace of the Iris monorepo.
 
-The default bind address is `127.0.0.1`. For remote use, prefer Tailscale and a bearer token over public port forwarding.
+The default bind address is `127.0.0.1`. For remote use, prefer Tailscale and a bearer token over public port forwarding. Non-loopback binds require bearer auth from either `IRIS_CORE_TOKEN`, the legacy `HERMES_MGMT_TOKEN`, or an active paired device token.
 
 ## Install
 
@@ -39,47 +39,65 @@ npm run sidecar:dev
 From this `sidecar/` directory:
 
 ```bash
-hermes-sidecar --host 127.0.0.1 --port 8765
+iris-core --host 127.0.0.1 --port 8765
 ```
 
 Use a custom Hermes home:
 
 ```bash
-hermes-sidecar --hermes-home ~/.hermes --host 127.0.0.1 --port 8765
+iris-core --hermes-home ~/.hermes --host 127.0.0.1 --port 8765
 ```
 
 Environment variables are also supported:
 
 ```bash
 export HERMES_HOME="$HOME/.hermes"
-export HERMES_MGMT_HOST="127.0.0.1"
-export HERMES_MGMT_PORT="8765"
-export HERMES_MGMT_TOKEN="replace-with-a-long-random-token"
-export HERMES_MGMT_CORS_ORIGINS="http://localhost:3000"
-hermes-sidecar
+export IRIS_CORE_HOST="127.0.0.1"
+export IRIS_CORE_PORT="8765"
+export IRIS_CORE_TOKEN="replace-with-a-long-random-token"
+export IRIS_INBOX_TOKEN="replace-with-a-long-random-token"
+export IRIS_CORE_CORS_ORIGINS="http://localhost:3000"
+iris-core
 ```
 
 If `HERMES_HOME` points at a named profile such as `~/.hermes/profiles/work`, the server normalizes the root back to `~/.hermes`. The `default` profile maps to the root; named profiles map to `~/.hermes/profiles/<name>`.
 
-## Tailscale Setup
+`IRIS_INBOX_TOKEN` protects only `/v1/inbox/*`. If it is unset, the inbox accepts local unauthenticated delivery. For same-machine development this is usually fine because the default bind address is `127.0.0.1`. For Tailscale or any non-loopback bind address, set `IRIS_INBOX_TOKEN` and configure the Iris Hermes Adapter with the same value as `IRIS_TOKEN`. Legacy `AGENTUI_INBOX_TOKEN` and `AGENTUI_TOKEN` are still accepted.
 
-1. Install Tailscale on the Hermes machine and on the AgentUI machine.
-2. Sign in to the same tailnet on both machines.
-3. On the Hermes machine, create a token:
+The inbox stores delivered scheduled-job messages in SQLite. Override the default path with:
 
 ```bash
-export HERMES_MGMT_TOKEN="$(openssl rand -base64 32)"
+export IRIS_INBOX_STORE="$HOME/.agent-ui/inbox.sqlite3"
 ```
 
-4. Start the sidecar on the Hermes machine:
+## Tailscale Setup
+
+1. Install Tailscale on the Hermes machine and on the Iris client machine.
+2. Sign in to the same tailnet on both machines.
+3. On the Hermes machine, create a temporary management token:
+
+```bash
+export IRIS_CORE_TOKEN="$(openssl rand -base64 32)"
+```
+
+4. Start Iris Core on the Hermes machine:
 
 ```bash
 HERMES_HOME="$HOME/.hermes" \
-HERMES_MGMT_TOKEN="$HERMES_MGMT_TOKEN" \
-hermes-sidecar --host 0.0.0.0 --port 8765
+IRIS_CORE_TOKEN="$IRIS_CORE_TOKEN" \
+iris-core --host 0.0.0.0 --port 8765
 ```
 
-5. From the AgentUI machine, connect to:
+5. Pair each remote client and copy the returned `token` once:
+
+```bash
+curl -X POST http://<tailscale-hostname>:8765/v1/devices/pair \
+  -H "Authorization: Bearer $IRIS_CORE_TOKEN" \
+  -H "Content-Type: application/json" \
+  --data '{"name":"Scott MacBook","kind":"desktop","metadata":{"network":"tailscale"}}'
+```
+
+6. In Iris Desktop, open Settings, set the Iris Core URL, and save the paired device token in the Core token field. Remote clients should connect to:
 
 ```text
 http://<tailscale-hostname>:8765/v1
@@ -88,17 +106,65 @@ http://<tailscale-hostname>:8765/v1
 Example:
 
 ```bash
-curl -H "Authorization: Bearer $HERMES_MGMT_TOKEN" \
-  http://<tailscale-hostname>:8765/v1/profiles
+curl -H "Authorization: Bearer <paired-device-token>" \
+  http://<tailscale-hostname>:8765/v1/agents
 ```
 
 You can bind to a specific Tailscale IP instead of `0.0.0.0`:
 
 ```bash
-hermes-sidecar --host 100.x.y.z --port 8765
+iris-core --host 100.x.y.z --port 8765
 ```
 
 Do not expose this service directly to the public internet without TLS and bearer-token auth. Memory and skills may contain sensitive local context.
+
+## Device Auth
+
+Pair a device:
+
+```bash
+curl -X POST http://127.0.0.1:8765/v1/devices/pair \
+  -H "Content-Type: application/json" \
+  --data '{"name":"Local desktop","kind":"desktop"}'
+```
+
+When `IRIS_CORE_TOKEN` or legacy `HERMES_MGMT_TOKEN` is set, include it as a bearer token on the pairing request. The pairing response shows the device token once. Core stores only a token hash.
+
+List devices:
+
+```bash
+curl -H "Authorization: Bearer $IRIS_CORE_TOKEN" \
+  http://127.0.0.1:8765/v1/devices
+```
+
+Revoke a device:
+
+```bash
+curl -X DELETE -H "Authorization: Bearer $IRIS_CORE_TOKEN" \
+  http://127.0.0.1:8765/v1/devices/dev_...
+```
+
+Verify a second client without Hermes filesystem access:
+
+```bash
+curl -H "Authorization: Bearer <paired-device-token>" \
+  'http://<tailscale-hostname>:8765/v1/conversations?agentId=<agent-id>'
+
+curl -H "Authorization: Bearer <paired-device-token>" \
+  'http://<tailscale-hostname>:8765/v1/events?after=0&limit=50&agentId=<agent-id>'
+```
+
+The second client needs only the Core URL and paired device token. It should not read `~/.hermes`, Hermes SQLite files, or the Iris Core SQLite file directly.
+
+## Service Install Notes
+
+For a durable local agent host, run Core under a service manager such as launchd on macOS. Keep the bind address loopback for same-machine desktop use:
+
+```bash
+iris-core --host 127.0.0.1 --port 8765 --hermes-home "$HOME/.hermes"
+```
+
+For remote clients over Tailscale, bind to the Tailscale IP or `0.0.0.0`, set `IRIS_CORE_TOKEN`, pair per-device tokens, and keep CORS disabled unless a browser client has an explicit trusted origin.
 
 ## API
 
@@ -108,7 +174,7 @@ All responses are JSON. Errors use:
 { "ok": false, "error": "..." }
 ```
 
-When `HERMES_MGMT_TOKEN` is set, include:
+When `IRIS_CORE_TOKEN` is set, or when Core is bound to a non-loopback host, include either the management token or a paired device token:
 
 ```http
 Authorization: Bearer <token>
@@ -121,6 +187,32 @@ curl http://127.0.0.1:8765/health
 ```
 
 Returns `ok`, `checkedAt`, `hermesHome`, and `profilesRootExists`.
+
+### Inbox Health
+
+```bash
+curl http://127.0.0.1:8765/v1/inbox/health
+```
+
+Returns `ok`, `checkedAt`, and the inbox SQLite `path`.
+
+### Inbox Messages
+
+Create a delivery:
+
+```bash
+curl -X POST http://127.0.0.1:8765/v1/inbox/messages \
+  -H "Content-Type: application/json" \
+  --data '{"source":"hermes-cron","platform":"agentui","chatId":"desktop","content":"Iris inbox smoke test","metadata":{"jobId":"manual-test"}}'
+```
+
+List deliveries:
+
+```bash
+curl http://127.0.0.1:8765/v1/inbox/messages
+```
+
+When `IRIS_INBOX_TOKEN` is set, include the bearer token on these requests.
 
 ### Status
 

@@ -1,5 +1,10 @@
-import { useEffect, useRef, useState } from "react";
-import type { ComponentProps, DragEvent, MouseEvent as ReactMouseEvent } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import type {
+  ComponentProps,
+  DragEvent,
+  KeyboardEvent as ReactKeyboardEvent,
+  MouseEvent as ReactMouseEvent,
+} from "react";
 import { convertFileSrc, isTauri } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
@@ -11,6 +16,7 @@ import {
   Mic,
   Paperclip,
   Plus,
+  Search,
   Send,
   ShieldCheck,
   Sparkles,
@@ -21,25 +27,60 @@ import {
 import { Streamdown, type StreamdownProps } from "streamdown";
 import { StickToBottom, useStickToBottomContext } from "use-stick-to-bottom";
 import type { Message, MessageAttachment } from "../../app/types";
-import type { HermesParsedEvents, HermesProfile, HermesStreamToolEvent } from "../../types/hermes";
+import type {
+  HermesModelCatalog,
+  HermesModelProvider,
+  HermesModelSelection,
+  HermesParsedEvents,
+  HermesProfile,
+  HermesSlashCommand,
+  HermesStreamToolEvent,
+} from "../../types/hermes";
+import { normalizeChatMarkdown } from "./markdown";
+import {
+  filterSlashCommands,
+  moveSlashCommandIndex,
+  slashCommandInsertion,
+  slashCommandTokenIsPartial,
+  slashTokenAtCursor,
+} from "./slashCommands";
 
 type ChatViewProps = {
   messages: Message[];
   selectedConversationId: string | null;
   input: string;
   onInput: (value: string) => void;
-  onSend: (attachments?: MessageAttachment[]) => void;
+  onSend: (options?: {
+    attachments?: MessageAttachment[];
+    modelSelection?: HermesModelSelection | null;
+  }) => Promise<boolean> | boolean | void;
   connected: boolean;
   profile: string;
   profiles: HermesProfile[];
   onProfileChange: (profile: string) => void;
   requestActive: boolean;
   onCancel: () => void;
+  modelCatalog: HermesModelCatalog | null;
+  modelSelection: HermesModelSelection | null;
+  lockedModelSelection: HermesModelSelection | null;
+  modelLoading: boolean;
+  modelError: string | null;
+  onModelSelect: (selection: HermesModelSelection) => void;
+  slashCommands: HermesSlashCommand[];
+  slashCommandsLoading: boolean;
+  slashCommandsError: string | null;
+  onSlashCommandsRefresh: () => void;
 };
 
 type AttachmentDraft = MessageAttachment & {
   previewUrl?: string;
   previewRevocable?: boolean;
+};
+
+type ModelMenuOption = {
+  provider: string;
+  providerName: string;
+  model: string;
 };
 
 const markdownComponents = {
@@ -58,25 +99,81 @@ export function ChatView({
   onProfileChange,
   requestActive,
   onCancel,
+  modelCatalog,
+  modelSelection,
+  lockedModelSelection,
+  modelLoading,
+  modelError,
+  onModelSelect,
+  slashCommands,
+  slashCommandsLoading,
+  slashCommandsError,
+  onSlashCommandsRefresh,
 }: ChatViewProps) {
   const chatPaneRef = useRef<HTMLDivElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
   const addMenuRef = useRef<HTMLDivElement>(null);
   const profileMenuRef = useRef<HTMLDivElement>(null);
+  const modelMenuRef = useRef<HTMLDivElement>(null);
+  const modelSearchRef = useRef<HTMLInputElement>(null);
+  const modelOptionRefs = useRef<Record<string, HTMLButtonElement | null>>({});
+  const slashCommandRefs = useRef<Record<string, HTMLButtonElement | null>>({});
   const fileInputRef = useRef<HTMLInputElement>(null);
   const dragDepthRef = useRef(0);
   const attachmentsRef = useRef<AttachmentDraft[]>([]);
   const [addMenuOpen, setAddMenuOpen] = useState(false);
   const [profileMenuOpen, setProfileMenuOpen] = useState(false);
+  const [modelMenuOpen, setModelMenuOpen] = useState(false);
+  const [modelSearch, setModelSearch] = useState("");
+  const [activeModelOptionKey, setActiveModelOptionKey] = useState("");
+  const [activeSlashIndex, setActiveSlashIndex] = useState(0);
+  const [composerSelection, setComposerSelection] = useState({ start: input.length, end: input.length });
+  const [dismissedSlashToken, setDismissedSlashToken] = useState("");
   const [attachments, setAttachments] = useState<AttachmentDraft[]>([]);
   const [dragActive, setDragActive] = useState(false);
   const renderedMessages = messages.filter(shouldRenderMessage);
   const newChat = !selectedConversationId && renderedMessages.length === 0;
   const profileSelectionLocked = !newChat || requestActive;
   const profileSelectionDisabled = profileSelectionLocked || !connected || profiles.length < 2;
+  const displayedModelSelection = lockedModelSelection || modelSelection;
+  const modelSelectionLocked = !newChat || requestActive;
+  const modelOptionsAvailable = Boolean(modelCatalog?.providers?.some((provider) => provider.models.length));
+  const modelSelectionDisabled = modelSelectionLocked || !connected || modelLoading || !modelOptionsAvailable;
+  const modelSelectorTitle = modelSelectionLocked
+    ? "Model is locked for this conversation"
+    : modelLoading
+      ? "Models are loading"
+      : !connected
+        ? "Connect Iris to select a model"
+        : !modelOptionsAvailable
+          ? "No model catalog available"
+          : "Change model";
+  const filteredModelProviders = useMemo(
+    () => filterModelProviders(modelCatalog?.providers || [], modelSearch),
+    [modelCatalog, modelSearch],
+  );
+  const filteredModelOptions = useMemo(
+    () => flattenModelOptions(filteredModelProviders),
+    [filteredModelProviders],
+  );
+  const slashToken = composerSelection.start === composerSelection.end
+    ? slashTokenAtCursor(input, composerSelection.start) || slashTokenAtCursor(input, input.length)
+    : null;
+  const slashTokenKey = slashToken ? `${slashToken.from}:${slashToken.to}:${slashToken.query}` : "";
+  const filteredSlashCommands = useMemo(
+    () => filterSlashCommands(slashCommands, slashToken?.query || ""),
+    [slashCommands, slashToken?.query],
+  );
+  const slashMenuOpen = Boolean(
+    slashToken &&
+      dismissedSlashToken !== slashTokenKey &&
+      connected &&
+      (filteredSlashCommands.length || slashCommandsLoading || slashCommandsError || slashCommands.length === 0),
+  );
   const profileSelectorTitle = profileSelectionLocked
     ? "Profile is locked for this conversation"
     : !connected
-      ? "Connect Hermes to select a profile"
+      ? "Connect Iris to select a profile"
       : profiles.length < 2
         ? "Only one profile is available"
         : "Change agent profile";
@@ -122,8 +219,63 @@ export function ChatView({
   }, [profileMenuOpen]);
 
   useEffect(() => {
+    if (!modelMenuOpen) return undefined;
+    setModelSearch("");
+    setActiveModelOptionKey(modelOptionKeyForSelection(displayedModelSelection) || "");
+    window.requestAnimationFrame(() => modelSearchRef.current?.focus());
+
+    function handlePointerDown(event: MouseEvent) {
+      if (modelMenuRef.current?.contains(event.target as Node)) return;
+      setModelMenuOpen(false);
+    }
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") setModelMenuOpen(false);
+    }
+
+    document.addEventListener("mousedown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [modelMenuOpen]);
+
+  useEffect(() => {
+    if (!modelMenuOpen) return;
+    const availableKeys = new Set(filteredModelOptions.map(modelOptionKey));
+    if (activeModelOptionKey && availableKeys.has(activeModelOptionKey)) return;
+    const selectedKey = modelOptionKeyForSelection(displayedModelSelection);
+    setActiveModelOptionKey(selectedKey && availableKeys.has(selectedKey) ? selectedKey : modelOptionKey(filteredModelOptions[0]));
+  }, [activeModelOptionKey, displayedModelSelection, filteredModelOptions, modelMenuOpen]);
+
+  useEffect(() => {
+    if (!modelMenuOpen || !activeModelOptionKey) return;
+    modelOptionRefs.current[activeModelOptionKey]?.scrollIntoView({ block: "nearest" });
+  }, [activeModelOptionKey, modelMenuOpen]);
+
+  useEffect(() => {
+    setActiveSlashIndex(0);
+  }, [slashToken?.query]);
+
+  useEffect(() => {
+    if (!slashMenuOpen) return;
+    setActiveSlashIndex((current) => Math.min(Math.max(current, 0), Math.max(0, filteredSlashCommands.length - 1)));
+  }, [filteredSlashCommands.length, slashMenuOpen]);
+
+  useEffect(() => {
+    if (!slashMenuOpen) return;
+    const activeCommand = filteredSlashCommands[activeSlashIndex];
+    if (activeCommand) slashCommandRefs.current[activeCommand.id]?.scrollIntoView({ block: "nearest" });
+  }, [activeSlashIndex, filteredSlashCommands, slashMenuOpen]);
+
+  useEffect(() => {
     if (profileSelectionDisabled) setProfileMenuOpen(false);
   }, [profileSelectionDisabled]);
+
+  useEffect(() => {
+    if (modelSelectionDisabled) setModelMenuOpen(false);
+  }, [modelSelectionDisabled]);
 
   useEffect(() => {
     attachmentsRef.current = attachments;
@@ -211,9 +363,13 @@ export function ChatView({
     fileInputRef.current?.click();
   }
 
-  function sendWithAttachments() {
+  async function sendWithAttachments() {
     const attachmentContext = attachments.map(({ previewUrl: _previewUrl, ...attachment }) => attachment);
-    onSend(attachmentContext);
+    const sent = await onSend({
+      attachments: attachmentContext,
+      modelSelection: displayedModelSelection,
+    });
+    if (sent === false) return;
     setAttachments((current) => {
       current.forEach(revokeAttachmentPreview);
       return [];
@@ -224,6 +380,94 @@ export function ChatView({
     setProfileMenuOpen(false);
     if (nextProfile === profile || profileSelectionDisabled) return;
     onProfileChange(nextProfile);
+  }
+
+  function selectModel(selection: HermesModelSelection) {
+    setModelMenuOpen(false);
+    if (modelSelectionDisabled) return;
+    onModelSelect(selection);
+  }
+
+  function updateComposerSelection(element: HTMLTextAreaElement) {
+    setComposerSelection({
+      start: element.selectionStart,
+      end: element.selectionEnd,
+    });
+  }
+
+  function insertSlashCommand(command: HermesSlashCommand) {
+    if (!slashToken) return;
+    const next = slashCommandInsertion(input, slashToken, command);
+    onInput(next.value);
+    setDismissedSlashToken("");
+    window.requestAnimationFrame(() => {
+      textareaRef.current?.focus();
+      textareaRef.current?.setSelectionRange(next.cursor, next.cursor);
+      setComposerSelection({ start: next.cursor, end: next.cursor });
+    });
+  }
+
+  function handleComposerKeyDown(event: ReactKeyboardEvent<HTMLTextAreaElement>) {
+    if (slashMenuOpen) {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setDismissedSlashToken(slashTokenKey);
+        return;
+      }
+      if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+        event.preventDefault();
+        setActiveSlashIndex((current) =>
+          moveSlashCommandIndex(current, event.key === "ArrowDown" ? 1 : -1, filteredSlashCommands.length),
+        );
+        return;
+      }
+      if (event.key === "Tab") {
+        const command = filteredSlashCommands[activeSlashIndex] || filteredSlashCommands[0];
+        if (command) {
+          event.preventDefault();
+          insertSlashCommand(command);
+        }
+        return;
+      }
+      if (event.key === "Enter" && !event.shiftKey) {
+        const command = filteredSlashCommands[activeSlashIndex] || filteredSlashCommands[0];
+        if (command && slashToken && slashCommandTokenIsPartial(input, slashToken, command)) {
+          event.preventDefault();
+          insertSlashCommand(command);
+          return;
+        }
+      }
+    }
+
+    if (event.key === "Enter" && !event.shiftKey) {
+      event.preventDefault();
+      sendWithAttachments();
+    }
+  }
+
+  function handleModelSearchKeyDown(event: ReactKeyboardEvent<HTMLInputElement>) {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      const option = filteredModelOptions.find((item) => modelOptionKey(item) === activeModelOptionKey) ||
+        filteredModelOptions[0];
+      if (option) {
+        selectModel({
+          provider: option.provider,
+          model: option.model,
+          providerName: option.providerName,
+        });
+      }
+      return;
+    }
+    if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
+    event.preventDefault();
+    if (!filteredModelOptions.length) return;
+    const currentIndex = filteredModelOptions.findIndex((item) => modelOptionKey(item) === activeModelOptionKey);
+    const direction = event.key === "ArrowDown" ? 1 : -1;
+    const nextIndex = currentIndex === -1
+      ? event.key === "ArrowDown" ? 0 : filteredModelOptions.length - 1
+      : (currentIndex + direction + filteredModelOptions.length) % filteredModelOptions.length;
+    setActiveModelOptionKey(modelOptionKey(filteredModelOptions[nextIndex]));
   }
 
   function hasFileDrag(event: DragEvent) {
@@ -304,7 +548,6 @@ export function ChatView({
                     ) : null}
                     <div className="message-body">
                       <MessageContent message={message} />
-                      {message.streaming ? <span className="typing-caret" /> : null}
                       {eventCount(message.events) ? <MessageEvents events={message.events} /> : null}
                     </div>
                   </article>
@@ -314,11 +557,21 @@ export function ChatView({
                   <div className="view-icon">
                     <Sparkles size={18} />
                   </div>
-                  <strong>{connected ? "Ready for the first request." : "Connect Hermes to start a live chat."}</strong>
+                  <strong>
+                    {requestActive ? (
+                      <span className="thinking-shimmer">Thinking...</span>
+                    ) : connected ? (
+                      "Ready for the first request."
+                    ) : (
+                      "Connect Iris to start a live chat."
+                    )}
+                  </strong>
                   <span>
-                    {connected
+                    {requestActive
+                      ? "Iris is working on this request."
+                      : connected
                       ? "Ask for research, code changes, memory work, or a reusable skill."
-                      : "Use Settings to pick a local or remote Hermes API, then retry the connection."}
+                      : "Use Settings to pick a local or remote runtime API, then retry the connection."}
                   </span>
                 </div>
               )}
@@ -345,21 +598,85 @@ export function ChatView({
             event.target.value = "";
           }}
         />
-        <textarea
-          value={input}
-          onChange={(event) => onInput(event.target.value)}
-          placeholder={
-            selectedConversationId
-              ? "Ask for follow-up changes"
-              : "Ask Hermes to research, build, remember, or create a reusable skill..."
-          }
-          onKeyDown={(event) => {
-            if (event.key === "Enter" && !event.shiftKey) {
-              event.preventDefault();
-              sendWithAttachments();
+        <div className="composer-input-wrap">
+          <textarea
+            ref={textareaRef}
+            value={input}
+            onChange={(event) => {
+              onInput(event.target.value);
+              updateComposerSelection(event.target);
+            }}
+            onClick={(event) => updateComposerSelection(event.currentTarget)}
+            onFocus={(event) => updateComposerSelection(event.currentTarget)}
+            onKeyUp={(event) => updateComposerSelection(event.currentTarget)}
+            onSelect={(event) => updateComposerSelection(event.currentTarget)}
+            placeholder={
+              selectedConversationId
+                ? "Ask for follow-up changes"
+                : "Ask Iris to research, build, remember, or create a reusable skill..."
             }
-          }}
-        />
+            aria-controls={slashMenuOpen ? "composer-slash-menu" : undefined}
+            aria-expanded={slashMenuOpen}
+            onKeyDown={handleComposerKeyDown}
+          />
+          {slashMenuOpen ? (
+            <div
+              id="composer-slash-menu"
+              className="composer-slash-menu"
+              role="listbox"
+              aria-label="Slash commands"
+            >
+              {slashCommandsLoading && !filteredSlashCommands.length ? (
+                <div className="composer-slash-empty">Loading commands...</div>
+              ) : null}
+              {slashCommandsError && !filteredSlashCommands.length ? (
+                <button
+                  type="button"
+                  className="composer-slash-row disabled"
+                  onClick={onSlashCommandsRefresh}
+                >
+                  <span className="composer-slash-icon"><Command size={14} /></span>
+                  <span className="composer-slash-main">
+                    <strong>Commands unavailable</strong>
+                    <small>Click to retry</small>
+                  </span>
+                </button>
+              ) : null}
+              {!slashCommandsLoading && !slashCommandsError && !filteredSlashCommands.length ? (
+                <div className="composer-slash-empty">No matching commands</div>
+              ) : null}
+              {filteredSlashCommands.map((command, index) => {
+                const active = index === activeSlashIndex;
+                const meta = command.description || command.category || command.source;
+                return (
+                  <button
+                    key={command.id}
+                    ref={(node) => {
+                      slashCommandRefs.current[command.id] = node;
+                    }}
+                    type="button"
+                    className="composer-slash-row"
+                    role="option"
+                    aria-selected={active}
+                    data-active={active}
+                    onMouseDown={(event) => event.preventDefault()}
+                    onMouseEnter={() => setActiveSlashIndex(index)}
+                    onClick={() => insertSlashCommand(command)}
+                  >
+                    <span className="composer-slash-icon">
+                      {command.source === "skill" ? <Sparkles size={14} /> : <Command size={14} />}
+                    </span>
+                    <span className="composer-slash-main">
+                      <strong>{command.label || command.text}</strong>
+                      {meta ? <small>{meta}</small> : null}
+                    </span>
+                    <span className="composer-slash-meta">{active ? "Tab" : command.category}</span>
+                  </button>
+                );
+              })}
+            </div>
+          ) : null}
+        </div>
         {attachments.length ? (
           <div className="attachment-tray" aria-label="Attached files">
             {attachments.map((attachment) => (
@@ -447,10 +764,81 @@ export function ChatView({
             </div>
           </div>
           <div className="composer-tools">
-            <span className="composer-model">
-              <Zap size={14} />
-              Hermes
-            </span>
+            <div className="composer-model-menu-wrap" ref={modelMenuRef}>
+              <button
+                type="button"
+                className="composer-model-button"
+                title={modelSelectorTitle}
+                aria-haspopup="menu"
+                aria-expanded={modelMenuOpen}
+                aria-label={`Model ${displayedModelSelection?.model || "unavailable"}`}
+                disabled={modelSelectionDisabled}
+                onClick={() => setModelMenuOpen((open) => !open)}
+              >
+                <Zap size={14} />
+                <span>{displayedModelSelection?.model || "Model"}</span>
+                <ChevronDown size={13} />
+              </button>
+              {modelMenuOpen ? (
+                <div className="composer-model-menu" role="menu" aria-label="Choose model">
+                  <label className="composer-model-search">
+                    <Search size={14} />
+                    <input
+                      ref={modelSearchRef}
+                      value={modelSearch}
+                      placeholder="Search models"
+                      aria-label="Search models"
+                      onChange={(event) => setModelSearch(event.target.value)}
+                      onKeyDown={handleModelSearchKeyDown}
+                    />
+                  </label>
+                  {modelError ? <div className="composer-menu-note">{modelError}</div> : null}
+                  {filteredModelProviders.length ? null : (
+                    <div className="composer-menu-note">No matching models</div>
+                  )}
+                  {filteredModelProviders.map((provider) =>
+                    provider.models.length ? (
+                      <div key={provider.slug || provider.name} className="composer-model-group">
+                        <div className="composer-model-provider">{provider.name}</div>
+                        {provider.models.map((model) => {
+                          const optionKey = modelOptionKey({
+                            provider: provider.slug,
+                            providerName: provider.name,
+                            model,
+                          });
+                          const selected =
+                            displayedModelSelection?.provider === provider.slug &&
+                            displayedModelSelection?.model === model;
+                          const active = activeModelOptionKey === optionKey;
+                          return (
+                            <button
+                              key={optionKey}
+                              ref={(node) => {
+                                modelOptionRefs.current[optionKey] = node;
+                              }}
+                              type="button"
+                              role="menuitemradio"
+                              aria-checked={selected}
+                              data-active={active}
+                              onClick={() =>
+                                selectModel({
+                                  provider: provider.slug,
+                                  model,
+                                  providerName: provider.name,
+                                })
+                              }
+                            >
+                              <span>{model}</span>
+                              {selected ? <Check size={14} /> : null}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    ) : null,
+                  )}
+                </div>
+              ) : null}
+            </div>
             <button type="button" className="composer-icon-button" title="Voice input">
               <Mic size={16} />
             </button>
@@ -538,15 +926,53 @@ function shouldRenderMessage(message: Message) {
   return Boolean(message.content.trim() || message.streaming || message.streamEvents?.length || eventCount(message.events));
 }
 
+function filterModelProviders(providers: HermesModelProvider[], query: string) {
+  const normalizedQuery = query.trim().toLowerCase();
+  if (!normalizedQuery) return providers;
+  return providers
+    .map((provider) => {
+      const providerMatches =
+        provider.name.toLowerCase().includes(normalizedQuery) ||
+        provider.slug.toLowerCase().includes(normalizedQuery);
+      const models = providerMatches
+        ? provider.models
+        : provider.models.filter((model) => model.toLowerCase().includes(normalizedQuery));
+      return { ...provider, models };
+    })
+    .filter((provider) => provider.models.length);
+}
+
+function flattenModelOptions(providers: HermesModelProvider[]): ModelMenuOption[] {
+  return providers.flatMap((provider) =>
+    provider.models.map((model) => ({
+      provider: provider.slug,
+      providerName: provider.name,
+      model,
+    })),
+  );
+}
+
+function modelOptionKey(option: ModelMenuOption | undefined) {
+  return option ? `${option.provider}:${option.model}` : "";
+}
+
+function modelOptionKeyForSelection(selection: HermesModelSelection | null) {
+  return selection ? `${selection.provider}:${selection.model}` : "";
+}
+
 function MessageContent({ message }: { message: Message }) {
   if (message.role === "tool") return <StreamToolEvents events={[streamToolEventFromLegacyContent(message.content)]} />;
-  if (message.streaming && message.content.trim() === "Thinking...") {
+  const content = message.content.trim();
+  const thinking = message.streaming && content === "Thinking...";
+  const hasToolEvents = Boolean(message.streamEvents?.length);
+  if (thinking && !hasToolEvents) {
     return <span className="thinking-shimmer">Thinking...</span>;
   }
   return (
     <>
-      {message.content.trim() ? <MarkdownMessage content={message.content} streaming={message.streaming} /> : null}
-      {message.streamEvents?.length ? <StreamToolEvents events={message.streamEvents} /> : null}
+      {hasToolEvents ? <StreamToolEvents events={message.streamEvents || []} /> : null}
+      {content && !thinking ? <MarkdownMessage content={message.content} streaming={message.streaming} /> : null}
+      {message.streaming ? <span className="typing-caret" /> : null}
     </>
   );
 }
@@ -561,7 +987,7 @@ function MarkdownMessage({ content, streaming }: { content: string; streaming?: 
       linkSafety={{ enabled: false }}
       parseIncompleteMarkdown
     >
-      {content}
+      {normalizeChatMarkdown(content)}
     </Streamdown>
   );
 }

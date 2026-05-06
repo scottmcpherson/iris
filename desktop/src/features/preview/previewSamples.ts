@@ -2,7 +2,7 @@ import type { PreviewMode } from "../../app/types";
 
 export const sampleHtml = `<main class="scene">
   <section>
-    <span>Hermes artifact</span>
+    <span>Iris artifact</span>
     <h1>Persistent agents deserve a living workspace.</h1>
     <p>This preview is sandboxed and refreshes as you type.</p>
     <button onclick="document.body.classList.toggle('warm')">Shift tone</button>
@@ -37,7 +37,7 @@ ReactDOM.createRoot(document.getElementById("root")).render(<HermesPreview />);`
 
 const sampleMarkdown = `# Skill Draft
 
-Hermes should turn repeated success into reusable procedural memory.
+Iris should turn repeated success into reusable procedural memory.
 
 ## Scope
 
@@ -55,9 +55,9 @@ type Skill = {
 
 const sampleDiagram = `flowchart LR
   User[User]
-  Desktop[Hermes Desktop]
+  Desktop[Iris Desktop]
   Bridge[Rust and Python Bridge]
-  Agent[Hermes Agent]
+  Agent[Iris]
   Memory[(MEMORY.md and USER.md)]
   Skills[Skills]
 

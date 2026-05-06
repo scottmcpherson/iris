@@ -1,6 +1,6 @@
 import type { HermesParsedEvents, HermesStreamToolEvent } from "../types/hermes";
 
-export type View = "chat" | "agents";
+export type View = "chat" | "agents" | "jobs";
 
 export type PreviewMode = "html" | "react" | "markdown" | "diagram";
 
@@ -26,6 +26,7 @@ export type Message = {
   role: "user" | "assistant" | "system" | "tool";
   content: string;
   streaming?: boolean;
+  streamMessageId?: string;
   events?: HermesParsedEvents;
   streamEvents?: HermesStreamToolEvent[];
 };

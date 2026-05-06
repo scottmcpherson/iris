@@ -14,8 +14,12 @@ import { AgentsView } from "./features/agents/AgentsView";
 import { AgentTopbar } from "./features/agents/AgentTopbar";
 import type { AgentDetailSection } from "./features/agents/types";
 import { ChatView } from "./features/chat/ChatView";
-import { useHermesChat } from "./features/chat/useHermesChat";
+import { useAgentUIChat } from "./features/chat/useHermesChat";
+import { useHermesModelCatalog } from "./features/chat/useHermesModelCatalog";
+import { useHermesSlashCommands } from "./features/chat/useHermesSlashCommands";
 import { useHermesRuntime } from "./features/hermes/useHermesRuntime";
+import { JobsView } from "./features/jobs/JobsView";
+import { useAgentUIAutomations } from "./features/jobs/useHermesJobs";
 import { LivePreviewPane } from "./features/preview/LivePreviewPane";
 import {
   createPreviewArtifact,
@@ -52,10 +56,11 @@ function App() {
   const [activeArtifactId, setActiveArtifactId] = useState(() => previewArtifacts[0]?.id || "");
 
   const hermes = useHermesRuntime();
-  const chat = useHermesChat({
+  const chat = useAgentUIChat({
     profile: hermes.selectedProfile,
     runtimeConfig: hermes.runtimeConfig,
   });
+  const jobs = useAgentUIAutomations(hermes.runtimeConfig, hermes.selectedProfile);
 
   useEffect(() => {
     savePreviewArtifacts(previewArtifacts);
@@ -79,9 +84,9 @@ function App() {
       } else if (event.key.toLowerCase() === "r") {
         event.preventDefault();
         void refreshWithNotice();
-      } else if (/^[1-2]$/.test(event.key)) {
+      } else if (/^[1-3]$/.test(event.key)) {
         event.preventDefault();
-        const views: View[] = ["chat", "agents"];
+        const views: View[] = ["chat", "agents", "jobs"];
         selectView(views[Number(event.key) - 1]);
       }
     };
@@ -110,12 +115,27 @@ function App() {
 
   const previewVisible = activeView === "chat" && previewOpen;
   const agentProfiles = hermes.status?.profiles?.length ? hermes.status.profiles : [hermes.activeProfile];
+  const selectedProfileSummary =
+    agentProfiles.find((profile) => profile.name === hermes.selectedProfile) || hermes.activeProfile;
+  const modelCatalog = useHermesModelCatalog({
+    profile: hermes.selectedProfile,
+    profileSummary: selectedProfileSummary,
+    runtimeConfig: hermes.runtimeConfig,
+    connected: hermes.connected,
+    refreshKey: hermes.status?.checkedAt || 0,
+  });
+  const slashCommands = useHermesSlashCommands({
+    profile: hermes.selectedProfile,
+    runtimeConfig: hermes.runtimeConfig,
+    connected: hermes.connected,
+    refreshKey: hermes.status?.checkedAt || 0,
+  });
   const agentTopbarProfile =
     agentProfiles.find((profile) => profile.name === agentDetailProfile) ?? hermes.activeProfile;
 
   const commands = useMemo<CommandItem[]>(
     () => [
-      ...(["chat", "agents"] as View[]).map((view, index) => ({
+      ...(["chat", "agents", "jobs"] as View[]).map((view, index) => ({
         id: `view-${view}`,
         label: `Open ${view}`,
         detail: "Switch workspace",
@@ -135,8 +155,8 @@ function App() {
         : []),
       {
         id: "refresh",
-        label: "Refresh Hermes Connection",
-        detail: "Retry bridge, profile, memory, and skill loading",
+        label: "Refresh Iris Connection",
+        detail: "Retry runtime, profile, memory, and skill loading",
         shortcut: "⌘R",
         run: () => void refreshWithNotice(),
       },
@@ -261,10 +281,11 @@ function App() {
 
   async function refreshWithNotice() {
     await hermes.refreshHermes();
+    await slashCommands.refreshSlashCommands();
     pushNotification({
       tone: hermes.status?.connected ? "success" : "info",
       title: "Connection refreshed",
-      message: hermes.status?.connected ? "Hermes profile data is current." : "Hermes is still waiting for a route.",
+      message: hermes.status?.connected ? "Iris profile data is current." : "Iris is still waiting for a route.",
     });
   }
 
@@ -396,19 +417,54 @@ function App() {
         />
       );
     }
+    if (activeView === "jobs") {
+      return (
+        <JobsView
+          activeJobs={jobs.activeJobs}
+          busyJobId={jobs.busyJobId}
+          completedJobs={jobs.completedJobs}
+          deliveries={jobs.deliveries}
+          deliveryTarget={jobs.deliveryTarget}
+          error={jobs.error}
+          loading={jobs.loading}
+          pausedJobs={jobs.pausedJobs}
+          onAcknowledgeDelivery={(messageId) => void jobs.acknowledgeDelivery(messageId)}
+          onCreateScheduledMessage={jobs.createScheduledMessage}
+          onDeliveryTargetChange={jobs.updateDeliveryTarget}
+          onRefresh={() => void jobs.refresh()}
+          onRunJobAction={jobs.runJobAction}
+        />
+      );
+    }
     return (
       <ChatView
         messages={chat.messages}
         selectedConversationId={chat.selectedConversationId}
         input={chat.input}
         onInput={chat.setInput}
-        onSend={(attachments) => void chat.sendMessage(attachments)}
+        onSend={(options) =>
+          chat.sendMessage({
+            attachments: options?.attachments,
+            modelSelection: options?.modelSelection,
+            currentModelSelection: modelCatalog.currentSelection,
+          })
+        }
         connected={hermes.connected}
         profile={hermes.selectedProfile}
         profiles={agentProfiles}
         onProfileChange={hermes.selectProfile}
         requestActive={chat.requestActive}
         onCancel={() => void chat.cancelMessage()}
+        modelCatalog={modelCatalog.catalog}
+        modelSelection={modelCatalog.draftSelection}
+        lockedModelSelection={chat.selectedModelSelection}
+        modelLoading={modelCatalog.loading}
+        modelError={modelCatalog.error}
+        onModelSelect={modelCatalog.selectDraftModel}
+        slashCommands={slashCommands.commands}
+        slashCommandsLoading={slashCommands.loading}
+        slashCommandsError={slashCommands.error}
+        onSlashCommandsRefresh={() => void slashCommands.refreshSlashCommands()}
       />
     );
   }

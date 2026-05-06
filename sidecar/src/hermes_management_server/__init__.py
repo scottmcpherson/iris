@@ -1,4 +1,4 @@
-"""Read-only FastAPI management sidecar for Hermes Agent."""
+"""Iris Core service with read-only Hermes compatibility helpers."""
 
 from __future__ import annotations
 

@@ -70,7 +70,7 @@ export function createSkillArtifact(artifact: PreviewArtifact): PreviewArtifact 
     mode: "markdown",
     source: `# ${title} Skill
 
-Use this skill when Hermes should recreate, extend, or explain the ${artifact.mode} artifact named "${artifact.name}".
+Use this skill when Iris should recreate, extend, or explain the ${artifact.mode} artifact named "${artifact.name}".
 
 ## Trigger
 

@@ -23,6 +23,8 @@ from typing import Any
 
 DEFAULT_GATEWAY_URL = "http://127.0.0.1:8642"
 DEFAULT_MANAGEMENT_URL = "http://127.0.0.1:8765"
+DEFAULT_AGENTUI_GATEWAY_URL = "http://127.0.0.1:8766"
+AGENTUI_GATEWAY_PORT_OFFSET = 124
 HERMES_API_TOKEN_ACCOUNT = "hermes-api-token"
 SIDECAR_TOKEN_ACCOUNT = "hermes-sidecar-token"
 REMOTE_TOKEN_SERVICE = "Hermes Agent Desktop"
@@ -52,6 +54,19 @@ def main() -> None:
             "skill_save": skill_save,
             "conversations": conversations,
             "conversation_detail": conversation_detail,
+            "models": models,
+            "slash_commands": slash_commands,
+            "slash_complete": slash_complete,
+            "jobs_list": jobs_list,
+            "jobs_create": jobs_create,
+            "jobs_update": jobs_update,
+            "jobs_delete": jobs_delete,
+            "jobs_pause": jobs_pause,
+            "jobs_resume": jobs_resume,
+            "jobs_run": jobs_run,
+            "inbox_messages": inbox_messages,
+            "inbox_ack": inbox_ack,
+            "gateway_message": gateway_message,
             "send_message": send_message,
             "stream_message": stream_message,
             "profile_create": profile_create,
@@ -62,6 +77,7 @@ def main() -> None:
             "remote_credential_status": remote_credential_status,
             "remote_credential_save": remote_credential_save,
             "remote_credential_delete": remote_credential_delete,
+            "core_request": core_request,
         }
         handler = handlers.get(action)
         if handler is None:
@@ -294,6 +310,140 @@ def conversation_detail(payload: dict[str, Any]) -> dict[str, Any]:
         "messages": [],
     }
 
+
+def jobs_list(payload: dict[str, Any]) -> dict[str, Any]:
+    return jobs_request(payload, "/api/jobs", method="GET")
+
+
+def jobs_create(payload: dict[str, Any]) -> dict[str, Any]:
+    body = payload.get("job") if isinstance(payload.get("job"), dict) else payload
+    return jobs_request(payload, "/api/jobs", method="POST", body=job_create_body(body))
+
+
+def jobs_update(payload: dict[str, Any]) -> dict[str, Any]:
+    job_id = required_identifier(payload, "jobId")
+    body = payload.get("job") if isinstance(payload.get("job"), dict) else {}
+    return jobs_request(payload, f"/api/jobs/{urllib.parse.quote(job_id, safe='')}", method="PATCH", body=body)
+
+
+def jobs_delete(payload: dict[str, Any]) -> dict[str, Any]:
+    job_id = required_identifier(payload, "jobId")
+    return jobs_request(payload, f"/api/jobs/{urllib.parse.quote(job_id, safe='')}", method="DELETE")
+
+
+def jobs_pause(payload: dict[str, Any]) -> dict[str, Any]:
+    return jobs_control_request(payload, "pause")
+
+
+def jobs_resume(payload: dict[str, Any]) -> dict[str, Any]:
+    return jobs_control_request(payload, "resume")
+
+
+def jobs_run(payload: dict[str, Any]) -> dict[str, Any]:
+    return jobs_control_request(payload, "run")
+
+
+def jobs_control_request(payload: dict[str, Any], action: str) -> dict[str, Any]:
+    job_id = required_identifier(payload, "jobId")
+    return jobs_request(payload, f"/api/jobs/{urllib.parse.quote(job_id, safe='')}/{action}", method="POST", body={})
+
+
+def inbox_messages(payload: dict[str, Any]) -> dict[str, Any]:
+    after = bounded_int(payload.get("after"), default=0, minimum=0, maximum=2_000_000_000)
+    limit = bounded_int(payload.get("limit"), default=50, minimum=1, maximum=200)
+    query = {"after": after, "limit": limit}
+    selected = str(payload.get("profile") or "").strip()
+    if selected:
+        query["profile"] = selected
+    path = f"/inbox/messages?{urllib.parse.urlencode(query)}"
+    result = management_get(payload, path, timeout=8)
+    if not result.get("ok"):
+        return {"ok": False, "messages": [], "cursor": after, "error": result.get("error") or "Could not load inbox messages."}
+    return {
+        "ok": True,
+        "messages": result.get("messages") if isinstance(result.get("messages"), list) else [],
+        "cursor": int(number_or_none(result.get("cursor")) or after),
+    }
+
+
+def inbox_ack(payload: dict[str, Any]) -> dict[str, Any]:
+    message_id = required_identifier(payload, "messageId")
+    return management_request(
+        payload,
+        f"/inbox/messages/{urllib.parse.quote(message_id, safe='')}/ack",
+        method="POST",
+        body={},
+        timeout=8,
+    )
+
+
+def core_request(payload: dict[str, Any]) -> dict[str, Any]:
+    method = str(payload.get("method") or "GET").upper()
+    if method not in {"GET", "POST", "PATCH", "DELETE"}:
+        return {"ok": False, "error": "Unsupported Core request method."}
+    path = str(payload.get("path") or "").strip()
+    if not path.startswith("/"):
+        path = f"/{path}"
+    if not path or path == "/":
+        return {"ok": False, "error": "Core request path is required."}
+    body = payload.get("body") if isinstance(payload.get("body"), dict) else None
+    return management_request(payload, path, method=method, body=body, timeout=12)
+
+
+def jobs_request(
+    payload: dict[str, Any],
+    path: str,
+    *,
+    method: str,
+    body: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    url = gateway_endpoint(payload, path)
+    result = (
+        http_get_json(url, payload, timeout=8, token_kind="hermes")
+        if method == "GET"
+        else http_json_request(url, payload, method=method, body=body, timeout=8, token_kind="hermes")
+    )
+    if not result.get("ok"):
+        return {
+            "ok": False,
+            "url": result.get("url") or url,
+            "status": result.get("status"),
+            "error": result.get("error") or "Hermes jobs API request failed.",
+        }
+    parsed = result.get("json") if isinstance(result.get("json"), dict) else {}
+    if parsed.get("ok") is False:
+        return {
+            **parsed,
+            "url": result.get("url") or url,
+            "status": result.get("status"),
+            "error": parsed.get("error") or "Hermes jobs API request failed.",
+        }
+    return {**parsed, "ok": True, "url": result.get("url") or url, "status": result.get("status")}
+
+
+def gateway_endpoint(payload: dict[str, Any], path: str) -> str:
+    base = bridge_config(payload)["gatewayUrl"].rstrip("/")
+    return f"{base}{path if path.startswith('/') else f'/{path}'}"
+
+
+def job_create_body(payload: dict[str, Any]) -> dict[str, Any]:
+    body: dict[str, Any] = {}
+    for key in ("name", "schedule", "prompt", "deliver", "repeat"):
+        value = payload.get(key)
+        if value not in (None, ""):
+            body[key] = value
+    skills = payload.get("skills")
+    if isinstance(skills, list):
+        body["skills"] = [str(item) for item in skills if str(item).strip()]
+    return body
+
+
+def required_identifier(payload: dict[str, Any], key: str) -> str:
+    value = str(payload.get(key) or payload.get(key.replace("Id", "_id")) or "").strip()
+    if not value:
+        raise ValueError(f"{key} is required.")
+    return value
+
 def profile_name_from_payload(payload: dict[str, Any]) -> str:
     return str(payload.get("profile") or "default")
 
@@ -307,6 +457,8 @@ def conversation_summary(row: dict[str, Any]) -> dict[str, Any]:
         "model": str(row.get("model") or ""),
         "title": title or preview or "Untitled session",
         "preview": preview,
+        "chatId": str(row.get("chatId") or row.get("chat_id") or ""),
+        "origin": row.get("origin") if isinstance(row.get("origin"), dict) else {},
         "startedAt": number_or_none(row.get("started_at")),
         "endedAt": number_or_none(row.get("ended_at")),
         "lastActiveAt": number_or_none(row.get("last_active")) or number_or_none(row.get("ended_at")) or number_or_none(row.get("started_at")),
@@ -330,6 +482,8 @@ def normalize_management_conversation(row: dict[str, Any]) -> dict[str, Any]:
         "model": str(row.get("model") or ""),
         "title": title or preview or "Untitled session",
         "preview": preview,
+        "chatId": str(row.get("chatId") or row.get("chat_id") or ""),
+        "origin": row.get("origin") if isinstance(row.get("origin"), dict) else {},
         "startedAt": started_at,
         "endedAt": ended_at,
         "lastActiveAt": last_active_at or ended_at or started_at,
@@ -1092,7 +1246,7 @@ def default_skill_content(name: str, category: str) -> str:
     clean_category = category.strip() or "personal"
     return f"""---
 name: {clean_name}
-description: Describe when Hermes should use this skill.
+description: Describe when Iris should use this skill.
 category: {clean_category}
 version: 0.1.0
 tags: []
@@ -1147,6 +1301,196 @@ def send_message(payload: dict[str, Any]) -> dict[str, Any]:
         return {"ok": False, "error": "Prompt is empty."}
 
     return send_http_message(api_base_url(payload), payload)
+
+
+def gateway_message(payload: dict[str, Any]) -> dict[str, Any]:
+    text = str(payload.get("text") or payload.get("prompt") or "").strip()
+    if not text:
+        return {"ok": False, "error": "Message text is empty."}
+
+    chat_id = str(payload.get("chatId") or payload.get("chat_id") or "desktop").strip()
+    if not chat_id:
+        return {"ok": False, "error": "chatId is required."}
+
+    message_id = str(payload.get("messageId") or payload.get("message_id") or "").strip() or f"agentui-{int(time.time() * 1000)}"
+    selected = profile_name_from_payload(payload)
+    body = {
+        "chatId": chat_id,
+        "chatName": str(payload.get("chatName") or payload.get("chat_name") or chat_id).strip(),
+        "profile": selected,
+        "userId": str(payload.get("userId") or payload.get("user_id") or "agentui-user").strip(),
+        "userName": str(payload.get("userName") or payload.get("user_name") or "Iris User").strip(),
+        "messageId": message_id,
+        "text": text,
+    }
+    metadata = payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {}
+    if metadata:
+        body["metadata"] = {str(key): value for key, value in metadata.items()}
+    url = agentui_gateway_endpoint(payload, "/agentui/messages")
+    token = agentui_platform_token(payload)
+    if not token:
+        return {"ok": False, "error": "IRIS_TOKEN or AGENTUI_TOKEN is required for Iris gateway chat."}
+
+    result = http_json_request(
+        url,
+        {"agentuiToken": token},
+        method="POST",
+        body=body,
+        timeout=8,
+        token_kind="agentui",
+    )
+    if not result.get("ok"):
+        return {
+            "ok": False,
+            "url": result.get("url") or url,
+            "status": result.get("status"),
+            "error": result.get("error") or "Iris gateway message failed.",
+        }
+    parsed = result.get("json") if isinstance(result.get("json"), dict) else {}
+    if parsed.get("ok") is False:
+        return {**parsed, "url": result.get("url") or url, "status": result.get("status")}
+    return {**parsed, "ok": True, "profile": str(parsed.get("profile") or selected), "url": result.get("url") or url, "status": result.get("status")}
+
+
+def models(payload: dict[str, Any]) -> dict[str, Any]:
+    selected = profile_name_from_payload(payload)
+    query = urllib.parse.urlencode({"maxModels": int_value(payload.get("maxModels"), 100, 1, 200)})
+    url = agentui_gateway_endpoint(payload, f"/agentui/models?{query}")
+    token = agentui_platform_token(payload)
+    if not token:
+        return {
+            "ok": False,
+            "profile": selected,
+            "current": None,
+            "providers": [],
+            "generatedAt": int(time.time()),
+            "url": url,
+            "error": "IRIS_TOKEN or AGENTUI_TOKEN is required for model catalog discovery.",
+        }
+
+    result = http_get_json(url, {"agentuiToken": token}, timeout=8, token_kind="agentui")
+    if not result.get("ok"):
+        return {
+            "ok": False,
+            "profile": selected,
+            "current": None,
+            "providers": [],
+            "generatedAt": int(time.time()),
+            "url": result.get("url") or url,
+            "status": result.get("status"),
+            "error": result.get("error") or "Iris model catalog is unavailable.",
+        }
+
+    parsed = result.get("json") if isinstance(result.get("json"), dict) else {}
+    providers = [
+        normalize_model_provider(row)
+        for row in (parsed.get("providers") if isinstance(parsed.get("providers"), list) else [])
+        if isinstance(row, dict)
+    ]
+    current = normalize_model_selection(parsed.get("current"))
+    return {
+        "ok": bool(parsed.get("ok", True)),
+        "profile": str(parsed.get("profile") or selected),
+        "current": current,
+        "providers": providers,
+        "generatedAt": int_value(parsed.get("generatedAt") or parsed.get("generated_at"), int(time.time()), 0, 4_102_444_800),
+        "url": result.get("url") or url,
+        "status": result.get("status"),
+        **({"error": str(parsed.get("error"))} if parsed.get("error") else {}),
+    }
+
+
+def slash_commands(payload: dict[str, Any]) -> dict[str, Any]:
+    selected = profile_name_from_payload(payload)
+    url = agentui_gateway_endpoint(payload, "/agentui/slash-commands")
+    token = agentui_platform_token(payload)
+    if not token:
+        return {
+            "ok": False,
+            "profile": selected,
+            "commands": [],
+            "generatedAt": int(time.time()),
+            "url": url,
+            "error": "IRIS_TOKEN or AGENTUI_TOKEN is required for slash command discovery.",
+        }
+
+    result = http_get_json(url, {"agentuiToken": token}, timeout=8, token_kind="agentui")
+    if not result.get("ok"):
+        return {
+            "ok": False,
+            "profile": selected,
+            "commands": [],
+            "generatedAt": int(time.time()),
+            "url": result.get("url") or url,
+            "status": result.get("status"),
+            "error": result.get("error") or "Iris slash command catalog is unavailable.",
+        }
+
+    parsed = result.get("json") if isinstance(result.get("json"), dict) else {}
+    commands = [
+        normalize_slash_command(row)
+        for row in (parsed.get("commands") if isinstance(parsed.get("commands"), list) else [])
+        if isinstance(row, dict)
+    ]
+    return {
+        "ok": bool(parsed.get("ok", True)),
+        "profile": str(parsed.get("profile") or selected),
+        "commands": commands,
+        "generatedAt": int_value(parsed.get("generatedAt") or parsed.get("generated_at"), int(time.time()), 0, 4_102_444_800),
+        "url": result.get("url") or url,
+        "status": result.get("status"),
+        **({"warning": str(parsed.get("warning"))} if parsed.get("warning") else {}),
+        **({"error": str(parsed.get("error"))} if parsed.get("error") else {}),
+    }
+
+
+def slash_complete(payload: dict[str, Any]) -> dict[str, Any]:
+    text = str(payload.get("text") or "").strip()
+    selected = profile_name_from_payload(payload)
+    url = agentui_gateway_endpoint(payload, "/agentui/slash-complete")
+    token = agentui_platform_token(payload)
+    if not token:
+        return {
+            "ok": False,
+            "items": [],
+            "replaceFrom": 1,
+            "url": url,
+            "error": "IRIS_TOKEN or AGENTUI_TOKEN is required for slash command completion.",
+        }
+
+    result = http_json_request(
+        url,
+        {"agentuiToken": token},
+        method="POST",
+        body={"text": text, "limit": int_value(payload.get("limit"), 30, 1, 100)},
+        timeout=8,
+        token_kind="agentui",
+    )
+    if not result.get("ok"):
+        return {
+            "ok": False,
+            "items": [],
+            "replaceFrom": 1,
+            "url": result.get("url") or url,
+            "status": result.get("status"),
+            "error": result.get("error") or "Iris slash command completion is unavailable.",
+        }
+
+    parsed = result.get("json") if isinstance(result.get("json"), dict) else {}
+    items = [
+        normalize_slash_completion_item(row)
+        for row in (parsed.get("items") if isinstance(parsed.get("items"), list) else [])
+        if isinstance(row, dict)
+    ]
+    return {
+        "ok": bool(parsed.get("ok", True)),
+        "items": items,
+        "replaceFrom": int_value(parsed.get("replaceFrom") or parsed.get("replace_from"), 1, 0, len(text)),
+        "url": result.get("url") or url,
+        "status": result.get("status"),
+        **({"error": str(parsed.get("error"))} if parsed.get("error") else {}),
+        **({"profile": str(parsed.get("profile") or selected)} if parsed.get("profile") else {}),
+    }
 
 
 def stream_message(payload: dict[str, Any]) -> None:
@@ -1490,6 +1834,136 @@ def api_base_url(payload: dict[str, Any]) -> str:
     return config["apiUrl"]
 
 
+def agentui_gateway_base_url(payload: dict[str, Any]) -> str:
+    runtime = payload.get("runtime") if isinstance(payload.get("runtime"), dict) else {}
+    profile = profile_name_from_payload(payload)
+    explicit_routes = runtime.get("agentuiGatewayUrls") if isinstance(runtime.get("agentuiGatewayUrls"), dict) else {}
+    explicit_profile_url = explicit_routes.get(profile) if isinstance(explicit_routes, dict) else ""
+    if explicit_profile_url:
+        return str(explicit_profile_url).strip()
+
+    derived_profile_url = derive_agentui_gateway_url(payload, runtime, profile)
+    if profile != "default" and derived_profile_url:
+        return derived_profile_url
+
+    return str(
+        runtime.get("agentuiGatewayUrl")
+        or payload.get("agentuiGatewayUrl")
+        or os.environ.get("IRIS_TO_HERMES_URL")
+        or os.environ.get("AGENTUI_TO_HERMES_URL")
+        or derived_profile_url
+        or DEFAULT_AGENTUI_GATEWAY_URL
+    ).strip()
+
+
+def derive_agentui_gateway_url(payload: dict[str, Any], runtime: dict[str, Any], profile: str) -> str:
+    source_url = (
+        profile_url_from_runtime(runtime, "profileApiUrls", profile)
+        or str(runtime.get("gatewayUrl") or payload.get("gatewayUrl") or "").strip()
+    )
+    if not source_url:
+        return ""
+    parsed = urllib.parse.urlparse(source_url)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname or not parsed.port:
+        return ""
+    port = parsed.port + AGENTUI_GATEWAY_PORT_OFFSET
+    netloc = parsed.hostname
+    if ":" in netloc and not netloc.startswith("["):
+        netloc = f"[{netloc}]"
+    return urllib.parse.urlunparse((parsed.scheme, f"{netloc}:{port}", "", "", "", ""))
+
+
+def agentui_gateway_endpoint(payload: dict[str, Any], path: str) -> str:
+    base = agentui_gateway_base_url(payload).rstrip("/")
+    return f"{base}{path if path.startswith('/') else f'/{path}'}"
+
+
+def normalize_model_provider(row: dict[str, Any]) -> dict[str, Any]:
+    models_value = row.get("models")
+    models = [str(item) for item in models_value if str(item).strip()] if isinstance(models_value, list) else []
+    slug = str(row.get("slug") or row.get("provider") or row.get("id") or "").strip()
+    return {
+        "slug": slug,
+        "name": str(row.get("name") or row.get("label") or slug or "Provider").strip(),
+        "isCurrent": bool(row.get("isCurrent", row.get("is_current", False))),
+        "isUserDefined": bool(row.get("isUserDefined", row.get("is_user_defined", False))),
+        "models": models,
+        "totalModels": int_value(row.get("totalModels") or row.get("total_models"), len(models), 0, 100_000),
+        "source": str(row.get("source") or "").strip(),
+    }
+
+
+def normalize_model_selection(value: Any) -> dict[str, str] | None:
+    if not isinstance(value, dict):
+        return None
+    model = str(value.get("model") or "").strip()
+    provider = str(value.get("provider") or value.get("slug") or "").strip()
+    if not model:
+        return None
+    selection = {"provider": provider, "model": model}
+    provider_name = str(value.get("providerName") or value.get("provider_name") or value.get("name") or "").strip()
+    if provider_name:
+        selection["providerName"] = provider_name
+    return selection
+
+
+def normalize_slash_command(row: dict[str, Any]) -> dict[str, Any]:
+    source = str(row.get("source") or "hermes").strip()
+    if source not in {"hermes", "skill", "quick-command", "plugin"}:
+        source = "hermes"
+    text = str(row.get("text") or row.get("label") or row.get("name") or "").strip()
+    if text and not text.startswith("/"):
+        text = f"/{text}"
+    name = str(row.get("name") or text.lstrip("/") or "").strip().lstrip("/")
+    aliases = string_list(row.get("aliases"))
+    subcommands = string_list(row.get("subcommands") or row.get("sub_commands"))
+    args_hint = str(row.get("argsHint") or row.get("args_hint") or "").strip()
+    command_id = str(row.get("id") or f"{source}:{name}" or text).strip()
+    return {
+        "id": command_id,
+        "name": name,
+        "text": text or f"/{name}",
+        "label": str(row.get("label") or text or f"/{name}").strip(),
+        "description": str(row.get("description") or row.get("help") or "").strip(),
+        "category": str(row.get("category") or "Commands").strip(),
+        "source": source,
+        "aliases": aliases,
+        "argsHint": args_hint,
+        "subcommands": subcommands,
+        "requiresArgument": bool(row.get("requiresArgument", row.get("requires_argument", args_hint.startswith("<")))),
+    }
+
+
+def normalize_slash_completion_item(row: dict[str, Any]) -> dict[str, str]:
+    text = str(row.get("text") or row.get("value") or row.get("display") or "").strip()
+    item = {
+        "text": text,
+        "display": str(row.get("display") or text).strip(),
+    }
+    meta = str(row.get("meta") or row.get("description") or "").strip()
+    if meta:
+        item["meta"] = meta
+    return item
+
+
+def string_list(value: Any) -> list[str]:
+    if isinstance(value, list):
+        return [str(item).strip() for item in value if str(item).strip()]
+    if isinstance(value, tuple):
+        return [str(item).strip() for item in value if str(item).strip()]
+    if isinstance(value, str) and value.strip():
+        return [item.strip() for item in re.split(r"[, ]+", value) if item.strip()]
+    return []
+
+
+def int_value(value: Any, default: int, minimum: int, maximum: int) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        parsed = default
+    return min(max(parsed, minimum), maximum)
+
+
 def api_endpoint(base_url: str, path: str) -> str:
     base = base_url.rstrip("/")
     if not base.endswith("/v1"):
@@ -1703,6 +2177,11 @@ def api_error_text(text: str) -> str:
 
 def http_headers(payload: dict[str, Any], token_kind: str = "hermes") -> dict[str, str]:
     headers = {"Content-Type": "application/json", "Accept": "application/json"}
+    if str(token_kind or "").strip() == "agentui":
+        token = str(payload.get("agentuiToken") or "").strip() or agentui_platform_token(payload)
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+        return headers
     kind = credential_kind(token_kind)
     payload_key = "sidecarToken" if kind == "sidecar" else "hermesApiToken"
     token = str(payload.get(payload_key) or payload.get("remoteToken") or "").strip() or read_remote_token(kind)
@@ -1812,11 +2291,43 @@ def read_env_token(kind: str) -> str:
     kind = credential_kind(kind)
     if kind == "sidecar":
         return (
-            os.environ.get("HERMES_SIDECAR_TOKEN", "").strip()
+            os.environ.get("IRIS_INBOX_TOKEN", "").strip()
+            or os.environ.get("AGENTUI_INBOX_TOKEN", "").strip()
+            or os.environ.get("IRIS_CORE_TOKEN", "").strip()
+            or os.environ.get("HERMES_SIDECAR_TOKEN", "").strip()
             or os.environ.get("HERMES_MGMT_TOKEN", "").strip()
             or os.environ.get("HERMES_REMOTE_TOKEN", "").strip()
         )
     return os.environ.get("HERMES_API_TOKEN", "").strip() or os.environ.get("HERMES_REMOTE_TOKEN", "").strip()
+
+
+def agentui_platform_token(payload: dict[str, Any] | None = None) -> str:
+    payload = payload or {}
+    runtime = payload.get("runtime") if isinstance(payload.get("runtime"), dict) else {}
+    return (
+        str(payload.get("agentuiToken") or runtime.get("agentuiToken") or "").strip()
+        or os.environ.get("IRIS_TOKEN", "").strip()
+        or os.environ.get("AGENTUI_TOKEN", "").strip()
+        or os.environ.get("IRIS_INBOX_TOKEN", "").strip()
+        or os.environ.get("AGENTUI_INBOX_TOKEN", "").strip()
+        or env_file_value(hermes_root() / ".env", "IRIS_TOKEN")
+        or env_file_value(hermes_root() / ".env", "AGENTUI_TOKEN")
+        or env_file_value(hermes_root() / ".env", "IRIS_INBOX_TOKEN")
+        or env_file_value(hermes_root() / ".env", "AGENTUI_INBOX_TOKEN")
+    )
+
+
+def env_file_value(path: Path, key: str) -> str:
+    text = safe_read(path)
+    if not text:
+        return ""
+    prefix = f"{key}="
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or not stripped.startswith(prefix):
+            continue
+        return stripped[len(prefix):].strip().strip("\"'")
+    return ""
 
 
 def read_keychain_token(account: str) -> str:

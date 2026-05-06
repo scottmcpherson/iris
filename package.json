@@ -1,5 +1,5 @@
 {
-  "name": "hermes-agent-monorepo",
+  "name": "iris-monorepo",
   "private": true,
   "version": "0.1.0",
   "type": "module",
@@ -11,6 +11,8 @@
     "sidecar:setup": "node scripts/setup-sidecar.mjs",
     "sidecar:dev": "sidecar/.venv/bin/hermes-sidecar --host 127.0.0.1 --port 8765",
     "sidecar:test": "sidecar/.venv/bin/python -m pytest sidecar",
+    "hermes:agentui:install": "node scripts/install-agentui-platform.mjs",
+    "iris:hermes:install": "node scripts/install-agentui-platform.mjs",
     "dev": "node scripts/dev.mjs",
     "dev:web": "node scripts/dev.mjs --web",
     "dev:desktop": "node scripts/dev.mjs",

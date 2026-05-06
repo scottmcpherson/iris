@@ -86,6 +86,27 @@ def test_conversations_from_observed_sqlite_schema(tmp_path):
     assert newer.messageCount == 2
 
 
+def test_conversations_hide_cron_runner_sessions(tmp_path):
+    root = tmp_path / ".hermes"
+    root.mkdir()
+    create_observed_state_db(root / "state.db")
+    with sqlite3.connect(root / "state.db") as connection:
+        connection.execute(
+            "insert into sessions (id, source, model, started_at, ended_at, message_count, title) values (?, ?, ?, ?, ?, ?, ?)",
+            ("cron_job_1", "cron", "gpt-5.5", 3000, 3010, 1, "Cron runner transcript"),
+        )
+        connection.execute(
+            "insert into messages (session_id, role, content, timestamp) values (?, ?, ?, ?)",
+            ("cron_job_1", "user", "[IMPORTANT: You are running as a scheduled cron job.]", 3001),
+        )
+
+    result = discover_conversations(root, limit=80)
+    detail_response = make_client(root).get("/v1/profiles/default/conversations/cron_job_1")
+
+    assert [item.id for item in result.conversations] == ["newer", "older"]
+    assert detail_response.status_code == 404
+
+
 def test_conversations_endpoint_clamps_limit(tmp_path):
     root = tmp_path / ".hermes"
     root.mkdir()
@@ -133,6 +154,50 @@ def test_conversation_detail_endpoint_reads_messages(tmp_path):
     assert [message["role"] for message in body["messages"]] == ["user", "assistant"]
     assert body["messages"][0]["sessionId"] == "newer"
     assert body["messages"][1]["content"] == "Use the profiles endpoint."
+
+
+def test_conversation_detail_orders_timestamp_ties_by_message_id(tmp_path):
+    root = tmp_path / ".hermes"
+    root.mkdir()
+    connection = sqlite3.connect(root / "state.db")
+    connection.executescript(
+        """
+        create table sessions (
+            id text primary key,
+            source text not null,
+            started_at real not null
+        );
+
+        create table messages (
+            message_id text not null,
+            session_id text not null,
+            role text not null,
+            content text,
+            timestamp real not null
+        );
+        """
+    )
+    connection.execute(
+        "insert into sessions (id, source, started_at) values (?, ?, ?)",
+        ("tied", "api_server", 1000),
+    )
+    connection.executemany(
+        "insert into messages (message_id, session_id, role, content, timestamp) values (?, ?, ?, ?, ?)",
+        [
+            ("m2", "tied", "assistant", "Second", 1001),
+            ("m1", "tied", "user", "First", 1001),
+            ("m3", "tied", "assistant", "Third", 1001),
+        ],
+    )
+    connection.commit()
+    connection.close()
+
+    response = make_client(root).get("/v1/profiles/default/conversations/tied")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert [message["id"] for message in body["messages"]] == ["m1", "m2", "m3"]
+    assert [message["content"] for message in body["messages"]] == ["First", "Second", "Third"]
 
 
 def test_conversation_detail_endpoint_includes_tool_call_metadata(tmp_path):

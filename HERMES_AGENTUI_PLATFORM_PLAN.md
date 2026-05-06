@@ -1,28 +1,28 @@
-# Hermes AgentUI Platform Adapter Plan
+# Iris Hermes Platform Adapter Plan
 
-This document captures the implementation plan for making Hermes scheduled jobs deliver messages into AgentUI.
+This document captures the implementation plan for making Hermes scheduled jobs deliver messages into Iris.
 
-The recommended architecture is a Hermes platform plugin named `agentui`. Hermes keeps ownership of scheduling and job execution. AgentUI exposes a small authenticated delivery surface and renders delivered messages in the desktop app.
+The recommended architecture is a Hermes platform plugin named `agentui`. Hermes keeps ownership of scheduling and job execution. Iris exposes a small authenticated delivery surface and renders delivered messages in the desktop app.
 
 ## Goals
 
-- Let a user ask AgentUI/Hermes: "send me a message in 10 minutes".
+- Let a user ask Iris/Hermes: "send me a message in 10 minutes".
 - Create a Hermes cron job that runs at the requested time.
-- Deliver the completed job output into AgentUI as an app message/notification.
-- Add an AgentUI sidebar link for viewing scheduled automations/jobs.
+- Deliver the completed job output into Iris as an app message/notification.
+- Add an Iris sidebar link for viewing scheduled automations/jobs.
 - Keep Hermes core untouched by using the Hermes plugin platform path.
-- Support Hermes running on a different machine from AgentUI, preferably over Tailscale plus bearer auth.
+- Support Hermes running on a different machine from Iris, preferably over Tailscale plus bearer auth.
 
 ## Non-Goals
 
 - Do not modify Hermes core for the first implementation.
-- Do not expose AgentUI publicly on the internet.
-- Do not depend on local filesystem reads from remote AgentUI clients.
-- Do not make AgentUI a full messaging platform in Phase 1.
+- Do not expose Iris publicly on the internet.
+- Do not depend on local filesystem reads from remote Iris clients.
+- Do not make Iris a full messaging platform in Phase 1.
 
 ## Phase 1: Outbound-Only Adapter
 
-Phase 1 makes Hermes able to send scheduled job results to AgentUI. AgentUI can create/list/manage jobs, and Hermes can deliver job output back to AgentUI, but AgentUI-originated chat still uses the existing API path.
+Phase 1 makes Hermes able to send scheduled job results to Iris. Iris can create/list/manage jobs, and Hermes can deliver job output back to Iris, but Iris-originated chat still uses the existing API path.
 
 ### Hermes Plugin
 
@@ -42,7 +42,7 @@ agentui-platform/
 name: agentui-platform
 kind: platform
 version: 0.1.0
-description: AgentUI delivery adapter for Hermes Agent.
+description: Iris delivery adapter for Hermes.
 requires_env:
   - AGENTUI_BASE_URL
   - AGENTUI_TOKEN
@@ -51,17 +51,17 @@ requires_env:
 `adapter.py` should register a platform via `ctx.register_platform(...)`:
 
 - `name="agentui"`
-- `label="AgentUI"`
-- `adapter_factory=lambda cfg: AgentUIAdapter(cfg)`
+- `label="Iris"`
+- `adapter_factory=lambda cfg: IrisAdapter(cfg)`
 - `check_fn` returns true when `AGENTUI_BASE_URL` and `AGENTUI_TOKEN` are present or config equivalents exist.
 - `validate_config` confirms `base_url`, `token`, and a default chat/device id.
-- `platform_hint` tells Hermes this is an AgentUI desktop delivery target.
+- `platform_hint` tells Hermes this is an Iris desktop delivery target.
 
 The adapter should implement:
 
-- `connect()`: validate config, probe AgentUI health/inbox endpoint, mark connected.
+- `connect()`: validate config, probe Iris health/inbox endpoint, mark connected.
 - `disconnect()`: mark disconnected.
-- `send(chat_id, content, reply_to=None, metadata=None)`: POST a message to AgentUI.
+- `send(chat_id, content, reply_to=None, metadata=None)`: POST a message to Iris.
 - `get_chat_info(chat_id)`: return basic destination metadata.
 
 Suggested outbound request:
@@ -100,16 +100,16 @@ deliver="agentui"
 
 when `AGENTUI_DEFAULT_CHAT_ID` is configured.
 
-### AgentUI Sidecar
+### Iris Sidecar
 
-Add authenticated inbox endpoints to the AgentUI sidecar:
+Add authenticated inbox endpoints to the Iris sidecar:
 
 - `GET /v1/inbox/health`
 - `POST /v1/inbox/messages`
 - `GET /v1/inbox/messages?after=<cursor>`
 - `POST /v1/inbox/messages/{message_id}/ack`
 
-Store delivered messages locally in a small AgentUI-managed store. SQLite is preferable once message ack/cursors exist; JSON is acceptable only for an initial prototype.
+Store delivered messages locally in a small Iris-managed store. SQLite is preferable once message ack/cursors exist; JSON is acceptable only for an initial prototype.
 
 Message model:
 
@@ -127,12 +127,12 @@ Message model:
 
 Security requirements:
 
-- Bind AgentUI sidecar to `127.0.0.1` by default.
+- Bind Iris sidecar to `127.0.0.1` by default.
 - For remote Hermes, use Tailscale or a private network address.
 - Require `AGENTUI_INBOX_TOKEN` or equivalent sidecar token.
 - Never accept arbitrary file paths or executable payloads through the inbox.
 
-### AgentUI Desktop
+### Iris Desktop
 
 Add a Jobs/Automations view:
 
@@ -163,7 +163,7 @@ Use Hermes' Jobs API when available:
 - `POST /api/jobs/{job_id}/resume`
 - `POST /api/jobs/{job_id}/run`
 
-AgentUI bridge actions to add:
+Iris bridge actions to add:
 
 - `jobs_list`
 - `jobs_create`
@@ -219,39 +219,37 @@ Verify:
 
 ```bash
 hermes plugins list
-hermes cron create "2m" "Reply exactly: test from Hermes cron" --deliver "agentui:scott-desktop" --name "AgentUI smoke test"
+hermes cron create "2m" "Reply exactly: test from Hermes cron" --deliver "agentui:scott-desktop" --name "Iris smoke test"
 hermes cron status
 ```
 
 ### Phase 1 Acceptance Criteria
 
-- AgentUI can create a one-shot scheduled message.
+- Iris can create a one-shot scheduled message.
 - Hermes shows the job in `hermes cron list` or `/api/jobs`.
 - Hermes gateway fires the job.
-- The `agentui` adapter POSTs the output to AgentUI.
-- AgentUI displays the delivered message without duplicate delivery.
-- AgentUI can pause/resume/delete jobs from the new sidebar view.
+- The `agentui` adapter POSTs the output to Iris.
+- Iris displays the delivered message without duplicate delivery.
+- Iris can pause/resume/delete jobs from the new sidebar view.
 - Remote Hermes delivery works over Tailscale with bearer auth.
 
-## Phase 2: Inbound AgentUI-To-Hermes Routing
+## Phase 2: Inbound Iris-To-Hermes Routing
 
-Phase 2 makes AgentUI a true Hermes platform. Messages entered in AgentUI can enter the Hermes gateway as `platform=agentui`, giving Hermes a real origin for follow-up delivery.
+Phase 2 makes Iris a true Hermes platform. Messages entered in Iris can enter the Hermes gateway as `platform=agentui`, giving Hermes a real origin for follow-up delivery.
 
 ### Inbound Transport
 
-Add one of these inbound paths:
-
-1. AgentUI calls a Hermes plugin HTTP endpoint.
-2. AgentUI sidecar opens a persistent websocket/SSE connection to the Hermes adapter.
-3. Hermes adapter polls AgentUI for queued outbound user messages.
-
-Preferred starting point: AgentUI calls a plugin HTTP endpoint on the Hermes machine, secured by bearer token and private network.
+Add the inbound path directly to the `agentui` platform adapter. Iris calls
+the Hermes plugin HTTP endpoint on the Hermes machine, secured by bearer token
+and private network. This is the standard chat route; Iris should not split
+messages between direct API chat and gateway/platform chat based on prompt
+intent.
 
 Suggested Hermes plugin endpoint:
 
 ```http
 POST /agentui/messages
-Authorization: Bearer <AGENTUI_TO_HERMES_TOKEN>
+Authorization: Bearer <AGENTUI_TOKEN>
 Content-Type: application/json
 ```
 
@@ -272,40 +270,43 @@ The adapter builds a `MessageEvent` and calls `self.handle_message(event)`.
 Inbound events should use:
 
 - `platform="agentui"`
-- `chat_id=<AgentUI conversation/device id>`
-- `chat_name=<AgentUI label>`
-- `user_id=<AgentUI user id>`
-- `message_id=<AgentUI message id>`
+- `chat_id=<Iris conversation/device id>`
+- `chat_name=<Iris label>`
+- `user_id=<Iris user id>`
+- `message_id=<Iris message id>`
 
-This lets Hermes cron jobs created from AgentUI use:
+This lets Hermes cron jobs created from Iris use:
 
 ```text
 deliver="origin"
 ```
 
-and still route back to AgentUI later.
+and still route back to Iris later.
 
-### AgentUI Chat Integration
+### Iris Chat Integration
 
-AgentUI should distinguish:
+Iris chat should use the gateway/platform path as the single standardized
+chat route. The legacy direct `/v1/responses` API path can be removed from
+normal composer flow rather than kept as a prompt-intent fallback.
 
-- Direct API chat sessions.
-- Gateway/platform sessions through `agentui`.
-
-Once inbound routing exists, scheduled-message prompts should go through the gateway/platform path when the user expects future delivery. That gives Hermes the same origin metadata it has for Telegram/Slack.
+Each Iris conversation gets a durable Iris chat id. The adapter uses that
+id as `SessionSource.chat_id`, so Hermes session lookup, tool execution, cron
+origin capture, and future `deliver="origin"` delivery all work the same way
+they do for Telegram or Slack.
 
 ### Phase 2 Acceptance Criteria
 
-- AgentUI sends a message into Hermes through the `agentui` platform adapter.
+- Iris sends a message into Hermes through the `agentui` platform adapter.
 - Hermes processes it as a gateway message, not just an API request.
+- The Iris composer uses the gateway/platform route for normal chat.
 - A user can say "send me a message in 10 minutes".
 - Hermes creates a cron job with `deliver="origin"`.
-- The future cron result routes back to the same AgentUI chat/device.
-- AgentUI shows the delivered result in the right conversation.
+- The future cron result routes back to the same Iris chat/device.
+- Iris shows the delivered result in the right conversation.
 
 ## Verification Workflow
 
-For code or visible UI changes in AgentUI:
+For code or visible UI changes in Iris:
 
 ```bash
 npm run check
@@ -323,15 +324,14 @@ For Hermes plugin changes:
 ```bash
 hermes plugins list
 hermes cron status
-hermes cron create "2m" "Reply exactly: adapter smoke test" --deliver "agentui:scott-desktop" --name "AgentUI adapter smoke"
+hermes cron create "2m" "Reply exactly: adapter smoke test" --deliver "agentui:scott-desktop" --name "Iris adapter smoke"
 ```
 
-Also verify the AgentUI sidecar receives the POST and the desktop renders the message.
+Also verify the Iris sidecar receives the POST and the desktop renders the message.
 
 ## Open Questions
 
 - Should the UI label be "Jobs", "Automations", or "Scheduled"?
 - Should delivered cron messages appear inside the chat transcript, a notification inbox, or both?
-- Should AgentUI store inbox messages in the existing sidecar, a desktop-local store, or both?
-- Should Phase 1 job creation go through Hermes `/api/jobs` directly or through AgentUI sidecar proxy endpoints?
-- What is the durable device/chat id format for AgentUI destinations?
+- Should Iris store inbox messages in the existing sidecar, a desktop-local store, or both?
+- What is the durable device/chat id format for Iris destinations?

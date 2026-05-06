@@ -1,0 +1,30 @@
+{
+  "source": "/Users/agent/Documents/95CCDF97-BB00-4280-A465-5EE5A7D874A2.png",
+  "source_size": [
+    1254,
+    1254
+  ],
+  "detected_foreground_bbox": [
+    109,
+    72,
+    1145,
+    1171
+  ],
+  "cropped_logo_size": [
+    1036,
+    1099
+  ],
+  "outputs": {
+    "master_transparent_logo": "/Users/agent/Documents/iris-assets/master/iris-logo-transparent-cropped.png",
+    "master_transparent_icon_1024": "/Users/agent/Documents/iris-assets/master/iris-icon-master-transparent-1024.png",
+    "master_opaque_icon_1024": "/Users/agent/Documents/iris-assets/master/iris-icon-master-opaque-1024.png",
+    "web_dir": "/Users/agent/Documents/iris-assets/web",
+    "tauri_dir": "/Users/agent/Documents/iris-assets/tauri-icons",
+    "ios_opaque_dir": "/Users/agent/Documents/iris-assets/ios-appicon-opaque"
+  },
+  "notes": [
+    "Outer connected white/off-white background was made transparent.",
+    "Transparent master is intended for website/logo/Tauri desktop use.",
+    "Opaque iOS set is provided because iOS AppIcon assets must not contain alpha."
+  ]
+}

@@ -164,6 +164,339 @@ class HermesBridgeTests(unittest.TestCase):
         self.assertTrue(result["ok"], result)
         self.assertEqual(seen_headers["authorization"], "Bearer sidecar-token")
 
+    def test_agentui_inbox_token_can_authorize_sidecar_requests(self) -> None:
+        old_value = os.environ.get("AGENTUI_INBOX_TOKEN")
+        try:
+            os.environ["AGENTUI_INBOX_TOKEN"] = "inbox-token"
+            self.assertEqual(hermes_bridge.read_env_token("sidecar"), "inbox-token")
+        finally:
+            if old_value is None:
+                os.environ.pop("AGENTUI_INBOX_TOKEN", None)
+            else:
+                os.environ["AGENTUI_INBOX_TOKEN"] = old_value
+
+    def test_agentui_gateway_message_uses_profile_derived_adapter_url(self) -> None:
+        seen_headers: dict[str, str] = {}
+        seen_request: dict[str, object] = {}
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_POST(self) -> None:  # noqa: N802
+                seen_headers["authorization"] = self.headers.get("Authorization", "")
+                seen_request["path"] = self.path
+                length = int(self.headers.get("Content-Length", "0"))
+                seen_request["body"] = json.loads(self.rfile.read(length).decode("utf-8"))
+                self.send_response(202)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps({
+                    "ok": True,
+                    "accepted": True,
+                    "platform": "agentui",
+                    "profile": "Health",
+                    "chatId": "desktop-1",
+                }).encode("utf-8"))
+
+            def log_message(self, _format: str, *args: object) -> None:
+                return
+
+        server = HTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        old_token = os.environ.get("AGENTUI_TOKEN")
+        try:
+            os.environ["AGENTUI_TOKEN"] = "agentui-token"
+            api_port = server.server_port - hermes_bridge.AGENTUI_GATEWAY_PORT_OFFSET
+            self.assertGreater(api_port, 0)
+            result = hermes_bridge.gateway_message({
+                "profile": "Health",
+                "text": "hello",
+                "chatId": "desktop-1",
+                "chatName": "Health chat",
+                "messageId": "msg-1",
+                "runtime": {
+                    "profileApiUrls": {
+                        "Health": f"http://127.0.0.1:{api_port}",
+                    },
+                },
+            })
+        finally:
+            server.shutdown()
+            server.server_close()
+            if old_token is None:
+                os.environ.pop("AGENTUI_TOKEN", None)
+            else:
+                os.environ["AGENTUI_TOKEN"] = old_token
+
+        self.assertTrue(result["ok"], result)
+        self.assertEqual(result["profile"], "Health")
+        self.assertEqual(seen_request["path"], "/agentui/messages")
+        self.assertEqual(seen_headers["authorization"], "Bearer agentui-token")
+        self.assertEqual(seen_request["body"]["profile"], "Health")
+
+    def test_agentui_models_use_profile_derived_adapter_url(self) -> None:
+        seen_headers: dict[str, str] = {}
+        seen_request: dict[str, object] = {}
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_GET(self) -> None:  # noqa: N802
+                seen_headers["authorization"] = self.headers.get("Authorization", "")
+                seen_request["path"] = self.path
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps({
+                    "ok": True,
+                    "profile": "Health",
+                    "current": {
+                        "provider": "openai-codex",
+                        "model": "gpt-5.5",
+                        "provider_name": "OpenAI Codex",
+                    },
+                    "providers": [
+                        {
+                            "slug": "openai-codex",
+                            "name": "OpenAI Codex",
+                            "is_current": True,
+                            "is_user_defined": False,
+                            "models": ["gpt-5.5", "gpt-5.4"],
+                            "total_models": 2,
+                            "source": "built-in",
+                        },
+                    ],
+                    "generated_at": 1710000000,
+                }).encode("utf-8"))
+
+            def log_message(self, _format: str, *args: object) -> None:
+                return
+
+        server = HTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        old_token = os.environ.get("AGENTUI_TOKEN")
+        try:
+            os.environ["AGENTUI_TOKEN"] = "agentui-token"
+            api_port = server.server_port - hermes_bridge.AGENTUI_GATEWAY_PORT_OFFSET
+            self.assertGreater(api_port, 0)
+            result = hermes_bridge.models({
+                "profile": "Health",
+                "runtime": {
+                    "profileApiUrls": {
+                        "Health": f"http://127.0.0.1:{api_port}",
+                    },
+                },
+            })
+        finally:
+            server.shutdown()
+            server.server_close()
+            if old_token is None:
+                os.environ.pop("AGENTUI_TOKEN", None)
+            else:
+                os.environ["AGENTUI_TOKEN"] = old_token
+
+        self.assertTrue(result["ok"], result)
+        self.assertEqual(seen_request["path"], "/agentui/models?maxModels=100")
+        self.assertEqual(seen_headers["authorization"], "Bearer agentui-token")
+        self.assertEqual(result["current"]["providerName"], "OpenAI Codex")
+        self.assertEqual(result["providers"][0]["isCurrent"], True)
+        self.assertEqual(result["providers"][0]["isUserDefined"], False)
+        self.assertEqual(result["providers"][0]["totalModels"], 2)
+
+    def test_agentui_models_unavailable_returns_structured_error(self) -> None:
+        old_token = os.environ.get("AGENTUI_TOKEN")
+        try:
+            os.environ["AGENTUI_TOKEN"] = "agentui-token"
+            result = hermes_bridge.models({
+                "profile": "Health",
+                "runtime": {
+                    "agentuiGatewayUrls": {
+                        "Health": "http://127.0.0.1:9",
+                    },
+                },
+            })
+        finally:
+            if old_token is None:
+                os.environ.pop("AGENTUI_TOKEN", None)
+            else:
+                os.environ["AGENTUI_TOKEN"] = old_token
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["profile"], "Health")
+        self.assertEqual(result["providers"], [])
+        self.assertIn("error", result)
+
+    def test_agentui_slash_commands_use_profile_derived_adapter_url(self) -> None:
+        seen_headers: dict[str, str] = {}
+        seen_request: dict[str, object] = {}
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_GET(self) -> None:  # noqa: N802
+                seen_headers["authorization"] = self.headers.get("Authorization", "")
+                seen_request["path"] = self.path
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps({
+                    "ok": True,
+                    "profile": "Health",
+                    "generated_at": 1710000000,
+                    "commands": [
+                        {
+                            "id": "hermes:reload-skills",
+                            "name": "reload-skills",
+                            "text": "/reload-skills",
+                            "label": "/reload-skills",
+                            "description": "Re-scan skills",
+                            "category": "Tools & Skills",
+                            "source": "hermes",
+                            "aliases": ["reload_skills"],
+                            "args_hint": "",
+                            "subcommands": [],
+                            "requires_argument": False,
+                        }
+                    ],
+                }).encode("utf-8"))
+
+            def log_message(self, _format: str, *args: object) -> None:
+                return
+
+        server = HTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        old_token = os.environ.get("AGENTUI_TOKEN")
+        try:
+            os.environ["AGENTUI_TOKEN"] = "agentui-token"
+            api_port = server.server_port - hermes_bridge.AGENTUI_GATEWAY_PORT_OFFSET
+            self.assertGreater(api_port, 0)
+            result = hermes_bridge.slash_commands({
+                "profile": "Health",
+                "runtime": {
+                    "profileApiUrls": {
+                        "Health": f"http://127.0.0.1:{api_port}",
+                    },
+                },
+            })
+        finally:
+            server.shutdown()
+            server.server_close()
+            if old_token is None:
+                os.environ.pop("AGENTUI_TOKEN", None)
+            else:
+                os.environ["AGENTUI_TOKEN"] = old_token
+
+        self.assertTrue(result["ok"], result)
+        self.assertEqual(seen_request["path"], "/agentui/slash-commands")
+        self.assertEqual(seen_headers["authorization"], "Bearer agentui-token")
+        self.assertEqual(result["profile"], "Health")
+        self.assertEqual(result["generatedAt"], 1710000000)
+        self.assertEqual(result["commands"][0]["argsHint"], "")
+        self.assertEqual(result["commands"][0]["requiresArgument"], False)
+
+    def test_agentui_slash_complete_posts_text_and_normalizes_items(self) -> None:
+        seen_headers: dict[str, str] = {}
+        seen_request: dict[str, object] = {}
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_POST(self) -> None:  # noqa: N802
+                seen_headers["authorization"] = self.headers.get("Authorization", "")
+                seen_request["path"] = self.path
+                length = int(self.headers.get("Content-Length", "0"))
+                seen_request["body"] = json.loads(self.rfile.read(length).decode("utf-8"))
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps({
+                    "ok": True,
+                    "items": [
+                        {"text": "/reload-skills", "display": "/reload-skills", "meta": "Re-scan skills"}
+                    ],
+                    "replace_from": 1,
+                }).encode("utf-8"))
+
+            def log_message(self, _format: str, *args: object) -> None:
+                return
+
+        server = HTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        old_token = os.environ.get("AGENTUI_TOKEN")
+        try:
+            os.environ["AGENTUI_TOKEN"] = "agentui-token"
+            api_port = server.server_port - hermes_bridge.AGENTUI_GATEWAY_PORT_OFFSET
+            self.assertGreater(api_port, 0)
+            result = hermes_bridge.slash_complete({
+                "profile": "Health",
+                "text": "/re",
+                "limit": 10,
+                "runtime": {
+                    "profileApiUrls": {
+                        "Health": f"http://127.0.0.1:{api_port}",
+                    },
+                },
+            })
+        finally:
+            server.shutdown()
+            server.server_close()
+            if old_token is None:
+                os.environ.pop("AGENTUI_TOKEN", None)
+            else:
+                os.environ["AGENTUI_TOKEN"] = old_token
+
+        self.assertTrue(result["ok"], result)
+        self.assertEqual(seen_request["path"], "/agentui/slash-complete")
+        self.assertEqual(seen_headers["authorization"], "Bearer agentui-token")
+        self.assertEqual(seen_request["body"], {"text": "/re", "limit": 10})
+        self.assertEqual(result["items"][0]["display"], "/reload-skills")
+        self.assertEqual(result["replaceFrom"], 1)
+
+    def test_jobs_create_uses_gateway_api_and_hermes_token(self) -> None:
+        seen_headers: dict[str, str] = {}
+        seen_request: dict[str, object] = {}
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_POST(self) -> None:  # noqa: N802
+                seen_headers["authorization"] = self.headers.get("Authorization", "")
+                seen_request["path"] = self.path
+                length = int(self.headers.get("Content-Length", "0"))
+                seen_request["body"] = json.loads(self.rfile.read(length).decode("utf-8"))
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps({"ok": True, "job": {"id": "job-1"}}).encode("utf-8"))
+
+            def log_message(self, _format: str, *args: object) -> None:
+                return
+
+        server = HTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+
+        try:
+            result = hermes_bridge.jobs_create({
+                "runtime": {"gatewayUrl": f"http://127.0.0.1:{server.server_port}"},
+                "hermesApiToken": "gateway-token",
+                "job": {
+                    "name": "Reminder",
+                    "schedule": "10m",
+                    "prompt": "Reply exactly: hello",
+                    "deliver": "agentui:desktop",
+                    "repeat": 1,
+                },
+            })
+        finally:
+            server.shutdown()
+            server.server_close()
+
+        self.assertTrue(result["ok"], result)
+        self.assertEqual(seen_headers["authorization"], "Bearer gateway-token")
+        self.assertEqual(seen_request["path"], "/api/jobs")
+        self.assertEqual(seen_request["body"], {
+            "name": "Reminder",
+            "schedule": "10m",
+            "prompt": "Reply exactly: hello",
+            "deliver": "agentui:desktop",
+            "repeat": 1,
+        })
+
     def test_conversations_read_management_api(self) -> None:
         seen: dict[str, str] = {}
 

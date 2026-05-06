@@ -10,6 +10,7 @@ export const defaultRuntimeConfig: HermesRuntimeConfig = {
   remoteUrl: "",
   gatewayUrl: "http://127.0.0.1:8642",
   managementApiUrl: "http://127.0.0.1:8765",
+  agentuiGatewayUrls: {},
   profileApiUrls: {},
   profileSidecarUrls: {},
 };
@@ -22,6 +23,7 @@ export function loadRuntimeConfig(): HermesRuntimeConfig {
       ...stored,
       gatewayUrl: normalizeServerUrl(stored.gatewayUrl) || defaultRuntimeConfig.gatewayUrl,
       managementApiUrl: normalizeServerUrl(stored.managementApiUrl) || defaultRuntimeConfig.managementApiUrl,
+      agentuiGatewayUrls: normalizeProfileApiUrls(stored.agentuiGatewayUrls),
       profileApiUrls: normalizeProfileApiUrls(stored.profileApiUrls),
       profileSidecarUrls: normalizeProfileApiUrls(stored.profileSidecarUrls),
       connectionMode: stored.connectionMode === "remote" ? "remote" : "local",
@@ -38,6 +40,7 @@ export function saveRuntimeConfig(config: HermesRuntimeConfig) {
       ...config,
       gatewayUrl: normalizeServerUrl(config.gatewayUrl) || defaultRuntimeConfig.gatewayUrl,
       managementApiUrl: normalizeServerUrl(config.managementApiUrl) || defaultRuntimeConfig.managementApiUrl,
+      agentuiGatewayUrls: normalizeProfileApiUrls(config.agentuiGatewayUrls),
       profileApiUrls: normalizeProfileApiUrls(config.profileApiUrls),
       profileSidecarUrls: normalizeProfileApiUrls(config.profileSidecarUrls),
     }),

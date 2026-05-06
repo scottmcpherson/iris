@@ -15,7 +15,7 @@ export function OnboardingOverlay({
 }: OnboardingOverlayProps) {
   return (
     <div className="onboarding-scrim" role="presentation">
-      <section className="onboarding-card" role="dialog" aria-modal="true" aria-label="Hermes setup">
+      <section className="onboarding-card" role="dialog" aria-modal="true" aria-label="Iris setup">
         <button className="icon-button onboarding-close" title="Close onboarding" onClick={onClose}>
           <X size={15} />
         </button>
@@ -23,9 +23,9 @@ export function OnboardingOverlay({
           <Sparkles size={24} />
         </div>
         <p className="eyebrow">First run</p>
-        <h1>Set up Hermes Agent for this Mac.</h1>
+        <h1>Set up Iris for this Mac.</h1>
         <p className="onboarding-copy">
-          Connect the desktop shell to a local or remote Hermes API server.
+          Connect Iris Desktop to a local or remote Hermes runtime.
         </p>
 
         <div className="setup-steps">

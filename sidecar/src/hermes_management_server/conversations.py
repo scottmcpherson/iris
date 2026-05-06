@@ -23,7 +23,7 @@ SQLITE_CANDIDATE_NAMES = (
     "history.db",
 )
 ID_COLUMNS = ("id", "session_id", "conversation_id", "thread_id")
-SOURCE_COLUMNS = ("source", "platform", "client", "origin")
+SOURCE_COLUMNS = ("source", "platform", "client")
 MODEL_COLUMNS = ("model", "model_name", "model_id")
 TITLE_COLUMNS = ("title", "name", "summary")
 START_COLUMNS = ("started_at", "session_start", "created_at", "created", "start_time", "timestamp")
@@ -186,6 +186,7 @@ def read_sqlite_conversations(db_path: Path, profile_root: Path, limit: int) -> 
             )
         message_table = choose_message_table(schema.tables, session_table)
         conversations = normalize_sqlite_conversations(connection, schema, session_table, message_table)
+        enrich_conversation_origins(conversations, profile_root)
         conversations.sort(key=lambda item: item.lastActiveAt or item.startedAt or 0, reverse=True)
         return ConversationDiscovery(
             path=str(safe_path),
@@ -233,8 +234,9 @@ def read_sqlite_conversation_detail(
         message_table = choose_message_table(schema.tables, session_table)
         messages = read_sqlite_messages(connection, schema, message_table, conversation_id)
         summary = normalize_conversation_row(dict(session), session_columns, messages, default_source="sqlite")
-        if summary is None:
+        if summary is None or not is_visible_chat_conversation(summary):
             return None
+        enrich_conversation_origins([summary], profile_root)
         return ConversationDetail(
             path=str(safe_path),
             schema_version=schema.schema_version,
@@ -361,7 +363,7 @@ def normalize_sqlite_conversations(
             continue
         messages = read_sqlite_messages(connection, schema, message_table, conversation_id)
         summary = normalize_conversation_row(session, session_columns, messages, default_source="sqlite")
-        if summary is not None:
+        if summary is not None and is_visible_chat_conversation(summary):
             conversations.append(summary)
     return conversations
 
@@ -398,7 +400,15 @@ def read_sqlite_messages(
         select_columns.append(tool_call_id_column)
     if tool_calls_column and tool_calls_column not in select_columns:
         select_columns.append(tool_calls_column)
-    order_by = f" order by {quote_identifier(timestamp_column)} asc" if timestamp_column else ""
+    if timestamp_column and message_id_column:
+        order_by = (
+            f" order by {quote_identifier(timestamp_column)} asc, "
+            f"{quote_identifier(message_id_column)} asc"
+        )
+    elif timestamp_column:
+        order_by = f" order by {quote_identifier(timestamp_column)} asc"
+    else:
+        order_by = ""
     query = (
         f"select {', '.join(quote_identifier(column) for column in select_columns)} "
         f"from {quote_identifier(message_table)} "
@@ -451,6 +461,8 @@ def normalize_conversation_row(
     message_count = first_int(row, COUNT_COLUMNS)
     if message_count is None or (messages and message_count < len(messages)):
         message_count = len(messages)
+    origin = origin_payload(first_value(row, ("origin",)))
+    chat_id = value_as_text(origin.get("chat_id") or first_value(row, ("chat_id",)))
 
     return ConversationSummary(
         id=conversation_id,
@@ -458,6 +470,8 @@ def normalize_conversation_row(
         model=value_as_text(first_value(row, MODEL_COLUMNS)),
         title=title,
         preview=preview,
+        chatId=chat_id or None,
+        origin=origin,
         startedAt=started_at,
         endedAt=ended_at,
         lastActiveAt=last_active_at,
@@ -488,7 +502,7 @@ def read_session_file_conversations(profile_root: Path, limit: int) -> Conversat
             continue
         if isinstance(payload, dict):
             summary = normalize_session_file(payload)
-            if summary is not None:
+            if summary is not None and is_visible_chat_conversation(summary):
                 conversations.append(summary)
 
     conversations.sort(key=lambda item: item.lastActiveAt or item.startedAt or 0, reverse=True)
@@ -497,6 +511,41 @@ def read_session_file_conversations(profile_root: Path, limit: int) -> Conversat
         schema_version=None,
         conversations=conversations[:limit],
     )
+
+
+def enrich_conversation_origins(conversations: list[ConversationSummary], profile_root: Path) -> None:
+    origins = session_origins_by_id(profile_root)
+    if not origins:
+        return
+    for conversation in conversations:
+        origin = origins.get(conversation.id)
+        if not origin:
+            continue
+        conversation.origin = origin
+        chat_id = value_as_text(origin.get("chat_id"))
+        if chat_id:
+            conversation.chatId = chat_id
+
+
+def session_origins_by_id(profile_root: Path) -> dict[str, dict[str, Any]]:
+    path = profile_root / "sessions" / "sessions.json"
+    if not path.exists():
+        return {}
+    try:
+        loaded = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    if not isinstance(loaded, dict):
+        return {}
+    origins: dict[str, dict[str, Any]] = {}
+    for entry in loaded.values():
+        if not isinstance(entry, dict):
+            continue
+        session_id = value_as_text(entry.get("session_id"))
+        origin = origin_payload(entry.get("origin"))
+        if session_id and origin:
+            origins[session_id] = origin
+    return origins
 
 
 def read_session_file_conversation_detail(profile_root: Path, conversation_id: str) -> ConversationDetail | None:
@@ -517,7 +566,7 @@ def read_session_file_conversation_detail(profile_root: Path, conversation_id: s
         if not isinstance(payload, dict):
             continue
         summary = normalize_session_file(payload)
-        if summary is None or summary.id != conversation_id:
+        if summary is None or summary.id != conversation_id or not is_visible_chat_conversation(summary):
             continue
         messages = normalize_file_messages(payload.get("messages"))
         return ConversationDetail(
@@ -542,6 +591,11 @@ def normalize_session_file(payload: dict[str, Any]) -> ConversationSummary | Non
         "message_count": payload.get("message_count"),
     }
     return normalize_conversation_row(row, normalize_columns(row.keys()), messages, default_source="session-file")
+
+
+def is_visible_chat_conversation(summary: ConversationSummary) -> bool:
+    source = summary.source.strip().lower()
+    return source != "cron" and not summary.id.startswith("cron_")
 
 
 def normalize_file_messages(value: Any) -> list[MessageRow]:
@@ -632,6 +686,18 @@ def first_value(row: dict[str, Any], candidates: tuple[str, ...]) -> Any:
         if key is not None:
             return row.get(key)
     return None
+
+
+def origin_payload(value: Any) -> dict[str, Any]:
+    if isinstance(value, dict):
+        return value
+    if not isinstance(value, str) or not value.strip():
+        return {}
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError:
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
 
 
 def first_timestamp(row: dict[str, Any], candidates: tuple[str, ...]) -> int | None:

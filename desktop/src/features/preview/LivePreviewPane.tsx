@@ -178,7 +178,7 @@ export function LivePreviewPane({
       <div className="preview-frame-shell">
         <iframe
           key={`${artifact.id}-${artifact.updatedAt}-${sandbox}`}
-          title="Hermes live preview"
+          title="Iris live preview"
           sandbox={sandbox}
           srcDoc={document}
         />
