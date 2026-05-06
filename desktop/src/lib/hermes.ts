@@ -1,5 +1,4 @@
 import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
 import {
   completeAgentUICoreSlashCommand,
   getAgentUICoreAgentForProfile,
@@ -17,12 +16,9 @@ import type {
   HermesMemory,
   HermesMemorySaveResult,
   HermesModelCatalog,
-  HermesMessageResult,
   HermesInboxMessagesResult,
   HermesConversationDetail,
   HermesConversationsResult,
-  HermesJobResult,
-  HermesJobsResult,
   HermesRuntimeConfig,
   HermesSkillDetail,
   HermesSkillSaveResult,
@@ -30,7 +26,6 @@ import type {
   HermesSlashCommandsResult,
   HermesSlashCompletionResult,
   HermesStatus,
-  HermesStreamEvent,
   RemoteCredentialKind,
   RemoteCredentialStatus,
 } from "../types/hermes";
@@ -205,40 +200,6 @@ export async function getHermesConversationDetail(
   });
 }
 
-export async function getHermesJobs(runtime?: HermesRuntimeConfig) {
-  return bridge<HermesJobsResult>("jobs_list", { ...runtimePayload(runtime) });
-}
-
-export async function createHermesJob(
-  job: {
-    name: string;
-    schedule: string;
-    prompt: string;
-    deliver?: string;
-    repeat?: number;
-    skills?: string[];
-  },
-  runtime?: HermesRuntimeConfig,
-) {
-  return bridge<HermesJobResult>("jobs_create", { job, ...runtimePayload(runtime) });
-}
-
-export async function pauseHermesJob(jobId: string, runtime?: HermesRuntimeConfig) {
-  return bridge<HermesJobResult>("jobs_pause", { jobId, ...runtimePayload(runtime) });
-}
-
-export async function resumeHermesJob(jobId: string, runtime?: HermesRuntimeConfig) {
-  return bridge<HermesJobResult>("jobs_resume", { jobId, ...runtimePayload(runtime) });
-}
-
-export async function runHermesJob(jobId: string, runtime?: HermesRuntimeConfig) {
-  return bridge<HermesJobResult>("jobs_run", { jobId, ...runtimePayload(runtime) });
-}
-
-export async function deleteHermesJob(jobId: string, runtime?: HermesRuntimeConfig) {
-  return bridge<{ ok: boolean; error?: string }>("jobs_delete", { jobId, ...runtimePayload(runtime) });
-}
-
 export async function getHermesInboxMessages(
   after = 0,
   limit = 50,
@@ -290,53 +251,6 @@ export async function sendHermesGatewayMessage(
     messageId?: string;
     url?: string;
   }>("gateway_message", { ...payload, ...runtimePayload(runtime) });
-}
-
-export async function sendHermesMessage(
-  prompt: string,
-  profile?: string,
-  runtime?: HermesRuntimeConfig,
-  conversationId?: string | null,
-) {
-  return bridge<HermesMessageResult>("send_message", {
-    prompt,
-    profile,
-    conversationId,
-    timeoutSeconds: 180,
-    ...runtimePayload(runtime),
-  });
-}
-
-export async function streamHermesMessage(
-  prompt: string,
-  profile: string | undefined,
-  runtime: HermesRuntimeConfig | undefined,
-  conversationId: string | null | undefined,
-  onEvent: (event: HermesStreamEvent) => void,
-) {
-  const requestId = crypto.randomUUID();
-  const unlisten = await listen<HermesStreamEvent>("hermes://stream", (event) => {
-    if (event.payload.requestId === requestId) {
-      onEvent(event.payload);
-    }
-  });
-
-  await invoke("hermes_stream_message", {
-    requestId,
-    payload: {
-      prompt,
-      profile,
-      conversationId,
-      timeoutSeconds: 180,
-      ...runtimePayload(runtime),
-    },
-  });
-
-  return { requestId, unlisten };
-}
-
-export async function cancelHermesMessage(requestId: string) {
-  return invoke<BridgeResponse<{ requestId: string }>>("hermes_cancel_message", { requestId });
 }
 
 export async function createHermesProfile(name: string, runtime?: HermesRuntimeConfig) {

@@ -1,67 +1,18 @@
 use serde_json::Value;
-use std::collections::HashMap;
 use std::fs::{create_dir_all, OpenOptions};
 use std::io::Write;
-use std::io::{BufRead, BufReader, Read};
 use std::panic;
 use std::path::PathBuf;
-use std::process::{Child, Command, Stdio};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::process::Command;
 use tauri::menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent};
 use tauri::{Emitter, Manager};
-
-type RunningProcess = Arc<Mutex<Child>>;
-
-static RUNNING_STREAMS: OnceLock<Mutex<HashMap<String, RunningProcess>>> = OnceLock::new();
 
 #[tauri::command]
 async fn hermes_bridge(action: String, payload: Value) -> Result<Value, String> {
     tauri::async_runtime::spawn_blocking(move || run_python_bridge(&action, payload))
         .await
         .map_err(|err| format!("Hermes bridge task failed: {err}"))?
-}
-
-#[tauri::command]
-async fn hermes_stream_message(
-    app: tauri::AppHandle,
-    request_id: String,
-    payload: Value,
-) -> Result<Value, String> {
-    let request_id_for_task = request_id.clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        run_python_bridge_stream(app, request_id_for_task, payload)
-    });
-
-    Ok(serde_json::json!({
-        "ok": true,
-        "requestId": request_id
-    }))
-}
-
-#[tauri::command]
-async fn hermes_cancel_message(request_id: String) -> Result<Value, String> {
-    let streams = RUNNING_STREAMS.get_or_init(|| Mutex::new(HashMap::new()));
-    let process = streams
-        .lock()
-        .map_err(|_| "Hermes process registry is unavailable.".to_string())?
-        .remove(&request_id);
-
-    if let Some(process) = process {
-        let mut child = process
-            .lock()
-            .map_err(|_| "Hermes subprocess is unavailable.".to_string())?;
-        child
-            .kill()
-            .map_err(|err| format!("Could not cancel Hermes request: {err}"))?;
-        Ok(serde_json::json!({ "ok": true, "requestId": request_id }))
-    } else {
-        Ok(serde_json::json!({
-            "ok": false,
-            "requestId": request_id,
-            "error": "No active Hermes request matched that id."
-        }))
-    }
 }
 
 fn run_python_bridge(action: &str, payload: Value) -> Result<Value, String> {
@@ -108,99 +59,6 @@ fn run_python_bridge(action: &str, payload: Value) -> Result<Value, String> {
     }
 
     Err(last_error)
-}
-
-fn run_python_bridge_stream(
-    app: tauri::AppHandle,
-    request_id: String,
-    mut payload: Value,
-) -> Result<(), String> {
-    let script = bridge_script()?;
-    payload["requestId"] = Value::String(request_id.clone());
-    let payload_text = serde_json::to_string(&payload)
-        .map_err(|err| format!("Could not serialize Hermes bridge payload: {err}"))?;
-
-    let mut last_error = String::new();
-    for python in python_candidates() {
-        let mut child = match Command::new(&python)
-            .arg(&script)
-            .arg("stream_message")
-            .arg(&payload_text)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-        {
-            Ok(child) => child,
-            Err(err) => {
-                last_error = format!("{python} failed to launch: {err}");
-                continue;
-            }
-        };
-
-        let stdout = child.stdout.take();
-        let stderr = child.stderr.take();
-        let process = Arc::new(Mutex::new(child));
-        RUNNING_STREAMS
-            .get_or_init(|| Mutex::new(HashMap::new()))
-            .lock()
-            .map_err(|_| "Hermes process registry is unavailable.".to_string())?
-            .insert(request_id.clone(), process.clone());
-
-        if let Some(stdout) = stdout {
-            let reader = BufReader::new(stdout);
-            for line in reader.lines().map_while(Result::ok) {
-                if let Ok(event) = serde_json::from_str::<Value>(&line) {
-                    let _ = app.emit("hermes://stream", event);
-                }
-            }
-        }
-
-        let status = process
-            .lock()
-            .map_err(|_| "Hermes subprocess is unavailable.".to_string())?
-            .wait()
-            .map_err(|err| format!("Hermes stream wait failed: {err}"))?;
-
-        RUNNING_STREAMS
-            .get_or_init(|| Mutex::new(HashMap::new()))
-            .lock()
-            .map_err(|_| "Hermes process registry is unavailable.".to_string())?
-            .remove(&request_id);
-
-        if status.success() {
-            return Ok(());
-        }
-
-        let mut stderr_text = String::new();
-        if let Some(mut stderr) = stderr {
-            let _ = stderr.read_to_string(&mut stderr_text);
-        }
-        let event = serde_json::json!({
-            "ok": false,
-            "requestId": request_id,
-            "type": "error",
-            "error": stderr_text.trim()
-        });
-        let _ = app.emit("hermes://stream", event);
-        return Ok(());
-    }
-
-    let event = serde_json::json!({
-        "ok": false,
-        "requestId": request_id,
-        "type": "error",
-        "error": last_error
-    });
-    let _ = app.emit("hermes://stream", event);
-    Ok(())
-}
-
-fn bridge_script() -> Result<PathBuf, String> {
-    let script = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("python/hermes_bridge.py");
-    if !script.exists() {
-        return Err(format!("Hermes bridge script not found at {}", script.display()));
-    }
-    Ok(script)
 }
 
 fn python_candidates() -> Vec<String> {
@@ -265,11 +123,7 @@ pub fn run() {
 
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![
-            hermes_bridge,
-            hermes_stream_message,
-            hermes_cancel_message
-        ])
+        .invoke_handler(tauri::generate_handler![hermes_bridge])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

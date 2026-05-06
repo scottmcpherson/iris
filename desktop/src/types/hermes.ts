@@ -294,15 +294,6 @@ export type HermesStreamToolEvent = {
   output?: string;
 };
 
-export type HermesMessageResult = {
-  ok: boolean;
-  response: string;
-  profile: string;
-  sessionId?: string;
-  events?: HermesParsedEvents;
-  error?: string;
-};
-
 export type HermesJobStatus = "active" | "paused" | "completed" | "error" | "unknown";
 
 export type HermesJob = {
@@ -323,18 +314,6 @@ export type HermesJob = {
   raw: Record<string, unknown>;
 };
 
-export type HermesJobsResult = {
-  ok: boolean;
-  jobs: HermesJob[];
-  error?: string;
-};
-
-export type HermesJobResult = {
-  ok: boolean;
-  job?: HermesJob;
-  error?: string;
-};
-
 export type HermesInboxMessage = {
   cursor: number;
   id: string;
@@ -352,23 +331,6 @@ export type HermesInboxMessagesResult = {
   ok: boolean;
   messages: HermesInboxMessage[];
   cursor: number;
-  error?: string;
-};
-
-export type HermesStreamEvent = {
-  ok: boolean;
-  requestId: string;
-  type: "delta" | "tool" | "done" | "error";
-  delta?: string;
-  toolName?: string;
-  label?: string;
-  status?: HermesStreamToolEvent["status"];
-  callId?: string;
-  arguments?: string;
-  output?: string;
-  response?: string;
-  sessionId?: string;
-  events?: HermesParsedEvents;
   error?: string;
 };
 
