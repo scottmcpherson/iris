@@ -598,6 +598,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             for key, value in request.metadata.items()
             if key not in {"modelSwitch", "chatId"}
         }
+        if request.attachments and "attachments" not in runtime_metadata:
+            runtime_metadata["attachments"] = request.attachments
         runtime_metadata.update({
                     "agentuiConversationId": conversation_id,
                     "chatId": chat_id,
@@ -683,6 +685,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if accepted_chat_id != conversation.get("externalChatId"):
             conversation = {**conversation, "externalChatId": accepted_chat_id}
             remember_active_conversation(app, conversation)
+        app.state.core_store.upsert_client_message_metadata(
+            runtime_id=agent["runtimeId"],
+            profile=agent["runtimeProfile"],
+            chat_id=accepted_chat_id,
+            message_id=message_id,
+            content=text,
+            metadata=runtime_metadata,
+        )
         app.state.accepted_client_messages.add(accepted_key)
         return {
             "ok": True,

@@ -15,7 +15,7 @@ from typing import Any
 from .models import ConversationMessage, ConversationSummary, ProfileSummary
 
 
-CORE_SCHEMA_VERSION = 2
+CORE_SCHEMA_VERSION = 3
 DEFAULT_RUNTIME_ID = "runtime_local_hermes"
 PROFILE_SLUG_RE = re.compile(r"[^A-Za-z0-9_.-]+")
 DUPLICATE_RUNTIME_TABLES = (
@@ -26,7 +26,7 @@ DUPLICATE_RUNTIME_TABLES = (
     "conversation_messages",
     "automations",
 )
-CORE_OWNED_TABLES = ("schema_meta", "devices", "runtimes", "device_cursors")
+CORE_OWNED_TABLES = ("schema_meta", "devices", "runtimes", "device_cursors", "client_message_metadata")
 
 
 def default_core_store_path() -> Path:
@@ -155,6 +155,21 @@ class CoreStore:
                   updated_at integer not null,
                   primary key (device_id, stream_name)
                 );
+
+                create table if not exists client_message_metadata (
+                  runtime_id text not null,
+                  profile text not null,
+                  chat_id text not null,
+                  message_id text not null,
+                  content_hash text not null,
+                  metadata_json text not null,
+                  created_at integer not null,
+                  updated_at integer not null,
+                  primary key (runtime_id, profile, chat_id, message_id)
+                );
+
+                create index if not exists idx_client_message_metadata_content
+                  on client_message_metadata(runtime_id, profile, chat_id, content_hash);
                 """
             )
         if auto_migrate:
@@ -256,6 +271,92 @@ class CoreStore:
         with self.connect() as connection:
             row = connection.execute("select * from runtimes where id = ?", (runtime_id,)).fetchone()
         return runtime_from_row(row) if row else None
+
+    def upsert_client_message_metadata(
+        self,
+        *,
+        runtime_id: str,
+        profile: str,
+        chat_id: str,
+        message_id: str,
+        content: str,
+        metadata: dict[str, Any],
+    ) -> None:
+        if not runtime_id or not profile or not chat_id or not message_id or not metadata:
+            return
+        timestamp = now()
+        content_hash = stable_hash(content, length=32)
+        with self.connect() as connection:
+            existing = connection.execute(
+                """
+                select created_at from client_message_metadata
+                where runtime_id = ? and profile = ? and chat_id = ? and message_id = ?
+                """,
+                (runtime_id, profile, chat_id, message_id),
+            ).fetchone()
+            connection.execute(
+                """
+                insert into client_message_metadata(
+                  runtime_id, profile, chat_id, message_id, content_hash,
+                  metadata_json, created_at, updated_at
+                ) values(?, ?, ?, ?, ?, ?, ?, ?)
+                on conflict(runtime_id, profile, chat_id, message_id) do update set
+                  content_hash = excluded.content_hash,
+                  metadata_json = excluded.metadata_json,
+                  updated_at = excluded.updated_at
+                """,
+                (
+                    runtime_id,
+                    profile,
+                    chat_id,
+                    message_id,
+                    content_hash,
+                    dumps(metadata),
+                    int(existing["created_at"]) if existing else timestamp,
+                    timestamp,
+                ),
+            )
+
+    def client_message_metadata_for_messages(
+        self,
+        *,
+        runtime_id: str,
+        profile: str,
+        chat_id: str,
+        messages: list[dict[str, Any]],
+    ) -> dict[str, dict[str, dict[str, Any]]]:
+        message_ids = sorted({str(message.get("id") or "") for message in messages if message.get("id")})
+        content_hashes = sorted({
+            stable_hash(str(message.get("content") or ""), length=32)
+            for message in messages
+            if str(message.get("content") or "")
+        })
+        if not runtime_id or not profile or not chat_id or (not message_ids and not content_hashes):
+            return {"byMessageId": {}, "byContentHash": {}}
+        clauses: list[str] = []
+        values: list[Any] = [runtime_id, profile, chat_id]
+        if message_ids:
+            clauses.append(f"message_id in ({', '.join('?' for _ in message_ids)})")
+            values.extend(message_ids)
+        if content_hashes:
+            clauses.append(f"content_hash in ({', '.join('?' for _ in content_hashes)})")
+            values.extend(content_hashes)
+        with self.connect() as connection:
+            rows = connection.execute(
+                f"""
+                select message_id, content_hash, metadata_json from client_message_metadata
+                where runtime_id = ? and profile = ? and chat_id = ? and ({' or '.join(clauses)})
+                """,
+                values,
+            ).fetchall()
+        by_message_id: dict[str, dict[str, Any]] = {}
+        by_content_hash: dict[str, dict[str, Any]] = {}
+        for row in rows:
+            metadata = loads(row["metadata_json"])
+            if isinstance(metadata, dict):
+                by_message_id[str(row["message_id"])] = metadata
+                by_content_hash[str(row["content_hash"])] = metadata
+        return {"byMessageId": by_message_id, "byContentHash": by_content_hash}
 
     def update_runtime_probe(self, runtime_id: str, probe: dict[str, Any]) -> None:
         with self.connect() as connection:

@@ -98,7 +98,15 @@ function App() {
   useEffect(() => {
     const unlisten = listen<string>("hermes://app-command", (event) => {
       if (event.payload === "refresh") void refreshWithNotice();
-      if (event.payload === "show") setCommandMenuOpen(true);
+      if (event.payload === "show" || event.payload === "command-menu") setCommandMenuOpen(true);
+      if (event.payload === "new-chat") {
+        setCommandMenuOpen(false);
+        window.dispatchEvent(new CustomEvent("hermes://new-conversation"));
+      }
+      if (event.payload === "search") {
+        setCommandMenuOpen(false);
+        window.dispatchEvent(new CustomEvent("hermes://open-conversation-search"));
+      }
     });
     return () => {
       void unlisten?.then((dispose: () => void) => dispose());

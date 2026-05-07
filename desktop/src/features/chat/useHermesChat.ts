@@ -168,12 +168,15 @@ export function useAgentUIChat({ profile, runtimeConfig }: UseHermesChatOptions)
     if (!prompt && !attachments.length) return false;
     if (sendInFlightRef.current) return false;
     sendInFlightRef.current = true;
+    const displayedPrompt = prompt || "Use the attached files as context.";
+    const attachmentContext = attachments.map(({ previewUrl: _previewUrl, ...attachment }) => attachment);
     const promptWithAttachments = formatPromptWithAttachments(prompt, attachments);
     const previousConversationId = selectedConversationIdRef.current;
     const userMessage: Message = {
       id: crypto.randomUUID(),
       role: "user",
-      content: promptWithAttachments,
+      content: displayedPrompt,
+      attachments,
     };
     const assistantId = crypto.randomUUID();
     const assistantMessage: Message = {
@@ -314,11 +317,12 @@ export function useAgentUIChat({ profile, runtimeConfig }: UseHermesChatOptions)
       const coreMetadata: Record<string, unknown> = {};
       if (gatewayChatId) coreMetadata.chatId = gatewayChatId;
       if (switchSelection) coreMetadata.modelSwitch = switchSelection;
+      if (attachmentContext.length) coreMetadata.attachments = attachmentContext;
       const result = await sendAgentUICoreMessage(
         conversationId,
         {
           text: promptWithAttachments,
-          attachments,
+          attachments: attachmentContext,
           model: modelSelection || null,
           clientMessageId: userMessage.id,
           metadata: coreMetadata,
@@ -1103,14 +1107,41 @@ function toolEventMessage(id: string, streamEvents: HermesStreamToolEvent[]): Me
 }
 
 function toAppMessage(message: HermesConversationMessage): Message {
+  const attachments = message.role === "user" ? attachmentsFromMetadata(message.metadata) : [];
   const content = message.role === "user"
     ? stripModelSwitchNote(message.content)
     : message.content;
   return {
     id: message.id,
     role: message.role,
-    content: message.toolName ? `${message.toolName}\n${content}`.trim() : content,
+    content: message.toolName ? `${message.toolName}\n${content}`.trim() : displayContentForAttachments(content, attachments),
+    attachments: attachments.length ? attachments : undefined,
   };
+}
+
+function attachmentsFromMetadata(metadata: Record<string, unknown> | undefined): MessageAttachment[] {
+  if (!metadata || !Array.isArray(metadata.attachments)) return [];
+  return metadata.attachments.flatMap((item) => {
+    if (!item || typeof item !== "object") return [];
+    const candidate = item as Record<string, unknown>;
+    const id = typeof candidate.id === "string" && candidate.id ? candidate.id : crypto.randomUUID();
+    const name = typeof candidate.name === "string" && candidate.name ? candidate.name : "Attached file";
+    const kind = candidate.kind === "image" ? "image" : "file";
+    const mimeType = typeof candidate.mimeType === "string" ? candidate.mimeType : "";
+    const size = typeof candidate.size === "number" ? candidate.size : -1;
+    const lastModified = typeof candidate.lastModified === "number" ? candidate.lastModified : 0;
+    const path = typeof candidate.path === "string" ? candidate.path : undefined;
+    return [{ id, name, kind, mimeType, size, lastModified, path }];
+  });
+}
+
+function displayContentForAttachments(content: string, attachments: MessageAttachment[]) {
+  if (!attachments.length) return content;
+  return stripAttachmentSummary(content) || "Use the attached files as context.";
+}
+
+function stripAttachmentSummary(content: string) {
+  return content.replace(/\n\nAttached files:\n[\s\S]*$/u, "").trim();
 }
 
 function isHiddenConversationMessage(message: HermesConversationMessage) {
@@ -1915,15 +1946,60 @@ function migrateConversationMessages(
   return next;
 }
 
-function mergeMessageLists(primary: Message[], secondary: Message[]) {
+export function mergeMessageLists(primary: Message[], secondary: Message[]) {
   const byId = new Set(primary.map((message) => message.id));
   const merged = [...primary];
   for (const message of secondary) {
     if (byId.has(message.id)) continue;
+    const duplicateLocalIndex = merged.findIndex((existing) =>
+      shouldReplaceLocalDuplicateMessage(existing, message),
+    );
+    if (duplicateLocalIndex !== -1) {
+      byId.delete(merged[duplicateLocalIndex].id);
+      merged[duplicateLocalIndex] = message;
+      byId.add(message.id);
+      continue;
+    }
     byId.add(message.id);
     merged.push(message);
   }
   return merged;
+}
+
+function shouldReplaceLocalDuplicateMessage(existing: Message, incoming: Message) {
+  if (!messagesRenderEquivalently(existing, incoming)) return false;
+  if (isPersistedHistoryMessageId(existing.id) && isPersistedHistoryMessageId(incoming.id)) return false;
+  return isLikelyLocalMessageId(existing.id) || isPersistedHistoryMessageId(incoming.id);
+}
+
+function messagesRenderEquivalently(left: Message, right: Message) {
+  return left.role === right.role &&
+    equivalentMessageContent(left.content, right.content) &&
+    attachmentSignature(left.attachments) === attachmentSignature(right.attachments);
+}
+
+function attachmentSignature(attachments: MessageAttachment[] | undefined) {
+  if (!attachments?.length) return "";
+  return attachments
+    .map((attachment) =>
+      [
+        attachment.kind,
+        attachment.mimeType,
+        attachment.name,
+        attachment.path || "",
+        attachment.size,
+      ].join(":"),
+    )
+    .sort()
+    .join("|");
+}
+
+function isPersistedHistoryMessageId(messageId: string) {
+  return /^\d+$/.test(messageId);
+}
+
+function isLikelyLocalMessageId(messageId: string) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(messageId);
 }
 
 function migrateActiveRequestId(

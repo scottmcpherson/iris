@@ -621,6 +621,49 @@ def test_core_backfills_hermes_conversations_and_fetches_messages(tmp_path):
     ]
 
 
+def test_core_merges_client_attachment_metadata_into_hermes_history(tmp_path):
+    root = tmp_path / ".hermes"
+    create_core_history_db(
+        root / "state.db",
+        session_id="default-session",
+        title="Attachment history",
+        user_text="Look at this\n\nAttached files:\n1. image.png (image/png, 12 KB)",
+        assistant_text="ok",
+        chat_id="default-chat",
+    )
+    client = make_client(root)
+    agent = client.get("/v1/agents").json()["agents"][0]
+    conversation = client.get(f"/v1/conversations?agentId={agent['id']}").json()["conversations"][0]
+
+    client.app.state.core_store.upsert_client_message_metadata(
+        runtime_id=agent["runtimeId"],
+        profile=agent["runtimeProfile"],
+        chat_id="default-chat",
+        message_id="client-message-1",
+        content="Look at this\n\nAttached files:\n1. image.png (image/png, 12 KB)",
+        metadata={
+            "attachments": [
+                {
+                    "id": "attachment-1",
+                    "name": "image.png",
+                    "kind": "image",
+                    "mimeType": "image/png",
+                    "size": 12_000,
+                    "lastModified": 0,
+                    "path": "/tmp/image.png",
+                }
+            ]
+        },
+    )
+
+    messages = client.get(f"/v1/conversations/{conversation['id']}/messages")
+
+    assert messages.status_code == 200
+    user_message = messages.json()["messages"][0]
+    assert user_message["content"] == "Look at this\n\nAttached files:\n1. image.png (image/png, 12 KB)"
+    assert user_message["metadata"]["attachments"][0]["name"] == "image.png"
+
+
 def test_core_conversations_and_events_are_profile_isolated(tmp_path):
     root = tmp_path / ".hermes"
     (root / "profiles" / "health").mkdir(parents=True)
@@ -945,6 +988,62 @@ def test_core_send_dedupes_replayed_client_message_ids(tmp_path, monkeypatch):
     assert replay.status_code == 200
     assert replay.json()["duplicate"] is True
     assert len(seen) == 1
+
+
+def test_core_send_persists_top_level_attachments_as_message_metadata(tmp_path, monkeypatch):
+    root = tmp_path / ".hermes"
+    root.mkdir(parents=True)
+    (root / ".env").write_text("AGENTUI_TOKEN=agentui-local-test\n", encoding="utf-8")
+    seen: list[dict] = []
+
+    def fake_http_json(url, *, method, token, body):
+        seen.append({"url": url, "method": method, "token": token, "body": body})
+        return {
+            "ok": True,
+            "json": {
+                "ok": True,
+                "accepted": True,
+                "profile": body["profile"],
+                "chatId": body["chatId"],
+                "messageId": body["messageId"],
+            },
+        }
+
+    monkeypatch.setattr(hermes_adapter, "http_json", fake_http_json)
+    client = make_client(root)
+    agent = client.get("/v1/agents").json()["agents"][0]
+    conversation = client.post(
+        "/v1/conversations",
+        json={"agentId": agent["id"], "title": "Attachment send"},
+    ).json()["conversation"]
+    attachment = {
+        "id": "attachment-1",
+        "name": "image.png",
+        "kind": "image",
+        "mimeType": "image/png",
+        "size": 12_000,
+        "lastModified": 0,
+        "path": "/tmp/image.png",
+    }
+
+    sent = client.post(
+        f"/v1/conversations/{conversation['id']}/messages",
+        json={
+            "text": "Look at this",
+            "attachments": [attachment],
+            "clientMessageId": "client-message-attachments",
+        },
+    )
+
+    assert sent.status_code == 200
+    rows = client.app.state.core_store.client_message_metadata_for_messages(
+        runtime_id=agent["runtimeId"],
+        profile=agent["runtimeProfile"],
+        chat_id=seen[0]["body"]["chatId"],
+        messages=[{"id": "client-message-attachments", "content": "Look at this"}],
+    )
+    assert rows["byMessageId"]["client-message-attachments"]["attachments"] == [attachment]
+    assert seen[0]["body"]["metadata"]["attachments"] == [attachment]
 
 
 def test_core_rejects_unknown_agent_filters(tmp_path):

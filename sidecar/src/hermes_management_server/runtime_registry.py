@@ -58,6 +58,7 @@ class RuntimeRegistry:
         return HermesRuntimeAdapter(
             runtime,
             hermes_store=self.hermes_store,
+            core_store=self.core_store,
             agentui_token=self.agentui_token,
             hermes_api_token=self.hermes_api_token,
         )

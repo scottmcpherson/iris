@@ -25,6 +25,7 @@ export type Message = {
   id: string;
   role: "user" | "assistant" | "system" | "tool";
   content: string;
+  attachments?: MessageAttachment[];
   streaming?: boolean;
   streamMessageId?: string;
   events?: HermesParsedEvents;
@@ -39,6 +40,7 @@ export type MessageAttachment = {
   size: number;
   lastModified: number;
   path?: string;
+  previewUrl?: string;
 };
 
 export type ProfileAction = "create" | "clone" | "rename" | "switch" | "delete";

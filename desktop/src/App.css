@@ -183,7 +183,8 @@ button:disabled {
 }
 
 .nav-item {
-  display: flex;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
   gap: 10px;
   height: 36px;
@@ -196,6 +197,29 @@ button:disabled {
     color 160ms ease,
     background 160ms ease,
     transform 160ms ease;
+}
+
+.nav-item span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nav-shortcut {
+  min-width: 32px;
+  padding: 2px 6px;
+  opacity: 0;
+  transform: translateX(2px);
+  transition:
+    opacity 140ms ease,
+    transform 140ms ease;
+}
+
+.nav-item:hover .nav-shortcut,
+.nav-item:focus-visible .nav-shortcut {
+  opacity: 1;
+  transform: translateX(0);
 }
 
 .nav-item:hover {
@@ -1331,6 +1355,72 @@ button:disabled {
 .message.user {
   align-items: flex-end;
   margin-left: 0;
+}
+
+.message-attachments {
+  display: flex;
+  justify-content: flex-end;
+  align-self: flex-end;
+  flex-wrap: wrap;
+  gap: 10px;
+  max-width: min(74%, 720px);
+}
+
+.message-attachment-card {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 112px;
+  height: 112px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.075);
+  border-radius: 14px;
+  color: #b8c0ce;
+  background: #252523;
+}
+
+.message-attachment-card img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.message-attachment-file {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  color: #b9c0cb;
+  background: #262624;
+}
+
+.message-attachment-label {
+  position: absolute;
+  right: 7px;
+  bottom: 7px;
+  left: 7px;
+  overflow: hidden;
+  padding: 4px 6px;
+  border-radius: 6px;
+  color: #f2f4f7;
+  background: rgba(12, 13, 15, 0.58);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  opacity: 0;
+  transform: translateY(3px);
+  transition:
+    opacity 150ms ease,
+    transform 150ms ease;
+}
+
+.message-attachment-card:hover .message-attachment-label {
+  opacity: 1;
+  transform: translateY(0);
 }
 
 .message.tool {
@@ -4571,10 +4661,18 @@ button:disabled {
   box-shadow: 0 28px 90px rgba(0, 0, 0, 0.48);
 }
 
+.command-scrim {
+  z-index: 45;
+  padding-top: 21vh;
+  background: transparent;
+  backdrop-filter: none;
+}
+
 .conversation-search-scrim {
   z-index: 45;
   padding-top: 21vh;
-  background: rgba(3, 5, 8, 0.38);
+  background: transparent;
+  backdrop-filter: none;
 }
 
 .conversation-search-dialog {
@@ -4894,6 +4992,16 @@ kbd {
 
   .message.user .message-body {
     max-width: 100%;
+  }
+
+  .message-attachments {
+    max-width: 100%;
+  }
+
+  .message-attachment-card {
+    width: 92px;
+    height: 92px;
+    border-radius: 12px;
   }
 
   .composer {

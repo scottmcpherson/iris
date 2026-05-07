@@ -13,6 +13,7 @@ import {
   ChevronDown,
   Check,
   Command,
+  FileText,
   Mic,
   Paperclip,
   Plus,
@@ -318,16 +319,20 @@ export function ChatView({
 
     setAttachments((current) => [
       ...current,
-      ...files.map((file) => ({
-        id: crypto.randomUUID(),
-        name: file.name,
-        kind: file.type.startsWith("image/") ? "image" : "file",
-        mimeType: file.type,
-        size: file.size,
-        lastModified: file.lastModified,
-        previewUrl: file.type.startsWith("image/") ? URL.createObjectURL(file) : undefined,
-        previewRevocable: file.type.startsWith("image/"),
-      } satisfies AttachmentDraft)),
+      ...files.map((file) => {
+        const mimeType = file.type || mimeTypeFromPath(file.name);
+        const image = mimeType.startsWith("image/") || isImagePath(file.name);
+        return {
+          id: crypto.randomUUID(),
+          name: file.name,
+          kind: image ? "image" : "file",
+          mimeType,
+          size: file.size,
+          lastModified: file.lastModified,
+          previewUrl: image ? URL.createObjectURL(file) : undefined,
+          previewRevocable: image,
+        } satisfies AttachmentDraft;
+      }),
     ]);
   }
 
@@ -371,16 +376,12 @@ export function ChatView({
     sendPendingRef.current = true;
     setSendPending(true);
     try {
-      const attachmentContext = attachments.map(({ previewUrl: _previewUrl, ...attachment }) => attachment);
       const sent = await onSend({
-        attachments: attachmentContext,
+        attachments,
         modelSelection: displayedModelSelection,
       });
       if (sent === false) return;
-      setAttachments((current) => {
-        current.forEach(revokeAttachmentPreview);
-        return [];
-      });
+      setAttachments([]);
     } finally {
       sendPendingRef.current = false;
       setSendPending(false);
@@ -557,6 +558,7 @@ export function ChatView({
                         <span>System</span>
                       </div>
                     ) : null}
+                    {message.attachments?.length ? <MessageAttachments attachments={message.attachments} /> : null}
                     <div className="message-body">
                       <MessageContent message={message} />
                       {eventCount(message.events) ? <MessageEvents events={message.events} /> : null}
@@ -940,7 +942,13 @@ function mimeTypeFromPath(path: string) {
 }
 
 function shouldRenderMessage(message: Message) {
-  return Boolean(message.content.trim() || message.streaming || message.streamEvents?.length || eventCount(message.events));
+  return Boolean(
+    message.content.trim() ||
+      message.attachments?.length ||
+      message.streaming ||
+      message.streamEvents?.length ||
+      eventCount(message.events),
+  );
 }
 
 function filterModelProviders(providers: HermesModelProvider[], query: string) {
@@ -992,6 +1000,34 @@ function MessageContent({ message }: { message: Message }) {
       {message.streaming ? <span className="typing-caret" /> : null}
     </>
   );
+}
+
+function MessageAttachments({ attachments }: { attachments: MessageAttachment[] }) {
+  return (
+    <div className="message-attachments" aria-label="Attached files">
+      {attachments.map((attachment) => {
+        const previewUrl = attachmentPreviewUrl(attachment);
+        return (
+          <div key={attachment.id} className="message-attachment-card" title={attachment.name}>
+            {previewUrl ? (
+              <img src={previewUrl} alt={attachment.name} />
+            ) : (
+              <span className="message-attachment-file">
+                <FileText size={28} />
+              </span>
+            )}
+            <span className="message-attachment-label">{attachment.name}</span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function attachmentPreviewUrl(attachment: MessageAttachment) {
+  if (attachment.previewUrl) return attachment.previewUrl;
+  if (attachment.kind === "image" && attachment.path) return convertFileSrc(attachment.path);
+  return "";
 }
 
 function MarkdownMessage({ content, streaming }: { content: string; streaming?: boolean }) {

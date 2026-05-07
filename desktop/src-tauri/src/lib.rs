@@ -4,7 +4,7 @@ use std::io::Write;
 use std::panic;
 use std::path::PathBuf;
 use std::process::Command;
-use tauri::menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem};
+use tauri::menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent};
 use tauri::{Emitter, Manager};
 
@@ -79,6 +79,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             install_crash_logging(app.handle().clone());
+            install_app_menu(app)?;
 
             let show = MenuItem::with_id(app, "show", "Show Iris", true, None::<&str>)?;
             let refresh =
@@ -126,6 +127,119 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![hermes_bridge])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+fn install_app_menu(app: &mut tauri::App) -> tauri::Result<()> {
+    let about = PredefinedMenuItem::about(app, None, None)?;
+    let hide = PredefinedMenuItem::hide(app, None)?;
+    let hide_others = PredefinedMenuItem::hide_others(app, None)?;
+    let show_all = PredefinedMenuItem::show_all(app, None)?;
+    let quit = PredefinedMenuItem::quit(app, None)?;
+    let app_separator_one = PredefinedMenuItem::separator(app)?;
+    let app_separator_two = PredefinedMenuItem::separator(app)?;
+    let app_menu = Submenu::with_items(
+        app,
+        "Iris",
+        true,
+        &[
+            &about,
+            &app_separator_one,
+            &hide,
+            &hide_others,
+            &show_all,
+            &app_separator_two,
+            &quit,
+        ],
+    )?;
+
+    let new_chat = MenuItem::with_id(app, "new-chat", "New Chat", true, Some("CmdOrCtrl+KeyN"))?;
+    let command_menu =
+        MenuItem::with_id(app, "command-menu", "Command Palette", true, Some("CmdOrCtrl+P"))?;
+    let search_chats =
+        MenuItem::with_id(app, "search-chats", "Search Chats", true, Some("CmdOrCtrl+KeyG"))?;
+    let refresh =
+        MenuItem::with_id(app, "refresh", "Refresh Connection", true, Some("CmdOrCtrl+KeyR"))?;
+    let file_separator_one = PredefinedMenuItem::separator(app)?;
+    let file_separator_two = PredefinedMenuItem::separator(app)?;
+    let close = PredefinedMenuItem::close_window(app, None)?;
+    let file_menu = Submenu::with_items(
+        app,
+        "File",
+        true,
+        &[
+            &new_chat,
+            &command_menu,
+            &search_chats,
+            &file_separator_one,
+            &refresh,
+            &file_separator_two,
+            &close,
+        ],
+    )?;
+
+    let undo = PredefinedMenuItem::undo(app, None)?;
+    let redo = PredefinedMenuItem::redo(app, None)?;
+    let cut = PredefinedMenuItem::cut(app, None)?;
+    let copy = PredefinedMenuItem::copy(app, None)?;
+    let paste = PredefinedMenuItem::paste(app, None)?;
+    let select_all = PredefinedMenuItem::select_all(app, None)?;
+    let edit_separator_one = PredefinedMenuItem::separator(app)?;
+    let edit_separator_two = PredefinedMenuItem::separator(app)?;
+    let edit_menu = Submenu::with_items(
+        app,
+        "Edit",
+        true,
+        &[
+            &undo,
+            &redo,
+            &edit_separator_one,
+            &cut,
+            &copy,
+            &paste,
+            &edit_separator_two,
+            &select_all,
+        ],
+    )?;
+
+    let minimize = PredefinedMenuItem::minimize(app, None)?;
+    let fullscreen = PredefinedMenuItem::fullscreen(app, None)?;
+    let bring_all_to_front = PredefinedMenuItem::bring_all_to_front(app, None)?;
+    let window_separator_one = PredefinedMenuItem::separator(app)?;
+    let window_menu = Submenu::with_items(
+        app,
+        "Window",
+        true,
+        &[
+            &minimize,
+            &fullscreen,
+            &window_separator_one,
+            &bring_all_to_front,
+        ],
+    )?;
+
+    let menu = Menu::with_items(app, &[&app_menu, &file_menu, &edit_menu, &window_menu])?;
+    app.set_menu(menu)?;
+    app.on_menu_event(|app, event| match event.id().as_ref() {
+        "new-chat" => {
+            show_main_window(app);
+            let _ = app.emit("hermes://app-command", "new-chat");
+        }
+        "command-menu" => {
+            show_main_window(app);
+            let _ = app.emit("hermes://app-command", "command-menu");
+        }
+        "search-chats" => {
+            show_main_window(app);
+            let _ = app.emit("hermes://app-command", "search");
+        }
+        "refresh" => {
+            show_main_window(app);
+            let _ = app.emit("hermes://app-command", "refresh");
+        }
+        _ => {}
+    });
+
+    Ok(())
 }
 
 fn show_main_window(app: &tauri::AppHandle) {

@@ -10,6 +10,7 @@ import {
   isTransientConversationLoadError,
   mergeCompletedDelivery,
   mergeConversationChatIdMap,
+  mergeMessageLists,
   mergeStreamDelivery,
   preserveActiveConversationTitles,
   shouldApplyConversationDetailSelection,
@@ -91,6 +92,67 @@ describe("Hermes chat inbox merging", () => {
         content: "Real answer",
       },
     ]);
+  });
+
+  it("replaces local duplicate messages with persisted history rows when merging conversation aliases", () => {
+    const attachment = {
+      id: "local-attachment-1",
+      kind: "image" as const,
+      mimeType: "image/png",
+      name: "statue.png",
+      path: "/Users/scott/Desktop/statue.png",
+      size: -1,
+      lastModified: 1,
+    };
+    const localUserId = "73b86a84-e212-4068-9fe1-16c7b3455daf";
+    const localAssistantId = "7179e940-202c-4329-a3c0-15bb34e3f963";
+
+    const merged = mergeMessageLists(
+      [
+        {
+          id: localUserId,
+          role: "user",
+          content: "reply with exactly: test ok",
+          attachments: [attachment],
+        },
+        {
+          id: localAssistantId,
+          role: "assistant",
+          content: "test ok",
+          streaming: false,
+        },
+      ],
+      [
+        {
+          id: "1090",
+          role: "user",
+          content: "reply with exactly: test ok",
+          attachments: [attachment],
+        },
+        {
+          id: "1091",
+          role: "assistant",
+          content: "test ok",
+          streaming: false,
+        },
+        {
+          id: "current-user",
+          role: "user",
+          content: "what is this?",
+        },
+      ],
+    );
+
+    expect(merged.map((message) => message.id)).toEqual(["1090", "1091", "current-user"]);
+  });
+
+  it("keeps repeated persisted messages even when their rendered content matches", () => {
+    const merged = mergeMessageLists(
+      [{ id: "1090", role: "user", content: "same prompt" }],
+      [{ id: "1092", role: "user", content: "same prompt" }],
+    );
+
+    expect(merged.map((message) => message.id)).toEqual(["1090", "1092"]);
   });
 
   it("replaces the optimistic assistant bubble with the first stream update", () => {

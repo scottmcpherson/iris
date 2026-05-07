@@ -12,9 +12,11 @@ from typing import Any
 
 from ..core_store import (
     DEFAULT_RUNTIME_ID,
+    CoreStore,
     agent_from_profile_summary,
     conversation_from_runtime_summary,
     core_message_from_hermes,
+    stable_hash,
 )
 from ..hermes_store import HermesStore
 from ..security import ManagementError
@@ -53,11 +55,13 @@ class HermesRuntimeAdapter:
         runtime: dict[str, Any],
         *,
         hermes_store: HermesStore | None = None,
+        core_store: CoreStore | None = None,
         agentui_token: str = "",
         hermes_api_token: str = "",
     ) -> None:
         self.runtime = runtime
         self.hermes_store = hermes_store
+        self.core_store = core_store
         self.token = agentui_token or os.environ.get("IRIS_TOKEN") or os.environ.get("AGENTUI_TOKEN") or ""
         self.hermes_api_token = (
             hermes_api_token
@@ -124,10 +128,47 @@ class HermesRuntimeAdapter:
             str(agent["runtimeProfile"]),
             str(conversation["externalSessionId"]),
         )
-        return [
+        messages = [
             {**core_message_from_hermes(message), "conversationId": conversation["id"]}
             for message in detail.messages
-        ], detail.warning
+        ]
+        return self.with_client_message_metadata(
+            messages,
+            profile=str(agent["runtimeProfile"]),
+            chat_id=str(conversation["externalChatId"] or ""),
+        ), detail.warning
+
+    def with_client_message_metadata(
+        self,
+        messages: list[dict[str, Any]],
+        *,
+        profile: str,
+        chat_id: str,
+    ) -> list[dict[str, Any]]:
+        if not self.core_store or not chat_id:
+            return messages
+        overlays = self.core_store.client_message_metadata_for_messages(
+            runtime_id=str(self.runtime["id"]),
+            profile=profile,
+            chat_id=chat_id,
+            messages=messages,
+        )
+        by_message_id = overlays["byMessageId"]
+        by_content_hash = overlays["byContentHash"]
+        enriched: list[dict[str, Any]] = []
+        for message in messages:
+            if message.get("role") != "user":
+                enriched.append(message)
+                continue
+            overlay = by_message_id.get(str(message.get("id") or "")) or by_content_hash.get(
+                stable_hash(str(message.get("content") or ""), length=32)
+            )
+            if not overlay:
+                enriched.append(message)
+                continue
+            metadata = message.get("metadata") if isinstance(message.get("metadata"), dict) else {}
+            enriched.append({**message, "metadata": {**metadata, **overlay}})
+        return enriched
 
     def probe(self, profile: str = "default") -> dict[str, Any]:
         gateway_url = str(self.connection.get("gatewayUrl") or DEFAULT_GATEWAY_URL)

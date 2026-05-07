@@ -218,6 +218,44 @@ export function AppShell({
     );
   }, [filteredConversationSearchItems.length]);
 
+  useEffect(() => {
+    const handleOpenSearch = () => {
+      openConversationSearch();
+    };
+    const handleNewConversation = () => {
+      startSelectedProfileConversation();
+    };
+    const handleShortcut = (event: KeyboardEvent) => {
+      const commandKey = event.metaKey || event.ctrlKey;
+      if (!commandKey || event.altKey || event.shiftKey) return;
+
+      if (event.key.toLowerCase() === "g") {
+        event.preventDefault();
+        openConversationSearch();
+      }
+      if (event.key.toLowerCase() === "n") {
+        event.preventDefault();
+        startSelectedProfileConversation();
+      }
+    };
+
+    window.addEventListener("hermes://new-conversation", handleNewConversation);
+    window.addEventListener("hermes://open-conversation-search", handleOpenSearch);
+    window.addEventListener("keydown", handleShortcut, { capture: true });
+    return () => {
+      window.removeEventListener("hermes://new-conversation", handleNewConversation);
+      window.removeEventListener("hermes://open-conversation-search", handleOpenSearch);
+      window.removeEventListener("keydown", handleShortcut, { capture: true });
+    };
+  }, [
+    conversationsLoadedByProfile,
+    conversationsLoadingByProfile,
+    onNewConversation,
+    onRefreshConversations,
+    profiles,
+    selectedProfile,
+  ]);
+
   return (
     <div className="app-shell">
       <aside className="sidebar">
@@ -248,6 +286,7 @@ export function AppShell({
                     !isNewChatAction && activeView === item.id ? "active" : "",
                   ].filter(Boolean).join(" ")}
                   aria-label={isNewChatAction ? "Start new chat" : undefined}
+                  aria-keyshortcuts={isNewChatAction ? "Meta+N" : undefined}
                   title={isNewChatAction ? "Start new chat" : undefined}
                   onMouseDown={isNewChatAction ? (event) => event.preventDefault() : undefined}
                   onClick={() => {
@@ -260,16 +299,19 @@ export function AppShell({
                 >
                   <Icon size={17} />
                   <span>{item.label}</span>
+                  {isNewChatAction ? <kbd className="nav-shortcut">⌘N</kbd> : null}
                 </button>
                 {isNewChatAction ? (
                   <button
                     type="button"
                     className={conversationSearchOpen ? "nav-item conversation-search-nav active" : "nav-item conversation-search-nav"}
+                    aria-keyshortcuts="Meta+G"
                     onMouseDown={(event) => event.preventDefault()}
                     onClick={openConversationSearch}
                   >
                     <Search size={17} />
                     <span>Search</span>
+                    <kbd className="nav-shortcut">⌘G</kbd>
                   </button>
                 ) : null}
               </Fragment>
@@ -492,6 +534,11 @@ export function AppShell({
     setConversationSearchOpen(false);
     setConversationSearchQuery("");
     setConversationSearchIndex(0);
+  }
+
+  function startSelectedProfileConversation() {
+    closeConversationSearch();
+    onNewConversation(selectedProfile);
   }
 
   function selectConversationSearchItem(item: ConversationSearchItem) {
