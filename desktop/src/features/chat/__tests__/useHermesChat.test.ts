@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { Message } from "../../../app/types";
 import type { HermesInboxMessage } from "../../../types/hermes";
 import {
+  activeConversationReplacements,
   activeRequestCompletedByHistory,
   coalescePostStreamAttachments,
   deliveryCompletesActiveStream,
@@ -10,6 +11,7 @@ import {
   mergeCompletedDelivery,
   mergeConversationChatIdMap,
   mergeStreamDelivery,
+  preserveActiveConversationTitles,
   shouldApplyConversationDetailSelection,
   shouldPreserveLocalMessagesOnEmptyHistory,
   shouldPreserveProfileConversationSelection,
@@ -530,6 +532,167 @@ describe("Hermes chat conversation loading", () => {
     expect(isTransientConversationLoadError("Failed to fetch")).toBe(true);
     expect(isTransientConversationLoadError("Could not resolve Iris agent.")).toBe(false);
   });
+
+  it("moves active request markers to a refreshed Hermes conversation with the same chat id", () => {
+    const replacements = activeConversationReplacements(
+      { "conv-core-draft": "user-1" },
+      [
+        {
+          id: "session-hermes",
+          source: "hermes-management",
+          title: "Hermes title",
+          preview: "",
+          chatId: "core-conv-core-draft",
+          origin: {},
+          startedAt: 1,
+          endedAt: null,
+          lastActiveAt: 2,
+          messageCount: 1,
+          model: "",
+        },
+      ],
+      [],
+      { "conv-core-draft": "core-conv-core-draft" },
+    );
+
+    expect(replacements).toHaveLength(1);
+    expect(replacements[0].fromId).toBe("conv-core-draft");
+    expect(replacements[0].to.id).toBe("session-hermes");
+  });
+
+  it("keeps an active prompt title when Hermes temporarily returns an untitled conversation", () => {
+    const endpoint = preserveActiveConversationTitles(
+      [
+        {
+          id: "session-hermes",
+          source: "hermes-management",
+          title: "Untitled conversation",
+          preview: "",
+          chatId: "core-conv-core-draft",
+          origin: {},
+          startedAt: 1,
+          endedAt: null,
+          lastActiveAt: 2,
+          messageCount: 1,
+          model: "",
+        },
+      ],
+      [
+        {
+          id: "conv-core-draft",
+          source: "agentui-core",
+          title: "Write a 4 paragraph streaming verification answer",
+          preview: "",
+          chatId: "core-conv-core-draft",
+          origin: {},
+          startedAt: 1,
+          endedAt: null,
+          lastActiveAt: 2,
+          messageCount: 1,
+          model: "",
+        },
+      ],
+      { "conv-core-draft": "user-1" },
+      {},
+      { "conv-core-draft": "core-conv-core-draft" },
+    );
+
+    expect(endpoint[0].title).toBe("Write a 4 paragraph streaming verification answer");
+  });
+
+  it("uses the real Hermes title once Hermes returns one", () => {
+    const endpoint = preserveActiveConversationTitles(
+      [
+        {
+          id: "session-hermes",
+          source: "hermes-management",
+          title: "Streaming Verification Answer",
+          preview: "",
+          chatId: "core-conv-core-draft",
+          origin: {},
+          startedAt: 1,
+          endedAt: null,
+          lastActiveAt: 2,
+          messageCount: 1,
+          model: "",
+        },
+      ],
+      [
+        {
+          id: "conv-core-draft",
+          source: "agentui-core",
+          title: "Write a 4 paragraph streaming verification answer",
+          preview: "",
+          chatId: "core-conv-core-draft",
+          origin: {},
+          startedAt: 1,
+          endedAt: null,
+          lastActiveAt: 2,
+          messageCount: 1,
+          model: "",
+        },
+      ],
+      { "conv-core-draft": "user-1" },
+      {},
+      { "conv-core-draft": "core-conv-core-draft" },
+    );
+
+    expect(endpoint[0].title).toBe("Streaming Verification Answer");
+  });
+
+  it("preserves a second active prompt title even after its local row has been replaced", () => {
+    const endpoint = preserveActiveConversationTitles(
+      [
+        {
+          id: "session-first",
+          source: "hermes-management",
+          title: "First Real Title",
+          preview: "",
+          chatId: "core-first",
+          origin: {},
+          startedAt: 1,
+          endedAt: null,
+          lastActiveAt: 4,
+          messageCount: 1,
+          model: "",
+        },
+        {
+          id: "session-second",
+          source: "hermes-management",
+          title: "Untitled conversation",
+          preview: "",
+          chatId: "core-second",
+          origin: {},
+          startedAt: 2,
+          endedAt: null,
+          lastActiveAt: 5,
+          messageCount: 1,
+          model: "",
+        },
+      ],
+      [
+        {
+          id: "session-first",
+          source: "hermes-management",
+          title: "First Real Title",
+          preview: "",
+          chatId: "core-first",
+          origin: {},
+          startedAt: 1,
+          endedAt: null,
+          lastActiveAt: 4,
+          messageCount: 1,
+          model: "",
+        },
+      ],
+      { "session-first": "user-1", "conv-second": "user-2" },
+      { "conv-second": "Second prompt title" },
+      { "session-first": "core-first", "conv-second": "core-second" },
+    );
+
+    expect(endpoint[0].title).toBe("First Real Title");
+    expect(endpoint[1].title).toBe("Second prompt title");
+  });
 });
 
 describe("Hermes chat model switching", () => {
@@ -660,6 +823,35 @@ describe("Hermes chat conversation detail loading", () => {
             toolName: "",
             timestamp: 2,
             metadata: { replyTo: "user-1", streaming: true },
+          },
+        ],
+        "user-1",
+      ),
+    ).toBe(false);
+  });
+
+  it("does not reconcile an active request from a partial stream history row after the active user", () => {
+    expect(
+      activeRequestCompletedByHistory(
+        [
+          {
+            id: "user-1",
+            sessionId: "session-1",
+            role: "user",
+            content: "Write a long answer",
+            status: "completed",
+            toolName: "",
+            timestamp: 1,
+          },
+          {
+            id: "stream-1",
+            sessionId: "session-1",
+            role: "assistant",
+            content: "Still writing",
+            status: "completed",
+            toolName: "",
+            timestamp: 2,
+            metadata: { streamMessageId: "stream-1", streaming: true, finalize: false },
           },
         ],
         "user-1",

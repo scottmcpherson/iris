@@ -177,16 +177,38 @@ export async function createAgentUICoreConversation(
   return coreRequest<{ conversation: AgentUICoreConversation }>(runtime, "POST", "/conversations", payload);
 }
 
-export async function getAgentUICoreConversation(conversationId: string, runtime?: HermesRuntimeConfig) {
-  return coreRequest<{ conversation: AgentUICoreConversation }>(runtime, "GET", `/conversations/${encodeURIComponent(conversationId)}`);
+export async function getAgentUICoreConversation(
+  conversationId: string,
+  runtime?: HermesRuntimeConfig,
+  reference: { externalSessionId?: string; externalChatId?: string } = {},
+) {
+  const query = conversationReferenceQuery(reference);
+  return coreRequest<{ conversation: AgentUICoreConversation }>(
+    runtime,
+    "GET",
+    `/conversations/${encodeURIComponent(conversationId)}${query}`,
+  );
 }
 
-export async function getAgentUICoreConversationMessages(conversationId: string, runtime?: HermesRuntimeConfig) {
+export async function getAgentUICoreConversationMessages(
+  conversationId: string,
+  runtime?: HermesRuntimeConfig,
+  reference: { externalSessionId?: string; externalChatId?: string } = {},
+) {
+  const query = conversationReferenceQuery(reference);
   return coreRequest<{ conversationId: string; messages: AgentUICoreMessage[]; warning?: string }>(
     runtime,
     "GET",
-    `/conversations/${encodeURIComponent(conversationId)}/messages`,
+    `/conversations/${encodeURIComponent(conversationId)}/messages${query}`,
   );
+}
+
+function conversationReferenceQuery(reference: { externalSessionId?: string; externalChatId?: string }) {
+  const query = new URLSearchParams();
+  if (reference.externalSessionId) query.set("externalSessionId", reference.externalSessionId);
+  if (reference.externalChatId) query.set("externalChatId", reference.externalChatId);
+  const value = query.toString();
+  return value ? `?${value}` : "";
 }
 
 export async function sendAgentUICoreMessage(

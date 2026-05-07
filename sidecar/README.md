@@ -1,6 +1,6 @@
 # Iris Core
 
-Iris Core is the local-first control plane for Iris. It owns Iris agents, conversations, messages, automations, devices, auth, and runtime routing, and connects to Hermes through the Iris Hermes Adapter. Hermes itself remains untouched: normal Iris chat enters Hermes through the `agentui` compatibility platform adapter, while this service exposes profile, memory, skill, status, conversation metadata, and delivered platform messages over HTTP from the machine where Hermes is running.
+Iris Core is the local-first control plane for Iris. It owns devices, auth, runtime routing, and Core-only coordination, and connects to Hermes through the Iris Hermes Adapter. Hermes itself remains untouched and remains the source of truth for Hermes profiles, conversations, messages, jobs, memory, skills, models, and command catalogs. Normal Iris chat enters Hermes through the `agentui` compatibility platform adapter, while this service exposes normalized adapter-backed records and live delivery events over HTTP from the machine where Hermes is running.
 
 This service lives in the `sidecar/` workspace of the Iris monorepo.
 
@@ -62,13 +62,17 @@ iris-core
 
 If `HERMES_HOME` points at a named profile such as `~/.hermes/profiles/work`, the server normalizes the root back to `~/.hermes`. The `default` profile maps to the root; named profiles map to `~/.hermes/profiles/<name>`.
 
-`IRIS_INBOX_TOKEN` protects only `/v1/inbox/*`. If it is unset, the inbox accepts local unauthenticated delivery. For same-machine development this is usually fine because the default bind address is `127.0.0.1`. For Tailscale or any non-loopback bind address, set `IRIS_INBOX_TOKEN` and configure the Iris Hermes Adapter with the same value as `IRIS_TOKEN`. Legacy `AGENTUI_INBOX_TOKEN` and `AGENTUI_TOKEN` are still accepted.
+`IRIS_INBOX_TOKEN` protects only legacy `/v1/inbox/*` compatibility routes. If it is unset, those local routes accept unauthenticated delivery. For same-machine development this is usually fine because the default bind address is `127.0.0.1`. For Tailscale or any non-loopback bind address, set `IRIS_INBOX_TOKEN` and configure the Iris Hermes Adapter with the same value as `IRIS_TOKEN`. Legacy `AGENTUI_INBOX_TOKEN` and `AGENTUI_TOKEN` are still accepted.
 
-The inbox stores delivered scheduled-job messages in SQLite. Override the default path with:
+The legacy inbox routes are now in-memory compatibility facades over live Core delivery events. They do not create or write an inbox SQLite database.
+
+Core-owned service state defaults to `~/.iris/core.sqlite3`. On startup, the default `~/.agent-ui/core.sqlite3` path is migrated into `~/.iris/core.sqlite3` with timestamped backups, then duplicate runtime-owned tables are removed. To run the migration manually:
 
 ```bash
-export IRIS_INBOX_STORE="$HOME/.agent-ui/inbox.sqlite3"
+iris-core migrate-source-of-truth --backup
 ```
+
+Set `IRIS_CORE_DISABLE_SOURCE_OF_TRUTH_MIGRATION=1` only as a temporary rollback guard.
 
 ## Tailscale Setup
 
@@ -194,7 +198,7 @@ Returns `ok`, `checkedAt`, `hermesHome`, and `profilesRootExists`.
 curl http://127.0.0.1:8765/v1/inbox/health
 ```
 
-Returns `ok`, `checkedAt`, and the inbox SQLite `path`.
+Returns `ok`, `checkedAt`, and `storage: "memory"`. This route exists so older Iris Hermes Adapter versions can still perform their connect-time health check without creating a second database.
 
 ### Inbox Messages
 
@@ -206,13 +210,13 @@ curl -X POST http://127.0.0.1:8765/v1/inbox/messages \
   --data '{"source":"hermes-cron","platform":"agentui","chatId":"desktop","content":"Iris inbox smoke test","metadata":{"jobId":"manual-test"}}'
 ```
 
-List deliveries:
+List recent live deliveries:
 
 ```bash
 curl http://127.0.0.1:8765/v1/inbox/messages
 ```
 
-When `IRIS_INBOX_TOKEN` is set, include the bearer token on these requests.
+When `IRIS_INBOX_TOKEN` is set, include the bearer token on these requests. Delivery listing is process-local and best effort; durable conversation history is read from Hermes.
 
 ### Status
 

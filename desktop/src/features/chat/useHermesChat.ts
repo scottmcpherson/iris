@@ -69,6 +69,7 @@ export function useAgentUIChat({ profile, runtimeConfig }: UseHermesChatOptions)
   const sendInFlightRef = useRef(false);
   const messagesByConversationRef = useRef(messagesByConversation);
   const activeRequestIdsByConversationRef = useRef(activeRequestIdsByConversation);
+  const activeConversationTitlesByConversationRef = useRef<Record<string, string>>({});
   const selectedConversationIdRef = useRef(selectedConversationId);
   const conversationChatIdsByConversationRef = useRef(conversationChatIdsByConversation);
   const conversationsByProfileRef = useRef(conversationsByProfile);
@@ -181,6 +182,7 @@ export function useAgentUIChat({ profile, runtimeConfig }: UseHermesChatOptions)
       content: "Thinking...",
       streaming: true,
     };
+    const activeConversationTitle = conversationTitleFromPrompt(promptWithAttachments);
     const optimisticConversationId = previousConversationId ? "" : `optimistic-${userMessage.id}`;
     let coreCreatedConversation: HermesConversation | null = null;
     let linkedFromConversationId = "";
@@ -204,6 +206,10 @@ export function useAgentUIChat({ profile, runtimeConfig }: UseHermesChatOptions)
     activeRequestIdsByConversationRef.current = {
       ...activeRequestIdsByConversationRef.current,
       [activeConversationId]: userMessage.id,
+    };
+    activeConversationTitlesByConversationRef.current = {
+      ...activeConversationTitlesByConversationRef.current,
+      [activeConversationId]: activeConversationTitle,
     };
     setActiveRequestIdsByConversation((current) => ({
       ...current,
@@ -263,6 +269,11 @@ export function useAgentUIChat({ profile, runtimeConfig }: UseHermesChatOptions)
           );
           activeRequestIdsByConversationRef.current = migrateActiveRequestId(
             activeRequestIdsByConversationRef.current,
+            linkedFromConversationId,
+            conversationId,
+          );
+          activeConversationTitlesByConversationRef.current = migrateConversationValue(
+            activeConversationTitlesByConversationRef.current,
             linkedFromConversationId,
             conversationId,
           );
@@ -338,6 +349,11 @@ export function useAgentUIChat({ profile, runtimeConfig }: UseHermesChatOptions)
         activeConversationId,
         conversationId,
       );
+      activeConversationTitlesByConversationRef.current = removeConversationValues(
+        activeConversationTitlesByConversationRef.current,
+        activeConversationId,
+        conversationId,
+      );
       setActiveRequestIdsByConversation((current) =>
         removeActiveRequestIds(current, activeConversationId, conversationId),
       );
@@ -372,7 +388,14 @@ export function useAgentUIChat({ profile, runtimeConfig }: UseHermesChatOptions)
         setHistorySchemaVersion(result.schemaVersion ?? null);
       }
       if (result.ok) {
-        const endpointConversations = result.conversations || [];
+        const currentProfileConversations = conversationsByProfileRef.current[targetProfile] || [];
+        const endpointConversations = preserveActiveConversationTitles(
+          result.conversations || [],
+          currentProfileConversations,
+          activeRequestIdsByConversationRef.current,
+          activeConversationTitlesByConversationRef.current,
+          conversationChatIdsByConversationRef.current,
+        );
         setConversationChatIdsByConversation((current) =>
           mergeConversationChatIdMap(current, endpointConversations),
         );
@@ -385,7 +408,7 @@ export function useAgentUIChat({ profile, runtimeConfig }: UseHermesChatOptions)
           ? replacementForOptimisticConversation(
               currentSelectedConversationId,
               endpointConversations,
-              conversationsByProfileRef.current[targetProfile] || [],
+              currentProfileConversations,
               selectedChatId,
             )
           : null;
@@ -407,6 +430,11 @@ export function useAgentUIChat({ profile, runtimeConfig }: UseHermesChatOptions)
             currentSelectedConversationId,
             selectedReplacement.id,
           );
+          activeConversationTitlesByConversationRef.current = migrateConversationValue(
+            activeConversationTitlesByConversationRef.current,
+            currentSelectedConversationId,
+            selectedReplacement.id,
+          );
           setActiveRequestIdsByConversation((current) =>
             migrateActiveRequestId(current, currentSelectedConversationId, selectedReplacement.id),
           );
@@ -414,6 +442,43 @@ export function useAgentUIChat({ profile, runtimeConfig }: UseHermesChatOptions)
             ...current,
             [selectedReplacement.id]: selectedReplacement.chatId || selectedChatId,
           }));
+        }
+        const activeReplacements = activeConversationReplacements(
+          activeRequestIdsByConversationRef.current,
+          endpointConversations,
+          currentProfileConversations,
+          conversationChatIdsByConversationRef.current,
+        );
+        if (activeReplacements.length) {
+          for (const replacement of activeReplacements) {
+            if (selectedConversationIdRef.current === replacement.fromId) {
+              selectedConversationIdRef.current = replacement.to.id;
+              setSelectedConversationId(replacement.to.id);
+            }
+            setMessagesByConversation((current) =>
+              migrateConversationMessages(current, replacement.fromId, replacement.to.id),
+            );
+            setModelSelectionByConversation((current) =>
+              migrateModelSelection(current, replacement.fromId, replacement.to.id),
+            );
+            activeRequestIdsByConversationRef.current = migrateActiveRequestId(
+              activeRequestIdsByConversationRef.current,
+              replacement.fromId,
+              replacement.to.id,
+            );
+            activeConversationTitlesByConversationRef.current = migrateConversationValue(
+              activeConversationTitlesByConversationRef.current,
+              replacement.fromId,
+              replacement.to.id,
+            );
+            setActiveRequestIdsByConversation((current) =>
+              migrateActiveRequestId(current, replacement.fromId, replacement.to.id),
+            );
+            setConversationChatIdsByConversation((current) => ({
+              ...current,
+              [replacement.to.id]: replacement.to.chatId || replacement.chatId,
+            }));
+          }
         }
         setConversationsByProfile((current) => ({
           ...current,
@@ -564,6 +629,12 @@ export function useAgentUIChat({ profile, runtimeConfig }: UseHermesChatOptions)
           loadedConversation.id,
           ...relatedConversationIds,
         );
+        activeConversationTitlesByConversationRef.current = removeConversationValues(
+          activeConversationTitlesByConversationRef.current,
+          conversationId,
+          loadedConversation.id,
+          ...relatedConversationIds,
+        );
         setActiveRequestIdsByConversation((current) =>
           removeActiveRequestIds(current, conversationId, loadedConversation.id, ...relatedConversationIds),
         );
@@ -671,6 +742,14 @@ export function useAgentUIChat({ profile, runtimeConfig }: UseHermesChatOptions)
     if (!selectedConversationId || !activeRequestId) return;
     const conversationId = selectedConversationId;
     if (isCoreConversationId(conversationId)) await cancelAgentUICoreMessage(conversationId, runtimeConfig);
+    activeRequestIdsByConversationRef.current = removeActiveRequestIds(
+      activeRequestIdsByConversationRef.current,
+      conversationId,
+    );
+    activeConversationTitlesByConversationRef.current = removeConversationValues(
+      activeConversationTitlesByConversationRef.current,
+      conversationId,
+    );
     setActiveRequestIdsByConversation((current) => removeActiveRequestIds(current, conversationId));
   }
 
@@ -777,10 +856,26 @@ export function useAgentUIChat({ profile, runtimeConfig }: UseHermesChatOptions)
         return setConversationMessages(current, relatedConversationIds, conversationId, nextMessages);
       });
       if (replyTo && (!isStreamDelivery || isFinalStreamDelivery)) {
+        activeRequestIdsByConversationRef.current = removeActiveRequestIds(
+          activeRequestIdsByConversationRef.current,
+          ...relatedConversationIds,
+        );
+        activeConversationTitlesByConversationRef.current = removeConversationValues(
+          activeConversationTitlesByConversationRef.current,
+          ...relatedConversationIds,
+        );
         setActiveRequestIdsByConversation((current) =>
           removeActiveRequestIds(current, ...relatedConversationIds),
         );
       } else if (isFinalStreamDelivery || completesActiveStream) {
+        activeRequestIdsByConversationRef.current = removeActiveRequestIds(
+          activeRequestIdsByConversationRef.current,
+          ...relatedConversationIds,
+        );
+        activeConversationTitlesByConversationRef.current = removeConversationValues(
+          activeConversationTitlesByConversationRef.current,
+          ...relatedConversationIds,
+        );
         setActiveRequestIdsByConversation((current) =>
           removeActiveRequestIds(current, ...relatedConversationIds),
         );
@@ -1249,6 +1344,33 @@ function mergeOptimisticConversations(
   return sortConversationsByActivity([...optimisticConversations, ...endpointConversations]);
 }
 
+export function preserveActiveConversationTitles(
+  endpointConversations: HermesConversation[],
+  currentConversations: HermesConversation[],
+  activeRequestIdsByConversation: Record<string, string>,
+  activeTitlesByConversation: Record<string, string>,
+  chatIdsByConversation: Record<string, string>,
+) {
+  if (!Object.keys(activeRequestIdsByConversation).length) return endpointConversations;
+  const activeLocalTitles = new Map<string, string>();
+  for (const conversationId of Object.keys(activeRequestIdsByConversation)) {
+    const localConversation = currentConversations.find((conversation) => conversation.id === conversationId);
+    const localTitle = activeTitlesByConversation[conversationId] || localConversation?.title || "";
+    if (!localTitle || isPlaceholderConversationTitle(localTitle)) continue;
+    activeLocalTitles.set(`id:${conversationId}`, localTitle);
+    if (localConversation?.id) activeLocalTitles.set(`id:${localConversation.id}`, localTitle);
+    const chatId = chatIdsByConversation[conversationId] || localConversation?.chatId || "";
+    if (chatId) activeLocalTitles.set(`chat:${chatId}`, localTitle);
+  }
+  if (!activeLocalTitles.size) return endpointConversations;
+  return endpointConversations.map((conversation) => {
+    if (!isPlaceholderConversationTitle(conversation.title)) return conversation;
+    const preservedTitle = activeLocalTitles.get(`id:${conversation.id}`) ||
+      (conversation.chatId ? activeLocalTitles.get(`chat:${conversation.chatId}`) : "");
+    return preservedTitle ? { ...conversation, title: preservedTitle } : conversation;
+  });
+}
+
 function replacementForOptimisticConversation(
   conversationId: string,
   endpointConversations: HermesConversation[],
@@ -1265,6 +1387,38 @@ function replacementForOptimisticConversation(
   return endpointConversations.find((conversation) =>
     conversationsLikelyMatch(optimisticConversation, conversation),
   ) || null;
+}
+
+export function activeConversationReplacements(
+  activeRequestIdsByConversation: Record<string, string>,
+  endpointConversations: HermesConversation[],
+  currentConversations: HermesConversation[],
+  chatIdsByConversation: Record<string, string>,
+) {
+  const replacements: Array<{ fromId: string; to: HermesConversation; chatId: string }> = [];
+  const endpointIds = new Set(endpointConversations.map((conversation) => conversation.id));
+  const claimedIds = new Set<string>();
+  for (const conversationId of Object.keys(activeRequestIdsByConversation)) {
+    if (endpointIds.has(conversationId)) continue;
+    const chatId = chatIdsByConversation[conversationId] ||
+      currentConversations.find((conversation) => conversation.id === conversationId)?.chatId ||
+      "";
+    if (!chatId) continue;
+    const replacement = endpointConversations.find(
+      (conversation) => conversation.chatId === chatId && !claimedIds.has(conversation.id),
+    );
+    if (!replacement) continue;
+    claimedIds.add(replacement.id);
+    replacements.push({ fromId: conversationId, to: replacement, chatId });
+  }
+  return replacements;
+}
+
+function isPlaceholderConversationTitle(title: string) {
+  const normalized = title.trim().toLowerCase();
+  return normalized === "untitled conversation" ||
+    normalized === "untitled session" ||
+    normalized === "new conversation";
 }
 
 function conversationsLikelyMatch(left: HermesConversation, right: HermesConversation) {
@@ -1400,9 +1554,16 @@ export function activeRequestCompletedByHistory(
     }
     if (message.role !== "assistant" || message.status !== "completed" || !message.content.trim()) return false;
     const metadata = message.metadata || {};
+    if (historyMessageStillStreaming(metadata)) return false;
     const replyTo = stringMetadata(metadata, "replyTo") || stringMetadata(metadata, "reply_to");
     return replyTo === activeRequestId || sawActiveUser;
   });
+}
+
+function historyMessageStillStreaming(metadata: Record<string, unknown>) {
+  if (booleanMetadata(metadata, "streaming") === true) return true;
+  if (booleanMetadata(metadata, "finalize") === false || booleanMetadata(metadata, "final") === false) return true;
+  return false;
 }
 
 function stringMetadata(metadata: Record<string, unknown>, key: string) {
@@ -1770,6 +1931,14 @@ function migrateActiveRequestId(
   fromConversationId: string,
   toConversationId: string,
 ) {
+  return migrateConversationValue(current, fromConversationId, toConversationId);
+}
+
+function migrateConversationValue(
+  current: Record<string, string>,
+  fromConversationId: string,
+  toConversationId: string,
+) {
   if (fromConversationId === toConversationId || !current[fromConversationId]) return current;
   const next = { ...current };
   next[toConversationId] = next[fromConversationId];
@@ -1778,6 +1947,13 @@ function migrateActiveRequestId(
 }
 
 function removeActiveRequestIds(
+  current: Record<string, string>,
+  ...conversationIds: Array<string | null | undefined>
+) {
+  return removeConversationValues(current, ...conversationIds);
+}
+
+function removeConversationValues(
   current: Record<string, string>,
   ...conversationIds: Array<string | null | undefined>
 ) {

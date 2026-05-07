@@ -8,6 +8,8 @@ import json
 import os
 import re
 import secrets
+import time
+from collections import deque
 from dataclasses import dataclass
 from typing import Any
 
@@ -24,12 +26,12 @@ from .core_store import (
     CoreStore,
     chat_id_for_conversation,
     clamp_int,
-    core_message_from_hermes,
+    draft_conversation,
     now,
     random_id,
+    stable_hash,
 )
 from .hermes_store import HermesStore, checked_at, normalize_hermes_home
-from .inbox_store import InboxStore
 from .models import (
     ConversationDetailResponse,
     ConversationsResponse,
@@ -67,6 +69,73 @@ DEFAULT_CORS_ORIGINS = (
 )
 
 
+class LiveDeliveryBus:
+    def __init__(self, *, max_events: int = 500, ttl_seconds: int = 900) -> None:
+        self.max_events = max_events
+        self.ttl_seconds = ttl_seconds
+        self._events: deque[dict[str, Any]] = deque(maxlen=max_events)
+        self._cursor = 0
+
+    def publish(self, event: dict[str, Any]) -> dict[str, Any]:
+        event_id = str(event.get("id") or "")
+        if event_id:
+            existing = next((row for row in self._events if row["id"] == event_id), None)
+            if existing:
+                return existing
+        self._cursor += 1
+        payload = {
+            "cursor": self._cursor,
+            "id": event_id or random_id("evt"),
+            "conversationId": str(event.get("conversationId") or ""),
+            "agentId": str(event.get("agentId") or ""),
+            "runtimeId": str(event.get("runtimeId") or ""),
+            "type": str(event.get("type") or "message.assistant.completed"),
+            "role": str(event.get("role") or ""),
+            "content": str(event.get("content") or ""),
+            "parentEventId": str(event.get("parentEventId") or ""),
+            "externalMessageId": str(event.get("externalMessageId") or ""),
+            "idempotencyKey": str(event.get("idempotencyKey") or ""),
+            "createdAt": int(event.get("createdAt") or now()),
+            "metadata": event.get("metadata") if isinstance(event.get("metadata"), dict) else {},
+        }
+        self._events.append(payload)
+        self.prune()
+        return payload
+
+    def list_events(
+        self,
+        *,
+        after: int = 0,
+        limit: int = 200,
+        conversation_id: str = "",
+        agent_id: str = "",
+    ) -> list[dict[str, Any]]:
+        self.prune()
+        rows = [
+            event
+            for event in self._events
+            if event["cursor"] > after
+            and (not conversation_id or event["conversationId"] == conversation_id)
+            and (not agent_id or event["agentId"] == agent_id)
+        ]
+        return rows[:limit]
+
+    def latest_cursor(self, *, conversation_id: str = "", agent_id: str = "") -> int:
+        self.prune()
+        for event in reversed(self._events):
+            if conversation_id and event["conversationId"] != conversation_id:
+                continue
+            if agent_id and event["agentId"] != agent_id:
+                continue
+            return int(event["cursor"])
+        return self._cursor
+
+    def prune(self) -> None:
+        cutoff = int(time.time()) - self.ttl_seconds
+        while self._events and int(self._events[0].get("createdAt") or 0) < cutoff:
+            self._events.popleft()
+
+
 @dataclass(frozen=True)
 class Settings:
     hermes_home: str | None = None
@@ -75,7 +144,6 @@ class Settings:
     token: str | None = None
     inbox_token: str | None = None
     runtime_delivery_token: str | None = None
-    inbox_store_path: str | None = None
     core_store_path: str | None = None
     cors_origins: tuple[str, ...] = ()
 
@@ -92,7 +160,6 @@ class Settings:
                 or os.environ.get("AGENTUI_RUNTIME_DELIVERY_TOKEN")
                 or None
             ),
-            inbox_store_path=os.environ.get("IRIS_INBOX_STORE") or os.environ.get("AGENTUI_INBOX_STORE") or None,
             core_store_path=os.environ.get("IRIS_CORE_STORE") or os.environ.get("AGENTUI_CORE_STORE") or None,
             cors_origins=parse_cors_origins(
                 os.environ.get("IRIS_CORE_CORS_ORIGINS") or os.environ.get("HERMES_MGMT_CORS_ORIGINS")
@@ -169,7 +236,8 @@ def model_switch_command(value: Any) -> str:
 def create_app(settings: Settings | None = None) -> FastAPI:
     app_settings = settings or Settings.from_env()
     store = HermesStore(app_settings.hermes_home)
-    core_store = CoreStore(app_settings.core_store_path)
+    auto_migrate_core = os.environ.get("IRIS_CORE_DISABLE_SOURCE_OF_TRUTH_MIGRATION") != "1"
+    core_store = CoreStore(app_settings.core_store_path, auto_migrate=auto_migrate_core)
     app = FastAPI(
         title="Iris Core",
         version="0.1.0",
@@ -180,7 +248,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     app.state.store = store
     app.state.core_store = core_store
-    app.state.inbox_store = InboxStore(app_settings.inbox_store_path)
     app.state.settings = app_settings
     platform_token = agentui_platform_token(store.root)
     app.state.management_token = app_settings.token or ""
@@ -200,7 +267,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         hermes_api_token=hermes_api_token(store.root),
     )
     app.state.runtime_registry.ensure_default_runtime()
-    app.state.core_conversation_sync_started = {}
+    app.state.live_delivery_bus = LiveDeliveryBus()
+    app.state.active_conversations = {}
+    app.state.active_conversations_by_chat = {}
+    app.state.accepted_client_messages = set()
+    app.state.inbox_acknowledged_at = {}
 
     if app_settings.cors_origins:
         app.add_middleware(
@@ -309,8 +380,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         request: Request,
         _auth: None = Depends(require_inbox_auth),
     ) -> InboxHealthResponse:
-        result = request.app.state.inbox_store.health()
-        return InboxHealthResponse(**result)
+        del request
+        return InboxHealthResponse(checkedAt=checked_at(), path="", storage="memory")
 
     @app.post("/v1/inbox/messages", response_model=InboxMessageResponse)
     async def inbox_create_message(
@@ -318,9 +389,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         request: Request,
         _auth: None = Depends(require_inbox_auth),
     ) -> InboxMessageResponse:
-        result = request.app.state.inbox_store.create_message(dump_model(message))
-        mirror_inbox_message_to_core(request.app, result)
-        return InboxMessageResponse(message=result)
+        payload = inbox_message_from_payload(dump_model(message))
+        event = mirror_inbox_message_to_core(request.app, payload)
+        payload["cursor"] = int(event.get("cursor") or 0) if event else 0
+        return InboxMessageResponse(message=payload)
 
     @app.get("/v1/inbox/messages", response_model=InboxMessagesResponse)
     async def inbox_messages(
@@ -330,8 +402,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         profile: str | None = Query(None),
         _auth: None = Depends(require_inbox_auth),
     ) -> InboxMessagesResponse:
-        result = request.app.state.inbox_store.list_messages(after=after, limit=limit, profile=profile)
-        return InboxMessagesResponse(**result)
+        after = clamp_int(after, default=0, minimum=0, maximum=9_223_372_036_854_775_807)
+        limit = clamp_int(limit, default=50, minimum=1, maximum=200)
+        events = request.app.state.live_delivery_bus.list_events(after=after, limit=limit)
+        messages = [
+            inbox_message_from_event(request.app, event)
+            for event in events
+            if not profile or str(event.get("metadata", {}).get("profile") or "") == profile
+        ]
+        cursor = messages[-1]["cursor"] if messages else request.app.state.live_delivery_bus.latest_cursor()
+        return InboxMessagesResponse(messages=messages, cursor=cursor)
 
     @app.post("/v1/inbox/messages/{message_id}/ack", response_model=InboxMessageResponse)
     async def inbox_ack_message(
@@ -339,8 +419,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         request: Request,
         _auth: None = Depends(require_inbox_auth),
     ) -> InboxMessageResponse:
-        result = request.app.state.inbox_store.acknowledge_message(message_id)
-        return InboxMessageResponse(message=result["message"])
+        acknowledged_at = now()
+        request.app.state.inbox_acknowledged_at[str(message_id)] = acknowledged_at
+        message = inbox_message_for_id(request.app, message_id)
+        if not message:
+            raise ManagementError("Inbox message was not found.", status_code=404)
+        message["acknowledgedAt"] = acknowledged_at
+        return InboxMessageResponse(message=message)
 
     @app.get("/v1/status", response_model=StatusResponse)
     async def status(_auth: None = Depends(require_auth)) -> StatusResponse:
@@ -396,12 +481,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     ) -> dict[str, Any]:
         del cursor
         limit = clamp_int(limit, default=80, minimum=1, maximum=200)
-        if agentId and not app.state.runtime_registry.agent(agentId):
+        agent = app.state.runtime_registry.agent(agentId) if agentId else None
+        if agentId and not agent:
             raise ManagementError("Agent was not found.", status_code=404)
-        await maybe_sync_core_conversations(app, agentId, limit)
+        agents = [agent] if agent else app.state.runtime_registry.agents()
+        conversations: list[dict[str, Any]] = []
+        for item in [row for row in agents if row]:
+            adapter = app.state.runtime_registry.adapter_for_runtime(item["runtimeId"])
+            conversations.extend(await asyncio.to_thread(adapter.list_conversations, item, limit))
+        conversations.sort(key=lambda row: int(row.get("updatedAt") or 0), reverse=True)
         return {
             "ok": True,
-            "conversations": core_store.list_conversations(agent_id=agentId, limit=limit),
+            "conversations": conversations[:limit],
         }
 
     @app.post("/v1/conversations")
@@ -412,24 +503,31 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         agent = app.state.runtime_registry.agent(request.agentId)
         if not agent:
             raise ManagementError("Agent was not found.", status_code=404)
-        conversation = core_store.create_conversation(
+        external_chat_id = (request.externalChatId or "").strip() or f"core-{secrets.token_urlsafe(18)}"
+        external_session_id = (request.externalSessionId or "").strip()
+        conversation = draft_conversation(
             agent,
             title=request.title,
-            external_chat_id=(request.externalChatId or "").strip(),
+            external_chat_id=external_chat_id,
+            external_session_id=external_session_id,
             metadata=request.metadata,
         )
-        external_session_id = (request.externalSessionId or "").strip()
-        if external_session_id:
-            core_store.update_conversation_link(conversation["id"], external_session_id=external_session_id)
-            conversation = core_store.get_conversation(conversation["id"]) or conversation
+        remember_active_conversation(app, conversation)
         return {"ok": True, "conversation": conversation}
 
     @app.get("/v1/conversations/{conversation_id}")
     async def core_conversation_detail(
         conversation_id: str,
+        externalSessionId: str | None = Query(None),
+        externalChatId: str | None = Query(None),
         _auth: None = Depends(require_auth),
     ) -> dict[str, Any]:
-        conversation = core_store.get_conversation(conversation_id)
+        conversation = resolve_core_conversation(
+            app,
+            conversation_id,
+            external_session_id=externalSessionId or "",
+            external_chat_id=externalChatId or "",
+        )
         if not conversation:
             raise ManagementError("Conversation was not found.", status_code=404)
         return {"ok": True, "conversation": conversation}
@@ -437,31 +535,30 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/v1/conversations/{conversation_id}/messages")
     async def core_conversation_messages(
         conversation_id: str,
+        externalSessionId: str | None = Query(None),
+        externalChatId: str | None = Query(None),
         _auth: None = Depends(require_auth),
     ) -> dict[str, Any]:
-        conversation = core_store.get_conversation(conversation_id)
+        conversation = resolve_core_conversation(
+            app,
+            conversation_id,
+            external_session_id=externalSessionId or "",
+            external_chat_id=externalChatId or "",
+        )
         if not conversation:
             raise ManagementError("Conversation was not found.", status_code=404)
-        messages = coalesce_core_messages(core_store.list_messages(conversation_id))
-        if messages:
-            return {"ok": True, "conversationId": conversation_id, "messages": messages}
-        external_session_id = conversation.get("externalSessionId") or ""
-        if external_session_id:
-            try:
-                detail = store.conversation_detail(conversation["runtimeProfile"], external_session_id)
-                return {
-                    "ok": True,
-                    "conversationId": conversation_id,
-                    "messages": [
-                        {**core_message_from_hermes(message), "conversationId": conversation_id}
-                        for message in detail.messages
-                    ],
-                    "source": "hermes-management",
-                    "warning": detail.warning,
-                }
-            except ManagementError as exc:
-                return {"ok": True, "conversationId": conversation_id, "messages": [], "warning": exc.error}
-        return {"ok": True, "conversationId": conversation_id, "messages": []}
+        adapter = app.state.runtime_registry.adapter_for_runtime(conversation["runtimeId"])
+        try:
+            messages, warning = await asyncio.to_thread(
+                adapter.get_conversation_messages,
+                conversation_agent(app, conversation),
+                conversation.get("externalSessionId") or "",
+                chat_id=conversation.get("externalChatId") or "",
+                conversation_id=conversation_id,
+            )
+        except ManagementError as exc:
+            return {"ok": True, "conversationId": conversation_id, "messages": [], "warning": exc.error}
+        return {"ok": True, "conversationId": conversation_id, "messages": messages, "source": "hermes-management", "warning": warning}
 
     @app.post("/v1/conversations/{conversation_id}/messages")
     async def core_send_message(
@@ -470,7 +567,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         http_request: Request,
         _auth: None = Depends(require_auth),
     ) -> dict[str, Any]:
-        conversation = core_store.get_conversation(conversation_id)
+        conversation = resolve_core_conversation(app, conversation_id)
         if not conversation:
             raise ManagementError("Conversation was not found.", status_code=404)
         agent = app.state.runtime_registry.agent(conversation["agentId"])
@@ -481,51 +578,32 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise ManagementError("Message text is required.", status_code=400)
         message_id = request.clientMessageId or random_id("msg")
         idempotency_key = http_request.headers.get("Idempotency-Key") or request.clientMessageId
-        user_event_id = f"evt_user_{message_id}"
-        existing_user_event = core_store.get_event(user_event_id)
-        if existing_user_event and existing_user_event["conversationId"] == conversation_id:
+        accepted_key = (conversation_id, message_id)
+        if accepted_key in app.state.accepted_client_messages:
             return {
                 "ok": True,
                 "conversationId": conversation_id,
                 "messageId": message_id,
                 "accepted": True,
-                "eventCursor": existing_user_event["cursor"],
+                "eventCursor": app.state.live_delivery_bus.latest_cursor(agent_id=agent["id"]),
                 "duplicate": True,
             }
-        user_event = core_store.append_event(
-            conversation_id=conversation_id,
-            agent_id=agent["id"],
-            runtime_id=agent["runtimeId"],
-            event_type="message.user.created",
-            role="user",
-            content=text,
-            external_message_id=message_id,
-            idempotency_key=idempotency_key,
-            metadata={"attachments": request.attachments, "model": request.model, **request.metadata},
-            event_id=user_event_id,
-        )
-        core_store.upsert_message(
-            conversation_id=conversation_id,
-            message_id=message_id,
-            role="user",
-            content=text,
-            status="completed",
-            metadata={"attachments": request.attachments, "model": request.model, **request.metadata},
-        )
         adapter = app.state.runtime_registry.adapter_for_runtime(agent["runtimeId"])
         chat_id = conversation["externalChatId"] or chat_id_for_conversation(conversation_id)
         if not conversation["externalChatId"]:
-            core_store.update_conversation_link(conversation_id, external_chat_id=chat_id)
+            conversation = {**conversation, "externalChatId": chat_id}
+            remember_active_conversation(app, conversation)
         runtime_metadata = {
             key: value
             for key, value in request.metadata.items()
             if key not in {"modelSwitch", "chatId"}
         }
         runtime_metadata.update({
-            "agentuiConversationId": conversation_id,
-            "chatId": chat_id,
-            "profile": agent["runtimeProfile"],
-        })
+                    "agentuiConversationId": conversation_id,
+                    "chatId": chat_id,
+                    "profile": agent["runtimeProfile"],
+                    "idempotencyKey": idempotency_key,
+                })
         switch_command = model_switch_command(request.metadata.get("modelSwitch"))
         if switch_command:
             switch_result = await asyncio.to_thread(
@@ -543,14 +621,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 },
             )
             if not switch_result.get("ok"):
-                core_store.append_event(
+                error_event = publish_core_event(
+                    app,
                     conversation_id=conversation_id,
                     agent_id=agent["id"],
                     runtime_id=agent["runtimeId"],
                     event_type="message.error",
                     role="assistant",
                     content=str(switch_result.get("error") or "Hermes gateway did not accept the model switch."),
-                    parent_event_id=user_event["id"],
+                    parent_event_id=message_id,
                     metadata={
                         "sendResult": switch_result,
                         "chatId": chat_id,
@@ -563,7 +642,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     "conversationId": conversation_id,
                     "messageId": message_id,
                     "accepted": False,
-                    "eventCursor": user_event["cursor"],
+                    "eventCursor": error_event["cursor"],
                     "error": switch_result.get("error") or "Hermes gateway did not accept the model switch.",
                 }
         result = await asyncio.to_thread(
@@ -576,14 +655,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             metadata=runtime_metadata,
         )
         if not result.get("ok"):
-            core_store.append_event(
+            error_event = publish_core_event(
+                app,
                 conversation_id=conversation_id,
                 agent_id=agent["id"],
                 runtime_id=agent["runtimeId"],
                 event_type="message.error",
                 role="assistant",
                 content=str(result.get("error") or "Hermes gateway did not accept the message."),
-                parent_event_id=user_event["id"],
+                parent_event_id=message_id,
                 metadata={
                     "sendResult": result,
                     "chatId": chat_id,
@@ -596,22 +676,26 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "conversationId": conversation_id,
                 "messageId": message_id,
                 "accepted": False,
-                "eventCursor": user_event["cursor"],
+                "eventCursor": error_event["cursor"],
                 "error": result.get("error") or "Hermes gateway did not accept the message.",
             }
-        core_store.update_conversation_link(conversation_id, external_chat_id=str(result.get("chatId") or chat_id))
+        accepted_chat_id = str(result.get("chatId") or chat_id)
+        if accepted_chat_id != conversation.get("externalChatId"):
+            conversation = {**conversation, "externalChatId": accepted_chat_id}
+            remember_active_conversation(app, conversation)
+        app.state.accepted_client_messages.add(accepted_key)
         return {
             "ok": True,
             "conversationId": conversation_id,
             "messageId": message_id,
             "accepted": True,
-            "eventCursor": user_event["cursor"],
+            "eventCursor": app.state.live_delivery_bus.latest_cursor(agent_id=agent["id"]),
             "runtime": result,
         }
 
     @app.post("/v1/conversations/{conversation_id}/cancel")
     async def core_cancel_message(conversation_id: str, _auth: None = Depends(require_auth)) -> dict[str, Any]:
-        conversation = core_store.get_conversation(conversation_id)
+        conversation = resolve_core_conversation(app, conversation_id)
         if not conversation:
             raise ManagementError("Conversation was not found.", status_code=404)
         agent = app.state.runtime_registry.agent(conversation["agentId"])
@@ -640,11 +724,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise ManagementError("Agent was not found.", status_code=404)
         after = clamp_int(after, default=0, minimum=0, maximum=9_223_372_036_854_775_807)
         limit = clamp_int(limit, default=200, minimum=1, maximum=500)
-        events = core_store.list_events(after=after, limit=limit, agent_id=agentId)
+        events = app.state.live_delivery_bus.list_events(after=after, limit=limit, agent_id=agentId or "")
         return {
             "ok": True,
             "events": events,
-            "cursor": events[-1]["cursor"] if events else core_store.latest_event_cursor(agent_id=agentId),
+            "cursor": events[-1]["cursor"] if events else app.state.live_delivery_bus.latest_cursor(agent_id=agentId or ""),
         }
 
     @app.get("/v1/conversations/{conversation_id}/events")
@@ -654,15 +738,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         limit: int = Query(200),
         _auth: None = Depends(require_auth),
     ) -> dict[str, Any]:
-        if not core_store.get_conversation(conversation_id):
+        if not resolve_core_conversation(app, conversation_id):
             raise ManagementError("Conversation was not found.", status_code=404)
         after = clamp_int(after, default=0, minimum=0, maximum=9_223_372_036_854_775_807)
         limit = clamp_int(limit, default=200, minimum=1, maximum=500)
-        events = core_store.list_events(after=after, limit=limit, conversation_id=conversation_id)
+        events = app.state.live_delivery_bus.list_events(after=after, limit=limit, conversation_id=conversation_id)
         return {
             "ok": True,
             "events": events,
-            "cursor": events[-1]["cursor"] if events else core_store.latest_event_cursor(conversation_id),
+            "cursor": events[-1]["cursor"] if events else app.state.live_delivery_bus.latest_cursor(conversation_id=conversation_id),
         }
 
     @app.get("/v1/events/stream")
@@ -683,7 +767,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             cursor = after
             heartbeat_at = now()
             while True:
-                events = core_store.list_events(after=cursor, limit=limit, agent_id=agentId)
+                events = app.state.live_delivery_bus.list_events(after=cursor, limit=limit, agent_id=agentId or "")
                 for event in events:
                     cursor = max(cursor, int(event["cursor"]))
                     yield sse_event(event)
@@ -707,25 +791,25 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         delivery: RuntimeDeliveryHermesRequest,
         _auth: None = Depends(require_runtime_delivery_auth),
     ) -> dict[str, Any]:
-        conversation_id = core_store.resolve_conversation_id(delivery.runtimeId, delivery.profile, "", delivery.chatId)
-        if not conversation_id:
-            app.state.runtime_registry.ensure_default_runtime()
-            agent = core_store.agent_for_profile(delivery.runtimeId, delivery.profile)
-            if not agent:
-                raise ManagementError("Delivery profile is not mapped to an Iris agent.", status_code=404)
-            conversation = core_store.create_conversation(
+        agent = agent_for_runtime_profile(app, delivery.runtimeId, delivery.profile)
+        if not agent:
+            raise ManagementError("Delivery profile is not mapped to an Iris agent.", status_code=404)
+        conversation = resolve_core_conversation(
+            app,
+            "",
+            runtime_id=delivery.runtimeId,
+            runtime_profile=delivery.profile,
+            external_chat_id=delivery.chatId,
+        )
+        if not conversation:
+            conversation = draft_conversation(
                 agent,
                 title=f"{delivery.profile} delivery",
                 external_chat_id=delivery.chatId,
                 metadata={"createdBy": "runtime-delivery"},
             )
-            conversation_id = conversation["id"]
-        conversation = core_store.get_conversation(conversation_id)
-        if not conversation:
-            raise ManagementError("Delivery conversation was not found.", status_code=404)
-        agent = app.state.runtime_registry.agent(conversation["agentId"])
-        if not agent:
-            raise ManagementError("Delivery agent was not found.", status_code=404)
+            remember_active_conversation(app, conversation)
+        conversation_id = conversation["id"]
         stream_message_id = str(
             delivery.metadata.get("streamMessageId")
             or delivery.metadata.get("stream_message_id")
@@ -743,44 +827,24 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         event_metadata = mark_hidden_model_switch_reply(event_metadata, delivery.replyTo or "")
         if has_stream_message_id(delivery.metadata):
             event_metadata["streamMessageId"] = stream_message_id
-        event_content, event_metadata, suppress_event = prepare_assistant_delivery_event(
-            core_store.list_messages(conversation_id),
-            content=delivery.content,
-            metadata=event_metadata,
-            stream_message_id=stream_message_id,
-            has_stream_id=has_stream_message_id(delivery.metadata),
-            reply_to=delivery.replyTo or "",
-            status="completed" if is_final or not is_streaming else "streaming",
-        )
-        event = None
-        if not suppress_event:
-            event = core_store.append_event(
-                conversation_id=conversation_id,
-                agent_id=agent["id"],
-                runtime_id=delivery.runtimeId,
-                event_type=event_type,
-                role="assistant",
-                content=event_content,
-                parent_event_id=delivery.replyTo or str(event_metadata.get("replyTo") or ""),
-                external_message_id=delivery.messageId,
-                metadata=event_metadata,
-                event_id=f"evt_delivery_{delivery.messageId}",
-            )
-        materialized = materialize_runtime_delivery(
-            core_store=core_store,
+        event = publish_core_event(
+            app,
             conversation_id=conversation_id,
-            delivery=delivery,
-            stream_message_id=stream_message_id,
-            is_streaming=is_streaming,
-            is_final=is_final,
+            agent_id=agent["id"],
+            runtime_id=delivery.runtimeId,
+            event_type=event_type,
+            role="assistant",
+            content=delivery.content,
+            parent_event_id=delivery.replyTo or str(event_metadata.get("replyTo") or ""),
+            external_message_id=delivery.messageId,
+            metadata=event_metadata,
+            event_id=f"evt_delivery_{delivery.messageId}",
         )
-        if materialized and event and event.get("metadata") is not None:
-            event["metadata"]["materializedMessageId"] = materialized["id"]
         return {
             "ok": True,
             "conversationId": conversation_id,
             "event": event,
-            "suppressed": suppress_event,
+            "suppressed": False,
         }
 
     @app.get("/v1/automations")
@@ -791,10 +855,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     ) -> dict[str, Any]:
         if agentId and not app.state.runtime_registry.agent(agentId):
             raise ManagementError("Agent was not found.", status_code=404)
-        await asyncio.to_thread(sync_core_automations, app, agentId)
+        automations = await asyncio.to_thread(list_runtime_automations, app, agentId)
+        limit = clamp_int(limit, default=200, minimum=1, maximum=500)
         return {
             "ok": True,
-            "automations": core_store.list_automations(agent_id=agentId, limit=limit),
+            "automations": automations[:limit],
         }
 
     @app.post("/v1/automations")
@@ -805,7 +870,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         agent = app.state.runtime_registry.agent(request.agentId)
         if not agent:
             raise ManagementError("Agent was not found.", status_code=404)
-        payload = automation_create_payload(core_store, agent, dump_model(request))
+        payload = automation_create_payload(app, agent, dump_model(request))
         adapter = app.state.runtime_registry.adapter_for_runtime(agent["runtimeId"])
         result = await asyncio.to_thread(adapter.create_automation, payload)
         if not result.get("ok"):
@@ -815,17 +880,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "runtime": result,
             }
         job = automation_job_payload(result)
-        automation = core_store.upsert_automation(
-            automation_record_from_request(
-                agent,
-                dump_model(request),
-                external_job_id=job_id(job),
-                status=job_status(job) or "active",
-                runtime_job=job,
-                deliver=payload.get("deliver", ""),
-                last_run_at=job_timestamp(job, "lastRunAt", "last_run_at", "lastRun", "last_run"),
-                next_run_at=job_timestamp(job, "nextRunAt", "next_run_at", "nextRun", "next_run"),
-            )
+        automation = automation_record_from_job(
+            agent,
+            job,
+            request_payload=dump_model(request),
+            deliver=payload.get("deliver", ""),
         )
         return {"ok": True, "automation": automation, "runtime": result}
 
@@ -835,7 +894,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         request: CoreAutomationUpdateRequest,
         _auth: None = Depends(require_auth),
     ) -> dict[str, Any]:
-        automation = core_store.get_automation(automation_id)
+        automation = resolve_runtime_automation(app, automation_id)
         if not automation:
             raise ManagementError("Automation was not found.", status_code=404)
         agent = app.state.runtime_registry.agent(automation["agentId"])
@@ -852,13 +911,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             )
             if not result.get("ok"):
                 return {"ok": False, "error": result.get("error") or "Could not update Hermes job.", "runtime": result}
-        record_updates = automation_store_updates(core_store, agent, automation, updates)
-        updated = core_store.update_automation(automation_id, record_updates)
+        updated_job = automation_job_payload(result)
+        updated = automation_record_from_job(agent, updated_job, request_payload={**automation, **updates}) if updated_job else automation
         return {"ok": True, "automation": updated, "runtime": result}
 
     @app.delete("/v1/automations/{automation_id}")
     async def core_delete_automation(automation_id: str, _auth: None = Depends(require_auth)) -> dict[str, Any]:
-        automation = core_store.get_automation(automation_id)
+        automation = resolve_runtime_automation(app, automation_id)
         if not automation:
             raise ManagementError("Automation was not found.", status_code=404)
         result: dict[str, Any] = {"ok": True}
@@ -867,7 +926,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             result = await asyncio.to_thread(adapter.delete_automation, automation["externalJobId"])
             if not result.get("ok") and "not found" not in str(result.get("error") or "").lower():
                 return {"ok": False, "error": result.get("error") or "Could not delete Hermes job.", "runtime": result}
-        core_store.delete_automation(automation_id)
         return {"ok": True, "automationId": automation_id, "runtime": result}
 
     @app.post("/v1/automations/{automation_id}/pause")
@@ -1042,99 +1100,48 @@ def core_auth_payload(request_app: FastAPI) -> dict[str, Any]:
     }
 
 
-async def maybe_sync_core_conversations(app: FastAPI, agent_id: str | None, limit: int) -> None:
-    sync_started: dict[str, int] = app.state.core_conversation_sync_started
-    sync_key = agent_id or "*"
-    current_time = now()
-    if current_time - int(sync_started.get(sync_key) or 0) < 30:
-        return
-    sync_started[sync_key] = current_time
-    try:
-        await asyncio.wait_for(
-            asyncio.to_thread(sync_core_conversations, app, agent_id, min(limit, 20)),
-            timeout=0.75,
-        )
-    except (asyncio.TimeoutError, ManagementError, Exception):
-        return
+def inbox_message_from_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    content = str(payload.get("content") or "").strip()
+    if not content:
+        raise ManagementError("Message content is required.", status_code=400)
+    metadata = payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {}
+    return {
+        "cursor": 0,
+        "id": str(payload.get("id") or random_id("inbox")),
+        "source": str(payload.get("source") or "hermes-cron"),
+        "platform": str(payload.get("platform") or "agentui"),
+        "profile": str(payload.get("profile") or metadata.get("profile") or "default"),
+        "chatId": str(payload.get("chatId") or payload.get("chat_id") or "agentui"),
+        "content": content,
+        "metadata": metadata,
+        "createdAt": int(payload.get("createdAt") or payload.get("created_at") or now()),
+        "acknowledgedAt": None,
+    }
 
 
-def sync_core_conversations(app: FastAPI, agent_id: str | None, limit: int) -> None:
-    registry: RuntimeRegistry = app.state.runtime_registry
-    core_store: CoreStore = app.state.core_store
-    hermes_store: HermesStore = app.state.store
-    agents = [registry.agent(agent_id)] if agent_id else registry.agents()
-    for agent in [row for row in agents if row]:
-        if agent["runtimeKind"] != "hermes":
-            continue
-        try:
-            result = hermes_store.conversations(agent["runtimeProfile"], limit)
-        except ManagementError:
-            continue
-        for conversation in result.conversations:
-            core_store.upsert_runtime_conversation(agent, conversation)
-
-
-def sync_core_automations(app: FastAPI, agent_id: str | None) -> None:
-    registry: RuntimeRegistry = app.state.runtime_registry
-    core_store: CoreStore = app.state.core_store
-    agents = [registry.agent(agent_id)] if agent_id else registry.agents()
-    for agent in [row for row in agents if row]:
-        if agent["runtimeKind"] != "hermes":
-            continue
-        adapter = registry.adapter_for_runtime(agent["runtimeId"])
-        result = adapter.list_automations(agent["runtimeProfile"])
-        if not result.get("ok"):
-            continue
-        for job in automation_jobs_from_result(result):
-            external_job_id = job_id(job)
-            if not external_job_id:
-                continue
-            core_store.upsert_automation(
-                {
-                    "agentId": agent["id"],
-                    "runtimeId": agent["runtimeId"],
-                    "externalJobId": external_job_id,
-                    "name": str(job.get("name") or "Hermes job"),
-                    "schedule": job_schedule(job),
-                    "prompt": str(job.get("prompt") or ""),
-                    "deliverToConversationId": "",
-                    "status": job_status(job) or "active",
-                    "lastRunAt": job_timestamp(job, "lastRunAt", "last_run_at", "lastRun", "last_run"),
-                    "nextRunAt": job_timestamp(job, "nextRunAt", "next_run_at", "nextRun", "next_run"),
-                    "metadata": {
-                        "source": "hermes-jobs",
-                        "deliver": str(job.get("deliver") or job.get("delivery") or ""),
-                        "repeat": job_repeat(job),
-                        "runtimeJob": job,
-                    },
-                }
-            )
-
-
-def mirror_inbox_message_to_core(app: FastAPI, message: dict[str, Any]) -> None:
-    core_store: CoreStore = app.state.core_store
+def mirror_inbox_message_to_core(app: FastAPI, message: dict[str, Any]) -> dict[str, Any] | None:
     runtime_id = str(message.get("metadata", {}).get("runtimeId") or DEFAULT_RUNTIME_ID)
     profile = str(message.get("profile") or "default")
     chat_id = str(message.get("chatId") or "agentui")
-    conversation_id = core_store.resolve_conversation_id(runtime_id, profile, "", chat_id)
-    if not conversation_id:
-        app.state.runtime_registry.ensure_default_runtime()
-        agent = core_store.agent_for_profile(runtime_id, profile)
-        if not agent:
-            return
-        conversation = core_store.create_conversation(
+    agent = agent_for_runtime_profile(app, runtime_id, profile)
+    if not agent:
+        return None
+    conversation = resolve_core_conversation(
+        app,
+        "",
+        runtime_id=runtime_id,
+        runtime_profile=profile,
+        external_chat_id=chat_id,
+    )
+    if not conversation:
+        conversation = draft_conversation(
             agent,
             title=f"{profile} delivery",
             external_chat_id=chat_id,
             metadata={"createdBy": "legacy-inbox-delivery"},
         )
-        conversation_id = conversation["id"]
-    conversation = core_store.get_conversation(conversation_id)
-    if not conversation:
-        return
-    agent = app.state.runtime_registry.agent(conversation["agentId"])
-    if not agent:
-        return
+        remember_active_conversation(app, conversation)
+    conversation_id = conversation["id"]
     metadata = message.get("metadata") if isinstance(message.get("metadata"), dict) else {}
     stream_message_id = str(metadata.get("streamMessageId") or metadata.get("stream_message_id") or "")
     is_streaming = bool(metadata.get("streaming"))
@@ -1150,93 +1157,208 @@ def mirror_inbox_message_to_core(app: FastAPI, message: dict[str, Any]) -> None:
     event_metadata = mark_hidden_model_switch_reply(event_metadata, str(metadata.get("replyTo") or ""))
     if stream_message_id:
         event_metadata["streamMessageId"] = stream_message_id
-    status = "completed" if is_final or not is_streaming else "streaming"
-    event_content, event_metadata, suppress_event = prepare_assistant_delivery_event(
-        core_store.list_messages(conversation_id),
+    return publish_core_event(
+        app,
+        conversation_id=conversation_id,
+        agent_id=agent["id"],
+        runtime_id=runtime_id,
+        event_type=event_type,
+        role="assistant",
         content=str(message.get("content") or ""),
+        parent_event_id=str(metadata.get("replyTo") or event_metadata.get("replyTo") or ""),
+        external_message_id=str(message.get("id") or ""),
         metadata=event_metadata,
-        stream_message_id=stream_message_id,
-        has_stream_id=bool(stream_message_id),
-        reply_to=str(metadata.get("replyTo") or ""),
-        status=status,
+        event_id=f"evt_inbox_{message.get('id')}",
     )
-    event = None
-    if not suppress_event:
-        event = core_store.append_event(
-            conversation_id=conversation_id,
-            agent_id=agent["id"],
-            runtime_id=runtime_id,
-            event_type=event_type,
-            role="assistant",
-            content=event_content,
-            parent_event_id=str(metadata.get("replyTo") or event_metadata.get("replyTo") or ""),
-            external_message_id=str(message.get("id") or ""),
-            metadata=event_metadata,
-            event_id=f"evt_inbox_{message.get('id')}",
-        )
-    message_id = stream_message_id or str(message.get("id") or random_id("msg"))
-    content = str(message.get("content") or "")
-    messages = core_store.list_messages(conversation_id)
-    if stream_message_id:
-        existing = message_by_id(messages, stream_message_id)
-        if existing and existing["status"] == "completed" and status == "streaming":
-            materialized = existing
-        else:
-            if existing:
-                if status == "streaming":
-                    content = merged_stream_snapshot_content(str(existing.get("content") or ""), content)
-                else:
-                    content = merged_completed_stream_content(str(existing.get("content") or ""), content)
-                    event_metadata = merged_completion_metadata(
-                        existing,
-                        event_metadata,
-                        reply_to=str(metadata.get("replyTo") or ""),
-                    )
-            materialized = core_store.upsert_message(
-                conversation_id=conversation_id,
-                message_id=message_id,
-                role="assistant",
-                content=content,
-                status=status,
-                metadata=event_metadata,
-            )
-    else:
-        fallback = stream_fallback_completion(
-            messages,
-            reply_to=str(metadata.get("replyTo") or ""),
-            content=content,
-        )
-        existing = None if fallback else last_mergeable_assistant_message(
-            messages,
-            reply_to=str(metadata.get("replyTo") or ""),
-            content=content,
-        )
-        if fallback:
-            message_id = str(fallback["messageId"])
-            content = str(fallback["content"])
-            event_metadata = finalized_stream_metadata(
-                event_metadata,
-                existing_metadata=fallback["metadata"],
-                stream_message_id=str(fallback["streamMessageId"]),
-                reply_to=str(metadata.get("replyTo") or fallback.get("replyTo") or ""),
-            )
-        elif existing:
-            message_id = existing["id"]
-            content = append_message_content(existing["content"], content)
-            event_metadata = merged_completion_metadata(existing, event_metadata, reply_to=str(metadata.get("replyTo") or ""))
-        materialized = core_store.upsert_message(
-            conversation_id=conversation_id,
-            message_id=message_id,
-            role="assistant",
-            content=content,
-            status=status,
-            metadata=event_metadata,
-        )
-    if materialized and event and event.get("metadata") is not None:
-        event["metadata"]["materializedMessageId"] = materialized["id"]
 
 
-def automation_create_payload(core_store: CoreStore, agent: dict[str, Any], request: dict[str, Any]) -> dict[str, Any]:
+def inbox_message_from_event(app: FastAPI, event: dict[str, Any]) -> dict[str, Any]:
+    metadata = event.get("metadata") if isinstance(event.get("metadata"), dict) else {}
+    message_id = str(event.get("externalMessageId") or event.get("id") or "")
+    if message_id.startswith("evt_inbox_"):
+        message_id = message_id.removeprefix("evt_inbox_")
+    return {
+        "cursor": int(event.get("cursor") or 0),
+        "id": message_id,
+        "source": str(metadata.get("source") or "agentui-core-events"),
+        "platform": "agentui",
+        "profile": str(metadata.get("profile") or "default"),
+        "chatId": str(metadata.get("chatId") or event.get("conversationId") or "agentui"),
+        "content": str(event.get("content") or ""),
+        "metadata": metadata,
+        "createdAt": int(event.get("createdAt") or now()),
+        "acknowledgedAt": app.state.inbox_acknowledged_at.get(message_id),
+    }
+
+
+def inbox_message_for_id(app: FastAPI, message_id: str) -> dict[str, Any] | None:
+    target = str(message_id)
+    for event in app.state.live_delivery_bus.list_events(after=0, limit=500):
+        message = inbox_message_from_event(app, event)
+        if message["id"] == target:
+            return message
+    return None
+
+
+def remember_active_conversation(app: FastAPI, conversation: dict[str, Any]) -> None:
+    app.state.active_conversations[conversation["id"]] = conversation
+    chat_id = str(conversation.get("externalChatId") or "")
+    if chat_id:
+        app.state.active_conversations_by_chat[
+            (conversation["runtimeId"], conversation["runtimeProfile"], chat_id)
+        ] = conversation["id"]
+
+
+def agent_for_runtime_profile(app: FastAPI, runtime_id: str, profile: str) -> dict[str, Any] | None:
+    return next(
+        (
+            agent
+            for agent in app.state.runtime_registry.agents()
+            if agent["runtimeId"] == runtime_id and agent["runtimeProfile"] == profile
+        ),
+        None,
+    )
+
+
+def conversation_agent(app: FastAPI, conversation: dict[str, Any]) -> dict[str, Any]:
+    agent = app.state.runtime_registry.agent(str(conversation.get("agentId") or ""))
+    if not agent:
+        raise ManagementError("Conversation agent was not found.", status_code=404)
+    return agent
+
+
+def resolve_core_conversation(
+    app: FastAPI,
+    conversation_id: str,
+    *,
+    runtime_id: str = "",
+    runtime_profile: str = "",
+    external_session_id: str = "",
+    external_chat_id: str = "",
+) -> dict[str, Any] | None:
+    active = app.state.active_conversations.get(conversation_id) if conversation_id else None
+    if active:
+        return active
+    if external_chat_id:
+        mapped_id = app.state.active_conversations_by_chat.get(
+            (runtime_id or DEFAULT_RUNTIME_ID, runtime_profile or "default", external_chat_id)
+        )
+        if mapped_id and mapped_id in app.state.active_conversations:
+            return app.state.active_conversations[mapped_id]
+
+    agents = app.state.runtime_registry.agents()
+    for agent in agents:
+        if runtime_id and agent["runtimeId"] != runtime_id:
+            continue
+        if runtime_profile and agent["runtimeProfile"] != runtime_profile:
+            continue
+        adapter = app.state.runtime_registry.adapter_for_runtime(agent["runtimeId"])
+        conversation = adapter.get_conversation(
+            agent,
+            external_session_id,
+            chat_id=external_chat_id,
+            conversation_id=conversation_id,
+        )
+        if conversation:
+            return conversation
+    return None
+
+
+def publish_core_event(
+    app: FastAPI,
+    *,
+    conversation_id: str,
+    agent_id: str,
+    runtime_id: str,
+    event_type: str,
+    role: str,
+    content: str,
+    parent_event_id: str = "",
+    external_message_id: str = "",
+    idempotency_key: str = "",
+    metadata: dict[str, Any] | None = None,
+    event_id: str = "",
+) -> dict[str, Any]:
+    return app.state.live_delivery_bus.publish(
+        {
+            "id": event_id,
+            "conversationId": conversation_id,
+            "agentId": agent_id,
+            "runtimeId": runtime_id,
+            "type": event_type,
+            "role": role,
+            "content": content,
+            "parentEventId": parent_event_id,
+            "externalMessageId": external_message_id,
+            "idempotencyKey": idempotency_key,
+            "metadata": metadata or {},
+        }
+    )
+
+
+def list_runtime_automations(app: FastAPI, agent_id: str | None = None) -> list[dict[str, Any]]:
+    registry: RuntimeRegistry = app.state.runtime_registry
+    agents = [registry.agent(agent_id)] if agent_id else registry.agents()
+    automations: list[dict[str, Any]] = []
+    for agent in [row for row in agents if row]:
+        adapter = registry.adapter_for_runtime(agent["runtimeId"])
+        result = adapter.list_automations(agent["runtimeProfile"])
+        if not result.get("ok"):
+            continue
+        for job in automation_jobs_from_result(result):
+            if job_id(job):
+                automations.append(automation_record_from_job(agent, job))
+    return sorted(automations, key=lambda row: (row["nextRunAt"] or row["updatedAt"], -row["createdAt"], row["id"]))
+
+
+def resolve_runtime_automation(app: FastAPI, automation_id: str) -> dict[str, Any] | None:
+    return next(
+        (
+            automation
+            for automation in list_runtime_automations(app)
+            if automation["id"] == automation_id or automation["externalJobId"] == automation_id
+        ),
+        None,
+    )
+
+
+def automation_record_from_job(
+    agent: dict[str, Any],
+    job: dict[str, Any],
+    *,
+    request_payload: dict[str, Any] | None = None,
+    deliver: str = "",
+) -> dict[str, Any]:
+    timestamp = now()
+    external_job_id = job_id(job)
+    request_payload = request_payload or {}
+    metadata = request_payload.get("metadata") if isinstance(request_payload.get("metadata"), dict) else {}
+    deliver = deliver or str(job.get("deliver") or job.get("delivery") or "")
+    return {
+        "id": f"auto_{stable_hash(agent['runtimeId'], external_job_id, length=22)}",
+        "agentId": agent["id"],
+        "runtimeId": agent["runtimeId"],
+        "externalJobId": external_job_id,
+        "name": str(job.get("name") or request_payload.get("name") or "Hermes job"),
+        "schedule": job_schedule(job) or str(request_payload.get("schedule") or ""),
+        "prompt": str(job.get("prompt") or request_payload.get("prompt") or ""),
+        "deliverToConversationId": str(request_payload.get("deliverToConversationId") or ""),
+        "status": job_status(job) or "active",
+        "createdAt": job_timestamp(job, "createdAt", "created_at", "created") or timestamp,
+        "updatedAt": job_timestamp(job, "updatedAt", "updated_at", "updated") or timestamp,
+        "lastRunAt": job_timestamp(job, "lastRunAt", "last_run_at", "lastRun", "last_run"),
+        "nextRunAt": job_timestamp(job, "nextRunAt", "next_run_at", "nextRun", "next_run"),
+        "metadata": {
+            **metadata,
+            "source": "hermes-jobs",
+            "deliver": deliver,
+            "repeat": job_repeat(job),
+            "runtimeJob": job,
+        },
+    }
+
+
+def automation_create_payload(app: FastAPI, agent: dict[str, Any], request: dict[str, Any]) -> dict[str, Any]:
     schedule = str(request.get("schedule") or "").strip()
     prompt = str(request.get("prompt") or "").strip()
     if not schedule:
@@ -1246,7 +1368,7 @@ def automation_create_payload(core_store: CoreStore, agent: dict[str, Any], requ
     deliver = str(request.get("deliver") or "").strip()
     conversation_id = str(request.get("deliverToConversationId") or "").strip()
     if conversation_id:
-        conversation = core_store.get_conversation(conversation_id)
+        conversation = resolve_core_conversation(app, conversation_id)
         if not conversation or conversation["agentId"] != agent["id"]:
             raise ManagementError("Delivery conversation was not found for this agent.", status_code=404)
         deliver = deliver or f"agentui:{conversation['externalChatId'] or chat_id_for_conversation(conversation_id)}"
@@ -1261,39 +1383,6 @@ def automation_create_payload(core_store: CoreStore, agent: dict[str, Any], requ
     if repeat not in (None, ""):
         payload["repeat"] = max(1, int(repeat))
     return payload
-
-
-def automation_record_from_request(
-    agent: dict[str, Any],
-    request: dict[str, Any],
-    *,
-    external_job_id: str,
-    status: str,
-    runtime_job: dict[str, Any],
-    deliver: str,
-    last_run_at: int | None = None,
-    next_run_at: int | None = None,
-) -> dict[str, Any]:
-    metadata = request.get("metadata") if isinstance(request.get("metadata"), dict) else {}
-    return {
-        "agentId": agent["id"],
-        "runtimeId": agent["runtimeId"],
-        "externalJobId": external_job_id,
-        "name": str(request.get("name") or "Iris reminder"),
-        "schedule": str(request.get("schedule") or ""),
-        "prompt": str(request.get("prompt") or ""),
-        "deliverToConversationId": str(request.get("deliverToConversationId") or ""),
-        "status": status,
-        "lastRunAt": last_run_at,
-        "nextRunAt": next_run_at,
-        "metadata": {
-            **metadata,
-            "source": "agentui-core",
-            "deliver": deliver,
-            "repeat": request.get("repeat"),
-            "runtimeJob": runtime_job,
-        },
-    }
 
 
 def automation_update_payload(updates: dict[str, Any]) -> dict[str, Any]:
@@ -1311,37 +1400,8 @@ def automation_update_payload(updates: dict[str, Any]) -> dict[str, Any]:
     return payload
 
 
-def automation_store_updates(
-    core_store: CoreStore,
-    agent: dict[str, Any],
-    automation: dict[str, Any],
-    updates: dict[str, Any],
-) -> dict[str, Any]:
-    deliver = str(updates.get("deliver") or automation.get("metadata", {}).get("deliver") or "")
-    conversation_id = str(updates.get("deliverToConversationId") or automation.get("deliverToConversationId") or "")
-    if conversation_id:
-        conversation = core_store.get_conversation(conversation_id)
-        if not conversation or conversation["agentId"] != agent["id"]:
-            raise ManagementError("Delivery conversation was not found for this agent.", status_code=404)
-        deliver = deliver or f"agentui:{conversation['externalChatId'] or chat_id_for_conversation(conversation_id)}"
-    metadata = updates.get("metadata") if isinstance(updates.get("metadata"), dict) else {}
-    return {
-        "name": updates.get("name") or automation["name"],
-        "schedule": updates.get("schedule") or automation["schedule"],
-        "prompt": updates.get("prompt") or automation["prompt"],
-        "deliverToConversationId": conversation_id,
-        "status": updates.get("status") or automation["status"],
-        "metadata": {
-            **metadata,
-            "deliver": deliver,
-            "repeat": updates.get("repeat", automation.get("metadata", {}).get("repeat")),
-        },
-    }
-
-
 def control_core_automation(app: FastAPI, automation_id: str, action: str, status: str | None) -> dict[str, Any]:
-    core_store: CoreStore = app.state.core_store
-    automation = core_store.get_automation(automation_id)
+    automation = resolve_runtime_automation(app, automation_id)
     if not automation:
         raise ManagementError("Automation was not found.", status_code=404)
     if not automation["externalJobId"]:
@@ -1355,7 +1415,7 @@ def control_core_automation(app: FastAPI, automation_id: str, action: str, statu
         updates["status"] = status
     if action == "run":
         updates["lastRunAt"] = now()
-    updated = core_store.update_automation(automation_id, updates) if updates else automation
+    updated = {**automation, **updates} if updates else automation
     return {"ok": True, "automation": updated, "runtime": result}
 
 
@@ -1509,76 +1569,6 @@ def prepare_assistant_delivery_event(
     if str(existing.get("status") or "") == "completed" and same_normalized_content(merged, existing_content):
         return existing_content, merged_metadata, True
     return merged, merged_metadata, False
-
-
-def materialize_runtime_delivery(
-    *,
-    core_store: CoreStore,
-    conversation_id: str,
-    delivery: RuntimeDeliveryHermesRequest,
-    stream_message_id: str,
-    is_streaming: bool,
-    is_final: bool,
-) -> dict[str, Any]:
-    status = "completed" if is_final or not is_streaming else "streaming"
-    metadata = {
-        "profile": delivery.profile,
-        "chatId": delivery.chatId,
-        "replyTo": delivery.replyTo,
-        "source": delivery.source,
-        **delivery.metadata,
-    }
-    metadata = mark_hidden_model_switch_reply(metadata, delivery.replyTo or "")
-    if has_stream_message_id(delivery.metadata):
-        metadata["streamMessageId"] = stream_message_id
-    target_id = stream_message_id if stream_message_id else delivery.messageId
-    content = delivery.content
-    messages = core_store.list_messages(conversation_id)
-
-    if has_stream_message_id(delivery.metadata):
-        existing = message_by_id(messages, target_id)
-        if existing and existing["status"] == "completed" and status == "streaming":
-            return existing
-        if existing:
-            if status == "streaming":
-                content = merged_stream_snapshot_content(str(existing.get("content") or ""), delivery.content)
-            else:
-                content = merged_completed_stream_content(str(existing.get("content") or ""), delivery.content)
-                metadata = merged_completion_metadata(existing, metadata, reply_to=delivery.replyTo or "")
-
-    if not has_stream_message_id(delivery.metadata):
-        fallback = stream_fallback_completion(
-            messages,
-            reply_to=delivery.replyTo or "",
-            content=delivery.content,
-        )
-        existing = None if fallback else last_mergeable_assistant_message(
-            messages,
-            reply_to=delivery.replyTo or "",
-            content=delivery.content,
-        )
-        if fallback:
-            target_id = str(fallback["messageId"])
-            content = str(fallback["content"])
-            metadata = finalized_stream_metadata(
-                metadata,
-                existing_metadata=fallback["metadata"],
-                stream_message_id=str(fallback["streamMessageId"]),
-                reply_to=delivery.replyTo or str(fallback.get("replyTo") or ""),
-            )
-        elif existing:
-            target_id = existing["id"]
-            content = merged_completed_stream_content(str(existing.get("content") or ""), delivery.content)
-            metadata = merged_completion_metadata(existing, metadata, reply_to=delivery.replyTo or "")
-
-    return core_store.upsert_message(
-        conversation_id=conversation_id,
-        message_id=target_id,
-        role="assistant",
-        content=content,
-        status=status,
-        metadata=metadata,
-    )
 
 
 def has_stream_message_id(metadata: dict[str, Any]) -> bool:
@@ -1827,9 +1817,17 @@ def dump_model(model):
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Run the Hermes management sidecar server.")
+    parser.add_argument(
+        "command",
+        nargs="?",
+        choices=("serve", "migrate-source-of-truth"),
+        default="serve",
+        help="Command to run. Defaults to serve.",
+    )
     parser.add_argument("--host", default=None, help="Bind host. Defaults to HERMES_MGMT_HOST or 127.0.0.1.")
     parser.add_argument("--port", type=int, default=None, help="Bind port. Defaults to HERMES_MGMT_PORT or 8765.")
     parser.add_argument("--hermes-home", default=None, help="Hermes home path. Defaults to HERMES_HOME or ~/.hermes.")
+    parser.add_argument("--backup", action="store_true", help="Create a migration backup before dropping duplicate tables.")
     return parser
 
 
@@ -1847,7 +1845,6 @@ def settings_from_args(args: argparse.Namespace) -> Settings:
         token=env_settings.token,
         inbox_token=env_settings.inbox_token,
         runtime_delivery_token=env_settings.runtime_delivery_token,
-        inbox_store_path=env_settings.inbox_store_path,
         core_store_path=env_settings.core_store_path,
         cors_origins=env_settings.cors_origins,
     )
@@ -1857,6 +1854,11 @@ def cli() -> None:
     parser = build_parser()
     args = parser.parse_args()
     settings = settings_from_args(args)
+    if args.command == "migrate-source-of-truth":
+        store = CoreStore(settings.core_store_path, auto_migrate=False)
+        result = store.migrate_source_of_truth_schema(backup=bool(args.backup))
+        print(json.dumps(result, indent=2, sort_keys=True))
+        return
     uvicorn.run(create_app(settings), host=settings.host, port=settings.port)
 
 

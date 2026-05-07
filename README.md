@@ -1,6 +1,6 @@
 # Iris
 
-Iris is a monorepo for local-first agent control surfaces, including Iris Desktop and Iris Core. Hermes remains the first runtime backend through the Iris Hermes Adapter, but Iris owns the user-facing app, conversations, automations, devices, and routing model.
+Iris is a monorepo for local-first agent control surfaces, including Iris Desktop and Iris Core. Hermes remains the first runtime backend through the Iris Hermes Adapter; Iris owns the user-facing app model, device/auth layer, and routing surface while runtime-owned records stay in their runtime source of truth.
 
 ## Workspace Layout
 
@@ -48,9 +48,9 @@ The desktop Vite server runs on `http://127.0.0.1:1420/`. Iris Core defaults to 
 
 ## Iris Core API
 
-Iris Core is the local-first control plane for Iris at `http://127.0.0.1:8765/v1`. It owns Iris conversations, messages, automations, devices, auth, and runtime routing, and connects to Hermes through the Iris Hermes Adapter.
+Iris Core is the local-first control plane for Iris at `http://127.0.0.1:8765/v1`. It owns devices, auth, runtime routing, and Core-only coordination, and connects to Hermes through the Iris Hermes Adapter.
 
-Core keeps the existing SQLite storage at `~/.agent-ui/core.sqlite3` by default for compatibility, seeds a local Hermes runtime, maps Hermes profiles into Iris agents, and keeps existing Hermes management routes available. Iris Desktop chat creates Core conversations and sends messages through Core, while Hermes platform deliveries land in `/v1/runtime-deliveries/hermes` and replay through `/v1/events`.
+Core stores Core-owned state at `~/.iris/core.sqlite3` by default. Hermes remains the source of truth for Hermes profiles, conversations, messages, models, commands, and jobs; Core normalizes those records through runtime adapters instead of copying them into SQLite. Existing default installs are migrated from `~/.agent-ui/core.sqlite3` with backups before duplicate runtime-owned tables are dropped. Iris Desktop chat creates short-lived Core draft targets and sends messages through Core, while Hermes platform deliveries land in `/v1/runtime-deliveries/hermes` and replay through the in-memory `/v1/events` live buffer.
 
 ## Iris Hermes Adapter
 
@@ -80,7 +80,7 @@ streaming:
   enabled: true
 ```
 
-Protect the Iris Core inbox with the same shared platform token:
+Protect the legacy Iris Core inbox compatibility routes with the same shared platform token. These routes are in-memory compatibility endpoints; they do not create a separate inbox database.
 
 ```bash
 IRIS_INBOX_TOKEN=replace-with-a-local-token

@@ -1,5 +1,15 @@
 # Iris Core API Implementation Plan
 
+## Source-Of-Truth Correction
+
+This plan is superseded where it implies that Core owns or persists Hermes
+profiles, conversations, messages, transcript events, or jobs. See
+`features/HERMES_SOURCE_OF_TRUTH.md` for the corrective implementation: Core is
+the normalized API facade, while Hermes remains the source of truth for
+Hermes-owned records. Core SQLite now keeps only Core-owned tables such as
+`schema_meta`, `devices`, `runtimes`, and `device_cursors`; live delivery events
+are process-local and best effort.
+
 ## Goal
 
 Create an Iris Core API that becomes the stable control plane for Iris clients.
@@ -93,8 +103,9 @@ Management sidecar:
   - FastAPI app that exposes profile, memory, skill, status, conversation, and
     inbox endpoints.
 
-- `sidecar/src/hermes_management_server/inbox_store.py`
-  - SQLite-backed inbox for Hermes-to-Iris deliveries.
+- Legacy `/v1/inbox/*` routes
+  - Now in-memory compatibility facades over live delivery events. See
+    `features/REMOVE_INBOX_SQLITE.md`.
 
 - `sidecar/src/hermes_management_server/conversations.py`
   - Schema-tolerant, read-only Hermes conversation discovery.
@@ -104,7 +115,9 @@ Hermes platform adapter:
 - `agentui-platform/adapter.py`
   - Registers the `agentui` platform inside Hermes.
   - Receives Iris messages at `/agentui/messages`.
-  - Delivers Hermes responses back to Iris through `/v1/inbox/messages`.
+  - Delivers Hermes responses back to Iris through
+    `/v1/runtime-deliveries/hermes`; `/v1/inbox/messages` remains a
+    memory-only compatibility facade for older/manual delivery calls.
   - Exposes model and slash command catalog endpoints in the Hermes runtime
     process.
 
@@ -938,8 +951,8 @@ complete.
   deliveries instead of only to legacy inbox rows.
 - Core materializes stream deltas, final assistant messages, and post-stream
   file/image deliveries into a single assistant message where appropriate.
-- Legacy `/v1/inbox/messages` remains available for compatibility, but desktop
-  chat no longer depends on it.
+- Legacy `/v1/inbox/messages` remains available for compatibility, but it is
+  memory-only and desktop chat no longer depends on it.
 - Core device routes exist:
   - `GET /v1/devices`
   - `GET /v1/devices/me`
@@ -1317,8 +1330,8 @@ Work:
 - Hermes jobs remain the execution backend for Hermes runtimes through the
   Core Hermes adapter.
 - Deliveries return through Core events/messages. Current Hermes installs that
-  still post to legacy `/v1/inbox/messages` are mirrored into Core for
-  compatibility.
+  still post to legacy `/v1/inbox/messages` are mirrored into live Core events
+  for compatibility without writing an inbox SQLite database.
 - Desktop `JobsView` calls Core automation endpoints through
   `useIrisAutomations`; `useHermesJobs` remains as a compatibility alias.
 

@@ -10,7 +10,14 @@ import urllib.parse
 import urllib.request
 from typing import Any
 
-from ..core_store import DEFAULT_RUNTIME_ID
+from ..core_store import (
+    DEFAULT_RUNTIME_ID,
+    agent_from_profile_summary,
+    conversation_from_runtime_summary,
+    core_message_from_hermes,
+)
+from ..hermes_store import HermesStore
+from ..security import ManagementError
 
 
 DEFAULT_GATEWAY_URL = "http://127.0.0.1:8642"
@@ -41,8 +48,16 @@ def local_runtime_config(*, management_url: str | None = None) -> dict[str, Any]
 class HermesRuntimeAdapter:
     kind = "hermes"
 
-    def __init__(self, runtime: dict[str, Any], agentui_token: str = "", hermes_api_token: str = "") -> None:
+    def __init__(
+        self,
+        runtime: dict[str, Any],
+        *,
+        hermes_store: HermesStore | None = None,
+        agentui_token: str = "",
+        hermes_api_token: str = "",
+    ) -> None:
         self.runtime = runtime
+        self.hermes_store = hermes_store
         self.token = agentui_token or os.environ.get("IRIS_TOKEN") or os.environ.get("AGENTUI_TOKEN") or ""
         self.hermes_api_token = (
             hermes_api_token
@@ -51,6 +66,68 @@ class HermesRuntimeAdapter:
             or ""
         )
         self.connection = runtime.get("connection") if isinstance(runtime.get("connection"), dict) else {}
+
+    def list_agents(self) -> list[dict[str, Any]]:
+        store = self.require_store()
+        profiles = store.profiles()
+        active_profile = next((profile.name for profile in profiles if profile.active), "default")
+        return [agent_from_profile_summary(self.runtime, profile, active_profile) for profile in profiles]
+
+    def get_agent(self, agent_id: str) -> dict[str, Any] | None:
+        return next((agent for agent in self.list_agents() if agent["id"] == agent_id), None)
+
+    def list_conversations(self, agent: dict[str, Any], limit: int = 80) -> list[dict[str, Any]]:
+        store = self.require_store()
+        result = store.conversations(str(agent["runtimeProfile"]), limit)
+        return [conversation_from_runtime_summary(agent, conversation) for conversation in result.conversations]
+
+    def get_conversation(
+        self,
+        agent: dict[str, Any],
+        external_id: str = "",
+        *,
+        chat_id: str = "",
+        conversation_id: str = "",
+    ) -> dict[str, Any] | None:
+        external_id = str(external_id or "").strip()
+        chat_id = str(chat_id or "").strip()
+        if external_id:
+            try:
+                detail = self.require_store().conversation_detail(str(agent["runtimeProfile"]), external_id)
+                return conversation_from_runtime_summary(agent, detail.conversation)
+            except ManagementError:
+                pass
+        for conversation in self.list_conversations(agent, 200):
+            if conversation_id and conversation["id"] == conversation_id:
+                return conversation
+            if chat_id and conversation["externalChatId"] == chat_id:
+                return conversation
+        return None
+
+    def get_conversation_messages(
+        self,
+        agent: dict[str, Any],
+        external_id: str = "",
+        *,
+        chat_id: str = "",
+        conversation_id: str = "",
+    ) -> tuple[list[dict[str, Any]], str | None]:
+        conversation = self.get_conversation(
+            agent,
+            external_id,
+            chat_id=chat_id,
+            conversation_id=conversation_id,
+        )
+        if not conversation or not conversation["externalSessionId"]:
+            return [], None
+        detail = self.require_store().conversation_detail(
+            str(agent["runtimeProfile"]),
+            str(conversation["externalSessionId"]),
+        )
+        return [
+            {**core_message_from_hermes(message), "conversationId": conversation["id"]}
+            for message in detail.messages
+        ], detail.warning
 
     def probe(self, profile: str = "default") -> dict[str, Any]:
         gateway_url = str(self.connection.get("gatewayUrl") or DEFAULT_GATEWAY_URL)
@@ -161,6 +238,11 @@ class HermesRuntimeAdapter:
     def list_automations(self, profile: str) -> dict[str, Any]:
         del profile
         return self.jobs_request("/api/jobs", method="GET")
+
+    def require_store(self) -> HermesStore:
+        if self.hermes_store is None:
+            raise RuntimeError("HermesStore is required for source-of-truth runtime reads.")
+        return self.hermes_store
 
     def create_automation(self, automation: dict[str, Any]) -> dict[str, Any]:
         body: dict[str, Any] = {}

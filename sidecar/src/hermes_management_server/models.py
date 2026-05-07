@@ -22,7 +22,8 @@ class HealthResponse(BaseModel):
 class InboxHealthResponse(BaseModel):
     ok: bool = True
     checkedAt: int
-    path: str
+    path: str = ""
+    storage: str = "memory"
 
 
 class StatusResponse(BaseModel):

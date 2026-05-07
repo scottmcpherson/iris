@@ -95,7 +95,11 @@ export async function saveHermesSkill(payload: {
   return bridge<HermesSkillSaveResult>("skill_save", payload);
 }
 
-export async function getHermesConversations(profile?: string, limit = 80, runtime?: HermesRuntimeConfig) {
+export async function getHermesConversations(
+  profile?: string,
+  limit = 80,
+  runtime?: HermesRuntimeConfig,
+): Promise<HermesConversationsResult> {
   const targetProfile = profile || "default";
   try {
     const agentResult = await getAgentUICoreAgentForProfile(targetProfile, runtime);
@@ -385,6 +389,13 @@ function agentResultError(result: unknown, fallback: string) {
 }
 
 function coreConversationToHermes(conversation: AgentUICoreConversation) {
+  const origin = {
+    ...(conversation.origin || {}),
+    runtimeId: conversation.runtimeId,
+    runtimeProfile: conversation.runtimeProfile,
+    externalSessionId: conversation.externalSessionId,
+    externalChatId: conversation.externalChatId,
+  };
   return {
     id: conversation.id,
     source: "agentui-core",
@@ -392,7 +403,7 @@ function coreConversationToHermes(conversation: AgentUICoreConversation) {
     title: conversation.title || conversation.summary || "Untitled session",
     preview: conversation.summary || String(conversation.metadata?.preview || ""),
     chatId: conversation.externalChatId || "",
-    origin: conversation.origin || {},
+    origin,
     startedAt: conversation.createdAt || null,
     endedAt: null,
     lastActiveAt: conversation.updatedAt || conversation.createdAt || null,

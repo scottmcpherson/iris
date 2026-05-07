@@ -212,7 +212,7 @@ class AgentUIAdapter(BasePlatformAdapter):
         )
 
     async def get_chat_info(self, chat_id: str) -> Dict[str, Any]:
-        return {"name": chat_id or self.default_chat_id, "type": "agentui-inbox"}
+        return {"name": chat_id or self.default_chat_id, "type": "agentui"}
 
     async def send_typing(self, chat_id: str, metadata=None) -> None:
         return None
