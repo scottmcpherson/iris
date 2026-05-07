@@ -25,7 +25,13 @@ import type {
   HermesRuntimeConfig,
   HermesSlashCommand,
 } from "../../types/hermes";
-import { filenameFromPath, isImagePath, mimeTypeFromPath } from "../../shared/files";
+import {
+  attachmentKindFromMime,
+  attachmentKindFromPath,
+  filenameFromPath,
+  isPreviewableImage,
+  mimeTypeFromPath,
+} from "../../shared/files";
 import {
   filterSlashCommands,
   moveSlashCommandIndex,
@@ -47,6 +53,7 @@ type ChatViewProps = {
   onSend: (options?: {
     attachments?: MessageAttachment[];
     modelSelection?: HermesModelSelection | null;
+    onAttachmentUploadError?: (error: { id: string; name: string; message: string }) => void;
   }) => Promise<boolean> | boolean | void;
   connected: boolean;
   profile: string;
@@ -316,17 +323,18 @@ export function ChatView({
       ...current,
       ...files.map((file) => {
         const mimeType = file.type || mimeTypeFromPath(file.name);
-        const image = mimeType.startsWith("image/") || isImagePath(file.name);
+        const kind = attachmentKindFromMime(mimeType, file.name);
+        const previewable = isPreviewableImage(mimeType, file.name);
         return {
           id: crypto.randomUUID(),
           name: file.name,
-          kind: image ? "image" : "file",
+          kind,
           mimeType,
           size: file.size,
           lastModified: file.lastModified,
           file,
-          previewUrl: image ? URL.createObjectURL(file) : undefined,
-          previewRevocable: image,
+          previewUrl: previewable ? URL.createObjectURL(file) : undefined,
+          previewRevocable: previewable,
           uploadStatus: "local",
         } satisfies AttachmentDraft;
       }),
@@ -340,16 +348,17 @@ export function ChatView({
       ...current,
       ...paths.map((path) => {
         const name = filenameFromPath(path);
-        const image = isImagePath(path);
+        const mimeType = mimeTypeFromPath(path);
+        const previewable = isPreviewableImage(mimeType, path);
         return {
           id: crypto.randomUUID(),
           name,
-          kind: image ? "image" : "file",
-          mimeType: mimeTypeFromPath(path),
+          kind: attachmentKindFromPath(path),
+          mimeType,
           size: -1,
           lastModified: Date.now(),
           localPath: path,
-          previewUrl: image ? convertFileSrc(path) : undefined,
+          previewUrl: previewable ? convertFileSrc(path) : undefined,
           uploadStatus: "local",
         } satisfies AttachmentDraft;
       }),
@@ -373,12 +382,33 @@ export function ChatView({
     if (requestActive || sendPendingRef.current) return;
     sendPendingRef.current = true;
     setSendPending(true);
+    setAttachments((current) =>
+      current.map((attachment) => ({ ...attachment, uploadStatus: "uploading", uploadError: undefined })),
+    );
     try {
       const sent = await onSend({
         attachments,
         modelSelection: displayedModelSelection,
+        onAttachmentUploadError: ({ id, message }) => {
+          setAttachments((current) =>
+            current.map((attachment) =>
+              attachment.id === id
+                ? { ...attachment, uploadStatus: "error", uploadError: message }
+                : attachment,
+            ),
+          );
+        },
       });
-      if (sent === false) return;
+      if (sent === false) {
+        setAttachments((current) =>
+          current.map((attachment) =>
+            attachment.uploadStatus === "uploading"
+              ? { ...attachment, uploadStatus: "local" }
+              : attachment,
+          ),
+        );
+        return;
+      }
       setAttachments([]);
     } finally {
       sendPendingRef.current = false;
@@ -536,7 +566,7 @@ export function ChatView({
       {dragActive ? (
         <div className="chat-drop-overlay" aria-hidden="true">
           <Paperclip size={20} />
-          <span>Drop photos or files to add them</span>
+          <span>Drop files to add them</span>
         </div>
       ) : null}
       {newChat ? (
@@ -662,7 +692,7 @@ export function ChatView({
               {addMenuOpen ? (
                 <div className="composer-context-menu" role="menu">
                   <button type="button" role="menuitem" onClick={openFilePicker}>
-                    <span>Add photos &amp; files</span>
+                    <span>Add files</span>
                     <Paperclip size={15} />
                   </button>
                 </div>
@@ -710,11 +740,17 @@ export function ChatView({
               </button>
             ) : (
               <button
-                type="submit"
+                type="button"
                 className="send-button"
                 title={sendPending ? "Sending message" : "Send message"}
                 disabled={sendPending}
                 aria-busy={sendPending}
+                onPointerDown={(event) => {
+                  if (event.button !== 0) return;
+                  event.preventDefault();
+                  void sendWithAttachments();
+                }}
+                onClick={sendWithAttachments}
               >
                 <Send size={16} />
               </button>

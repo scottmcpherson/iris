@@ -453,6 +453,7 @@ function App() {
             attachments: options?.attachments,
             modelSelection: options?.modelSelection,
             currentModelSelection: modelCatalog.currentSelection,
+            onAttachmentUploadError: options?.onAttachmentUploadError,
           })
         }
         connected={iris.connected}

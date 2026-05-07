@@ -9,6 +9,8 @@ import type {
   HermesStatus,
 } from "../types/hermes";
 import { coreAttachmentUrl, coreBaseUrl, coreRequest, type CoreResponse } from "./coreTransport";
+import type { AttachmentKind } from "../app/types";
+import { attachmentKindFromMime } from "../shared/files";
 
 export type AgentUICoreAgent = {
   id: string;
@@ -81,7 +83,7 @@ export type AgentUICoreAutomation = {
 export type AgentUICoreAttachment = {
   id: string;
   name: string;
-  kind: "image" | "file";
+  kind: AttachmentKind;
   mimeType: string;
   size: number;
   sha256?: string;
@@ -350,7 +352,7 @@ export async function uploadAgentUICoreAttachment(
     localPath?: string;
     name: string;
     mimeType?: string;
-    kind?: "image" | "file";
+    kind?: AttachmentKind;
     profile: string;
     conversationId?: string;
     messageId?: string;
@@ -364,7 +366,7 @@ export async function uploadAgentUICoreAttachment(
     form.set("file", payload.file, payload.name || payload.file.name);
     form.set("profile", payload.profile);
     form.set("runtimeId", payload.runtimeId || "runtime_local_hermes");
-    form.set("kind", payload.kind || (payload.mimeType?.startsWith("image/") ? "image" : "file"));
+    form.set("kind", payload.kind || attachmentKindFromMime(payload.mimeType || payload.file.type, payload.name));
     if (payload.conversationId) form.set("conversationId", payload.conversationId);
     if (payload.messageId) form.set("messageId", payload.messageId);
     if (payload.metadata) form.set("metadata", JSON.stringify(payload.metadata));

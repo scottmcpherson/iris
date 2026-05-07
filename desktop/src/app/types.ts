@@ -35,7 +35,7 @@ export type Message = {
 export type MessageAttachment = {
   id: string;
   name: string;
-  kind: "image" | "file";
+  kind: AttachmentKind;
   mimeType: string;
   size: number;
   lastModified?: number;
@@ -44,6 +44,8 @@ export type MessageAttachment = {
   localPath?: string;
   legacyLocalPath?: boolean;
 };
+
+export type AttachmentKind = "image" | "document" | "audio" | "video" | "archive" | "code" | "file";
 
 export type ProfileAction = "create" | "clone" | "rename" | "switch" | "delete";
 

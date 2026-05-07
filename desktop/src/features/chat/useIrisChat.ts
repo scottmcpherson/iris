@@ -22,7 +22,7 @@ import type {
   HermesRuntimeConfig,
 } from "../../types/hermes";
 import { compactText } from "../../shared/strings";
-import { formatPromptWithAttachments, uploadAttachmentsForSend } from "./chatAttachments";
+import { AttachmentUploadError, formatPromptWithAttachments, uploadAttachmentsForSend } from "./chatAttachments";
 import type { PendingProfileConversationSelection, SendMessageOptions } from "./chatTypes";
 import {
   booleanMetadata,
@@ -196,6 +196,9 @@ export function useAgentUIChat({ profile, runtimeConfig }: UseIrisChatOptions) {
         runtimeConfig,
       });
     } catch (error) {
+      if (error instanceof AttachmentUploadError) {
+        if (!Array.isArray(options)) options.onAttachmentUploadError?.(error.attachment);
+      }
       setInput(prompt);
       sendInFlightRef.current = false;
       return false;

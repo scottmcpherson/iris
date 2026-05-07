@@ -40,15 +40,27 @@ def text_with_runtime_attachments(text: str, attachments: Any) -> str:
         name = str(item.get("name") or "attachment").strip()
         mime_type = str(item.get("mimeType") or item.get("kind") or "file").strip()
         size = item.get("size")
-        size_label = f", {size} bytes" if isinstance(size, int) and size >= 0 else ""
-        path_label = f", path: {runtime_path}" if runtime_path else ""
-        rows.append(f"{index + 1}. {name} ({mime_type}{size_label}{path_label})")
+        size_label = f", {format_attachment_size(size)}" if isinstance(size, int) and size >= 0 else ""
+        rows.append(f"{index + 1}. {name} ({mime_type}{size_label})")
+        if runtime_path:
+            rows.append(f"   Runtime path: {runtime_path}")
     if not rows:
         return text
     visible_text = text.strip() or "Use the attached files as context."
     if "\n\nAttached files:\n" in visible_text:
         return visible_text
     return f"{visible_text}\n\nAttached files:\n" + "\n".join(rows)
+
+
+def format_attachment_size(bytes_value: int) -> str:
+    units = ["B", "KB", "MB", "GB"]
+    value = float(bytes_value)
+    unit_index = 0
+    while value >= 1024 and unit_index < len(units) - 1:
+        value /= 1024
+        unit_index += 1
+    precision = 0 if value >= 10 or unit_index == 0 else 1
+    return f"{value:.{precision}f} {units[unit_index]}"
 
 
 def local_runtime_config(*, management_url: str | None = None) -> dict[str, Any]:

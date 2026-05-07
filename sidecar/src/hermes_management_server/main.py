@@ -27,11 +27,14 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from .core_store import (
     DEFAULT_RUNTIME_ID,
     CoreStore,
-    MAX_ATTACHMENT_SIZE_BYTES,
+    attachment_size_limit_label,
     chat_id_for_conversation,
     clamp_int,
     client_attachment_payload,
     draft_conversation,
+    max_attachment_size_bytes,
+    normalize_attachment_kind,
+    normalize_attachment_mime_type,
     now,
     random_id,
     runtime_attachment_payload,
@@ -241,6 +244,7 @@ def safe_attachment_name(value: str) -> str:
 
 
 def attachment_mime_type(*, filename: str, content_type: str, head: bytes) -> str:
+    lower_head = head[:512].lstrip().lower()
     if head.startswith(b"\x89PNG\r\n\x1a\n"):
         return "image/png"
     if head.startswith(b"\xff\xd8\xff"):
@@ -251,17 +255,97 @@ def attachment_mime_type(*, filename: str, content_type: str, head: bytes) -> st
         return "application/pdf"
     if head.startswith(b"RIFF") and len(head) >= 12 and head[8:12] == b"WEBP":
         return "image/webp"
+    if head.startswith(b"RIFF") and len(head) >= 12 and head[8:12] == b"WAVE":
+        return "audio/wav"
+    if head.startswith(b"fLaC"):
+        return "audio/flac"
+    if head.startswith(b"ID3"):
+        return "audio/mpeg"
+    if head.startswith(b"\x1f\x8b"):
+        return "application/gzip"
+    if head.startswith(b"PK\x03\x04") or head.startswith(b"PK\x05\x06") or head.startswith(b"PK\x07\x08"):
+        return office_or_zip_mime_type(filename)
+    if head.startswith(b"7z\xbc\xaf\x27\x1c"):
+        return "application/x-7z-compressed"
+    if head.startswith(b"Rar!\x1a\x07"):
+        return "application/vnd.rar"
+    if len(head) >= 12 and head[4:8] == b"ftyp":
+        major_brand = head[8:12]
+        if major_brand in {b"qt  "}:
+            return "video/quicktime"
+        if major_brand in {b"heic", b"heix", b"hevc", b"hevx"}:
+            return "image/heic"
+        if major_brand in {b"heif", b"mif1"}:
+            return "image/heif"
+        if major_brand in {b"avif", b"avis"}:
+            return "image/avif"
+        return "video/mp4"
+    if lower_head.startswith(b"<svg") or (lower_head.startswith(b"<?xml") and b"<svg" in lower_head):
+        return "image/svg+xml"
     guessed = mimetypes.guess_type(filename)[0] or ""
-    mime_type = (content_type or guessed or "application/octet-stream").split(";", 1)[0].strip().lower()
-    if mime_type == "image/jpg":
-        return "image/jpeg"
-    return mime_type
+    return normalize_attachment_mime_type(guessed or content_type or "application/octet-stream")
 
 
-def attachment_kind(mime_type: str, hint: str = "") -> str:
-    if hint == "image" or mime_type.startswith("image/"):
-        return "image"
-    return "file"
+def office_or_zip_mime_type(filename: str) -> str:
+    extension = Path(filename).suffix.lower().lstrip(".")
+    return {
+        "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        "epub": "application/epub+zip",
+    }.get(extension, "application/zip")
+
+
+def attachment_kind(mime_type: str, filename: str = "", hint: str = "") -> str:
+    extension = Path(filename).suffix.lower().lstrip(".")
+    extension_kinds = {
+        "pdf": "document",
+        "doc": "document",
+        "docx": "document",
+        "xls": "document",
+        "xlsx": "document",
+        "ppt": "document",
+        "pptx": "document",
+        "odt": "document",
+        "ods": "document",
+        "odp": "document",
+        "rtf": "document",
+        "csv": "document",
+        "epub": "document",
+        "html": "document",
+        "htm": "document",
+        "json": "document",
+        "xml": "document",
+        "md": "code",
+        "markdown": "code",
+        "yaml": "code",
+        "yml": "code",
+        "toml": "code",
+        "js": "code",
+        "jsx": "code",
+        "ts": "code",
+        "tsx": "code",
+        "py": "code",
+        "rb": "code",
+        "go": "code",
+        "rs": "code",
+        "mp3": "audio",
+        "wav": "audio",
+        "m4a": "audio",
+        "aac": "audio",
+        "ogg": "audio",
+        "flac": "audio",
+        "mp4": "video",
+        "mov": "video",
+        "webm": "video",
+        "zip": "archive",
+        "tar": "archive",
+        "gz": "archive",
+        "tgz": "archive",
+        "7z": "archive",
+        "rar": "archive",
+    }
+    return normalize_attachment_kind(hint or extension_kinds.get(extension, ""), mime_type)
 
 
 def parse_attachment_metadata(value: str) -> dict[str, Any]:
@@ -405,8 +489,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     if not head:
                         head = chunk[:512]
                     size += len(chunk)
-                    if size > MAX_ATTACHMENT_SIZE_BYTES:
-                        raise ManagementError("Attachment exceeds the 25 MB limit.", status_code=413)
+                    if size > max_attachment_size_bytes():
+                        raise ManagementError(
+                            f"Attachment exceeds the {attachment_size_limit_label()} limit.",
+                            status_code=413,
+                        )
                     hasher.update(chunk)
                     handle.write(chunk)
             if size <= 0:
@@ -426,7 +513,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     owner_device_id=str(getattr(getattr(request, "state", None), "agentui_device", {}).get("id", "")),
                     name=filename,
                     mime_type=mime_type,
-                    kind=attachment_kind(mime_type, kind),
+                    kind=attachment_kind(mime_type, filename, kind),
                     size_bytes=size,
                     sha256=hasher.hexdigest(),
                     metadata=metadata_payload,

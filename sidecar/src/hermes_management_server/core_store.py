@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import secrets
 import shutil
@@ -18,16 +19,44 @@ from .models import ConversationMessage, ConversationSummary, ProfileSummary
 CORE_SCHEMA_VERSION = 4
 DEFAULT_RUNTIME_ID = "runtime_local_hermes"
 PROFILE_SLUG_RE = re.compile(r"[^A-Za-z0-9_.-]+")
-MAX_ATTACHMENT_SIZE_BYTES = 25 * 1024 * 1024
+DEFAULT_MAX_ATTACHMENT_SIZE_MB = 250
+MAX_ATTACHMENT_SIZE_BYTES = DEFAULT_MAX_ATTACHMENT_SIZE_MB * 1024 * 1024
 MAX_ATTACHMENTS_PER_MESSAGE = 8
-ALLOWED_ATTACHMENT_MIME_TYPES = {
-    "image/png",
-    "image/jpeg",
-    "image/webp",
-    "image/gif",
+ATTACHMENT_KINDS = {"image", "document", "audio", "video", "archive", "code", "file"}
+DOCUMENT_ATTACHMENT_MIME_TYPES = {
     "application/pdf",
-    "text/plain",
+    "application/msword",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "application/vnd.ms-excel",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "application/vnd.ms-powerpoint",
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    "application/vnd.oasis.opendocument.text",
+    "application/vnd.oasis.opendocument.spreadsheet",
+    "application/vnd.oasis.opendocument.presentation",
+    "application/rtf",
+    "application/json",
+    "application/xml",
+    "application/epub+zip",
+    "text/csv",
+    "text/html",
+}
+CODE_ATTACHMENT_MIME_TYPES = {
+    "application/javascript",
+    "application/typescript",
+    "application/toml",
+    "application/x-yaml",
+    "application/yaml",
     "text/markdown",
+}
+ARCHIVE_ATTACHMENT_MIME_TYPES = {
+    "application/zip",
+    "application/x-tar",
+    "application/gzip",
+    "application/x-gzip",
+    "application/x-7z-compressed",
+    "application/vnd.rar",
+    "application/x-rar-compressed",
 }
 DUPLICATE_RUNTIME_TABLES = (
     "agents",
@@ -121,6 +150,23 @@ def clamp_int(value: Any, *, default: int, minimum: int, maximum: int) -> int:
     except (TypeError, ValueError):
         number = default
     return min(max(number, minimum), maximum)
+
+
+def max_attachment_size_mb() -> int:
+    return clamp_int(
+        os.environ.get("IRIS_MAX_ATTACHMENT_SIZE_MB"),
+        default=DEFAULT_MAX_ATTACHMENT_SIZE_MB,
+        minimum=1,
+        maximum=4096,
+    )
+
+
+def max_attachment_size_bytes() -> int:
+    return max_attachment_size_mb() * 1024 * 1024
+
+
+def attachment_size_limit_label() -> str:
+    return f"{max_attachment_size_mb()} MB"
 
 
 class CoreStore:
@@ -441,12 +487,12 @@ class CoreStore:
     ) -> dict[str, Any]:
         if not runtime_id or not profile:
             raise ValueError("runtime_id and profile are required.")
-        if size_bytes < 0 or size_bytes > MAX_ATTACHMENT_SIZE_BYTES:
-            raise ValueError("Attachment is too large.")
+        if size_bytes < 0 or size_bytes > max_attachment_size_bytes():
+            raise ValueError(f"Attachment exceeds the {attachment_size_limit_label()} limit.")
         normalized_mime = normalize_attachment_mime_type(mime_type)
-        if normalized_mime not in ALLOWED_ATTACHMENT_MIME_TYPES:
+        if not is_allowed_attachment_mime(normalized_mime):
             raise ValueError(f"Unsupported attachment type: {normalized_mime}.")
-        normalized_kind = "image" if kind == "image" or normalized_mime.startswith("image/") else "file"
+        normalized_kind = normalize_attachment_kind(kind, normalized_mime)
         attachment_id = random_id("att")
         blob_path = self.blob_path_for_sha256(sha256)
         blob_path.parent.mkdir(parents=True, exist_ok=True)
@@ -735,6 +781,39 @@ def normalize_attachment_mime_type(value: str) -> str:
     return mime_type or "application/octet-stream"
 
 
+def is_allowed_attachment_mime(mime_type: str) -> bool:
+    normalized = normalize_attachment_mime_type(mime_type)
+    if normalized == "application/octet-stream":
+        return True
+    if normalized.startswith(("image/", "audio/", "video/", "text/")):
+        return True
+    return normalized in (
+        DOCUMENT_ATTACHMENT_MIME_TYPES
+        | CODE_ATTACHMENT_MIME_TYPES
+        | ARCHIVE_ATTACHMENT_MIME_TYPES
+    )
+
+
+def normalize_attachment_kind(kind: str, mime_type: str) -> str:
+    value = str(kind or "").strip().lower()
+    if value in ATTACHMENT_KINDS:
+        return value
+    normalized_mime = normalize_attachment_mime_type(mime_type)
+    if normalized_mime.startswith("image/"):
+        return "image"
+    if normalized_mime.startswith("audio/"):
+        return "audio"
+    if normalized_mime.startswith("video/"):
+        return "video"
+    if normalized_mime.startswith("text/") or normalized_mime in CODE_ATTACHMENT_MIME_TYPES:
+        return "code"
+    if normalized_mime in DOCUMENT_ATTACHMENT_MIME_TYPES:
+        return "document"
+    if normalized_mime in ARCHIVE_ATTACHMENT_MIME_TYPES:
+        return "archive"
+    return "file"
+
+
 def message_content_hash_candidates(content: str) -> set[str]:
     value = str(content or "")
     if not value:
@@ -764,7 +843,7 @@ def attachment_from_row(row: sqlite3.Row, *, include_storage: bool = False) -> d
         "sha256": str(row["sha256"]),
         "createdAt": int(row["created_at"]),
         "updatedAt": int(row["updated_at"]),
-        "previewUrl": f"/v1/attachments/{row['id']}/preview",
+        "previewUrl": f"/v1/attachments/{row['id']}/preview" if str(row["kind"]) == "image" else "",
         "downloadUrl": f"/v1/attachments/{row['id']}/content",
         "metadata": loads(row["metadata_json"]),
     }
@@ -784,7 +863,10 @@ def client_attachment_payload(attachment: dict[str, Any]) -> dict[str, Any]:
     payload = {
         "id": str(attachment.get("id") or ""),
         "name": str(attachment.get("name") or "attachment"),
-        "kind": "image" if attachment.get("kind") == "image" else "file",
+        "kind": normalize_attachment_kind(
+            str(attachment.get("kind") or ""),
+            str(attachment.get("mimeType") or ""),
+        ),
         "mimeType": str(attachment.get("mimeType") or ""),
         "size": int(attachment.get("size") if isinstance(attachment.get("size"), int) else -1),
         "sha256": str(attachment.get("sha256") or ""),
@@ -811,8 +893,8 @@ def legacy_attachment_from_ref(ref: dict[str, Any]) -> dict[str, Any] | None:
     if not path:
         return None
     name = str(ref.get("name") or Path(path).name or "Attached file")
-    kind = "image" if ref.get("kind") == "image" else "file"
     mime_type = normalize_attachment_mime_type(str(ref.get("mimeType") or "application/octet-stream"))
+    kind = normalize_attachment_kind(str(ref.get("kind") or ""), mime_type)
     return {
         "id": str(ref.get("id") or random_id("legacy_att")),
         "name": name,

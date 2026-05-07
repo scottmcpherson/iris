@@ -163,6 +163,49 @@ describe("agentuiCore", () => {
     );
   });
 
+  it.each([
+    ["report.pdf", "application/pdf", "document"],
+    ["clip.mp4", "video/mp4", "video"],
+    ["payload.bin", "application/octet-stream", "file"],
+  ])("uploads %s with the richer attachment kind", async (filename, mimeType, kind) => {
+    const fetch = vi.fn(async (_url: string, init: RequestInit) => {
+      const form = init.body as FormData;
+      expect(form.get("kind")).toBe(kind);
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          ok: true,
+          attachment: {
+            id: "att_123",
+            name: filename,
+            kind,
+            mimeType,
+            size: 12,
+            previewUrl: "",
+            downloadUrl: "/v1/attachments/att_123/content",
+          },
+        }),
+      };
+    });
+    vi.stubGlobal("fetch", fetch);
+
+    const result = await uploadAgentUICoreAttachment(
+      {
+        file: new File(["file-bytes"], filename, { type: mimeType }),
+        name: filename,
+        mimeType,
+        profile: "default",
+        messageId: "client-message-1",
+      },
+      defaultRuntimeConfig,
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.attachment.kind).toBe(kind);
+    expect(result.attachment.downloadUrl).toBe("http://127.0.0.1:8765/v1/attachments/att_123/content");
+  });
+
   it("does not rewrite browser or Tauri local preview URLs as Core paths", () => {
     expect(agentUICoreAttachmentUrl(defaultRuntimeConfig, "asset://localhost/%2FUsers%2Fscott%2FDesktop%2Fphoto.png")).toBe(
       "asset://localhost/%2FUsers%2Fscott%2FDesktop%2Fphoto.png",

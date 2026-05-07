@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import hashlib
 import sqlite3
 
-from hermes_management_server.core_store import CoreStore
+from hermes_management_server.core_store import CoreStore, is_allowed_attachment_mime
 
 
 def test_core_store_creates_only_core_owned_schema(tmp_path):
@@ -85,3 +86,28 @@ def test_source_of_truth_migration_drops_duplicate_tables_and_preserves_core_dat
     }
     assert store.list_devices()[0]["id"] == "dev_1"
     assert store.list_runtimes()[0]["id"] == "runtime_local_hermes"
+
+
+def test_core_store_accepts_general_attachment_mime_types(tmp_path):
+    store = CoreStore(tmp_path / "core.sqlite3")
+    source = tmp_path / "song.mp3"
+    content = b"ID3audio"
+    source.write_bytes(content)
+
+    attachment = store.create_attachment(
+        source_path=source,
+        runtime_id="runtime_local_hermes",
+        profile="default",
+        name="song.mp3",
+        mime_type="audio/mpeg",
+        kind="audio",
+        size_bytes=len(content),
+        sha256=hashlib.sha256(content).hexdigest(),
+    )
+
+    assert attachment["kind"] == "audio"
+    assert attachment["mimeType"] == "audio/mpeg"
+    assert attachment["previewUrl"] == ""
+    assert is_allowed_attachment_mime("video/mp4")
+    assert is_allowed_attachment_mime("application/zip")
+    assert is_allowed_attachment_mime("application/octet-stream")

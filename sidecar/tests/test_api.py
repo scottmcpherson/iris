@@ -1084,7 +1084,7 @@ def test_core_send_persists_top_level_attachments_as_message_metadata(tmp_path, 
     upload = client.post(
         "/v1/attachments",
         data={"profile": agent["runtimeProfile"], "runtimeId": agent["runtimeId"]},
-        files={"file": ("image.png", b"\x89PNG\r\n\x1a\nimage-bytes", "image/png")},
+        files={"file": ("report.pdf", b"%PDF-1.7\npdf-bytes", "application/pdf")},
     )
     attachment = upload.json()["attachment"]
 
@@ -1108,12 +1108,76 @@ def test_core_send_persists_top_level_attachments_as_message_metadata(tmp_path, 
     persisted_attachment = rows["byMessageId"]["client-message-attachments"]["attachments"][0]
     runtime_attachment = seen[0]["body"]["metadata"]["attachments"][0]
     assert persisted_attachment["id"] == attachment["id"]
-    assert persisted_attachment["previewUrl"] == f"/v1/attachments/{attachment['id']}/preview"
+    assert persisted_attachment["kind"] == "document"
+    assert persisted_attachment["mimeType"] == "application/pdf"
+    assert persisted_attachment["previewUrl"] == ""
+    assert persisted_attachment["downloadUrl"] == f"/v1/attachments/{attachment['id']}/content"
     assert "runtime" not in persisted_attachment
     assert runtime_attachment["id"] == attachment["id"]
+    assert runtime_attachment["kind"] == "document"
+    assert runtime_attachment["mimeType"] == "application/pdf"
+    assert runtime_attachment["size"] == len(b"%PDF-1.7\npdf-bytes")
+    assert runtime_attachment["sha256"] == attachment["sha256"]
     assert runtime_attachment["runtime"]["path"].endswith(runtime_attachment["sha256"])
     assert "/tmp/image.png" not in seen[0]["body"]["text"]
+    assert "report.pdf (application/pdf" in seen[0]["body"]["text"]
+    assert "Runtime path:" in seen[0]["body"]["text"]
     assert runtime_attachment["runtime"]["path"] in seen[0]["body"]["text"]
+
+
+def test_core_upload_accepts_universal_attachment_kinds_and_content(tmp_path):
+    client = make_client(tmp_path / ".hermes")
+    cases = [
+        ("report.pdf", b"%PDF-1.7\npdf-bytes", "application/pdf", "document"),
+        ("song.mp3", b"ID3\x04\x00\x00audio-bytes", "audio/mpeg", "audio"),
+        ("clip.mp4", b"\x00\x00\x00\x18ftypmp42video-bytes", "video/mp4", "video"),
+        ("files.zip", b"PK\x03\x04zip-bytes", "application/zip", "archive"),
+        ("blob.bin", b"\x00\x01\x02binary", "application/octet-stream", "file"),
+    ]
+
+    for filename, content, mime_type, kind in cases:
+        upload = client.post(
+            "/v1/attachments",
+            data={"profile": "default", "runtimeId": "runtime_local_hermes"},
+            files={"file": (filename, content, mime_type)},
+        )
+
+        assert upload.status_code == 200
+        attachment = upload.json()["attachment"]
+        assert attachment["kind"] == kind
+        assert attachment["mimeType"] == mime_type
+        assert attachment["size"] == len(content)
+        assert attachment["downloadUrl"] == f"/v1/attachments/{attachment['id']}/content"
+        assert attachment["previewUrl"] == ""
+
+        preview = client.get(f"/v1/attachments/{attachment['id']}/preview")
+        download = client.get(f"/v1/attachments/{attachment['id']}/content")
+
+        assert preview.status_code == 415
+        assert download.status_code == 200
+        assert download.content == content
+        assert download.headers["content-type"].split(";")[0] == mime_type
+
+
+def test_core_upload_rejects_empty_and_oversized_files_with_limit(tmp_path, monkeypatch):
+    client = make_client(tmp_path / ".hermes")
+
+    empty = client.post(
+        "/v1/attachments",
+        data={"profile": "default"},
+        files={"file": ("empty.txt", b"", "text/plain")},
+    )
+    monkeypatch.setenv("IRIS_MAX_ATTACHMENT_SIZE_MB", "1")
+    oversized = client.post(
+        "/v1/attachments",
+        data={"profile": "default"},
+        files={"file": ("large.bin", b"x" * (1024 * 1024 + 1), "application/octet-stream")},
+    )
+
+    assert empty.status_code == 400
+    assert empty.json()["error"] == "Attachment file is empty."
+    assert oversized.status_code == 413
+    assert oversized.json()["error"] == "Attachment exceeds the 1 MB limit."
 
 
 def test_core_rejects_unknown_agent_filters(tmp_path):

@@ -20,6 +20,7 @@ DEFAULT_CORE_URL = "http://127.0.0.1:8765"
 IRIS_CORE_TOKEN_ACCOUNT = "iris-core-token"
 LEGACY_SIDECAR_TOKEN_ACCOUNT = "hermes-sidecar-token"
 REMOTE_TOKEN_SERVICE = "Iris Desktop"
+DEFAULT_MAX_ATTACHMENT_SIZE_MB = 250
 
 
 def main() -> None:
@@ -75,15 +76,16 @@ def core_upload_path(payload: dict[str, Any]) -> dict[str, Any]:
     path = Path(str(payload.get("localPath") or payload.get("path") or "")).expanduser()
     if not path.is_file():
         return {"ok": False, "error": "Attachment file does not exist."}
-    if path.stat().st_size > 25 * 1024 * 1024:
-        return {"ok": False, "error": "Attachment exceeds the 25 MB limit."}
+    size_limit_mb = max_attachment_size_mb()
+    if path.stat().st_size > size_limit_mb * 1024 * 1024:
+        return {"ok": False, "error": f"Attachment exceeds the {size_limit_mb} MB limit."}
 
     filename = str(payload.get("name") or path.name or "attachment")
     mime_type = str(payload.get("mimeType") or mimetypes.guess_type(filename)[0] or "application/octet-stream")
     fields = {
         "profile": str(payload.get("profile") or "default"),
         "runtimeId": str(payload.get("runtimeId") or "runtime_local_hermes"),
-        "kind": str(payload.get("kind") or ("image" if mime_type.startswith("image/") else "file")),
+        "kind": str(payload.get("kind") or kind_from_mime(mime_type)),
         "conversationId": str(payload.get("conversationId") or ""),
         "messageId": str(payload.get("messageId") or ""),
         "metadata": json.dumps(payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {}),
@@ -103,6 +105,31 @@ def core_upload_path(payload: dict[str, Any]) -> dict[str, Any]:
         timeout=30,
     )
     return result
+
+
+def max_attachment_size_mb() -> int:
+    try:
+        value = int(os.environ.get("IRIS_MAX_ATTACHMENT_SIZE_MB", ""))
+    except ValueError:
+        value = DEFAULT_MAX_ATTACHMENT_SIZE_MB
+    return min(max(value or DEFAULT_MAX_ATTACHMENT_SIZE_MB, 1), 4096)
+
+
+def kind_from_mime(mime_type: str) -> str:
+    normalized = str(mime_type or "").split(";", 1)[0].strip().lower()
+    if normalized.startswith("image/"):
+        return "image"
+    if normalized.startswith("audio/"):
+        return "audio"
+    if normalized.startswith("video/"):
+        return "video"
+    if normalized.startswith("text/"):
+        return "code"
+    if normalized in {"application/zip", "application/x-tar", "application/gzip", "application/x-7z-compressed", "application/vnd.rar"}:
+        return "archive"
+    if normalized in {"application/pdf", "application/json", "application/xml", "application/rtf"}:
+        return "document"
+    return "file"
 
 
 def core_json_request(

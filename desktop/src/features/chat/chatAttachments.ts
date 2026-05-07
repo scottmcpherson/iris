@@ -2,7 +2,7 @@ import type { MessageAttachment } from "../../app/types";
 import { uploadAgentUICoreAttachment } from "../../lib/agentuiCore";
 import type { HermesRuntimeConfig } from "../../types/hermes";
 import { formatAttachmentSize } from "../../shared/files";
-import type { SendableAttachment } from "./chatTypes";
+import type { AttachmentUploadFailure, SendableAttachment } from "./chatTypes";
 
 type UploadAttachmentsForSendOptions = {
   profile: string;
@@ -43,11 +43,25 @@ export async function uploadAttachmentsForSend(
       options.runtimeConfig,
     );
     if (!result.ok || !result.attachment) {
-      throw new Error(result.error || `Could not upload ${attachment.name}.`);
+      throw new AttachmentUploadError({
+        id: attachment.id,
+        name: attachment.name,
+        message: uploadErrorMessage(attachment.name, result.error),
+      });
     }
     uploaded.push(mergeUploadedAttachment(attachment, result.attachment));
   }
   return uploaded;
+}
+
+export class AttachmentUploadError extends Error {
+  attachment: AttachmentUploadFailure;
+
+  constructor(attachment: AttachmentUploadFailure) {
+    super(attachment.message);
+    this.name = "AttachmentUploadError";
+    this.attachment = attachment;
+  }
 }
 
 export function mergeUploadedAttachment(draft: SendableAttachment, uploaded: MessageAttachment): MessageAttachment {
@@ -75,4 +89,9 @@ export function formatPromptWithAttachments(prompt: string, attachments: Message
     .join("\n");
 
   return [prompt || "Use the attached files as context.", `Attached files:\n${attachmentSummary}`].join("\n\n");
+}
+
+function uploadErrorMessage(name: string, error = "") {
+  const detail = error.trim() || "Upload failed.";
+  return detail.includes(name) ? detail : `${name}: ${detail}`;
 }

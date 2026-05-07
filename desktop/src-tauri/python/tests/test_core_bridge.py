@@ -92,6 +92,23 @@ class IrisBridgeTests(unittest.TestCase):
         self.assertFalse(result["ok"])
         self.assertEqual(result["error"], "Core request path is required.")
 
+    def test_core_upload_path_uses_configured_size_limit(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "large.bin"
+            path.write_bytes(b"x" * (1024 * 1024 + 1))
+            old_value = os.environ.get("IRIS_MAX_ATTACHMENT_SIZE_MB")
+            os.environ["IRIS_MAX_ATTACHMENT_SIZE_MB"] = "1"
+            try:
+                result = core_bridge.core_upload_path({"localPath": str(path), "profile": "default"})
+            finally:
+                if old_value is None:
+                    os.environ.pop("IRIS_MAX_ATTACHMENT_SIZE_MB", None)
+                else:
+                    os.environ["IRIS_MAX_ATTACHMENT_SIZE_MB"] = old_value
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["error"], "Attachment exceeds the 1 MB limit.")
+
 
 if __name__ == "__main__":
     unittest.main()

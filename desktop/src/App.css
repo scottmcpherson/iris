@@ -1373,11 +1373,22 @@ button:disabled {
   justify-content: center;
   width: 112px;
   height: 112px;
+  padding: 0;
   overflow: hidden;
   border: 1px solid rgba(255, 255, 255, 0.075);
-  border-radius: 14px;
+  border-radius: 8px;
   color: #b8c0ce;
   background: #252523;
+  cursor: pointer;
+}
+
+.message-attachment-card:disabled {
+  cursor: default;
+}
+
+.message-attachment-card:focus-visible {
+  outline: 2px solid rgba(240, 154, 105, 0.55);
+  outline-offset: 2px;
 }
 
 .message-attachment-card img {
@@ -1421,6 +1432,19 @@ button:disabled {
 .message-attachment-card:hover .message-attachment-label {
   opacity: 1;
   transform: translateY(0);
+}
+
+.message-attachment-kind {
+  position: absolute;
+  top: 7px;
+  left: 7px;
+  padding: 3px 5px;
+  border-radius: 5px;
+  color: #c5ccd7;
+  background: rgba(12, 13, 15, 0.52);
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
 }
 
 .message.tool {
@@ -1616,23 +1640,52 @@ button:disabled {
   background: #0b0e13;
 }
 
-.message-markdown table {
-  display: block;
+.message-markdown-table {
   max-width: 100%;
+  margin-block: 14px;
   overflow-x: auto;
+  border: 1px solid rgba(255, 255, 255, 0.11);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.018);
+}
+
+.message-markdown-table:focus-visible {
+  outline: 2px solid rgba(154, 199, 255, 0.42);
+  outline-offset: 2px;
+}
+
+.message-markdown table {
+  width: max-content;
+  min-width: 100%;
   border-collapse: collapse;
+  table-layout: auto;
   font-size: 14px;
+  overflow-wrap: normal;
+  word-break: normal;
 }
 
 .message-markdown th,
 .message-markdown td {
-  padding: 8px 10px;
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  min-width: 9ch;
+  padding: 10px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.095);
+  vertical-align: middle;
+  overflow-wrap: normal;
+  word-break: normal;
 }
 
 .message-markdown th {
   color: #f4f5f7;
   background: rgba(255, 255, 255, 0.075);
+}
+
+.message-markdown td {
+  color: #eceef2;
+}
+
+.message-markdown th:first-child,
+.message-markdown td:first-child {
+  min-width: 14ch;
 }
 
 .message-markdown hr {
@@ -2180,6 +2233,12 @@ button:disabled {
   border-radius: 9px;
   color: #d8dde7;
   background: rgba(255, 255, 255, 0.045);
+}
+
+.attachment-pill.error {
+  border-color: rgba(245, 101, 101, 0.4);
+  color: #ffd6d6;
+  background: rgba(245, 101, 101, 0.08);
 }
 
 .attachment-pill img,

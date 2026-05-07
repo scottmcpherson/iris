@@ -10,6 +10,7 @@ export type SendMessageOptions = {
   attachments?: SendableAttachment[];
   modelSelection?: HermesModelSelection | null;
   currentModelSelection?: HermesModelSelection | null;
+  onAttachmentUploadError?: (error: AttachmentUploadFailure) => void;
 };
 
 export type SendableAttachment = MessageAttachment & {
@@ -17,4 +18,10 @@ export type SendableAttachment = MessageAttachment & {
   upload?: MessageAttachment;
   uploadStatus?: "local" | "uploading" | "uploaded" | "error";
   uploadError?: string;
+};
+
+export type AttachmentUploadFailure = {
+  id: string;
+  name: string;
+  message: string;
 };
