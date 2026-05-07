@@ -170,12 +170,12 @@ export function ChatView({
       (filteredSlashCommands.length || slashCommandsLoading || slashCommandsError || slashCommands.length === 0),
   );
   const profileSelectorTitle = profileSelectionLocked
-    ? "Profile is locked for this conversation"
+    ? "Agent is locked for this conversation"
     : !connected
-      ? "Connect Iris to select a profile"
+      ? "Connect Iris to select an agent"
       : profiles.length < 2
-        ? "Only one profile is available"
-        : "Change agent profile";
+        ? "Only one agent is available"
+        : "Change agent";
 
   useEffect(() => {
     if (!addMenuOpen) return undefined;

@@ -2,15 +2,10 @@ export type HermesConnectionMode = "local" | "remote";
 
 export type HermesRuntimeConfig = {
   connectionMode: HermesConnectionMode;
-  customHermesPath: string;
   provider: string;
   model: string;
   remoteUrl: string;
-  gatewayUrl: string;
-  managementApiUrl: string;
-  agentuiGatewayUrls?: Record<string, string>;
-  profileApiUrls: Record<string, string>;
-  profileSidecarUrls: Record<string, string>;
+  coreApiUrl: string;
 };
 
 export type HermesPathCandidate = {
@@ -120,8 +115,7 @@ export type HermesStatus = {
   checkedAt: number;
   connectionMode?: HermesConnectionMode;
   remoteUrl?: string;
-  gatewayUrl?: string;
-  managementApiUrl?: string;
+  coreApiUrl?: string;
   activeApiUrl?: string;
   gatewayStatus?: HermesEndpointStatus;
   remoteStatus?: HermesEndpointStatus;
@@ -260,8 +254,10 @@ export type HermesSkillHistoryEntry = {
 };
 
 export type HermesSkillDetail = HermesSkill & {
+  ok?: boolean;
   content: string;
   history: HermesSkillHistoryEntry[];
+  error?: string;
 };
 
 export type HermesSkills = {
@@ -336,7 +332,7 @@ export type HermesInboxMessagesResult = {
   error?: string;
 };
 
-export type RemoteCredentialKind = "hermes" | "sidecar";
+export type RemoteCredentialKind = "core" | "sidecar";
 
 export type RemoteCredentialStatus = {
   ok: boolean;

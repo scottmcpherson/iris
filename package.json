@@ -9,7 +9,7 @@
   "scripts": {
     "bootstrap": "npm install && npm run sidecar:setup",
     "sidecar:setup": "node scripts/setup-sidecar.mjs",
-    "sidecar:dev": "sidecar/.venv/bin/hermes-sidecar --host 127.0.0.1 --port 8765",
+    "sidecar:dev": "sidecar/.venv/bin/iris-core --host 127.0.0.1 --port 8765",
     "sidecar:test": "sidecar/.venv/bin/python -m pytest sidecar",
     "hermes:agentui:install": "node scripts/install-agentui-platform.mjs",
     "iris:hermes:install": "node scripts/install-agentui-platform.mjs",

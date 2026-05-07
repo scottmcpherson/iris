@@ -42,7 +42,6 @@ type ConversationSearchItem = {
 
 type AppShellProps = {
   activeView: View;
-  activeProfile: HermesProfile;
   connected: boolean;
   error?: string | null;
   isRefreshing: boolean;
@@ -61,6 +60,7 @@ type AppShellProps = {
   historyErrorsByProfile: Record<string, string | null>;
   selectedConversationId: string | null;
   activeConversationIds: string[];
+  coreApiUrl: string;
   onNewConversation: (profileName?: string) => void;
   onPreviewToggle: () => void;
   onEditProfile: (profile: string) => void;
@@ -74,7 +74,6 @@ type AppShellProps = {
 
 export function AppShell({
   activeView,
-  activeProfile,
   connected,
   error,
   isRefreshing,
@@ -93,6 +92,7 @@ export function AppShell({
   historyErrorsByProfile,
   selectedConversationId,
   activeConversationIds,
+  coreApiUrl,
   onNewConversation,
   onPreviewToggle,
   onEditProfile,
@@ -238,12 +238,12 @@ export function AppShell({
       }
     };
 
-    window.addEventListener("hermes://new-conversation", handleNewConversation);
-    window.addEventListener("hermes://open-conversation-search", handleOpenSearch);
+    window.addEventListener("iris://new-conversation", handleNewConversation);
+    window.addEventListener("iris://open-conversation-search", handleOpenSearch);
     window.addEventListener("keydown", handleShortcut, { capture: true });
     return () => {
-      window.removeEventListener("hermes://new-conversation", handleNewConversation);
-      window.removeEventListener("hermes://open-conversation-search", handleOpenSearch);
+      window.removeEventListener("iris://new-conversation", handleNewConversation);
+      window.removeEventListener("iris://open-conversation-search", handleOpenSearch);
       window.removeEventListener("keydown", handleShortcut, { capture: true });
     };
   }, [
@@ -326,8 +326,8 @@ export function AppShell({
                 type="button"
                 className="sidebar-icon-button"
                 onClick={() => openProfileCreateDialog()}
-                aria-label="Create agent profile"
-                title="Create agent profile"
+                aria-label="Create agent"
+                title="Create agent"
               >
                 <Plus size={14} />
               </button>
@@ -471,7 +471,7 @@ export function AppShell({
             <>
               <div className="topbar-title">
                 <p>{viewTitle(activeView)}</p>
-                <span>{activeProfile.path}</span>
+                <span>{coreApiUrl}</span>
               </div>
               <div className="topbar-actions">
                 {activeView === "chat" ? (
@@ -723,7 +723,7 @@ export function AppShell({
           role="menuitem"
           className="danger-menu-item"
           disabled={profile.name === "default"}
-          title={profile.name === "default" ? "The default profile cannot be deleted" : undefined}
+          title={profile.name === "default" ? "The default agent cannot be deleted" : undefined}
           onClick={() => {
             setProfileMenu(null);
             openProfileDeleteDialog(profile.name);
@@ -748,7 +748,7 @@ export function AppShell({
 
     const name = profileDialog.name.trim();
     if (profileDialog.action !== "delete" && !name) {
-      setProfileActionError("Enter a profile name.");
+      setProfileActionError("Enter an agent name.");
       return;
     }
     if (profileDialog.action === "delete" && name !== profileDialog.source) {
@@ -783,8 +783,8 @@ export function AppShell({
       ? `Delete ${source}`
       : isClone
         ? `Duplicate ${source}`
-        : "New agent profile";
-    const label = isDelete ? "Confirm profile name" : "Profile name";
+        : "New agent";
+    const label = isDelete ? "Confirm agent name" : "Agent name";
     const submitLabel = isDelete ? "Delete" : isClone ? "Duplicate" : "Create";
     const inputValue = dialog.name;
     const submitDisabled =
@@ -795,7 +795,7 @@ export function AppShell({
       <div className="profile-action-modal" role="dialog" aria-modal="true" aria-labelledby="profile-action-title">
         <form onSubmit={submitProfileDialog}>
           <div>
-            <p className="eyebrow">{isDelete ? "Profile deletion" : "Profile management"}</p>
+            <p className="eyebrow">{isDelete ? "Agent deletion" : "Agent management"}</p>
             <h2 id="profile-action-title">{title}</h2>
           </div>
           <label>

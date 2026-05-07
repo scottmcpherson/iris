@@ -1,4 +1,4 @@
-"""Response models for Iris Core and Hermes compatibility APIs."""
+"""Response models for Iris Core APIs."""
 
 from __future__ import annotations
 
@@ -48,29 +48,30 @@ class ProfileSummary(BaseModel):
     gatewayRunning: bool
 
 
-class ProfilesResponse(BaseModel):
-    ok: bool = True
-    hermesHome: str
-    activeProfile: str
-    profiles: list[ProfileSummary]
+class AgentCreateRequest(BaseModel):
+    name: str
+    runtimeId: str | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
-class ProfileResponse(ProfileSummary):
-    ok: bool = True
-
-
-class ProfileCreateRequest(BaseModel):
+class AgentRenameRequest(BaseModel):
     name: str
 
 
-class ProfileCloneRequest(BaseModel):
-    name: str
+class AgentMemorySaveRequest(BaseModel):
+    content: str
+    expectedUpdatedAt: int | None = None
 
 
-class ProfileActionResponse(BaseModel):
-    ok: bool = True
-    profile: str
-    profiles: list[ProfileSummary]
+class AgentMemoryResetRequest(BaseModel):
+    confirm: str = ""
+
+
+class AgentSkillSaveRequest(BaseModel):
+    name: str = ""
+    category: str = "personal"
+    path: str = ""
+    content: str = ""
 
 
 class InboxMessageCreateRequest(BaseModel):
@@ -117,15 +118,6 @@ class FileContent(BaseModel):
     content: str
 
 
-class MemoryResponse(BaseModel):
-    ok: bool = True
-    profile: str
-    path: str
-    files: list[FileContent]
-    memory: FileContent
-    user: FileContent
-
-
 class SkillSummary(BaseModel):
     id: str
     name: str
@@ -138,19 +130,6 @@ class SkillSummary(BaseModel):
     tags: list[str] = Field(default_factory=list)
     bytes: int
     metadata: dict[str, Any] = Field(default_factory=dict)
-
-
-class SkillsResponse(BaseModel):
-    ok: bool = True
-    profile: str
-    path: str
-    skills: list[SkillSummary]
-
-
-class SkillDetailResponse(SkillSummary):
-    ok: bool = True
-    profile: str
-    content: str
 
 
 class CoreConversationCreateRequest(BaseModel):
@@ -240,24 +219,3 @@ class ConversationMessage(BaseModel):
     toolCallId: str = ""
     toolCalls: list[dict[str, Any]] = Field(default_factory=list)
     timestamp: int | None
-
-
-class ConversationsResponse(BaseModel):
-    ok: bool = True
-    profile: str
-    path: str
-    source: str = "hermes-management"
-    schemaVersion: int | None
-    conversations: list[ConversationSummary] = Field(default_factory=list)
-    warning: str | None = None
-
-
-class ConversationDetailResponse(BaseModel):
-    ok: bool = True
-    profile: str
-    path: str
-    source: str = "hermes-management"
-    schemaVersion: int | None
-    conversation: ConversationSummary
-    messages: list[ConversationMessage] = Field(default_factory=list)
-    warning: str | None = None

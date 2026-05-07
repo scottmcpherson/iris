@@ -1,7 +1,7 @@
 import { useState } from "react";
 import type { FormEvent } from "react";
 import { Check, Clock3, Pause, Play, RefreshCcw, Send, Trash2 } from "lucide-react";
-import type { CreateScheduledMessageInput } from "./useHermesJobs";
+import type { CreateScheduledMessageInput } from "./useIrisAutomations";
 import type { HermesInboxMessage, HermesJob } from "../../types/hermes";
 
 type JobsViewProps = {

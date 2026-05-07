@@ -2,9 +2,9 @@ import { useEffect, useRef, useState } from "react";
 import type { Message, MessageAttachment } from "../../app/types";
 import {
   coreEventToInboxMessage,
-  getHermesConversationDetail,
-  getHermesConversations,
-} from "../../lib/hermes";
+  getIrisConversationDetail,
+  getIrisConversations,
+} from "../../lib/irisRuntime";
 import {
   agentUICoreEventStreamUrl,
   cancelAgentUICoreMessage,
@@ -48,7 +48,7 @@ export {
 export { mergeUploadedAttachment } from "./chatAttachments";
 export type { SendableAttachment } from "./chatTypes";
 
-type UseHermesChatOptions = {
+type UseIrisChatOptions = {
   profile: string;
   runtimeConfig: HermesRuntimeConfig;
 };
@@ -59,7 +59,7 @@ const coreDeliveryEventNames = [
   "message.error",
 ];
 
-export function useAgentUIChat({ profile, runtimeConfig }: UseHermesChatOptions) {
+export function useAgentUIChat({ profile, runtimeConfig }: UseIrisChatOptions) {
   const [input, setInput] = useState("");
   const [messagesByConversation, setMessagesByConversation] = useState<Record<string, Message[]>>({});
   const [activeRequestIdsByConversation, setActiveRequestIdsByConversation] = useState<Record<string, string>>({});
@@ -171,7 +171,7 @@ export function useAgentUIChat({ profile, runtimeConfig }: UseHermesChatOptions)
         coreEventSourceRef.current = null;
       }
     };
-  }, [runtimeConfig.managementApiUrl, profile, hasActiveRequest]);
+  }, [runtimeConfig.coreApiUrl, profile, hasActiveRequest]);
 
   async function sendMessage(options: SendMessageOptions | MessageAttachment[] = {}) {
     const draftAttachments = Array.isArray(options) ? options : options.attachments || [];
@@ -412,7 +412,7 @@ export function useAgentUIChat({ profile, runtimeConfig }: UseHermesChatOptions)
       setConversationsLoadingByProfile((current) => ({ ...current, [targetProfile]: true }));
     }
     try {
-      const result = await getHermesConversations(targetProfile, 80, runtimeConfig);
+      const result = await getIrisConversations(targetProfile, 80, runtimeConfig);
       if (targetProfile === profile) {
         setHistorySource(result.source || null);
         setHistorySchemaVersion(result.schemaVersion ?? null);
@@ -594,7 +594,7 @@ export function useAgentUIChat({ profile, runtimeConfig }: UseHermesChatOptions)
       setConversationsLoadingByProfile((current) => ({ ...current, [profileName]: true }));
     }
     try {
-      const result = await getHermesConversationDetail(profileName, conversationId, runtimeConfig);
+      const result = await getIrisConversationDetail(profileName, conversationId, runtimeConfig);
       if (profileName === profile) {
         setHistorySource(result.source || null);
         setHistorySchemaVersion(result.schemaVersion ?? null);
@@ -1041,7 +1041,7 @@ export function useAgentUIChat({ profile, runtimeConfig }: UseHermesChatOptions)
   };
 }
 
-export const useHermesChat = useAgentUIChat;
+export const useIrisChat = useAgentUIChat;
 
 export function shouldSendModelSwitch(
   selected: HermesModelSelection | null,

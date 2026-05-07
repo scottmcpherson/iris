@@ -1,24 +1,24 @@
 import { useEffect, useRef, useState } from "react";
-import { getHermesSlashCommands } from "../../lib/hermes";
+import { getIrisSlashCommands } from "../../lib/irisRuntime";
 import type {
   HermesRuntimeConfig,
   HermesSlashCommand,
   HermesSlashCommandsResult,
 } from "../../types/hermes";
 
-type UseHermesSlashCommandsOptions = {
+type UseIrisSlashCommandsOptions = {
   profile: string;
   runtimeConfig: HermesRuntimeConfig;
   connected: boolean;
   refreshKey?: string | number | null;
 };
 
-export function useHermesSlashCommands({
+export function useIrisSlashCommands({
   profile,
   runtimeConfig,
   connected,
   refreshKey,
-}: UseHermesSlashCommandsOptions) {
+}: UseIrisSlashCommandsOptions) {
   const [catalogs, setCatalogs] = useState<Record<string, HermesSlashCommandsResult>>({});
   const [loadingByKey, setLoadingByKey] = useState<Record<string, boolean>>({});
   const [errorsByKey, setErrorsByKey] = useState<Record<string, string | null>>({});
@@ -46,7 +46,7 @@ export function useHermesSlashCommands({
     setLoadingByKey((current) => ({ ...current, [cacheKey]: true }));
     setErrorsByKey((current) => ({ ...current, [cacheKey]: null }));
     try {
-      const result = await getHermesSlashCommands(profile, runtimeConfig);
+      const result = await getIrisSlashCommands(profile, runtimeConfig);
       if (requestSeqRef.current !== requestId) return;
       setCatalogs((current) => ({ ...current, [cacheKey]: normalizeSlashCommandsResult(profile, result) }));
       setErrorsByKey((current) => ({
@@ -76,11 +76,7 @@ export function useHermesSlashCommands({
 }
 
 function slashCommandRouteKey(runtimeConfig: HermesRuntimeConfig, profile: string) {
-  return [
-    runtimeConfig.gatewayUrl,
-    runtimeConfig.agentuiGatewayUrls?.[profile] || "",
-    runtimeConfig.profileApiUrls?.[profile] || "",
-  ].join("|");
+  return [runtimeConfig.coreApiUrl, profile].join("|");
 }
 
 function normalizeSlashCommandsResult(

@@ -11,9 +11,9 @@ import time
 from pathlib import Path
 from typing import Any
 
-from .conversations import ConversationDetail, ConversationDiscovery, discover_conversation_detail, discover_conversations
-from .models import FileContent, ProfileSummary, SkillSummary
-from .security import ManagementError
+from .hermes_conversations import ConversationDetail, ConversationDiscovery, discover_conversation_detail, discover_conversations
+from ..models import FileContent, ProfileSummary, SkillSummary
+from ..security import ManagementError
 
 
 PROFILE_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
@@ -256,6 +256,61 @@ def safe_skill_path(skills_dir: Path, profile_root: Path, skill_id: str) -> tupl
     return resolved, relative_path
 
 
+def memory_file_path(directory: Path, file_key: str) -> Path:
+    normalized = file_key.strip().lower()
+    if normalized in {"memory", "memory.md"}:
+        return directory / "memories" / "MEMORY.md"
+    if normalized in {"user", "user.md"}:
+        return directory / "memories" / "USER.md"
+    raise ManagementError("Memory writes are limited to MEMORY.md and USER.md.", status_code=400)
+
+
+def safe_skill_segment(value: str, fallback: str) -> str:
+    slug = re.sub(r"[^A-Za-z0-9_.-]+", "-", value.strip()).strip(".-")
+    return slug[:64] or fallback
+
+
+def skill_path_for_write(skills_dir: Path, profile_root: Path, payload: dict[str, Any], skill_id: str = "") -> Path:
+    if skill_id:
+        path, _relative_path = safe_skill_path(skills_dir, profile_root, skill_id)
+        return path
+    raw_path = str(payload.get("path") or "").strip()
+    if raw_path:
+        path = Path(raw_path).expanduser()
+        if not path.is_absolute():
+            path = skills_dir / path
+        resolved = assert_within_base(path, profile_root)
+        try:
+            resolved.relative_to(skills_dir.resolve())
+        except ValueError as exc:
+            raise ManagementError(
+                "Skill path must stay inside the active profile skills directory.",
+                status_code=400,
+            ) from exc
+        if resolved.name != "SKILL.md":
+            raise ManagementError("Skill editor can only write SKILL.md files.", status_code=400)
+        return resolved
+    category = safe_skill_segment(str(payload.get("category") or "personal"), "personal")
+    name = safe_skill_segment(str(payload.get("name") or "untitled-skill"), "untitled-skill")
+    return assert_within_base(skills_dir / category / name / "SKILL.md", profile_root)
+
+
+def default_skill_content(name: str, category: str) -> str:
+    title = name.strip() or "Untitled skill"
+    return "\n".join(
+        [
+            "---",
+            f"name: {title}",
+            f"category: {category.strip() or 'personal'}",
+            "---",
+            "",
+            f"# {title}",
+            "",
+            "Describe when to use this skill and the workflow it should follow.",
+        ]
+    )
+
+
 def file_payload(path: Path, profile_root: Path) -> FileContent:
     text = safe_read_text(path, profile_root)
     stat = safe_stat(path, profile_root)
@@ -438,6 +493,30 @@ class HermesStore:
         shutil.copytree(source, destination, ignore=clone_ignore(source_name))
         return self.profile_summary(name)
 
+    def rename_profile(self, source_profile: str, profile: str) -> ProfileSummary:
+        source_name = validate_profile_name(source_profile)
+        name = validate_profile_name(profile)
+        if source_name == "default":
+            raise ManagementError("The default profile cannot be renamed.", status_code=400)
+        source = self.profile_directory(source_name)
+        destination = self.profile_directory(name)
+        if not source.exists():
+            raise ManagementError(f"Profile '{source_name}' does not exist.", status_code=404)
+        if destination.exists():
+            raise ManagementError(f"Profile '{name}' already exists.", status_code=400)
+        source.rename(destination)
+        if self.active_profile_name() == source_name:
+            (self.root / "active_profile").write_text(name, encoding="utf-8")
+        return self.profile_summary(name)
+
+    def activate_profile(self, profile: str) -> ProfileSummary:
+        name = validate_profile_name(profile)
+        directory = self.profile_directory(name)
+        if not directory.exists():
+            raise ManagementError(f"Profile '{name}' does not exist.", status_code=404)
+        (self.root / "active_profile").write_text(name, encoding="utf-8")
+        return self.profile_summary(name)
+
     def delete_profile(self, profile: str) -> str:
         name = validate_profile_name(profile)
         if name == "default":
@@ -458,6 +537,34 @@ class HermesStore:
             file_payload(memories / "USER.md", directory),
         )
 
+    def save_memory_file(
+        self,
+        profile: str,
+        file_key: str,
+        content: str,
+        expected_updated_at: int | None = None,
+    ) -> tuple[FileContent, FileContent]:
+        directory = self.profile_directory(validate_profile_name(profile))
+        path = memory_file_path(directory, file_key)
+        current_updated_at = file_payload(path, directory).updatedAt
+        if expected_updated_at is not None and current_updated_at != expected_updated_at:
+            raise ManagementError(
+                "Memory changed on disk. Refresh before saving so you do not overwrite newer notes.",
+                status_code=409,
+            )
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
+        return self.memory_files(profile)
+
+    def reset_memory_file(self, profile: str, file_key: str) -> tuple[FileContent, FileContent]:
+        directory = self.profile_directory(validate_profile_name(profile))
+        targets = ["memory", "user"] if file_key.strip().lower() == "all" else [file_key]
+        for target in targets:
+            path = memory_file_path(directory, target)
+            if path.exists():
+                path.unlink()
+        return self.memory_files(profile)
+
     def skills(self, profile: str) -> list[SkillSummary]:
         directory = self.profile_directory(validate_profile_name(profile))
         skills_dir = directory / "skills"
@@ -472,6 +579,23 @@ class HermesStore:
         path, _relative_path = safe_skill_path(skills_dir, directory, skill_id)
         if not path.is_file():
             raise ManagementError("Skill was not found.", status_code=404)
+        summary = skill_payload(path, directory, skills_dir.resolve())
+        return summary, safe_read_text(path, directory)
+
+    def save_skill(self, profile: str, payload: dict[str, Any], skill_id: str = "") -> tuple[SkillSummary, str]:
+        directory = self.profile_directory(validate_profile_name(profile))
+        skills_dir = directory / "skills"
+        skills_dir.mkdir(parents=True, exist_ok=True)
+        path = skill_path_for_write(skills_dir, directory, payload, skill_id=skill_id)
+        relative_path = path.relative_to(skills_dir.resolve())
+        content = str(payload.get("content") or "").strip()
+        if not content:
+            content = default_skill_content(
+                str(payload.get("name") or path.parent.name),
+                str(payload.get("category") or (relative_path.parts[0] if len(relative_path.parts) > 1 else "personal")),
+            )
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content.rstrip() + "\n", encoding="utf-8")
         summary = skill_payload(path, directory, skills_dir.resolve())
         return summary, safe_read_text(path, directory)
 

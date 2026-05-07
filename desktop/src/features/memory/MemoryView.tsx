@@ -140,7 +140,7 @@ export function MemoryView({
             checked={providers.builtin}
             onChange={(event) => setProviders((current) => ({ ...current, builtin: event.target.checked }))}
           />
-          <span>Profile memory</span>
+          <span>Agent memory</span>
         </label>
         <label className="memory-toggle">
           <input
@@ -283,7 +283,7 @@ export function MemoryView({
             <AlertTriangle size={18} />
             <strong>Reset {resetTarget === "all" ? "all memory" : fileLabels[resetTarget]}</strong>
           </div>
-          <p>This removes the selected memory file from the active profile after saving a revision snapshot.</p>
+          <p>This removes the selected memory file from the active agent after saving a revision snapshot.</p>
           <input
             autoFocus
             value={resetText}

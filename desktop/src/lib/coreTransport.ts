@@ -6,10 +6,10 @@ export type CoreResponse<T> = T & {
   error?: string;
 };
 
-type CoreMethod = "GET" | "POST" | "PATCH" | "DELETE";
+type CoreMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
 
 export function coreBaseUrl(runtime?: HermesRuntimeConfig) {
-  const base = (runtime?.managementApiUrl || "http://127.0.0.1:8765").replace(/\/+$/, "");
+  const base = (runtime?.coreApiUrl || "http://127.0.0.1:8765").replace(/\/+$/, "");
   return base.endsWith("/v1") ? base : `${base}/v1`;
 }
 
@@ -74,7 +74,7 @@ function coreRequestViaBridge<T>(
   path: string,
   body?: unknown,
 ) {
-  return invoke<CoreResponse<T>>("hermes_bridge", {
+  return invoke<CoreResponse<T>>("core_bridge", {
     action: "core_request",
     payload: {
       method,

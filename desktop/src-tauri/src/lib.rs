@@ -9,20 +9,20 @@ use tauri::tray::{MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, Tray
 use tauri::{Emitter, Manager};
 
 #[tauri::command]
-async fn hermes_bridge(action: String, payload: Value) -> Result<Value, String> {
+async fn core_bridge(action: String, payload: Value) -> Result<Value, String> {
     tauri::async_runtime::spawn_blocking(move || run_python_bridge(&action, payload))
         .await
-        .map_err(|err| format!("Hermes bridge task failed: {err}"))?
+        .map_err(|err| format!("Core bridge task failed: {err}"))?
 }
 
 fn run_python_bridge(action: &str, payload: Value) -> Result<Value, String> {
-    let script = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("python/hermes_bridge.py");
+    let script = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("python/core_bridge.py");
     if !script.exists() {
-        return Err(format!("Hermes bridge script not found at {}", script.display()));
+        return Err(format!("Core bridge script not found at {}", script.display()));
     }
 
     let payload_text = serde_json::to_string(&payload)
-        .map_err(|err| format!("Could not serialize Hermes bridge payload: {err}"))?;
+        .map_err(|err| format!("Could not serialize Core bridge payload: {err}"))?;
 
     let mut last_error = String::new();
     for python in python_candidates() {
@@ -37,7 +37,7 @@ fn run_python_bridge(action: &str, payload: Value) -> Result<Value, String> {
                 let stdout = String::from_utf8_lossy(&output.stdout);
                 return serde_json::from_str(stdout.trim()).map_err(|err| {
                     format!(
-                        "Hermes bridge returned invalid JSON: {err}. Output: {}",
+                        "Core bridge returned invalid JSON: {err}. Output: {}",
                         stdout.trim()
                     )
                 });
@@ -63,7 +63,7 @@ fn run_python_bridge(action: &str, payload: Value) -> Result<Value, String> {
 
 fn python_candidates() -> Vec<String> {
     let mut candidates = Vec::new();
-    if let Ok(path) = std::env::var("HERMES_DESKTOP_PYTHON") {
+    if let Ok(path) = std::env::var("IRIS_DESKTOP_PYTHON") {
         if !path.trim().is_empty() {
             candidates.push(path);
         }
@@ -98,11 +98,11 @@ pub fn run() {
             tray.on_menu_event(|app, event: MenuEvent| match event.id().as_ref() {
                 "show" => {
                     show_main_window(app);
-                    let _ = app.emit("hermes://app-command", "show");
+                    let _ = app.emit("iris://app-command", "show");
                 }
                 "refresh" => {
                     show_main_window(app);
-                    let _ = app.emit("hermes://app-command", "refresh");
+                    let _ = app.emit("iris://app-command", "refresh");
                 }
                 "quit" => app.exit(0),
                 _ => {}
@@ -124,7 +124,7 @@ pub fn run() {
 
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![hermes_bridge])
+        .invoke_handler(tauri::generate_handler![core_bridge])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
@@ -222,19 +222,19 @@ fn install_app_menu(app: &mut tauri::App) -> tauri::Result<()> {
     app.on_menu_event(|app, event| match event.id().as_ref() {
         "new-chat" => {
             show_main_window(app);
-            let _ = app.emit("hermes://app-command", "new-chat");
+            let _ = app.emit("iris://app-command", "new-chat");
         }
         "command-menu" => {
             show_main_window(app);
-            let _ = app.emit("hermes://app-command", "command-menu");
+            let _ = app.emit("iris://app-command", "command-menu");
         }
         "search-chats" => {
             show_main_window(app);
-            let _ = app.emit("hermes://app-command", "search");
+            let _ = app.emit("iris://app-command", "search");
         }
         "refresh" => {
             show_main_window(app);
-            let _ = app.emit("hermes://app-command", "refresh");
+            let _ = app.emit("iris://app-command", "refresh");
         }
         _ => {}
     });

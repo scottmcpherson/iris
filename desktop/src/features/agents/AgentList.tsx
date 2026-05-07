@@ -63,8 +63,8 @@ export function AgentList({ profiles, onOpenAgent, onProfileAction }: AgentListP
         <button
           type="button"
           className="icon-button agent-list-add-button"
-          aria-label="Create agent profile"
-          title="Create agent profile"
+          aria-label="Create agent"
+          title="Create agent"
           onClick={openCreateDialog}
         >
           <Plus size={17} />
@@ -87,7 +87,7 @@ export function AgentList({ profiles, onOpenAgent, onProfileAction }: AgentListP
               </span>
               <span className="agent-list-main">
                 <strong>{profile.name}</strong>
-                <small>{profile.path}</small>
+                <small>{agentSubtitle(profile)}</small>
               </span>
               <span className="agent-list-stat">
                 <FolderOpen size={15} />
@@ -184,7 +184,7 @@ export function AgentList({ profiles, onOpenAgent, onProfileAction }: AgentListP
           role="menuitem"
           className="danger-menu-item"
           disabled={profile.name === "default"}
-          title={profile.name === "default" ? "The default profile cannot be deleted" : undefined}
+          title={profile.name === "default" ? "The default agent cannot be deleted" : undefined}
           onClick={() => openDeleteDialog(profile.name)}
         >
           <Trash2 size={14} />
@@ -199,8 +199,8 @@ export function AgentList({ profiles, onOpenAgent, onProfileAction }: AgentListP
     const isDelete = dialog.action === "delete";
     const isClone = dialog.action === "clone";
     const source = "source" in dialog ? dialog.source : "";
-    const title = isDelete ? `Delete ${source}` : isClone ? `Duplicate ${source}` : "New agent profile";
-    const label = isDelete ? "Confirm profile name" : "Profile name";
+    const title = isDelete ? `Delete ${source}` : isClone ? `Duplicate ${source}` : "New agent";
+    const label = isDelete ? "Confirm agent name" : "Agent name";
     const submitLabel = isDelete ? "Delete" : isClone ? "Duplicate" : "Create";
     const disabled = busy || (isDelete ? dialog.name.trim() !== source : !dialog.name.trim());
 
@@ -208,7 +208,7 @@ export function AgentList({ profiles, onOpenAgent, onProfileAction }: AgentListP
       <div className="profile-action-modal" role="dialog" aria-modal="true" aria-labelledby="agent-list-action-title">
         <form onSubmit={submitDialog}>
           <div>
-            <p className="eyebrow">{isDelete ? "Profile deletion" : "Profile management"}</p>
+            <p className="eyebrow">{isDelete ? "Agent deletion" : "Agent management"}</p>
             <h2 id="agent-list-action-title">{title}</h2>
           </div>
           <label>
@@ -244,7 +244,7 @@ export function AgentList({ profiles, onOpenAgent, onProfileAction }: AgentListP
 
     const name = dialog.name.trim();
     if (dialog.action !== "delete" && !name) {
-      setError("Enter a profile name.");
+      setError("Enter an agent name.");
       return;
     }
     if (dialog.action === "delete" && name !== dialog.source) {
@@ -282,6 +282,20 @@ function nextProfileName(base: string, profiles: HermesProfile[]) {
 
 function clamp(value: number, minimum: number, maximum: number) {
   return Math.max(minimum, Math.min(value, maximum));
+}
+
+function agentSubtitle(profile: HermesProfile) {
+  const provider = cleanAgentLabel(profile.provider) || "Iris Core";
+  const model = cleanAgentLabel(profile.model);
+  const summary = model ? `${provider} / ${model}` : provider;
+  return profile.active ? `${summary} / active` : summary;
+}
+
+function cleanAgentLabel(value: unknown) {
+  if (typeof value !== "string") return "";
+  const trimmed = value.trim();
+  if (!trimmed || trimmed === "not configured" || trimmed.startsWith("{") || trimmed.startsWith("[")) return "";
+  return trimmed;
 }
 
 function isProfileActionFailure(message: string) {

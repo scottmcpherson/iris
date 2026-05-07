@@ -30,7 +30,7 @@ Start the sidecar and the Tauri desktop app together:
 npm run dev
 ```
 
-`npm run dev` defaults `HERMES_HOME` to `~/.hermes`, starts Iris Core on `127.0.0.1:8765`, and auto-loads `API_SERVER_KEY` from `$HERMES_HOME/.env` as `HERMES_API_TOKEN` for the desktop app. That lets the Automations view call Hermes' local Jobs API without exporting the token by hand.
+`npm run dev` starts Iris Core on `127.0.0.1:8765`, then launches Iris Desktop. `HERMES_HOME` is still accepted as an Iris Core runtime default for the local Hermes adapter, and `API_SERVER_KEY` from `$HERMES_HOME/.env` is passed to Core as the Hermes Jobs API token when present.
 
 Start the sidecar and the Vite web surface only:
 
@@ -38,7 +38,7 @@ Start the sidecar and the Vite web surface only:
 npm run dev:web
 ```
 
-Start only the sidecar:
+Start only Iris Core:
 
 ```bash
 npm run sidecar:dev
@@ -117,7 +117,7 @@ npm run package:check
 npm run build:mac:app
 ```
 
-`npm run check` runs the desktop TypeScript/Vitest/build checks, the desktop Python bridge tests, and the sidecar pytest suite. `npm run build:mac:app` delegates to the desktop Tauri app build.
+`npm run check` runs the desktop TypeScript/Vitest/build checks, the desktop Python bridge tests, and the Iris Core pytest suite. `npm run build:mac:app` delegates to the desktop Tauri app build.
 
 ## More Detail
 

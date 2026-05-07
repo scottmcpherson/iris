@@ -28,13 +28,13 @@ for (const profileHome of profileHomes) {
   });
 
   if (result.error) {
-    console.warn(`[agentui-platform] copied to ${profileHome}, but could not run Hermes CLI: ${result.error.message}`);
+    console.warn(`[iris-hermes-adapter] copied to ${profileHome}, but could not run Hermes CLI: ${result.error.message}`);
     console.warn(`Enable it manually with: HERMES_HOME="${profileHome}" hermes plugins enable agentui-platform`);
     continue;
   }
 
   if (result.status !== 0) {
-    console.warn(`[agentui-platform] copied to ${profileHome}, but Hermes CLI did not enable it successfully.`);
+    console.warn(`[iris-hermes-adapter] copied to ${profileHome}, but Hermes CLI did not enable it successfully.`);
     console.warn(`Enable it manually with: HERMES_HOME="${profileHome}" hermes plugins enable agentui-platform`);
     failed = true;
   }
@@ -49,7 +49,7 @@ function installForHermesHome(profileHome) {
   mkdirSync(pluginsDir, { recursive: true });
   rmSync(destination, { recursive: true, force: true });
   cpSync(source, destination, { recursive: true });
-  console.log(`[agentui-platform] installed to ${destination}`);
+  console.log(`[iris-hermes-adapter] installed to ${destination}`);
 }
 
 function discoverHermesHomes(rootHome) {

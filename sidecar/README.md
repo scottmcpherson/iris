@@ -226,20 +226,22 @@ curl http://127.0.0.1:8765/v1/status
 
 Returns `ok`, `checkedAt`, `hermesHome`, `activeProfile`, and `profileCount`.
 
-### Profiles
+### Agents
 
 ```bash
-curl http://127.0.0.1:8765/v1/profiles
-curl http://127.0.0.1:8765/v1/profiles/default
-curl http://127.0.0.1:8765/v1/profiles/work
+curl http://127.0.0.1:8765/v1/agents
+curl http://127.0.0.1:8765/v1/agents/<agent_id>
 ```
 
-Each profile summary includes `name`, `path`, `active`, `exists`, `provider`, `model`, `memoryBytes`, `memoryUpdatedAt`, `skillCount`, and `gatewayRunning`.
+Each agent includes its Core id, runtime id, runtime kind, display name, runtime profile, default status, and runtime metadata. Legacy `/v1/profiles/**` routes remain compatibility shims and delegate through the same runtime adapter methods.
 
 ### Memory
 
 ```bash
-curl http://127.0.0.1:8765/v1/profiles/default/memory
+curl http://127.0.0.1:8765/v1/agents/<agent_id>/memory
+curl -X PUT http://127.0.0.1:8765/v1/agents/<agent_id>/memory/memory \
+  -H "Content-Type: application/json" \
+  -d '{"content":"updated memory"}'
 ```
 
 Returns metadata and content for `MEMORY.md` and `USER.md`.
@@ -247,44 +249,35 @@ Returns metadata and content for `MEMORY.md` and `USER.md`.
 ### Conversations
 
 ```bash
-curl 'http://127.0.0.1:8765/v1/profiles/default/conversations?limit=80'
+curl 'http://127.0.0.1:8765/v1/conversations?agentId=<agent_id>&limit=80'
 ```
 
-Returns existing Hermes conversations for the selected profile without requiring the client to read Hermes files or SQLite directly. `limit` defaults to `80` and is clamped to `1..200`.
+Returns existing runtime conversations for the selected agent without requiring the client to read runtime files or SQLite directly. `limit` defaults to `80` and is clamped to `1..200`.
 
 Response shape:
 
 ```json
 {
   "ok": true,
-  "profile": "default",
-  "path": "/Users/scott/.hermes/state.db",
-  "source": "hermes-management",
-  "schemaVersion": 11,
   "conversations": [
     {
-      "id": "session-id",
-      "source": "api_server",
-      "model": "gpt-5.5",
+      "id": "conv_abc",
+      "agentId": "agent_abc_default",
       "title": "How do I list profiles?",
       "preview": "Use the profiles endpoint.",
-      "startedAt": 1777804077,
-      "endedAt": null,
-      "lastActiveAt": 1777804079,
-      "messageCount": 2
+      "updatedAt": 1777804079
     }
-  ],
-  "warning": "optional warning"
+  ]
 }
 ```
 
-Conversation discovery is schema-tolerant and read-only. The server first inspects profile-local SQLite candidates such as `state.db` by reading `sqlite_master` and table columns. It supports the observed Hermes `sessions` and `messages` schema, then falls back to profile-local `sessions/*.json` files when no supported SQLite conversation table exists. If no supported store is found, it returns `ok: true`, an empty `conversations` array, and a warning instead of crashing.
+Conversation discovery is schema-tolerant and read-only inside the Hermes runtime adapter. The adapter inspects Hermes-local stores and falls back to session JSON when no supported SQLite conversation table exists. Unsupported stores fail soft with an empty list and a warning.
 
 ### Skills
 
 ```bash
-curl http://127.0.0.1:8765/v1/profiles/default/skills
-curl http://127.0.0.1:8765/v1/profiles/default/skills/<skill_id>
+curl http://127.0.0.1:8765/v1/agents/<agent_id>/skills
+curl http://127.0.0.1:8765/v1/agents/<agent_id>/skills/<skill_id>
 ```
 
 Skill ids are URL-safe base64 encodings of the relative `SKILL.md` path under the selected profile's `skills` directory. The server rejects ids that decode to absolute paths, parent traversal, or anything other than a `SKILL.md` file.

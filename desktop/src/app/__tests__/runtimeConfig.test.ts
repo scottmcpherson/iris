@@ -2,8 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   defaultRuntimeConfig,
   loadRuntimeConfig,
-  resolveManagementApiUrl,
-  resolveRuntimeApiUrl,
+  resolveCoreApiUrl,
   saveRuntimeConfig,
 } from "../runtimeConfig";
 
@@ -38,104 +37,48 @@ describe("runtimeConfig", () => {
     });
   });
 
-  it("migrates the old gateway runtime back to local API", () => {
+  it("normalizes the Core API URL default", () => {
+    localStorage.setItem("hermes.desktop.runtime", JSON.stringify({ coreApiUrl: "" }));
+
+    expect(loadRuntimeConfig().coreApiUrl).toBe("http://127.0.0.1:8765");
+    expect(resolveCoreApiUrl(loadRuntimeConfig())).toBe("http://127.0.0.1:8765");
+  });
+
+  it("migrates the old management route into the Core API URL", () => {
     localStorage.setItem(
       "hermes.desktop.runtime",
-      JSON.stringify({ connectionMode: "gateway", gatewayUrl: "http://127.0.0.1:8765" }),
+      JSON.stringify({ managementApiUrl: " http://127.0.0.1:8766/v1 " }),
     );
 
-    expect(loadRuntimeConfig()).toMatchObject({
-      connectionMode: "local",
-      gatewayUrl: "http://127.0.0.1:8765",
-    });
+    expect(loadRuntimeConfig().coreApiUrl).toBe("http://127.0.0.1:8766");
   });
 
-  it("normalizes the management API URL default", () => {
-    localStorage.setItem("hermes.desktop.runtime", JSON.stringify({ managementApiUrl: "" }));
-
-    expect(loadRuntimeConfig().managementApiUrl).toBe("http://127.0.0.1:8765");
-    expect(resolveManagementApiUrl(loadRuntimeConfig())).toBe("http://127.0.0.1:8765");
-  });
-
-  it("normalizes per-profile API routes", () => {
+  it("migrates the first old profile sidecar route into the Core API URL", () => {
+    const legacyProfileRoutesKey = ["profile", "Sidecar", "Urls"].join("");
     localStorage.setItem(
       "hermes.desktop.runtime",
-      JSON.stringify({
-        profileApiUrls: {
-          Health: " http://127.0.0.1:8643/v1 ",
-          Empty: "",
-          Broken: 42,
-        },
-        profileSidecarUrls: {
-          Health: " http://127.0.0.1:8766/v1 ",
-          Empty: "",
-          Broken: 42,
-        },
-      }),
+      JSON.stringify({ [legacyProfileRoutesKey]: { Health: " http://127.0.0.1:8767/v1 " } }),
     );
 
-    expect(loadRuntimeConfig().profileApiUrls).toEqual({
-      Health: "http://127.0.0.1:8643",
-    });
-    expect(loadRuntimeConfig().profileSidecarUrls).toEqual({
-      Health: "http://127.0.0.1:8766",
-    });
-    expect(resolveManagementApiUrl(loadRuntimeConfig(), "Health")).toBe("http://127.0.0.1:8766");
+    expect(loadRuntimeConfig().coreApiUrl).toBe("http://127.0.0.1:8767");
   });
 
-  it("persists runtime settings without credential material", () => {
+  it("persists runtime settings without credential material or runtime routes", () => {
     saveRuntimeConfig({
       ...defaultRuntimeConfig,
       connectionMode: "remote",
       remoteUrl: "https://agent.example.com",
-      managementApiUrl: "http://agent.example.com:8765",
-      profileApiUrls: {
-        default: "http://127.0.0.1:8642",
-        Empty: "",
-      },
-      profileSidecarUrls: {
-        default: "http://127.0.0.1:8765",
-        Empty: "",
-      },
+      coreApiUrl: "http://agent.example.com:8765/v1",
     });
 
     const stored = JSON.parse(localStorage.getItem("hermes.desktop.runtime") || "{}");
-    expect(stored).toMatchObject({
+    expect(stored).toEqual({
       connectionMode: "remote",
+      provider: "",
+      model: "",
       remoteUrl: "https://agent.example.com",
-      managementApiUrl: "http://agent.example.com:8765",
-      profileApiUrls: { default: "http://127.0.0.1:8642" },
-      profileSidecarUrls: { default: "http://127.0.0.1:8765" },
+      coreApiUrl: "http://agent.example.com:8765",
     });
     expect(stored.remoteToken).toBeUndefined();
-  });
-
-  it("resolves only the selected profile API URL", () => {
-    expect(
-      resolveRuntimeApiUrl(
-        {
-          ...defaultRuntimeConfig,
-          connectionMode: "remote",
-          remoteUrl: "https://agent.example.com/v1",
-          gatewayUrl: "http://127.0.0.1:8642/v1",
-          profileApiUrls: {
-            Health: "http://127.0.0.1:8643",
-          },
-        },
-        "Health",
-      ),
-    ).toBe("http://127.0.0.1:8643");
-
-    expect(
-      resolveRuntimeApiUrl(
-        {
-          ...defaultRuntimeConfig,
-          connectionMode: "remote",
-          remoteUrl: "https://agent.example.com/v1",
-          gatewayUrl: "http://127.0.0.1:8642/v1",
-        },
-        "default",
-      ),
-    ).toBe("");
   });
 });

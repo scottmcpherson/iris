@@ -14,12 +14,12 @@ import { AgentsView } from "./features/agents/AgentsView";
 import { AgentTopbar } from "./features/agents/AgentTopbar";
 import type { AgentDetailSection } from "./features/agents/types";
 import { ChatView } from "./features/chat/ChatView";
-import { useAgentUIChat } from "./features/chat/useHermesChat";
-import { useHermesModelCatalog } from "./features/chat/useHermesModelCatalog";
-import { useHermesSlashCommands } from "./features/chat/useHermesSlashCommands";
-import { useHermesRuntime } from "./features/hermes/useHermesRuntime";
+import { useAgentUIChat } from "./features/chat/useIrisChat";
+import { useIrisModelCatalog } from "./features/chat/useIrisModelCatalog";
+import { useIrisSlashCommands } from "./features/chat/useIrisSlashCommands";
+import { useIrisRuntime } from "./features/iris/useIrisRuntime";
 import { JobsView } from "./features/jobs/JobsView";
-import { useAgentUIAutomations } from "./features/jobs/useHermesJobs";
+import { useAgentUIAutomations } from "./features/jobs/useIrisAutomations";
 import { LivePreviewPane } from "./features/preview/LivePreviewPane";
 import {
   createPreviewArtifact,
@@ -53,12 +53,12 @@ function App() {
   );
   const [activeArtifactId, setActiveArtifactId] = useState(() => previewArtifacts[0]?.id || "");
 
-  const hermes = useHermesRuntime();
+  const iris = useIrisRuntime();
   const chat = useAgentUIChat({
-    profile: hermes.selectedProfile,
-    runtimeConfig: hermes.runtimeConfig,
+    profile: iris.selectedProfile,
+    runtimeConfig: iris.runtimeConfig,
   });
-  const jobs = useAgentUIAutomations(hermes.runtimeConfig, hermes.selectedProfile);
+  const jobs = useAgentUIAutomations(iris.runtimeConfig, iris.selectedProfile);
 
   useEffect(() => {
     savePreviewArtifacts(previewArtifacts);
@@ -94,16 +94,16 @@ function App() {
   }, [activeView]);
 
   useEffect(() => {
-    const unlisten = listen<string>("hermes://app-command", (event) => {
+    const unlisten = listen<string>("iris://app-command", (event) => {
       if (event.payload === "refresh") void refreshWithNotice();
       if (event.payload === "show" || event.payload === "command-menu") setCommandMenuOpen(true);
       if (event.payload === "new-chat") {
         setCommandMenuOpen(false);
-        window.dispatchEvent(new CustomEvent("hermes://new-conversation"));
+        window.dispatchEvent(new CustomEvent("iris://new-conversation"));
       }
       if (event.payload === "search") {
         setCommandMenuOpen(false);
-        window.dispatchEvent(new CustomEvent("hermes://open-conversation-search"));
+        window.dispatchEvent(new CustomEvent("iris://open-conversation-search"));
       }
     });
     return () => {
@@ -120,24 +120,24 @@ function App() {
   );
 
   const previewVisible = activeView === "chat" && previewOpen;
-  const agentProfiles = hermes.status?.profiles?.length ? hermes.status.profiles : [hermes.activeProfile];
+  const agentProfiles = iris.status?.profiles?.length ? iris.status.profiles : [iris.activeProfile];
   const selectedProfileSummary =
-    agentProfiles.find((profile) => profile.name === hermes.selectedProfile) || hermes.activeProfile;
-  const modelCatalog = useHermesModelCatalog({
-    profile: hermes.selectedProfile,
+    agentProfiles.find((profile) => profile.name === iris.selectedProfile) || iris.activeProfile;
+  const modelCatalog = useIrisModelCatalog({
+    profile: iris.selectedProfile,
     profileSummary: selectedProfileSummary,
-    runtimeConfig: hermes.runtimeConfig,
-    connected: hermes.connected,
-    refreshKey: hermes.status?.checkedAt || 0,
+    runtimeConfig: iris.runtimeConfig,
+    connected: iris.connected,
+    refreshKey: iris.status?.checkedAt || 0,
   });
-  const slashCommands = useHermesSlashCommands({
-    profile: hermes.selectedProfile,
-    runtimeConfig: hermes.runtimeConfig,
-    connected: hermes.connected,
-    refreshKey: hermes.status?.checkedAt || 0,
+  const slashCommands = useIrisSlashCommands({
+    profile: iris.selectedProfile,
+    runtimeConfig: iris.runtimeConfig,
+    connected: iris.connected,
+    refreshKey: iris.status?.checkedAt || 0,
   });
   const agentTopbarProfile =
-    agentProfiles.find((profile) => profile.name === agentDetailProfile) ?? hermes.activeProfile;
+    agentProfiles.find((profile) => profile.name === agentDetailProfile) ?? iris.activeProfile;
 
   const commands = useMemo<CommandItem[]>(
     () => [
@@ -162,7 +162,7 @@ function App() {
       {
         id: "refresh",
         label: "Refresh Iris Connection",
-        detail: "Retry runtime, profile, memory, and skill loading",
+        detail: "Retry runtime, agent, memory, and skill loading",
         shortcut: "⌘R",
         run: () => void refreshWithNotice(),
       },
@@ -180,10 +180,9 @@ function App() {
     <>
       <AppShell
         activeView={activeView}
-        activeProfile={hermes.activeProfile}
-        connected={hermes.connected}
-        error={hermes.status?.error}
-        isRefreshing={hermes.isRefreshing}
+        connected={iris.connected}
+        error={iris.status?.error}
+        isRefreshing={iris.isRefreshing}
         previewOpen={previewVisible}
         primaryPane={renderPrimaryPane()}
         previewPane={
@@ -208,7 +207,7 @@ function App() {
             <AgentTopbar
               detailProfile={agentDetailProfile}
               profile={agentTopbarProfile}
-              rootPath={hermes.status?.root || hermes.activeProfile.path}
+              rootPath={iris.runtimeConfig.coreApiUrl}
               section={agentSection}
               onBack={() => {
                 setAgentDetailProfile(null);
@@ -218,8 +217,9 @@ function App() {
             />
           ) : undefined
         }
-        selectedProfile={hermes.selectedProfile}
-        status={hermes.status}
+        selectedProfile={iris.selectedProfile}
+        status={iris.status}
+        coreApiUrl={iris.runtimeConfig.coreApiUrl}
         conversations={chat.conversations}
         conversationsByProfile={chat.conversationsByProfile}
         conversationsLoadedByProfile={chat.conversationsLoadedByProfile}
@@ -231,15 +231,15 @@ function App() {
         activeConversationIds={chat.activeConversationIds}
         onNewConversation={(profileName) => {
           setActiveView("chat");
-          if (profileName && profileName !== hermes.selectedProfile) {
-            hermes.selectProfile(profileName);
+          if (profileName && profileName !== iris.selectedProfile) {
+            iris.selectProfile(profileName);
           }
           chat.startNewConversation(profileName);
         }}
         onPreviewToggle={togglePreviewPane}
         onEditProfile={(profileName) => {
-          if (profileName !== hermes.selectedProfile) {
-            hermes.selectProfile(profileName);
+          if (profileName !== iris.selectedProfile) {
+            iris.selectProfile(profileName);
           }
           setAgentDetailProfile(profileName);
           setAgentSection("overview");
@@ -250,13 +250,13 @@ function App() {
         onRefreshConversations={(profileName) => void chat.refreshConversations({ profileName })}
         onSelectConversation={(profileName, conversationId) => {
           setActiveView("chat");
-          if (profileName !== hermes.selectedProfile) {
-            hermes.selectProfile(profileName);
+          if (profileName !== iris.selectedProfile) {
+            iris.selectProfile(profileName);
           }
           void chat.loadConversation(conversationId, profileName);
         }}
         onSelectProfile={(profileName) => {
-          hermes.selectProfile(profileName);
+          iris.selectProfile(profileName);
         }}
         onSelectView={selectView}
       />
@@ -271,10 +271,10 @@ function App() {
       />
       {onboardingOpen ? (
         <OnboardingOverlay
-          connected={hermes.connected}
+          connected={iris.connected}
           onClose={dismissOnboarding}
           onOpenSettings={() => {
-            setAgentDetailProfile(hermes.selectedProfile);
+            setAgentDetailProfile(iris.selectedProfile);
             setAgentSection("overview");
             setActiveView("agents");
             dismissOnboarding();
@@ -286,12 +286,12 @@ function App() {
   );
 
   async function refreshWithNotice() {
-    await hermes.refreshHermes();
+    await iris.refreshIris();
     await slashCommands.refreshSlashCommands();
     pushNotification({
-      tone: hermes.status?.connected ? "success" : "info",
+      tone: iris.status?.connected ? "success" : "info",
       title: "Connection refreshed",
-      message: hermes.status?.connected ? "Iris profile data is current." : "Iris is still waiting for a route.",
+      message: iris.status?.connected ? "Iris agent data is current." : "Iris is still waiting for a route.",
     });
   }
 
@@ -322,7 +322,7 @@ function App() {
   }
 
   async function runProfileActionWithNotice(action: ProfileAction, name: string, sourceProfile?: string) {
-    const message = await hermes.runProfileAction(action, name, sourceProfile);
+    const message = await iris.runProfileAction(action, name, sourceProfile);
     pushNotification({
       tone: isProfileActionFailure(message) ? "error" : "success",
       title: profileActionTitle(action),
@@ -405,21 +405,21 @@ function App() {
       return (
         <AgentsView
           detailProfile={agentDetailProfile}
-          status={hermes.status}
-          activeProfile={hermes.activeProfile}
-          selectedProfile={hermes.selectedProfile}
-          runtimeConfig={hermes.runtimeConfig}
-          memory={hermes.memory}
-          skills={hermes.skills}
+          status={iris.status}
+          activeProfile={iris.activeProfile}
+          selectedProfile={iris.selectedProfile}
+          runtimeConfig={iris.runtimeConfig}
+          memory={iris.memory}
+          skills={iris.skills}
           section={agentSection}
           onDetailProfileChange={setAgentDetailProfile}
           onSectionChange={setAgentSection}
-          onSelectProfile={hermes.selectProfile}
-          onRuntimeChange={hermes.updateRuntimeConfig}
-          onRefresh={() => void hermes.refreshHermes()}
-          onProfileAction={hermes.runProfileAction}
-          onResetMemory={hermes.resetMemoryFile}
-          onSaveMemory={hermes.saveMemoryFile}
+          onSelectProfile={iris.selectProfile}
+          onRuntimeChange={iris.updateRuntimeConfig}
+          onRefresh={() => void iris.refreshIris()}
+          onProfileAction={iris.runProfileAction}
+          onResetMemory={iris.resetMemoryFile}
+          onSaveMemory={iris.saveMemoryFile}
         />
       );
     }
@@ -455,10 +455,10 @@ function App() {
             currentModelSelection: modelCatalog.currentSelection,
           })
         }
-        connected={hermes.connected}
-        profile={hermes.selectedProfile}
+        connected={iris.connected}
+        profile={iris.selectedProfile}
         profiles={agentProfiles}
-        onProfileChange={hermes.selectProfile}
+        onProfileChange={iris.selectProfile}
         requestActive={chat.requestActive}
         onCancel={() => void chat.cancelMessage()}
         modelCatalog={modelCatalog.catalog}
@@ -466,7 +466,7 @@ function App() {
         lockedModelSelection={chat.selectedModelSelection}
         modelLoading={modelCatalog.loading}
         modelError={modelCatalog.error}
-        runtimeConfig={hermes.runtimeConfig}
+        runtimeConfig={iris.runtimeConfig}
         onModelSelect={modelCatalog.selectDraftModel}
         slashCommands={slashCommands.commands}
         slashCommandsLoading={slashCommands.loading}
@@ -494,11 +494,11 @@ function savePreviewOpenPreference(open: boolean) {
 }
 
 function profileActionTitle(action: ProfileAction) {
-  if (action === "create") return "Profile created";
-  if (action === "clone") return "Profile duplicated";
-  if (action === "delete") return "Profile deleted";
-  if (action === "rename") return "Profile renamed";
-  return "Profile switched";
+  if (action === "create") return "Agent created";
+  if (action === "clone") return "Agent duplicated";
+  if (action === "delete") return "Agent deleted";
+  if (action === "rename") return "Agent renamed";
+  return "Agent switched";
 }
 
 function isProfileActionFailure(message: string) {

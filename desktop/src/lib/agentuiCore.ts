@@ -1,5 +1,13 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { HermesRuntimeConfig } from "../types/hermes";
+import type {
+  HermesMemory,
+  HermesMemorySaveResult,
+  HermesSkillDetail,
+  HermesSkillSaveResult,
+  HermesSkills,
+  HermesStatus,
+} from "../types/hermes";
 import { coreAttachmentUrl, coreBaseUrl, coreRequest, type CoreResponse } from "./coreTransport";
 
 export type AgentUICoreAgent = {
@@ -86,6 +94,44 @@ export async function getAgentUICoreAgents(runtime?: HermesRuntimeConfig) {
   return coreRequest<{ agents: AgentUICoreAgent[] }>(runtime, "GET", "/agents");
 }
 
+export async function getAgentUICoreStatus(runtime?: HermesRuntimeConfig) {
+  const [health, status, agents, runtimes] = await Promise.all([
+    coreRequest<Record<string, unknown>>(runtime, "GET", "/health"),
+    coreRequest<Record<string, unknown>>(runtime, "GET", "/status"),
+    getAgentUICoreAgents(runtime),
+    coreRequest<{ runtimes: Array<Record<string, unknown>> }>(runtime, "GET", "/runtimes"),
+  ]);
+  const ok = Boolean(health.ok || status.ok || agents.ok);
+  const agentRows = agents.ok ? agents.agents : [];
+  const activeAgent = agentRows.find((agent) => agent.isDefault) || agentRows[0] || null;
+  const profiles = agentRows.map(coreAgentToHermesProfile);
+  const runtimeRows = runtimes.ok ? runtimes.runtimes || [] : [];
+  const probe = firstRuntimeProbe(runtimeRows);
+  const coreStatus = endpointFromResponse(status, coreBaseUrl(runtime));
+  return {
+    ok,
+    connected: ok,
+    root: "",
+    hermesPath: null,
+    hermesPathSource: null,
+    hermesPathCandidates: [],
+    version: null,
+    activeProfile: activeAgent ? coreAgentToHermesProfile(activeAgent) : profiles[0] || null,
+    profiles,
+    checkedAt: Math.floor(Date.now() / 1000),
+    connectionMode: runtime?.connectionMode || "local",
+    remoteUrl: runtime?.remoteUrl || "",
+    coreApiUrl: coreBaseUrl(runtime).replace(/\/v1$/, ""),
+    activeApiUrl: "",
+    gatewayStatus: probe.gateway,
+    remoteStatus: { ok: false },
+    activeApiStatus: probe.agentuiAdapter,
+    managementStatus: coreStatus,
+    runtimeStatus: probe,
+    error: ok ? null : health.error || status.error || agents.error || "Could not reach Iris Core.",
+  } as HermesStatus & { runtimeStatus?: Record<string, unknown> };
+}
+
 export async function getAgentUICoreAgentForProfile(profile = "default", runtime?: HermesRuntimeConfig) {
   const result = await getAgentUICoreAgents(runtime);
   if (!result.ok) return { ...result, agent: null };
@@ -97,6 +143,127 @@ export async function getAgentUICoreAgentForProfile(profile = "default", runtime
       result.agents[0] ||
       null,
   };
+}
+
+export async function getAgentUICoreAgentMemory(agentId: string, runtime?: HermesRuntimeConfig) {
+  return coreRequest<HermesMemory>(runtime, "GET", `/agents/${encodeURIComponent(agentId)}/memory`);
+}
+
+export async function saveAgentUICoreAgentMemory(
+  agentId: string,
+  file: "memory" | "user",
+  payload: { content: string; expectedUpdatedAt?: number | null },
+  runtime?: HermesRuntimeConfig,
+) {
+  return coreRequest<HermesMemorySaveResult>(
+    runtime,
+    "PUT",
+    `/agents/${encodeURIComponent(agentId)}/memory/${encodeURIComponent(file)}`,
+    payload,
+  );
+}
+
+export async function resetAgentUICoreAgentMemory(
+  agentId: string,
+  file: "memory" | "user" | "all",
+  payload: { confirm: string },
+  runtime?: HermesRuntimeConfig,
+) {
+  return coreRequest<HermesMemorySaveResult>(
+    runtime,
+    "DELETE",
+    `/agents/${encodeURIComponent(agentId)}/memory/${encodeURIComponent(file)}`,
+    payload,
+  );
+}
+
+export async function getAgentUICoreAgentSkills(agentId: string, runtime?: HermesRuntimeConfig) {
+  return coreRequest<HermesSkills>(runtime, "GET", `/agents/${encodeURIComponent(agentId)}/skills`);
+}
+
+export async function getAgentUICoreAgentSkill(agentId: string, skillId: string, runtime?: HermesRuntimeConfig) {
+  return coreRequest<HermesSkillDetail>(
+    runtime,
+    "GET",
+    `/agents/${encodeURIComponent(agentId)}/skills/${encodeURIComponent(skillId)}`,
+  );
+}
+
+export async function createAgentUICoreAgentSkill(
+  agentId: string,
+  payload: { name: string; category: string; path?: string; content: string },
+  runtime?: HermesRuntimeConfig,
+) {
+  return coreRequest<HermesSkillSaveResult>(
+    runtime,
+    "POST",
+    `/agents/${encodeURIComponent(agentId)}/skills`,
+    payload,
+  );
+}
+
+export async function saveAgentUICoreAgentSkill(
+  agentId: string,
+  skillId: string,
+  payload: { name: string; category: string; path?: string; content: string },
+  runtime?: HermesRuntimeConfig,
+) {
+  return coreRequest<HermesSkillSaveResult>(
+    runtime,
+    "PUT",
+    `/agents/${encodeURIComponent(agentId)}/skills/${encodeURIComponent(skillId)}`,
+    payload,
+  );
+}
+
+export async function createAgentUICoreAgent(
+  payload: { name: string; runtimeId?: string; metadata?: Record<string, unknown> },
+  runtime?: HermesRuntimeConfig,
+) {
+  return coreRequest<{ agent: AgentUICoreAgent }>(runtime, "POST", "/agents", payload);
+}
+
+export async function cloneAgentUICoreAgent(
+  agentId: string,
+  payload: { name: string; metadata?: Record<string, unknown> },
+  runtime?: HermesRuntimeConfig,
+) {
+  return coreRequest<{ agent: AgentUICoreAgent }>(
+    runtime,
+    "POST",
+    `/agents/${encodeURIComponent(agentId)}/clone`,
+    payload,
+  );
+}
+
+export async function renameAgentUICoreAgent(
+  agentId: string,
+  payload: { name: string },
+  runtime?: HermesRuntimeConfig,
+) {
+  return coreRequest<{ agent: AgentUICoreAgent }>(
+    runtime,
+    "PATCH",
+    `/agents/${encodeURIComponent(agentId)}`,
+    payload,
+  );
+}
+
+export async function activateAgentUICoreAgent(agentId: string, runtime?: HermesRuntimeConfig) {
+  return coreRequest<{ agent: AgentUICoreAgent }>(
+    runtime,
+    "POST",
+    `/agents/${encodeURIComponent(agentId)}/activate`,
+    {},
+  );
+}
+
+export async function deleteAgentUICoreAgent(agentId: string, runtime?: HermesRuntimeConfig) {
+  return coreRequest<{ agent: AgentUICoreAgent }>(
+    runtime,
+    "DELETE",
+    `/agents/${encodeURIComponent(agentId)}`,
+  );
 }
 
 export async function getAgentUICoreConversations(agentId: string, limit = 80, runtime?: HermesRuntimeConfig) {
@@ -221,7 +388,7 @@ export async function uploadAgentUICoreAttachment(
   }
 
   if (payload.localPath) {
-    const result = await invoke<CoreResponse<{ attachment: AgentUICoreAttachment }>>("hermes_bridge", {
+    const result = await invoke<CoreResponse<{ attachment: AgentUICoreAttachment }>>("core_bridge", {
       action: "core_upload_path",
       payload: { ...payload, runtime },
     });
@@ -248,6 +415,57 @@ function normalizeAttachmentUploadResponse(
       downloadUrl: coreAttachmentUrl(runtime, result.attachment.downloadUrl),
     },
   };
+}
+
+function coreAgentToHermesProfile(agent: AgentUICoreAgent) {
+  const metadata = agent.metadata || {};
+  return {
+    name: agent.runtimeProfile || agent.displayName,
+    path: stringMetadata(metadata.path),
+    active: Boolean(agent.isDefault),
+    exists: metadata.exists !== false,
+    model: stringMetadata(metadata.model) || "not configured",
+    provider: stringMetadata(metadata.provider) || "not configured",
+    memoryBytes: numberMetadata(metadata.memoryBytes),
+    memoryUpdatedAt: nullableNumberMetadata(metadata.memoryUpdatedAt),
+    skillCount: numberMetadata(metadata.skillCount),
+    sessionCount: 0,
+    estimatedCostUsd: null,
+    gatewayRunning: Boolean(metadata.gatewayRunning),
+  };
+}
+
+function firstRuntimeProbe(runtimes: Array<Record<string, unknown>>) {
+  const runtime = runtimes[0] || {};
+  const probe = runtime.lastProbe || runtime.last_probe;
+  if (probe && typeof probe === "object" && !Array.isArray(probe)) {
+    return probe as Record<string, { ok: boolean }>;
+  }
+  return {
+    gateway: { ok: false },
+    management: { ok: false },
+    agentuiAdapter: { ok: false },
+  };
+}
+
+function endpointFromResponse(response: CoreResponse<Record<string, unknown>>, url: string) {
+  return {
+    ok: Boolean(response.ok),
+    url,
+    error: response.ok ? undefined : response.error,
+  };
+}
+
+function stringMetadata(value: unknown) {
+  return typeof value === "string" ? value : "";
+}
+
+function numberMetadata(value: unknown) {
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+function nullableNumberMetadata(value: unknown) {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
 export async function cancelAgentUICoreMessage(conversationId: string, runtime?: HermesRuntimeConfig) {

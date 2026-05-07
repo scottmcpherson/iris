@@ -4,7 +4,7 @@ import {
   modelSelectionLabel,
   resolveDraftSelection,
   selectionExistsInCatalog,
-} from "../useHermesModelCatalog";
+} from "../useIrisModelCatalog";
 
 const catalog: HermesModelCatalog = {
   ok: true,

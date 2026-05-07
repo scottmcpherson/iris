@@ -6,13 +6,13 @@ import {
   Layers3,
   LayoutPanelLeft,
 } from "lucide-react";
-import { resolveManagementApiUrl, resolveRuntimeApiUrl } from "../../app/runtimeConfig";
+import { resolveCoreApiUrl } from "../../app/runtimeConfig";
 import type { ProfileAction, ProfileActionHandler } from "../../app/types";
 import {
   deleteRemoteCredential,
   getRemoteCredentialStatus,
   saveRemoteCredential,
-} from "../../lib/hermes";
+} from "../../lib/irisRuntime";
 import { endpointLabel } from "../../shared/format";
 import { rawStringValue } from "../../shared/strings";
 import type {
@@ -46,26 +46,12 @@ export function SettingsView({
   const [draftConfig, setDraftConfig] = useState(runtimeConfig);
   const [profileName, setProfileName] = useState("");
   const [notice, setNotice] = useState("");
-  const [hermesToken, setHermesToken] = useState("");
   const [sidecarToken, setSidecarToken] = useState("");
-  const [hermesCredentialStatus, setHermesCredentialStatus] = useState<RemoteCredentialStatus | null>(null);
   const [sidecarCredentialStatus, setSidecarCredentialStatus] = useState<RemoteCredentialStatus | null>(null);
   const [coreApiInput, setCoreApiInput] = useState("");
-  const [hermesApiInput, setHermesApiInput] = useState("");
-  const [sidecarApiInput, setSidecarApiInput] = useState("");
-  const selectedProfileApiUrl = draftConfig.profileApiUrls?.[selectedProfile] || "";
-  const selectedProfileSidecarUrl =
-    draftConfig.profileSidecarUrls?.[selectedProfile] || resolveManagementApiUrl(draftConfig, selectedProfile);
-  const appliedApiUrl = status?.activeApiUrl || resolveRuntimeApiUrl(runtimeConfig, selectedProfile);
-  const draftResolvedApiUrl = normalizeServerUrl(hermesApiInput);
-  const pendingApiUrl = draftResolvedApiUrl !== appliedApiUrl ? draftResolvedApiUrl : "";
-  const selectedApiStatus = endpointLabel(status?.activeApiStatus);
-  const appliedManagementApiUrl = status?.managementApiUrl || resolveManagementApiUrl(runtimeConfig, selectedProfile);
+  const appliedManagementApiUrl = status?.coreApiUrl || resolveCoreApiUrl(runtimeConfig);
   const draftCoreApiUrl = normalizeServerUrl(coreApiInput);
   const pendingCoreApiUrl = draftCoreApiUrl !== appliedManagementApiUrl ? draftCoreApiUrl : "";
-  const draftManagementApiUrl = normalizeServerUrl(sidecarApiInput);
-  const pendingManagementApiUrl =
-    draftManagementApiUrl !== appliedManagementApiUrl ? draftManagementApiUrl : "";
   const profileCount = status?.profiles?.length ?? 1;
   const checkedAt = status?.checkedAt ? formatTimestamp(status.checkedAt) : "Not checked";
   const modelDisplay = modelSummary(profile.provider, profile.model);
@@ -75,13 +61,8 @@ export function SettingsView({
   }, [runtimeConfig]);
 
   useEffect(() => {
-    setHermesApiInput(serverUrlInput(selectedProfileApiUrl));
-    setSidecarApiInput(serverUrlInput(selectedProfileSidecarUrl));
-  }, [selectedProfile, selectedProfileApiUrl, selectedProfileSidecarUrl]);
-
-  useEffect(() => {
-    setCoreApiInput(serverUrlInput(runtimeConfig.managementApiUrl));
-  }, [runtimeConfig.managementApiUrl]);
+    setCoreApiInput(serverUrlInput(runtimeConfig.coreApiUrl));
+  }, [runtimeConfig.coreApiUrl]);
 
   useEffect(() => {
     void refreshCredentialStatus();
@@ -99,33 +80,13 @@ export function SettingsView({
     setNotice(message);
   }
 
-  function saveProfileConnection() {
-    const profileApiUrls = { ...(draftConfig.profileApiUrls || {}) };
-    const profileSidecarUrls = { ...(draftConfig.profileSidecarUrls || {}) };
-    const apiUrl = normalizeServerUrl(hermesApiInput);
-    const sidecarUrl = normalizeServerUrl(sidecarApiInput);
-
-    if (!apiUrl || !sidecarUrl) {
-      setNotice("Enter full URLs with protocol and port, like http://127.0.0.1:8643.");
-      return;
-    }
-
-    profileApiUrls[selectedProfile] = apiUrl;
-    profileSidecarUrls[selectedProfile] = sidecarUrl;
-
-    const nextConfig = { ...draftConfig, profileApiUrls, profileSidecarUrls };
-    setDraftConfig(nextConfig);
-    onRuntimeChange(nextConfig);
-    setNotice(`${selectedProfile} connection saved.`);
-  }
-
   function saveCoreConnection() {
     const coreUrl = normalizeServerUrl(coreApiInput);
     if (!coreUrl) {
       setNotice("Enter a full Iris Core URL with protocol and port, like http://127.0.0.1:8765.");
       return;
     }
-    const nextConfig = { ...draftConfig, managementApiUrl: coreUrl };
+    const nextConfig = { ...draftConfig, coreApiUrl: coreUrl };
     setDraftConfig(nextConfig);
     onRuntimeChange(nextConfig);
     setNotice("Iris Core connection saved.");
@@ -138,42 +99,27 @@ export function SettingsView({
   }
 
   async function refreshCredentialStatus() {
-    const unavailable: RemoteCredentialStatus = { ok: false, kind: "hermes", exists: false, source: "unavailable" };
+    const unavailable: RemoteCredentialStatus = { ok: false, kind: "core", exists: false, source: "unavailable" };
     try {
-      const [hermesResult, sidecarResult] = await Promise.all([
-        getRemoteCredentialStatus("hermes"),
-        getRemoteCredentialStatus("sidecar"),
-      ]);
-      setHermesCredentialStatus(hermesResult);
+      const sidecarResult = await getRemoteCredentialStatus("core");
       setSidecarCredentialStatus(sidecarResult);
     } catch {
-      setHermesCredentialStatus(unavailable);
-      setSidecarCredentialStatus({ ...unavailable, kind: "sidecar" });
+      setSidecarCredentialStatus(unavailable);
     }
   }
 
-  async function saveToken(kind: "hermes" | "sidecar") {
-    const token = kind === "hermes" ? hermesToken : sidecarToken;
+  async function saveToken(kind: "core") {
+    const token = sidecarToken;
     const result = await saveRemoteCredential(kind, token);
-    if (kind === "hermes") {
-      setHermesCredentialStatus(result);
-      if (result.ok) setHermesToken("");
-    } else {
-      setSidecarCredentialStatus(result);
-      if (result.ok) setSidecarToken("");
-    }
+    setSidecarCredentialStatus(result);
+    if (result.ok) setSidecarToken("");
     setNotice(result.ok ? `${credentialLabel(kind)} token saved to the OS credential store.` : result.error || "Token save failed.");
   }
 
-  async function clearToken(kind: "hermes" | "sidecar") {
+  async function clearToken(kind: "core") {
     const result = await deleteRemoteCredential(kind);
-    if (kind === "hermes") {
-      setHermesCredentialStatus(result);
-      setHermesToken("");
-    } else {
-      setSidecarCredentialStatus(result);
-      setSidecarToken("");
-    }
+    setSidecarCredentialStatus(result);
+    setSidecarToken("");
     setNotice(result.ok ? `${credentialLabel(kind)} token cleared.` : result.error || "Token clear failed.");
   }
 
@@ -240,8 +186,8 @@ export function SettingsView({
                 value={sidecarToken}
                 status={sidecarCredentialStatus}
                 onChange={setSidecarToken}
-                onSave={() => void saveToken("sidecar")}
-                onClear={() => void clearToken("sidecar")}
+                onSave={() => void saveToken("core")}
+                onClear={() => void clearToken("core")}
               />
             </ServiceCard>
             <div className="settings-actions">
@@ -254,9 +200,9 @@ export function SettingsView({
           <section className="settings-section">
             <div className="settings-section-header">
               <div>
-                <p className="eyebrow">Profiles</p>
-                <h2>{profileCount} {profileCount === 1 ? "profile" : "profiles"}</h2>
-                <span>{status?.root || "~/.hermes"}</span>
+                <p className="eyebrow">Agents</p>
+                <h2>{profileCount} {profileCount === 1 ? "agent" : "agents"}</h2>
+                <span>{status?.coreApiUrl || resolveCoreApiUrl(runtimeConfig)}</span>
               </div>
             </div>
             <div className="usage-dashboard">
@@ -278,48 +224,23 @@ export function SettingsView({
           <SettingsSection
             eyebrow="Connection"
             title="Routes and credentials"
-            detail="Hermes API, Iris Core, and their bearer tokens."
+            detail="Iris Core route and bearer token."
           >
             <div className="service-card-grid">
-              <ServiceCard
-                name="Hermes API"
-                healthy={Boolean(status?.activeApiStatus?.ok)}
-                statusLabel={healthLabel(status?.activeApiStatus)}
-                statusTitle={selectedApiStatus}
-                lastChecked={checkedAt}
-                pendingUrl={pendingApiUrl}
-              >
-                <RuntimeTextField
-                  id="profile-api-route"
-                  label="URL"
-                  value={hermesApiInput}
-                  placeholder="http://127.0.0.1:8643"
-                  onChange={setHermesApiInput}
-                />
-                <TokenField
-                  id="profile-hermes-token"
-                  label="Token"
-                  value={hermesToken}
-                  status={hermesCredentialStatus}
-                  onChange={setHermesToken}
-                  onSave={() => void saveToken("hermes")}
-                  onClear={() => void clearToken("hermes")}
-                />
-              </ServiceCard>
               <ServiceCard
                 name="Iris Core"
                 healthy={Boolean(status?.managementStatus?.ok)}
                 statusLabel={healthLabel(status?.managementStatus)}
                 statusTitle={endpointLabel(status?.managementStatus)}
                 lastChecked={checkedAt}
-                pendingUrl={pendingManagementApiUrl}
+                pendingUrl={pendingCoreApiUrl}
               >
                 <RuntimeTextField
                   id="profile-sidecar-route"
                   label="URL"
-                  value={sidecarApiInput}
+                  value={coreApiInput}
                   placeholder="http://127.0.0.1:8765"
-                  onChange={setSidecarApiInput}
+                  onChange={setCoreApiInput}
                 />
                 <TokenField
                   id="profile-sidecar-token"
@@ -327,14 +248,14 @@ export function SettingsView({
                   value={sidecarToken}
                   status={sidecarCredentialStatus}
                   onChange={setSidecarToken}
-                  onSave={() => void saveToken("sidecar")}
-                  onClear={() => void clearToken("sidecar")}
+                  onSave={() => void saveToken("core")}
+                  onClear={() => void clearToken("core")}
                 />
               </ServiceCard>
             </div>
             <div className="settings-actions">
-              <button className="small-button settings-button" onClick={saveProfileConnection}>
-                Save profile connection
+              <button className="small-button settings-button" onClick={saveCoreConnection}>
+                Save Core connection
               </button>
             </div>
           </SettingsSection>
@@ -351,7 +272,7 @@ export function SettingsView({
           </section>
 
           <div className="agent-metadata-strip">
-            <SettingsRow icon={<LayoutPanelLeft size={17} />} label="Hermes root" value={status?.root || "~/.hermes"} />
+            <SettingsRow icon={<LayoutPanelLeft size={17} />} label="Runtime" value={selectedProfile} />
             <SettingsRow icon={<Layers3 size={17} />} label="Sessions" value={`${profile.sessionCount} sessions`} />
             <SettingsRow
               icon={<Database size={17} />}
@@ -384,12 +305,12 @@ function ProfileWorkflows({
   return (
     <div className="profile-workflows">
       <div>
-        <p className="eyebrow">Profile management</p>
-        <h2>Create, clone, rename, switch, or delete profiles.</h2>
+        <p className="eyebrow">Agent management</p>
+        <h2>Create, clone, rename, switch, or delete agents.</h2>
       </div>
       <input
         value={profileName}
-        placeholder="new-profile-name"
+        placeholder="new-agent-name"
         onChange={(event) => onProfileNameChange(event.target.value)}
       />
       <div className="profile-actions">
@@ -660,6 +581,6 @@ function normalizePathname(pathname: string) {
   return normalized || "/";
 }
 
-function credentialLabel(kind: "hermes" | "sidecar") {
-  return kind === "hermes" ? "Hermes API" : "Iris Core";
+function credentialLabel(_kind: "core") {
+  return "Iris Core";
 }

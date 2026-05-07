@@ -15,8 +15,8 @@ const exe = process.platform === "win32" ? ".exe" : "";
 const sidecarBin = join(root, "sidecar", ".venv", binDir, `hermes-sidecar${exe}`);
 const npm = process.platform === "win32" ? "npm.cmd" : "npm";
 const hermesHome = expandHome(process.env.HERMES_HOME ?? join(homedir(), ".hermes"));
-const sidecarHost = process.env.HERMES_MGMT_HOST ?? "127.0.0.1";
-const sidecarPort = process.env.HERMES_MGMT_PORT ?? "8765";
+const coreHost = process.env.IRIS_CORE_HOST ?? process.env.HERMES_MGMT_HOST ?? "127.0.0.1";
+const corePort = process.env.IRIS_CORE_PORT ?? process.env.HERMES_MGMT_PORT ?? "8765";
 const hermesEnvPath = join(hermesHome, ".env");
 const discoveredHermesApiToken = readEnvFileValue(hermesEnvPath, "API_SERVER_KEY");
 const hermesApiToken = process.env.HERMES_API_TOKEN || discoveredHermesApiToken;
@@ -31,20 +31,24 @@ const agentuiInboxToken = process.env.AGENTUI_INBOX_TOKEN || process.env.AGENTUI
 const agentuiToken = process.env.AGENTUI_TOKEN || agentuiInboxToken;
 const inboxToken = irisInboxToken || agentuiInboxToken;
 const platformToken = irisToken || agentuiToken || inboxToken;
-const sidecarToken =
+const coreToken =
   process.env.IRIS_CORE_TOKEN ||
   process.env.HERMES_SIDECAR_TOKEN ||
   process.env.HERMES_MGMT_TOKEN ||
   process.env.HERMES_REMOTE_TOKEN ||
   inboxToken;
 const devEnv = {
+  IRIS_CORE_HOST: coreHost,
+  IRIS_CORE_PORT: corePort,
+  IRIS_CORE_API_URL: `http://${coreHost}:${corePort}`,
+  ...(process.env.IRIS_CORE_STORE ? { IRIS_CORE_STORE: process.env.IRIS_CORE_STORE } : {}),
   HERMES_HOME: hermesHome,
-  HERMES_MGMT_HOST: sidecarHost,
-  HERMES_MGMT_PORT: sidecarPort,
+  HERMES_MGMT_HOST: coreHost,
+  HERMES_MGMT_PORT: corePort,
   ...(hermesApiToken ? { HERMES_API_TOKEN: hermesApiToken } : {}),
   ...(platformToken ? { IRIS_TOKEN: platformToken, AGENTUI_TOKEN: platformToken } : {}),
   ...(inboxToken ? { IRIS_INBOX_TOKEN: inboxToken, AGENTUI_INBOX_TOKEN: inboxToken } : {}),
-  ...(sidecarToken ? { HERMES_SIDECAR_TOKEN: sidecarToken } : {}),
+  ...(coreToken ? { IRIS_CORE_TOKEN: coreToken, HERMES_SIDECAR_TOKEN: coreToken } : {}),
 };
 
 function prefix(label, chunk) {
@@ -129,19 +133,19 @@ process.on("SIGINT", () => shutdown(0));
 process.on("SIGTERM", () => shutdown(0));
 
 if (hermesApiTokenSource) {
-  console.log(`[dev] using Hermes API token from ${hermesApiTokenSource}`);
+  console.log(`[dev] using Hermes Jobs API token as an Iris Core runtime default from ${hermesApiTokenSource}`);
 } else {
-  console.log(`[dev] no Hermes API token found; Automations job management may require HERMES_API_TOKEN`);
+  console.log("[dev] no Hermes Jobs API token found; Iris Core runtime automation calls may require HERMES_API_TOKEN");
 }
 if (inboxToken) {
   console.log("[dev] using Iris inbox token from environment");
 }
 
-async function sidecarIsAlreadyRunning() {
+async function coreIsAlreadyRunning() {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 800);
   try {
-    const response = await fetch(`http://${sidecarHost}:${sidecarPort}/health`, {
+    const response = await fetch(`http://${coreHost}:${corePort}/health`, {
       signal: controller.signal,
     });
     return response.ok;
@@ -158,10 +162,10 @@ if (withSidecar) {
     process.exit(1);
   }
 
-  if (await sidecarIsAlreadyRunning()) {
-    console.log(`[sidecar] using existing server at http://${sidecarHost}:${sidecarPort}`);
+  if (await coreIsAlreadyRunning()) {
+    console.log(`[iris-core] using existing server at http://${coreHost}:${corePort}`);
   } else {
-    run("sidecar", sidecarBin, ["--hermes-home", hermesHome, "--host", sidecarHost, "--port", sidecarPort], {
+    run("iris-core", sidecarBin, ["--hermes-home", hermesHome, "--host", coreHost, "--port", corePort], {
       env: devEnv,
     });
   }

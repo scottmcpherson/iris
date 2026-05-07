@@ -13,7 +13,7 @@ import {
   Store,
   Tags,
 } from "lucide-react";
-import { getHermesSkillDetail, saveHermesSkill } from "../../lib/hermes";
+import { getIrisSkillDetail, saveIrisSkill } from "../../lib/irisRuntime";
 import { ViewHeader } from "../../shared/ViewHeader";
 import type { HermesRuntimeConfig, HermesSkill, HermesSkillDetail } from "../../types/hermes";
 
@@ -131,7 +131,7 @@ export function SkillsView({
       return;
     }
 
-    void getHermesSkillDetail(profile, selectedSkill.id || selectedSkill.path, runtimeConfig)
+    void getIrisSkillDetail(profile, selectedSkill.id || selectedSkill.path, runtimeConfig)
       .then((result) => {
         if (cancelled) return;
         if (!result.ok) throw new Error(result.error || "Could not load skill.");
@@ -176,12 +176,14 @@ export function SkillsView({
     setIsSaving(true);
     setNotice("");
     try {
-      const result = await saveHermesSkill({
+      const result = await saveIrisSkill({
         profile,
+        id: detail && !isVirtualPath(detail.path) ? detail.id : undefined,
         path: detail && !isVirtualPath(detail.path) ? detail.path : undefined,
         name: draftName,
         category: draftCategory,
         content: draftContent,
+        runtime: runtimeConfig,
       });
       if (!result.ok) throw new Error(result.error || "Could not save skill.");
       setDetail(result.skill);

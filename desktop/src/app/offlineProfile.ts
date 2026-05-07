@@ -2,7 +2,7 @@ import type { HermesProfile } from "../types/hermes";
 
 export const offlineProfile: HermesProfile = {
   name: "default",
-  path: "~/.hermes",
+  path: "",
   active: true,
   exists: false,
   model: "not configured",

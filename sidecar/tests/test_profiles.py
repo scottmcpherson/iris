@@ -4,7 +4,7 @@ import base64
 
 import pytest
 
-from hermes_management_server.hermes_store import (
+from hermes_management_server.runtime_adapters.hermes_store import (
     HermesStore,
     decode_skill_id,
     encode_skill_id,

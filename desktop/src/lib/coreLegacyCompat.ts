@@ -4,7 +4,7 @@ import type {
   AgentUICoreMessage,
 } from "./agentuiCore";
 
-export function coreConversationToHermes(conversation: AgentUICoreConversation) {
+export function coreConversationToLegacy(conversation: AgentUICoreConversation) {
   const origin = {
     ...(conversation.origin || {}),
     runtimeId: conversation.runtimeId,
@@ -27,7 +27,7 @@ export function coreConversationToHermes(conversation: AgentUICoreConversation) 
   };
 }
 
-export function coreMessageToHermes(message: AgentUICoreMessage, conversationId: string) {
+export function coreMessageToLegacy(message: AgentUICoreMessage, conversationId: string) {
   return {
     id: message.id,
     sessionId: conversationId,

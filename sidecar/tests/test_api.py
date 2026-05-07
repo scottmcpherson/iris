@@ -14,6 +14,15 @@ def make_client(root):
     return TestClient(app)
 
 
+def agent_for_profile(client, profile):
+    response = client.get("/v1/agents")
+    assert response.status_code == 200
+    for agent in response.json()["agents"]:
+        if agent["runtimeProfile"] == profile:
+            return agent
+    raise AssertionError(f"Agent for profile {profile} was not found.")
+
+
 def create_core_history_db(path, *, session_id, title, user_text, assistant_text, chat_id):
     path.parent.mkdir(parents=True, exist_ok=True)
     connection = sqlite3.connect(path)
@@ -103,7 +112,7 @@ def test_core_cors_preflight_allows_idempotency_key(tmp_path):
     assert "Idempotency-Key" in response.headers["access-control-allow-headers"]
 
 
-def test_profile_memory_and_skills_endpoints(tmp_path):
+def test_agent_memory_and_skills_endpoints(tmp_path):
     root = tmp_path / ".hermes"
     profile = root / "profiles" / "research"
     memories = profile / "memories"
@@ -114,15 +123,17 @@ def test_profile_memory_and_skills_endpoints(tmp_path):
     skill.parent.mkdir(parents=True)
     skill.write_text("# Summarize\n\nCondense notes.", encoding="utf-8")
     client = make_client(root)
+    agent = agent_for_profile(client, "research")
+    agent_id = agent["id"]
 
-    profile_response = client.get("/v1/profiles/research")
-    memory_response = client.get("/v1/profiles/research/memory")
-    skills_response = client.get("/v1/profiles/research/skills")
+    agent_response = client.get(f"/v1/agents/{agent_id}")
+    memory_response = client.get(f"/v1/agents/{agent_id}/memory")
+    skills_response = client.get(f"/v1/agents/{agent_id}/skills")
     skill_id = skills_response.json()["skills"][0]["id"]
-    detail_response = client.get(f"/v1/profiles/research/skills/{skill_id}")
+    detail_response = client.get(f"/v1/agents/{agent_id}/skills/{skill_id}")
 
-    assert profile_response.status_code == 200
-    assert profile_response.json()["skillCount"] == 1
+    assert agent_response.status_code == 200
+    assert agent_response.json()["agent"]["metadata"]["skillCount"] == 1
     assert memory_response.status_code == 200
     assert memory_response.json()["memory"]["content"] == "remember this"
     assert memory_response.json()["user"]["content"] == "user facts"
@@ -132,39 +143,93 @@ def test_profile_memory_and_skills_endpoints(tmp_path):
     assert detail_response.json()["content"] == "# Summarize\n\nCondense notes."
 
 
+def test_agent_scoped_memory_skills_and_profile_actions(tmp_path):
+    root = tmp_path / ".hermes"
+    memories = root / "memories"
+    memories.mkdir(parents=True)
+    (memories / "MEMORY.md").write_text("default memory", encoding="utf-8")
+    client = make_client(root)
+
+    agents_response = client.get("/v1/agents")
+    default_agent_id = agents_response.json()["agents"][0]["id"]
+
+    memory_response = client.get(f"/v1/agents/{default_agent_id}/memory")
+    save_memory_response = client.put(
+        f"/v1/agents/{default_agent_id}/memory/memory",
+        json={"content": "updated memory", "expectedUpdatedAt": memory_response.json()["memory"]["updatedAt"]},
+    )
+    create_skill_response = client.post(
+        f"/v1/agents/{default_agent_id}/skills",
+        json={"name": "Route Core", "category": "personal", "content": "# Route Core\n"},
+    )
+    skills_response = client.get(f"/v1/agents/{default_agent_id}/skills")
+    skill_id = skills_response.json()["skills"][0]["id"]
+    save_skill_response = client.put(
+        f"/v1/agents/{default_agent_id}/skills/{skill_id}",
+        json={"name": "Route Core", "category": "personal", "content": "# Route Core\n\nUpdated.\n"},
+    )
+    create_agent_response = client.post("/v1/agents", json={"name": "research"})
+    clone_agent_response = client.post(
+        f"/v1/agents/{default_agent_id}/clone",
+        json={"name": "default-copy"},
+    )
+    activate_agent_response = client.post(f"/v1/agents/{create_agent_response.json()['agent']['id']}/activate")
+    rename_agent_response = client.patch(
+        f"/v1/agents/{create_agent_response.json()['agent']['id']}",
+        json={"name": "research-renamed"},
+    )
+
+    assert save_memory_response.status_code == 200
+    assert save_memory_response.json()["memory"]["memory"]["content"] == "updated memory"
+    assert create_skill_response.status_code == 200
+    assert save_skill_response.status_code == 200
+    assert save_skill_response.json()["skill"]["content"] == "# Route Core\n\nUpdated.\n"
+    assert create_agent_response.status_code == 200
+    assert clone_agent_response.status_code == 200
+    assert (root / "profiles" / "default-copy" / "memories" / "MEMORY.md").read_text(encoding="utf-8") == "updated memory"
+    assert activate_agent_response.status_code == 200
+    assert rename_agent_response.status_code == 200
+    assert (root / "profiles" / "research-renamed").is_dir()
+    assert (root / "active_profile").read_text(encoding="utf-8") == "research-renamed"
+    delete_agent_response = client.delete(f"/v1/agents/{clone_agent_response.json()['agent']['id']}")
+    assert delete_agent_response.status_code == 200
+    assert not (root / "profiles" / "default-copy").exists()
+
+
 def test_profile_summary_accepts_json_gateway_pid(tmp_path):
     root = tmp_path / ".hermes"
     root.mkdir(parents=True)
     (root / "gateway.pid").write_text(f'{{"pid": {os.getpid()}, "kind": "hermes-gateway"}}', encoding="utf-8")
     client = make_client(root)
 
-    response = client.get("/v1/profiles")
+    response = client.get("/v1/agents")
 
     assert response.status_code == 200
-    assert response.json()["profiles"][0]["gatewayRunning"] is True
+    assert response.json()["agents"][0]["metadata"]["gatewayRunning"] is True
 
 
-def test_profile_management_endpoints_create_clone_delete(tmp_path):
+def test_agent_management_endpoints_create_clone_delete(tmp_path):
     root = tmp_path / ".hermes"
     default_memories = root / "memories"
     default_memories.mkdir(parents=True)
     (default_memories / "MEMORY.md").write_text("default memory", encoding="utf-8")
     (root / "profiles" / "existing").mkdir(parents=True)
     client = make_client(root)
+    default_agent_id = agent_for_profile(client, "default")["id"]
 
-    create_response = client.post("/v1/profiles", json={"name": "research"})
-    clone_response = client.post("/v1/profiles/default/clone", json={"name": "default-copy"})
+    create_response = client.post("/v1/agents", json={"name": "research"})
+    clone_response = client.post(f"/v1/agents/{default_agent_id}/clone", json={"name": "default-copy"})
 
     assert create_response.status_code == 200
-    assert create_response.json()["profile"] == "research"
+    assert create_response.json()["agent"]["runtimeProfile"] == "research"
     assert (root / "profiles" / "research" / "memories").is_dir()
     assert clone_response.status_code == 200
-    assert clone_response.json()["profile"] == "default-copy"
+    assert clone_response.json()["agent"]["runtimeProfile"] == "default-copy"
     assert (root / "profiles" / "default-copy" / "memories" / "MEMORY.md").read_text(encoding="utf-8") == "default memory"
     assert not (root / "profiles" / "default-copy" / "profiles").exists()
 
-    delete_response = client.delete("/v1/profiles/research")
-    default_delete_response = client.delete("/v1/profiles/default")
+    delete_response = client.delete(f"/v1/agents/{create_response.json()['agent']['id']}")
+    default_delete_response = client.delete(f"/v1/agents/{default_agent_id}")
 
     assert delete_response.status_code == 200
     assert not (root / "profiles" / "research").exists()
@@ -172,14 +237,14 @@ def test_profile_management_endpoints_create_clone_delete(tmp_path):
     assert "default profile cannot be deleted" in default_delete_response.json()["error"].lower()
 
 
-def test_api_returns_structured_error_for_bad_profile(tmp_path):
+def test_removed_profile_routes_return_structured_404(tmp_path):
     client = make_client(tmp_path / ".hermes")
 
     response = client.get("/v1/profiles/bad$name")
 
-    assert response.status_code == 400
+    assert response.status_code == 404
     assert response.json()["ok"] is False
-    assert "Profile names" in response.json()["error"]
+    assert response.json()["error"] == "Not Found"
 
 
 def test_inbox_accepts_lists_and_acknowledges_messages_without_sqlite(tmp_path, monkeypatch):

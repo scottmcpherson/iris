@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { normalizeJobsResult } from "../useHermesJobs";
+import { normalizeJobsResult } from "../useIrisAutomations";
 
-describe("Hermes jobs helpers", () => {
-  it("treats scheduled Hermes API jobs as active", () => {
+describe("runtime jobs helpers", () => {
+  it("treats scheduled runtime jobs as active", () => {
     const jobs = normalizeJobsResult({
       jobs: [
         {

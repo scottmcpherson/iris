@@ -1,32 +1,42 @@
 import { invoke } from "@tauri-apps/api/core";
 import {
+  activateAgentUICoreAgent,
+  cloneAgentUICoreAgent,
   completeAgentUICoreSlashCommand,
+  createAgentUICoreAgent,
+  createAgentUICoreAgentSkill,
+  deleteAgentUICoreAgent,
   getAgentUICoreAgentForProfile,
+  getAgentUICoreAgentMemory,
+  getAgentUICoreAgentSkill,
+  getAgentUICoreAgentSkills,
   getAgentUICoreConversation,
   getAgentUICoreConversationMessages,
   getAgentUICoreConversations,
   getAgentUICoreEvents,
   getAgentUICoreModels,
   getAgentUICoreSlashCommands,
+  getAgentUICoreStatus,
+  renameAgentUICoreAgent,
+  resetAgentUICoreAgentMemory,
+  saveAgentUICoreAgentMemory,
+  saveAgentUICoreAgentSkill,
 } from "./agentuiCore";
 import {
-  coreConversationToHermes,
+  coreConversationToLegacy,
   coreEventToInboxMessage,
-  coreMessageToHermes,
-} from "./coreHermesCompat";
+  coreMessageToLegacy,
+} from "./coreLegacyCompat";
 import type {
   HermesMemory,
-  HermesMemorySaveResult,
   HermesModelCatalog,
   HermesConversationDetail,
   HermesConversationsResult,
   HermesRuntimeConfig,
   HermesSkillDetail,
-  HermesSkillSaveResult,
   HermesSkills,
   HermesSlashCommandsResult,
   HermesSlashCompletionResult,
-  HermesStatus,
   RemoteCredentialKind,
   RemoteCredentialStatus,
 } from "../types/hermes";
@@ -40,67 +50,114 @@ type BridgeResponse<T> = T & {
 };
 
 async function bridge<T>(action: string, payload: Record<string, unknown> = {}) {
-  return invoke<BridgeResponse<T>>("hermes_bridge", { action, payload });
+  return invoke<BridgeResponse<T>>("core_bridge", { action, payload });
 }
 
-function runtimePayload(runtime?: HermesRuntimeConfig) {
-  return runtime
-    ? {
-        runtime,
-        provider: runtime.provider,
-        model: runtime.model,
-      }
-    : {};
+export async function getIrisStatus(runtime?: HermesRuntimeConfig, profile?: string) {
+  const status = await getAgentUICoreStatus(runtime);
+  if (!profile) return status;
+  const activeProfile =
+    status.profiles.find((item) => item.name === profile) ||
+    status.activeProfile;
+  return { ...status, activeProfile };
 }
 
-export async function getHermesStatus(runtime?: HermesRuntimeConfig, profile?: string) {
-  return bridge<HermesStatus>("status", { ...runtimePayload(runtime), profile });
+export async function getIrisMemory(profile?: string, runtime?: HermesRuntimeConfig) {
+  const agentResult = await getAgentUICoreAgentForProfile(profile || "default", runtime);
+  if (!agentResult.ok || !agentResult.agent) {
+    return emptyMemory(profile || "default", agentResultError(agentResult, "Could not resolve Iris agent."));
+  }
+  const result = await getAgentUICoreAgentMemory(agentResult.agent.id, runtime);
+  return result.ok ? result : emptyMemory(agentResult.agent.runtimeProfile, result.error || "Could not load memory from Iris Core.");
 }
 
-export async function getHermesMemory(profile?: string, runtime?: HermesRuntimeConfig) {
-  return bridge<HermesMemory>("memory", { profile, ...runtimePayload(runtime) });
-}
-
-export async function saveHermesMemoryFile(payload: {
+export async function saveIrisMemoryFile(payload: {
   profile?: string;
   file: "memory" | "user";
   content: string;
   expectedUpdatedAt?: number | null;
+  runtime?: HermesRuntimeConfig;
 }) {
-  return bridge<HermesMemorySaveResult>("memory_save", payload);
+  const agentResult = await getAgentUICoreAgentForProfile(payload.profile || "default", payload.runtime);
+  if (!agentResult.ok || !agentResult.agent) {
+    return { ok: false, profile: payload.profile || "default", memory: emptyMemory(payload.profile || "default"), error: agentResultError(agentResult, "Could not resolve Iris agent.") };
+  }
+  const result = await saveAgentUICoreAgentMemory(
+    agentResult.agent.id,
+    payload.file,
+    { content: payload.content, expectedUpdatedAt: payload.expectedUpdatedAt },
+    payload.runtime,
+  );
+  return result.ok ? result : { ...result, profile: agentResult.agent.runtimeProfile, memory: emptyMemory(agentResult.agent.runtimeProfile) };
 }
 
-export async function resetHermesMemoryFile(payload: {
+export async function resetIrisMemoryFile(payload: {
   profile?: string;
   file: "memory" | "user" | "all";
   confirm: string;
+  runtime?: HermesRuntimeConfig;
 }) {
-  return bridge<HermesMemorySaveResult>("memory_reset", payload);
+  const agentResult = await getAgentUICoreAgentForProfile(payload.profile || "default", payload.runtime);
+  if (!agentResult.ok || !agentResult.agent) {
+    return { ok: false, profile: payload.profile || "default", memory: emptyMemory(payload.profile || "default"), error: agentResultError(agentResult, "Could not resolve Iris agent.") };
+  }
+  const result = await resetAgentUICoreAgentMemory(
+    agentResult.agent.id,
+    payload.file,
+    { confirm: payload.confirm },
+    payload.runtime,
+  );
+  return result.ok ? result : { ...result, profile: agentResult.agent.runtimeProfile, memory: emptyMemory(agentResult.agent.runtimeProfile) };
 }
 
-export async function getHermesSkills(profile?: string, runtime?: HermesRuntimeConfig) {
-  return bridge<HermesSkills>("skills", { profile, ...runtimePayload(runtime) });
+export async function getIrisSkills(profile?: string, runtime?: HermesRuntimeConfig) {
+  const agentResult = await getAgentUICoreAgentForProfile(profile || "default", runtime);
+  if (!agentResult.ok || !agentResult.agent) {
+    return emptySkills(profile || "default", agentResultError(agentResult, "Could not resolve Iris agent."));
+  }
+  const result = await getAgentUICoreAgentSkills(agentResult.agent.id, runtime);
+  return result.ok ? result : emptySkills(agentResult.agent.runtimeProfile, result.error || "Could not load skills from Iris Core.");
 }
 
-export async function getHermesSkillDetail(
+export async function getIrisSkillDetail(
   profile: string | undefined,
   skillId: string,
   runtime?: HermesRuntimeConfig,
 ) {
-  return bridge<HermesSkillDetail>("skill_detail", { profile, skillId, ...runtimePayload(runtime) });
+  const agentResult = await getAgentUICoreAgentForProfile(profile || "default", runtime);
+  if (!agentResult.ok || !agentResult.agent) {
+    return emptySkillDetail(profile || "default", agentResultError(agentResult, "Could not resolve Iris agent."));
+  }
+  const result = await getAgentUICoreAgentSkill(agentResult.agent.id, skillId, runtime);
+  return result.ok ? result : emptySkillDetail(agentResult.agent.runtimeProfile, result.error || "Could not load skill from Iris Core.");
 }
 
-export async function saveHermesSkill(payload: {
+export async function saveIrisSkill(payload: {
   profile?: string;
+  id?: string;
   path?: string;
   name: string;
   category: string;
   content: string;
+  runtime?: HermesRuntimeConfig;
 }) {
-  return bridge<HermesSkillSaveResult>("skill_save", payload);
+  const agentResult = await getAgentUICoreAgentForProfile(payload.profile || "default", payload.runtime);
+  if (!agentResult.ok || !agentResult.agent) {
+    return { ok: false, profile: payload.profile || "default", skill: emptySkillDetail(payload.profile || "default"), error: agentResultError(agentResult, "Could not resolve Iris agent.") };
+  }
+  const savePayload = {
+    name: payload.name,
+    category: payload.category,
+    path: payload.path,
+    content: payload.content,
+  };
+  const result = payload.id
+    ? await saveAgentUICoreAgentSkill(agentResult.agent.id, payload.id, savePayload, payload.runtime)
+    : await createAgentUICoreAgentSkill(agentResult.agent.id, savePayload, payload.runtime);
+  return result.ok ? result : { ...result, profile: agentResult.agent.runtimeProfile, skill: emptySkillDetail(agentResult.agent.runtimeProfile) };
 }
 
-export async function getHermesConversations(
+export async function getIrisConversations(
   profile?: string,
   limit = 80,
   runtime?: HermesRuntimeConfig,
@@ -126,10 +183,10 @@ export async function getHermesConversations(
     return {
       ok: true,
       profile: agentResult.agent.runtimeProfile,
-      path: `${runtime?.managementApiUrl || "http://127.0.0.1:8765"}/v1/conversations`,
+      path: `${runtime?.coreApiUrl || "http://127.0.0.1:8765"}/v1/conversations`,
       source: "hermes-management" as const,
       schemaVersion: null,
-      conversations: result.conversations.map(coreConversationToHermes),
+      conversations: result.conversations.map(coreConversationToLegacy),
     };
   } catch (error) {
     return emptyConversations(
@@ -140,7 +197,7 @@ export async function getHermesConversations(
   }
 }
 
-export async function getHermesModelCatalog(profile?: string, runtime?: HermesRuntimeConfig) {
+export async function getIrisModelCatalog(profile?: string, runtime?: HermesRuntimeConfig) {
   const targetProfile = profile || "default";
   try {
     const agentResult = await getAgentUICoreAgentForProfile(targetProfile, runtime);
@@ -159,7 +216,7 @@ export async function getHermesModelCatalog(profile?: string, runtime?: HermesRu
   }
 }
 
-export async function getHermesSlashCommands(profile?: string, runtime?: HermesRuntimeConfig) {
+export async function getIrisSlashCommands(profile?: string, runtime?: HermesRuntimeConfig) {
   const targetProfile = profile || "default";
   try {
     const agentResult = await getAgentUICoreAgentForProfile(targetProfile, runtime);
@@ -178,7 +235,7 @@ export async function getHermesSlashCommands(profile?: string, runtime?: HermesR
   }
 }
 
-export async function completeHermesSlashCommand(
+export async function completeIrisSlashCommand(
   text: string,
   profile?: string,
   runtime?: HermesRuntimeConfig,
@@ -199,7 +256,7 @@ export async function completeHermesSlashCommand(
   }
 }
 
-export async function getHermesConversationDetail(
+export async function getIrisConversationDetail(
   profile: string | undefined,
   conversationId: string,
   runtime?: HermesRuntimeConfig,
@@ -228,11 +285,11 @@ export async function getHermesConversationDetail(
     return {
       ok: true,
       profile: conversationResult.conversation.runtimeProfile || profile || "default",
-      path: `${runtime?.managementApiUrl || "http://127.0.0.1:8765"}/v1/conversations/${conversationId}`,
+      path: `${runtime?.coreApiUrl || "http://127.0.0.1:8765"}/v1/conversations/${conversationId}`,
       source: "hermes-management" as const,
       schemaVersion: null,
-      conversation: coreConversationToHermes(conversationResult.conversation),
-      messages: messagesResult.messages.map((message) => coreMessageToHermes(message, conversationId)),
+      conversation: coreConversationToLegacy(conversationResult.conversation),
+      messages: messagesResult.messages.map((message) => coreMessageToLegacy(message, conversationId)),
       warning: messagesResult.warning,
       error: undefined,
     };
@@ -246,7 +303,7 @@ export async function getHermesConversationDetail(
   }
 }
 
-export async function getHermesInboxMessages(
+export async function getIrisInboxMessages(
   after = 0,
   limit = 50,
   runtime?: HermesRuntimeConfig,
@@ -293,24 +350,37 @@ export async function getHermesInboxMessages(
   }
 }
 
-export async function createHermesProfile(name: string, runtime?: HermesRuntimeConfig) {
-  return bridge<{ profile: string }>("profile_create", { name, ...runtimePayload(runtime) });
+export async function createIrisAgent(name: string, runtime?: HermesRuntimeConfig) {
+  const result = await createAgentUICoreAgent({ name }, runtime);
+  return profileActionResult(result);
 }
 
-export async function cloneHermesProfile(source: string, name: string, runtime?: HermesRuntimeConfig) {
-  return bridge<{ profile: string }>("profile_clone", { source, name, ...runtimePayload(runtime) });
+export async function cloneIrisAgent(source: string, name: string, runtime?: HermesRuntimeConfig) {
+  const agentResult = await getAgentUICoreAgentForProfile(source || "default", runtime);
+  if (!agentResult.ok || !agentResult.agent) return { ok: false, profile: source, error: agentResultError(agentResult, "Could not resolve Iris agent.") };
+  const result = await cloneAgentUICoreAgent(agentResult.agent.id, { name }, runtime);
+  return profileActionResult(result);
 }
 
-export async function renameHermesProfile(source: string, name: string, runtime?: HermesRuntimeConfig) {
-  return bridge<{ profile: string }>("profile_rename", { source, name, ...runtimePayload(runtime) });
+export async function renameIrisAgent(source: string, name: string, runtime?: HermesRuntimeConfig) {
+  const agentResult = await getAgentUICoreAgentForProfile(source || "default", runtime);
+  if (!agentResult.ok || !agentResult.agent) return { ok: false, profile: source, error: agentResultError(agentResult, "Could not resolve Iris agent.") };
+  const result = await renameAgentUICoreAgent(agentResult.agent.id, { name }, runtime);
+  return profileActionResult(result);
 }
 
-export async function switchHermesProfile(name: string, runtime?: HermesRuntimeConfig) {
-  return bridge<{ profile: string }>("profile_switch", { name, ...runtimePayload(runtime) });
+export async function switchIrisAgent(name: string, runtime?: HermesRuntimeConfig) {
+  const agentResult = await getAgentUICoreAgentForProfile(name || "default", runtime);
+  if (!agentResult.ok || !agentResult.agent) return { ok: false, profile: name, error: agentResultError(agentResult, "Could not resolve Iris agent.") };
+  const result = await activateAgentUICoreAgent(agentResult.agent.id, runtime);
+  return profileActionResult(result);
 }
 
-export async function deleteHermesProfile(name: string, runtime?: HermesRuntimeConfig) {
-  return bridge<{ profile: string }>("profile_delete", { name, ...runtimePayload(runtime) });
+export async function deleteIrisAgent(name: string, runtime?: HermesRuntimeConfig) {
+  const agentResult = await getAgentUICoreAgentForProfile(name || "default", runtime);
+  if (!agentResult.ok || !agentResult.agent) return { ok: false, profile: name, error: agentResultError(agentResult, "Could not resolve Iris agent.") };
+  const result = await deleteAgentUICoreAgent(agentResult.agent.id, runtime);
+  return profileActionResult(result);
 }
 
 export async function getRemoteCredentialStatus(kind: RemoteCredentialKind) {
@@ -336,11 +406,66 @@ function emptyModelCatalog(profile: string, error: string): HermesModelCatalog {
   };
 }
 
+function emptyMemory(profile: string, error = ""): HermesMemory {
+  const emptyFile = (name: string) => ({
+    name,
+    path: "",
+    exists: false,
+    updatedAt: null,
+    bytes: 0,
+    content: "",
+  });
+  return {
+    ok: !error,
+    profile,
+    path: "",
+    memory: emptyFile("MEMORY.md"),
+    user: emptyFile("USER.md"),
+    history: [],
+    ...(error ? { error } : {}),
+  };
+}
+
+function emptySkills(profile: string, error: string): HermesSkills {
+  return {
+    ok: false,
+    profile,
+    path: "",
+    skills: [],
+    error,
+  };
+}
+
+function emptySkillDetail(_profile: string, error = ""): HermesSkillDetail {
+  return {
+    id: "",
+    name: "",
+    path: "",
+    category: "personal",
+    description: "",
+    updatedAt: null,
+    source: "installed",
+    version: null,
+    tags: [],
+    bytes: 0,
+    metadata: {},
+    content: "",
+    history: [],
+    ...(error ? { error } : {}),
+  } as HermesSkillDetail;
+}
+
+function profileActionResult(result: { ok: boolean; agent?: { runtimeProfile: string }; error?: string }) {
+  return result.ok && result.agent
+    ? { ok: true, profile: result.agent.runtimeProfile }
+    : { ok: false, profile: "", error: result.error || "Agent operation failed." };
+}
+
 function emptyConversations(profile: string, error: string, runtime?: HermesRuntimeConfig): HermesConversationsResult {
   return {
     ok: false,
     profile,
-    path: `${runtime?.managementApiUrl || "http://127.0.0.1:8765"}/v1/conversations`,
+    path: `${runtime?.coreApiUrl || "http://127.0.0.1:8765"}/v1/conversations`,
     source: "hermes-management",
     schemaVersion: null,
     conversations: [],
@@ -357,7 +482,7 @@ function emptyConversationDetail(
   return {
     ok: false,
     profile,
-    path: `${runtime?.managementApiUrl || "http://127.0.0.1:8765"}/v1/conversations/${conversationId}`,
+    path: `${runtime?.coreApiUrl || "http://127.0.0.1:8765"}/v1/conversations/${conversationId}`,
     source: "hermes-management",
     schemaVersion: null,
     conversation: null,
@@ -393,4 +518,4 @@ function agentResultError(result: unknown, fallback: string) {
   return fallback;
 }
 
-export { coreEventToInboxMessage } from "./coreHermesCompat";
+export { coreEventToInboxMessage } from "./coreLegacyCompat";

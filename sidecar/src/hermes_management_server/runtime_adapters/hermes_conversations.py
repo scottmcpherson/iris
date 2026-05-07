@@ -10,8 +10,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from .models import ConversationMessage, ConversationSummary
-from .security import ManagementError
+from ..models import ConversationMessage, ConversationSummary
+from ..security import ManagementError
 
 
 SQLITE_SUFFIXES = {".db", ".sqlite", ".sqlite3"}

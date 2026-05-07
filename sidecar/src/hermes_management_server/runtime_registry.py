@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from .core_store import CoreStore
-from .hermes_store import HermesStore
+from .runtime_adapters.base import RuntimeAdapter
 from .runtime_adapters.hermes import HermesRuntimeAdapter, local_runtime_config
 
 
@@ -14,13 +14,13 @@ class RuntimeRegistry:
         self,
         *,
         core_store: CoreStore,
-        hermes_store: HermesStore,
+        hermes_home: str | None = None,
         management_url: str,
         agentui_token: str = "",
         hermes_api_token: str = "",
     ) -> None:
         self.core_store = core_store
-        self.hermes_store = hermes_store
+        self.hermes_home = hermes_home
         self.management_url = management_url
         self.agentui_token = agentui_token
         self.hermes_api_token = hermes_api_token
@@ -49,7 +49,7 @@ class RuntimeRegistry:
     def agent(self, agent_id: str) -> dict[str, Any] | None:
         return next((agent for agent in self.agents() if agent["id"] == agent_id), None)
 
-    def adapter_for_runtime(self, runtime_id: str) -> HermesRuntimeAdapter:
+    def adapter_for_runtime(self, runtime_id: str) -> RuntimeAdapter:
         runtime = self.runtime(runtime_id)
         if not runtime:
             raise KeyError(runtime_id)
@@ -57,7 +57,7 @@ class RuntimeRegistry:
             raise ValueError(f"Runtime kind '{runtime['kind']}' is not supported yet.")
         return HermesRuntimeAdapter(
             runtime,
-            hermes_store=self.hermes_store,
+            hermes_home=self.hermes_home,
             core_store=self.core_store,
             agentui_token=self.agentui_token,
             hermes_api_token=self.hermes_api_token,

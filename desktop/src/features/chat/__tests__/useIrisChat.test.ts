@@ -13,7 +13,7 @@ import {
   shouldRetryUnmappedDelivery,
   shouldSendModelSwitch,
   shouldSkipConversationDetailLoad,
-} from "../useHermesChat";
+} from "../useIrisChat";
 import {
   coalescePostStreamAttachments,
   deliveryCompletesActiveStream,
@@ -44,7 +44,7 @@ function inboxMessage(
   };
 }
 
-describe("Hermes chat inbox merging", () => {
+describe("Iris chat inbox merging", () => {
   it("keeps the chat-id map stable when a conversation refresh has no new mappings", () => {
     const current = { "conversation-1": "chat-1" };
 
@@ -597,7 +597,7 @@ describe("Hermes chat inbox merging", () => {
   });
 });
 
-describe("Hermes chat profile selection", () => {
+describe("Iris chat profile selection", () => {
   it("preserves an explicit conversation selection while switching profiles", () => {
     expect(
       shouldPreserveProfileConversationSelection("default", "cron-default", {
@@ -618,7 +618,7 @@ describe("Hermes chat profile selection", () => {
   });
 });
 
-describe("Hermes chat conversation loading", () => {
+describe("Iris chat conversation loading", () => {
   it("treats timeout-like conversation list failures as transient", () => {
     expect(isTransientConversationLoadError("timed out")).toBe(true);
     expect(isTransientConversationLoadError("AbortError: The operation was aborted")).toBe(true);
@@ -788,7 +788,7 @@ describe("Hermes chat conversation loading", () => {
   });
 });
 
-describe("Hermes chat model switching", () => {
+describe("Iris chat model switching", () => {
   it("sends a model switch only when the selected first-message model differs", () => {
     expect(
       shouldSendModelSwitch(
@@ -814,7 +814,7 @@ describe("Hermes chat model switching", () => {
   });
 });
 
-describe("Hermes chat conversation detail loading", () => {
+describe("Iris chat conversation detail loading", () => {
   it("does not let empty canonical history erase a local failed first request", () => {
     expect(
       shouldPreserveLocalMessagesOnEmptyHistory(

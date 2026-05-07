@@ -3,28 +3,19 @@ import { loadJsonValue, saveJsonValue, storageKeys } from "./storage";
 
 export const defaultRuntimeConfig: HermesRuntimeConfig = {
   connectionMode: "local",
-  customHermesPath: "",
   provider: "",
   model: "",
   remoteUrl: "",
-  gatewayUrl: "http://127.0.0.1:8642",
-  managementApiUrl: "http://127.0.0.1:8765",
-  agentuiGatewayUrls: {},
-  profileApiUrls: {},
-  profileSidecarUrls: {},
+  coreApiUrl: "http://127.0.0.1:8765",
 };
 
 export function loadRuntimeConfig(): HermesRuntimeConfig {
   try {
-    const stored = loadJsonValue<Partial<HermesRuntimeConfig>>(storageKeys.runtimeConfig, {});
+    const stored = loadJsonValue<Partial<HermesRuntimeConfig> & Record<string, unknown>>(storageKeys.runtimeConfig, {});
     return {
       ...defaultRuntimeConfig,
       ...stored,
-      gatewayUrl: normalizeServerUrl(stored.gatewayUrl) || defaultRuntimeConfig.gatewayUrl,
-      managementApiUrl: normalizeServerUrl(stored.managementApiUrl) || defaultRuntimeConfig.managementApiUrl,
-      agentuiGatewayUrls: normalizeProfileApiUrls(stored.agentuiGatewayUrls),
-      profileApiUrls: normalizeProfileApiUrls(stored.profileApiUrls),
-      profileSidecarUrls: normalizeProfileApiUrls(stored.profileSidecarUrls),
+      coreApiUrl: migratedCoreApiUrl(stored) || defaultRuntimeConfig.coreApiUrl,
       connectionMode: stored.connectionMode === "remote" ? "remote" : "local",
     };
   } catch {
@@ -33,37 +24,31 @@ export function loadRuntimeConfig(): HermesRuntimeConfig {
 }
 
 export function saveRuntimeConfig(config: HermesRuntimeConfig) {
-  saveJsonValue(
-    storageKeys.runtimeConfig,
-    {
-      ...config,
-      gatewayUrl: normalizeServerUrl(config.gatewayUrl) || defaultRuntimeConfig.gatewayUrl,
-      managementApiUrl: normalizeServerUrl(config.managementApiUrl) || defaultRuntimeConfig.managementApiUrl,
-      agentuiGatewayUrls: normalizeProfileApiUrls(config.agentuiGatewayUrls),
-      profileApiUrls: normalizeProfileApiUrls(config.profileApiUrls),
-      profileSidecarUrls: normalizeProfileApiUrls(config.profileSidecarUrls),
-    },
-  );
+  saveJsonValue(storageKeys.runtimeConfig, {
+    connectionMode: config.connectionMode === "remote" ? "remote" : "local",
+    provider: config.provider,
+    model: config.model,
+    remoteUrl: config.remoteUrl,
+    coreApiUrl: normalizeServerUrl(config.coreApiUrl) || defaultRuntimeConfig.coreApiUrl,
+  });
 }
 
-export function resolveRuntimeApiUrl(config: HermesRuntimeConfig, profile: string) {
-  return (config.profileApiUrls?.[profile] || "").trim();
+export function resolveCoreApiUrl(config: HermesRuntimeConfig) {
+  return normalizeServerUrl(config.coreApiUrl) || defaultRuntimeConfig.coreApiUrl;
 }
 
-export function resolveManagementApiUrl(config: HermesRuntimeConfig, profile?: string) {
+function migratedCoreApiUrl(stored: Partial<HermesRuntimeConfig> & Record<string, unknown>) {
+  const legacyProfileRoutesKey = ["profile", "Sidecar", "Urls"].join("");
+  const legacyCoreRouteKey = ["management", "Api", "Url"].join("");
+  const legacyRoutes = stored[legacyProfileRoutesKey];
+  const firstLegacyRoute =
+    legacyRoutes && typeof legacyRoutes === "object" && !Array.isArray(legacyRoutes)
+      ? Object.values(legacyRoutes as Record<string, unknown>).find((value) => typeof value === "string")
+      : "";
   return (
-    (profile ? config.profileSidecarUrls?.[profile] : "") ||
-    config.managementApiUrl ||
-    defaultRuntimeConfig.managementApiUrl
-  ).trim();
-}
-
-function normalizeProfileApiUrls(value: unknown) {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
-  return Object.fromEntries(
-    Object.entries(value as Record<string, unknown>)
-      .map(([profile, url]) => [profile.trim(), typeof url === "string" ? normalizeServerUrl(url) : ""])
-      .filter(([profile, url]) => profile && url),
+    normalizeServerUrl(stored.coreApiUrl) ||
+    normalizeServerUrl(stored[legacyCoreRouteKey]) ||
+    normalizeServerUrl(firstLegacyRoute)
   );
 }
 

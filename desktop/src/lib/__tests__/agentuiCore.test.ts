@@ -1,7 +1,18 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   agentUICoreAttachmentUrl,
+  cloneAgentUICoreAgent,
+  createAgentUICoreAgent,
+  createAgentUICoreAgentSkill,
+  deleteAgentUICoreAgent,
+  getAgentUICoreAgentMemory,
+  getAgentUICoreAgentSkill,
+  getAgentUICoreAgentSkills,
   getAgentUICoreEvents,
+  renameAgentUICoreAgent,
+  resetAgentUICoreAgentMemory,
+  saveAgentUICoreAgentMemory,
+  saveAgentUICoreAgentSkill,
   sendAgentUICoreMessage,
   uploadAgentUICoreAttachment,
 } from "../agentuiCore";
@@ -37,7 +48,7 @@ describe("agentuiCore", () => {
     const result = await getAgentUICoreEvents(7, 50, defaultRuntimeConfig, "agent_default");
 
     expect(result).toEqual({ ok: true, events: [], cursor: 7 });
-    expect(invoke).toHaveBeenCalledWith("hermes_bridge", {
+    expect(invoke).toHaveBeenCalledWith("core_bridge", {
       action: "core_request",
       payload: {
         method: "GET",
@@ -160,5 +171,46 @@ describe("agentuiCore", () => {
       "blob:http://localhost/local-preview",
     );
     expect(agentUICoreAttachmentUrl(defaultRuntimeConfig, "data:image/png;base64,abc")).toBe("data:image/png;base64,abc");
+  });
+
+  it("routes agent resources through agent-scoped Core endpoints", async () => {
+    const calls: Array<{ url: string; init: RequestInit }> = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init: RequestInit) => {
+        calls.push({ url, init });
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ ok: true }),
+        };
+      }),
+    );
+
+    await getAgentUICoreAgentMemory("agent_default", defaultRuntimeConfig);
+    await saveAgentUICoreAgentMemory("agent_default", "memory", { content: "notes" }, defaultRuntimeConfig);
+    await resetAgentUICoreAgentMemory("agent_default", "user", { confirm: "RESET MEMORY" }, defaultRuntimeConfig);
+    await getAgentUICoreAgentSkills("agent_default", defaultRuntimeConfig);
+    await getAgentUICoreAgentSkill("agent_default", "skill_1", defaultRuntimeConfig);
+    await createAgentUICoreAgentSkill("agent_default", { name: "Skill", category: "personal", content: "# Skill" }, defaultRuntimeConfig);
+    await saveAgentUICoreAgentSkill("agent_default", "skill_1", { name: "Skill", category: "personal", content: "# Skill" }, defaultRuntimeConfig);
+    await createAgentUICoreAgent({ name: "research" }, defaultRuntimeConfig);
+    await cloneAgentUICoreAgent("agent_default", { name: "copy" }, defaultRuntimeConfig);
+    await renameAgentUICoreAgent("agent_default", { name: "renamed" }, defaultRuntimeConfig);
+    await deleteAgentUICoreAgent("agent_default", defaultRuntimeConfig);
+
+    expect(calls.map((call) => [call.init.method, new URL(call.url).pathname])).toEqual([
+      ["GET", "/v1/agents/agent_default/memory"],
+      ["PUT", "/v1/agents/agent_default/memory/memory"],
+      ["DELETE", "/v1/agents/agent_default/memory/user"],
+      ["GET", "/v1/agents/agent_default/skills"],
+      ["GET", "/v1/agents/agent_default/skills/skill_1"],
+      ["POST", "/v1/agents/agent_default/skills"],
+      ["PUT", "/v1/agents/agent_default/skills/skill_1"],
+      ["POST", "/v1/agents"],
+      ["POST", "/v1/agents/agent_default/clone"],
+      ["PATCH", "/v1/agents/agent_default"],
+      ["DELETE", "/v1/agents/agent_default"],
+    ]);
   });
 });

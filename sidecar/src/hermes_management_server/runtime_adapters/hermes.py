@@ -18,7 +18,7 @@ from ..core_store import (
     core_message_from_hermes,
     message_content_hash_candidates,
 )
-from ..hermes_store import HermesStore
+from .hermes_store import HermesStore
 from ..security import ManagementError
 
 
@@ -78,12 +78,14 @@ class HermesRuntimeAdapter:
         runtime: dict[str, Any],
         *,
         hermes_store: HermesStore | None = None,
+        hermes_home: str | os.PathLike[str] | None = None,
         core_store: CoreStore | None = None,
         agentui_token: str = "",
         hermes_api_token: str = "",
     ) -> None:
         self.runtime = runtime
         self.hermes_store = hermes_store
+        self.hermes_home = hermes_home
         self.core_store = core_store
         self.token = agentui_token or os.environ.get("IRIS_TOKEN") or os.environ.get("AGENTUI_TOKEN") or ""
         self.hermes_api_token = (
@@ -102,6 +104,89 @@ class HermesRuntimeAdapter:
 
     def get_agent(self, agent_id: str) -> dict[str, Any] | None:
         return next((agent for agent in self.list_agents() if agent["id"] == agent_id), None)
+
+    def create_agent(self, name: str, metadata: dict[str, Any] | None = None) -> dict[str, Any]:
+        del metadata
+        self.require_store().create_profile(name)
+        return self.require_agent_profile(name)
+
+    def clone_agent(self, source_agent: dict[str, Any], name: str) -> dict[str, Any]:
+        self.require_store().clone_profile(str(source_agent["runtimeProfile"]), name)
+        return self.require_agent_profile(name)
+
+    def rename_agent(self, agent: dict[str, Any], name: str) -> dict[str, Any]:
+        self.require_store().rename_profile(str(agent["runtimeProfile"]), name)
+        return self.require_agent_profile(name)
+
+    def activate_agent(self, agent: dict[str, Any]) -> dict[str, Any]:
+        self.require_store().activate_profile(str(agent["runtimeProfile"]))
+        refreshed = self.get_agent(str(agent["id"])) or self.require_agent_profile(str(agent["runtimeProfile"]))
+        return {**refreshed, "isDefault": True}
+
+    def delete_agent(self, agent: dict[str, Any]) -> dict[str, Any]:
+        next_profile = self.require_store().delete_profile(str(agent["runtimeProfile"]))
+        return self.require_agent_profile(next_profile)
+
+    def require_agent_profile(self, profile: str) -> dict[str, Any]:
+        agent = next((row for row in self.list_agents() if row["runtimeProfile"] == profile), None)
+        if not agent:
+            raise ManagementError("Agent was not found.", status_code=404)
+        return agent
+
+    def agent_memory(self, agent: dict[str, Any]) -> dict[str, Any]:
+        profile = str(agent["runtimeProfile"])
+        store = self.require_store()
+        memory_file, user_file = store.memory_files(profile)
+        directory = store.profile_directory(profile)
+        return {
+            "ok": True,
+            "profile": profile,
+            "path": str(directory / "memories"),
+            "files": [memory_file, user_file],
+            "memory": memory_file,
+            "user": user_file,
+            "history": [],
+        }
+
+    def save_agent_memory(
+        self,
+        agent: dict[str, Any],
+        file: str,
+        content: str,
+        expected_updated_at: int | None = None,
+    ) -> dict[str, Any]:
+        self.require_store().save_memory_file(str(agent["runtimeProfile"]), file, content, expected_updated_at)
+        return self.agent_memory(agent)
+
+    def reset_agent_memory(self, agent: dict[str, Any], file: str) -> dict[str, Any]:
+        self.require_store().reset_memory_file(str(agent["runtimeProfile"]), file)
+        return self.agent_memory(agent)
+
+    def list_agent_skills(self, agent: dict[str, Any]) -> dict[str, Any]:
+        profile = str(agent["runtimeProfile"])
+        store = self.require_store()
+        directory = store.profile_directory(profile)
+        return {
+            "ok": True,
+            "profile": profile,
+            "path": str(directory / "skills"),
+            "skills": store.skills(profile),
+        }
+
+    def get_agent_skill(self, agent: dict[str, Any], skill_id: str) -> dict[str, Any]:
+        profile = str(agent["runtimeProfile"])
+        summary, content = self.require_store().skill_detail(profile, skill_id)
+        return {"ok": True, "profile": profile, "content": content, "history": [], **summary.model_dump()}
+
+    def create_agent_skill(self, agent: dict[str, Any], payload: dict[str, Any]) -> dict[str, Any]:
+        profile = str(agent["runtimeProfile"])
+        summary, content = self.require_store().save_skill(profile, payload)
+        return {"ok": True, "profile": profile, "skill": {"content": content, "history": [], **summary.model_dump()}}
+
+    def save_agent_skill(self, agent: dict[str, Any], skill_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        profile = str(agent["runtimeProfile"])
+        summary, content = self.require_store().save_skill(profile, payload, skill_id)
+        return {"ok": True, "profile": profile, "skill": {"content": content, "history": [], **summary.model_dump()}}
 
     def list_conversations(self, agent: dict[str, Any], limit: int = 80) -> list[dict[str, Any]]:
         store = self.require_store()
@@ -314,7 +399,7 @@ class HermesRuntimeAdapter:
 
     def require_store(self) -> HermesStore:
         if self.hermes_store is None:
-            raise RuntimeError("HermesStore is required for source-of-truth runtime reads.")
+            self.hermes_store = HermesStore(self.hermes_home)
         return self.hermes_store
 
     def create_automation(self, automation: dict[str, Any]) -> dict[str, Any]:

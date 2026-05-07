@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { loadJsonValue, saveJsonValue, storageKeys } from "../../app/storage";
-import { getHermesModelCatalog } from "../../lib/hermes";
+import { getIrisModelCatalog } from "../../lib/irisRuntime";
 import { stringValue } from "../../shared/strings";
 import type {
   HermesModelCatalog,
@@ -9,7 +9,7 @@ import type {
   HermesRuntimeConfig,
 } from "../../types/hermes";
 
-type UseHermesModelCatalogOptions = {
+type UseIrisModelCatalogOptions = {
   profile: string;
   profileSummary?: HermesProfile;
   runtimeConfig: HermesRuntimeConfig;
@@ -17,13 +17,13 @@ type UseHermesModelCatalogOptions = {
   refreshKey?: string | number | null;
 };
 
-export function useHermesModelCatalog({
+export function useIrisModelCatalog({
   profile,
   profileSummary,
   runtimeConfig,
   connected,
   refreshKey,
-}: UseHermesModelCatalogOptions) {
+}: UseIrisModelCatalogOptions) {
   const [catalogs, setCatalogs] = useState<Record<string, HermesModelCatalog>>({});
   const [loadingByProfile, setLoadingByProfile] = useState<Record<string, boolean>>({});
   const [errorsByProfile, setErrorsByProfile] = useState<Record<string, string | null>>({});
@@ -68,7 +68,7 @@ export function useHermesModelCatalog({
     setLoadingByProfile((current) => ({ ...current, [profile]: true }));
     setErrorsByProfile((current) => ({ ...current, [profile]: null }));
     try {
-      const result = await getHermesModelCatalog(profile, runtimeConfig);
+      const result = await getIrisModelCatalog(profile, runtimeConfig);
       if (requestSeqRef.current !== requestId) return;
       setCatalogs((current) => ({ ...current, [profile]: result }));
       setErrorsByProfile((current) => ({
@@ -137,11 +137,7 @@ export function modelSelectionLabel(selection: HermesModelSelection | null) {
 }
 
 function modelCatalogRouteKey(runtimeConfig: HermesRuntimeConfig, profile: string) {
-  return [
-    runtimeConfig.gatewayUrl,
-    runtimeConfig.agentuiGatewayUrls?.[profile] || "",
-    runtimeConfig.profileApiUrls?.[profile] || "",
-  ].join("|");
+  return [runtimeConfig.coreApiUrl, profile].join("|");
 }
 
 function selectionFromProfile(profile?: HermesProfile): HermesModelSelection | null {

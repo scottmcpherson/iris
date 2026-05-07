@@ -10,7 +10,7 @@ import {
   resumeAgentUICoreAutomation,
   runAgentUICoreAutomation,
 } from "../../lib/agentuiCore";
-import { coreEventToInboxMessage } from "../../lib/hermes";
+import { coreEventToInboxMessage } from "../../lib/irisRuntime";
 import { rawStringValue } from "../../shared/strings";
 import type { HermesInboxMessage, HermesJob, HermesJobStatus, HermesRuntimeConfig } from "../../types/hermes";
 
@@ -41,7 +41,7 @@ export function useAgentUIAutomations(runtimeConfig: HermesRuntimeConfig, profil
       void loadJobs({ silent: true });
     }, 6000);
     return () => window.clearInterval(timer);
-  }, [profile, runtimeConfig.gatewayUrl, runtimeConfig.managementApiUrl]);
+  }, [profile, runtimeConfig.coreApiUrl]);
 
   function updateDeliveryTarget(value: string) {
     const normalized = value.trim() || "agentui:desktop";
@@ -173,7 +173,7 @@ export function useAgentUIAutomations(runtimeConfig: HermesRuntimeConfig, profil
   };
 }
 
-export const useHermesJobs = useAgentUIAutomations;
+export const useIrisAutomations = useAgentUIAutomations;
 
 export function normalizeJobsResult(result: Record<string, unknown>) {
   const rawJobs =

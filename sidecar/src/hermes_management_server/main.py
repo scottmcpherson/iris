@@ -37,10 +37,12 @@ from .core_store import (
     runtime_attachment_payload,
     stable_hash,
 )
-from .hermes_store import HermesStore, checked_at, normalize_hermes_home
 from .models import (
-    ConversationDetailResponse,
-    ConversationsResponse,
+    AgentCreateRequest,
+    AgentMemoryResetRequest,
+    AgentMemorySaveRequest,
+    AgentRenameRequest,
+    AgentSkillSaveRequest,
     CoreAutomationCreateRequest,
     CoreAutomationUpdateRequest,
     CoreConversationCreateRequest,
@@ -53,18 +55,12 @@ from .models import (
     InboxMessageCreateRequest,
     InboxMessageResponse,
     InboxMessagesResponse,
-    ProfileActionResponse,
-    ProfileCloneRequest,
-    ProfileCreateRequest,
-    MemoryResponse,
-    ProfileResponse,
-    ProfilesResponse,
+    ProfileSummary,
     RuntimeDeliveryHermesRequest,
-    SkillDetailResponse,
-    SkillsResponse,
     StatusResponse,
 )
 from .runtime_registry import RuntimeRegistry
+from .runtime_adapters.hermes_store import checked_at, normalize_hermes_home
 from .security import ManagementError, device_token_hash, host_is_loopback, make_auth_dependency
 
 
@@ -292,9 +288,12 @@ def normalize_attachment_refs(refs: list[Any]) -> list[dict[str, Any]]:
 
 def create_app(settings: Settings | None = None) -> FastAPI:
     app_settings = settings or Settings.from_env()
-    store = HermesStore(app_settings.hermes_home)
+    hermes_root = normalize_hermes_home(app_settings.hermes_home)
     auto_migrate_core = os.environ.get("IRIS_CORE_DISABLE_SOURCE_OF_TRUTH_MIGRATION") != "1"
-    core_store = CoreStore(app_settings.core_store_path, auto_migrate=auto_migrate_core)
+    core_store_path = app_settings.core_store_path
+    if core_store_path is None and app_settings.hermes_home:
+        core_store_path = str(Path(app_settings.hermes_home).expanduser().parent / ".iris" / "core.sqlite3")
+    core_store = CoreStore(core_store_path, auto_migrate=auto_migrate_core)
     app = FastAPI(
         title="Iris Core",
         version="0.1.0",
@@ -303,10 +302,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         default_response_class=JSONResponse,
         responses={400: {"model": ErrorResponse}, 401: {"model": ErrorResponse}, 404: {"model": ErrorResponse}},
     )
-    app.state.store = store
+    app.state.hermes_root = hermes_root
     app.state.core_store = core_store
     app.state.settings = app_settings
-    platform_token = agentui_platform_token(store.root)
+    platform_token = agentui_platform_token(hermes_root)
     app.state.management_token = app_settings.token or ""
     app.state.inbox_token = app_settings.inbox_token or app_settings.token or platform_token or ""
     app.state.runtime_delivery_token = (
@@ -318,10 +317,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     app.state.runtime_registry = RuntimeRegistry(
         core_store=core_store,
-        hermes_store=store,
+        hermes_home=str(hermes_root),
         management_url=f"http://{app_settings.host}:{app_settings.port}",
         agentui_token=platform_token,
-        hermes_api_token=hermes_api_token(store.root),
+        hermes_api_token=hermes_api_token(hermes_root),
     )
     app.state.runtime_registry.ensure_default_runtime()
     app.state.live_delivery_bus = LiveDeliveryBus()
@@ -364,8 +363,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def health(_auth: None = Depends(require_auth)) -> HealthResponse:
         return HealthResponse(
             checkedAt=checked_at(),
-            hermesHome=str(store.root),
-            profilesRootExists=store.profiles_root.is_dir(),
+            hermesHome=str(hermes_root),
+            profilesRootExists=(hermes_root / "profiles").is_dir(),
         )
 
     @app.get("/v1/health")
@@ -374,8 +373,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "ok": True,
             "checkedAt": checked_at(),
             "service": "iris-core",
-            "hermesHome": str(store.root),
-            "profilesRootExists": store.profiles_root.is_dir(),
+            "hermesHome": str(hermes_root),
+            "profilesRootExists": (hermes_root / "profiles").is_dir(),
             "core": core_store.health(),
         }
 
@@ -602,11 +601,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/v1/status", response_model=StatusResponse)
     async def status(_auth: None = Depends(require_auth)) -> StatusResponse:
-        profiles = store.profiles()
+        profiles = [profile_summary_from_agent(agent) for agent in app.state.runtime_registry.agents()]
+        active = next((profile.name for profile in profiles if profile.active), "default")
         return StatusResponse(
             checkedAt=checked_at(),
-            hermesHome=str(store.root),
-            activeProfile=store.active_profile_name(),
+            hermesHome=str(hermes_root),
+            activeProfile=active,
             profileCount=len(profiles),
             core=core_status_payload(request_app=app),
         )
@@ -644,6 +644,149 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if not agent:
             raise ManagementError("Agent was not found.", status_code=404)
         return {"ok": True, "agent": agent}
+
+    @app.post("/v1/agents")
+    async def core_create_agent(
+        request: AgentCreateRequest,
+        _auth: None = Depends(require_auth),
+    ) -> dict[str, Any]:
+        runtime_id = request.runtimeId or DEFAULT_RUNTIME_ID
+        adapter = app.state.runtime_registry.adapter_for_runtime(runtime_id)
+        agent = await asyncio.to_thread(adapter.create_agent, request.name, request.metadata)
+        return {"ok": True, "agent": agent}
+
+    @app.post("/v1/agents/{agent_id}/clone")
+    async def core_clone_agent(
+        agent_id: str,
+        request: AgentCreateRequest,
+        _auth: None = Depends(require_auth),
+    ) -> dict[str, Any]:
+        agent = app.state.runtime_registry.agent(agent_id)
+        if not agent:
+            raise ManagementError("Agent was not found.", status_code=404)
+        adapter = app.state.runtime_registry.adapter_for_runtime(agent["runtimeId"])
+        cloned = await asyncio.to_thread(adapter.clone_agent, agent, request.name)
+        return {"ok": True, "agent": cloned}
+
+    @app.patch("/v1/agents/{agent_id}")
+    async def core_rename_agent(
+        agent_id: str,
+        request: AgentRenameRequest,
+        _auth: None = Depends(require_auth),
+    ) -> dict[str, Any]:
+        agent = app.state.runtime_registry.agent(agent_id)
+        if not agent:
+            raise ManagementError("Agent was not found.", status_code=404)
+        adapter = app.state.runtime_registry.adapter_for_runtime(agent["runtimeId"])
+        renamed = await asyncio.to_thread(adapter.rename_agent, agent, request.name)
+        return {"ok": True, "agent": renamed}
+
+    @app.delete("/v1/agents/{agent_id}")
+    async def core_delete_agent(agent_id: str, _auth: None = Depends(require_auth)) -> dict[str, Any]:
+        agent = app.state.runtime_registry.agent(agent_id)
+        if not agent:
+            raise ManagementError("Agent was not found.", status_code=404)
+        adapter = app.state.runtime_registry.adapter_for_runtime(agent["runtimeId"])
+        next_agent = await asyncio.to_thread(adapter.delete_agent, agent)
+        return {"ok": True, "agent": next_agent}
+
+    @app.post("/v1/agents/{agent_id}/activate")
+    async def core_activate_agent(agent_id: str, _auth: None = Depends(require_auth)) -> dict[str, Any]:
+        agent = app.state.runtime_registry.agent(agent_id)
+        if not agent:
+            raise ManagementError("Agent was not found.", status_code=404)
+        adapter = app.state.runtime_registry.adapter_for_runtime(agent["runtimeId"])
+        activated = await asyncio.to_thread(adapter.activate_agent, agent)
+        return {"ok": True, "agent": activated}
+
+    @app.get("/v1/agents/{agent_id}/memory")
+    async def core_agent_memory(agent_id: str, _auth: None = Depends(require_auth)) -> dict[str, Any]:
+        agent = app.state.runtime_registry.agent(agent_id)
+        if not agent:
+            raise ManagementError("Agent was not found.", status_code=404)
+        adapter = app.state.runtime_registry.adapter_for_runtime(agent["runtimeId"])
+        return await asyncio.to_thread(adapter.agent_memory, agent)
+
+    @app.put("/v1/agents/{agent_id}/memory/{file}")
+    async def core_save_agent_memory(
+        agent_id: str,
+        file: str,
+        request: AgentMemorySaveRequest,
+        _auth: None = Depends(require_auth),
+    ) -> dict[str, Any]:
+        agent = app.state.runtime_registry.agent(agent_id)
+        if not agent:
+            raise ManagementError("Agent was not found.", status_code=404)
+        adapter = app.state.runtime_registry.adapter_for_runtime(agent["runtimeId"])
+        memory = await asyncio.to_thread(
+            adapter.save_agent_memory,
+            agent,
+            file,
+            request.content,
+            request.expectedUpdatedAt,
+        )
+        return {"ok": True, "profile": memory["profile"], "memory": memory}
+
+    @app.delete("/v1/agents/{agent_id}/memory/{file}")
+    async def core_reset_agent_memory(
+        agent_id: str,
+        file: str,
+        request: AgentMemoryResetRequest,
+        _auth: None = Depends(require_auth),
+    ) -> dict[str, Any]:
+        if request.confirm != "RESET MEMORY":
+            raise ManagementError("Type RESET MEMORY to confirm destructive memory reset.", status_code=400)
+        agent = app.state.runtime_registry.agent(agent_id)
+        if not agent:
+            raise ManagementError("Agent was not found.", status_code=404)
+        adapter = app.state.runtime_registry.adapter_for_runtime(agent["runtimeId"])
+        memory = await asyncio.to_thread(adapter.reset_agent_memory, agent, file)
+        return {"ok": True, "profile": memory["profile"], "memory": memory}
+
+    @app.get("/v1/agents/{agent_id}/skills")
+    async def core_agent_skills(agent_id: str, _auth: None = Depends(require_auth)) -> dict[str, Any]:
+        agent = app.state.runtime_registry.agent(agent_id)
+        if not agent:
+            raise ManagementError("Agent was not found.", status_code=404)
+        adapter = app.state.runtime_registry.adapter_for_runtime(agent["runtimeId"])
+        return await asyncio.to_thread(adapter.list_agent_skills, agent)
+
+    @app.get("/v1/agents/{agent_id}/skills/{skill_id}")
+    async def core_agent_skill_detail(
+        agent_id: str,
+        skill_id: str,
+        _auth: None = Depends(require_auth),
+    ) -> dict[str, Any]:
+        agent = app.state.runtime_registry.agent(agent_id)
+        if not agent:
+            raise ManagementError("Agent was not found.", status_code=404)
+        adapter = app.state.runtime_registry.adapter_for_runtime(agent["runtimeId"])
+        return await asyncio.to_thread(adapter.get_agent_skill, agent, skill_id)
+
+    @app.post("/v1/agents/{agent_id}/skills")
+    async def core_create_agent_skill(
+        agent_id: str,
+        request: AgentSkillSaveRequest,
+        _auth: None = Depends(require_auth),
+    ) -> dict[str, Any]:
+        agent = app.state.runtime_registry.agent(agent_id)
+        if not agent:
+            raise ManagementError("Agent was not found.", status_code=404)
+        adapter = app.state.runtime_registry.adapter_for_runtime(agent["runtimeId"])
+        return await asyncio.to_thread(adapter.create_agent_skill, agent, dump_model(request))
+
+    @app.put("/v1/agents/{agent_id}/skills/{skill_id}")
+    async def core_save_agent_skill(
+        agent_id: str,
+        skill_id: str,
+        request: AgentSkillSaveRequest,
+        _auth: None = Depends(require_auth),
+    ) -> dict[str, Any]:
+        agent = app.state.runtime_registry.agent(agent_id)
+        if not agent:
+            raise ManagementError("Agent was not found.", status_code=404)
+        adapter = app.state.runtime_registry.adapter_for_runtime(agent["runtimeId"])
+        return await asyncio.to_thread(adapter.save_agent_skill, agent, skill_id, dump_model(request))
 
     @app.get("/v1/conversations")
     async def core_conversations(
@@ -1178,104 +1321,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             limit=int(body.get("limit") or 30),
         )
 
-    @app.get("/v1/profiles", response_model=ProfilesResponse)
-    async def profiles(_auth: None = Depends(require_auth)) -> ProfilesResponse:
-        return ProfilesResponse(
-            hermesHome=str(store.root),
-            activeProfile=store.active_profile_name(),
-            profiles=store.profiles(),
-        )
-
-    @app.get("/v1/profiles/{profile}", response_model=ProfileResponse)
-    async def profile(profile: str, _auth: None = Depends(require_auth)) -> ProfileResponse:
-        summary = store.profile_summary(profile)
-        return ProfileResponse(ok=True, **dump_model(summary))
-
-    @app.post("/v1/profiles", response_model=ProfileActionResponse)
-    async def create_profile(
-        request: ProfileCreateRequest,
-        _auth: None = Depends(require_auth),
-    ) -> ProfileActionResponse:
-        summary = store.create_profile(request.name)
-        return ProfileActionResponse(profile=summary.name, profiles=store.profiles())
-
-    @app.post("/v1/profiles/{profile}/clone", response_model=ProfileActionResponse)
-    async def clone_profile(
-        profile: str,
-        request: ProfileCloneRequest,
-        _auth: None = Depends(require_auth),
-    ) -> ProfileActionResponse:
-        summary = store.clone_profile(profile, request.name)
-        return ProfileActionResponse(profile=summary.name, profiles=store.profiles())
-
-    @app.delete("/v1/profiles/{profile}", response_model=ProfileActionResponse)
-    async def delete_profile(profile: str, _auth: None = Depends(require_auth)) -> ProfileActionResponse:
-        next_profile = store.delete_profile(profile)
-        return ProfileActionResponse(profile=next_profile, profiles=store.profiles())
-
-    @app.get("/v1/profiles/{profile}/memory", response_model=MemoryResponse)
-    async def memory(profile: str, _auth: None = Depends(require_auth)) -> MemoryResponse:
-        memory_file, user_file = store.memory_files(profile)
-        directory = store.profile_directory(profile)
-        return MemoryResponse(
-            profile=profile,
-            path=str(directory / "memories"),
-            files=[memory_file, user_file],
-            memory=memory_file,
-            user=user_file,
-        )
-
-    @app.get(
-        "/v1/profiles/{profile}/conversations",
-        response_model=ConversationsResponse,
-    )
-    async def conversations(
-        profile: str,
-        limit: int = Query(80),
-        _auth: None = Depends(require_auth),
-    ) -> ConversationsResponse:
-        result = store.conversations(profile, limit)
-        return ConversationsResponse(
-            profile=profile,
-            path=result.path,
-            schemaVersion=result.schema_version,
-            conversations=result.conversations,
-            warning=result.warning,
-        )
-
-    @app.get(
-        "/v1/profiles/{profile}/conversations/{conversation_id}",
-        response_model=ConversationDetailResponse,
-    )
-    async def conversation_detail(
-        profile: str,
-        conversation_id: str,
-        _auth: None = Depends(require_auth),
-    ) -> ConversationDetailResponse:
-        result = store.conversation_detail(profile, conversation_id)
-        return ConversationDetailResponse(
-            profile=profile,
-            path=result.path,
-            schemaVersion=result.schema_version,
-            conversation=result.conversation,
-            messages=result.messages,
-            warning=result.warning,
-        )
-
-    @app.get("/v1/profiles/{profile}/skills", response_model=SkillsResponse)
-    async def skills(profile: str, _auth: None = Depends(require_auth)) -> SkillsResponse:
-        directory = store.profile_directory(profile)
-        return SkillsResponse(profile=profile, path=str(directory / "skills"), skills=store.skills(profile))
-
-    @app.get("/v1/profiles/{profile}/skills/{skill_id}", response_model=SkillDetailResponse)
-    async def skill_detail(
-        profile: str,
-        skill_id: str,
-        _auth: None = Depends(require_auth),
-    ) -> SkillDetailResponse:
-        summary, content = store.skill_detail(profile, skill_id)
-        return SkillDetailResponse(ok=True, profile=profile, content=content, **dump_model(summary))
-
     return app
 
 
@@ -1289,6 +1334,22 @@ def core_status_payload(*, request_app: FastAPI) -> dict[str, Any]:
         "agentCount": len(agents),
         **core_auth_payload(request_app),
     }
+
+
+def profile_summary_from_agent(agent: dict[str, Any]) -> ProfileSummary:
+    metadata = agent.get("metadata") if isinstance(agent.get("metadata"), dict) else {}
+    return ProfileSummary(
+        name=str(agent.get("runtimeProfile") or agent.get("displayName") or "default"),
+        path=str(metadata.get("path") or ""),
+        active=bool(agent.get("isDefault")),
+        exists=metadata.get("exists") is not False,
+        provider=str(metadata.get("provider") or "not configured"),
+        model=str(metadata.get("model") or "not configured"),
+        memoryBytes=int(metadata.get("memoryBytes") if isinstance(metadata.get("memoryBytes"), int) else 0),
+        memoryUpdatedAt=metadata.get("memoryUpdatedAt") if isinstance(metadata.get("memoryUpdatedAt"), int) else None,
+        skillCount=int(metadata.get("skillCount") if isinstance(metadata.get("skillCount"), int) else 0),
+        gatewayRunning=bool(metadata.get("gatewayRunning")),
+    )
 
 
 def core_auth_payload(request_app: FastAPI) -> dict[str, Any]:
@@ -2066,7 +2127,7 @@ def cli() -> None:
     uvicorn.run(create_app(settings), host=settings.host, port=settings.port)
 
 
-app = create_app()
+app = create_app(Settings(core_store_path="/private/tmp/iris-core-import.sqlite3"))
 
 
 if __name__ == "__main__":

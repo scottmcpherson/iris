@@ -34,8 +34,8 @@ export function ProfileMenu({
         aria-expanded={open}
         aria-label={
           locked
-            ? `Conversation profile ${profile}`
-            : `Agent profile ${connected ? profile : "Offline"}`
+            ? `Conversation agent ${profile}`
+            : `Agent ${connected ? profile : "Offline"}`
         }
         disabled={disabled}
         onClick={onToggle}
@@ -45,7 +45,7 @@ export function ProfileMenu({
         <ChevronDown size={14} />
       </button>
       {open ? (
-        <div className="composer-profile-menu" role="menu" aria-label="Choose agent profile">
+        <div className="composer-profile-menu" role="menu" aria-label="Choose agent">
           {profiles.map((item) => (
             <button
               key={item.name}
