@@ -1016,25 +1016,23 @@ def test_core_send_persists_top_level_attachments_as_message_metadata(tmp_path, 
         "/v1/conversations",
         json={"agentId": agent["id"], "title": "Attachment send"},
     ).json()["conversation"]
-    attachment = {
-        "id": "attachment-1",
-        "name": "image.png",
-        "kind": "image",
-        "mimeType": "image/png",
-        "size": 12_000,
-        "lastModified": 0,
-        "path": "/tmp/image.png",
-    }
+    upload = client.post(
+        "/v1/attachments",
+        data={"profile": agent["runtimeProfile"], "runtimeId": agent["runtimeId"]},
+        files={"file": ("image.png", b"\x89PNG\r\n\x1a\nimage-bytes", "image/png")},
+    )
+    attachment = upload.json()["attachment"]
 
     sent = client.post(
         f"/v1/conversations/{conversation['id']}/messages",
         json={
             "text": "Look at this",
-            "attachments": [attachment],
+            "attachments": [{"id": attachment["id"]}],
             "clientMessageId": "client-message-attachments",
         },
     )
 
+    assert upload.status_code == 200
     assert sent.status_code == 200
     rows = client.app.state.core_store.client_message_metadata_for_messages(
         runtime_id=agent["runtimeId"],
@@ -1042,8 +1040,15 @@ def test_core_send_persists_top_level_attachments_as_message_metadata(tmp_path, 
         chat_id=seen[0]["body"]["chatId"],
         messages=[{"id": "client-message-attachments", "content": "Look at this"}],
     )
-    assert rows["byMessageId"]["client-message-attachments"]["attachments"] == [attachment]
-    assert seen[0]["body"]["metadata"]["attachments"] == [attachment]
+    persisted_attachment = rows["byMessageId"]["client-message-attachments"]["attachments"][0]
+    runtime_attachment = seen[0]["body"]["metadata"]["attachments"][0]
+    assert persisted_attachment["id"] == attachment["id"]
+    assert persisted_attachment["previewUrl"] == f"/v1/attachments/{attachment['id']}/preview"
+    assert "runtime" not in persisted_attachment
+    assert runtime_attachment["id"] == attachment["id"]
+    assert runtime_attachment["runtime"]["path"].endswith(runtime_attachment["sha256"])
+    assert "/tmp/image.png" not in seen[0]["body"]["text"]
+    assert runtime_attachment["runtime"]["path"] in seen[0]["body"]["text"]
 
 
 def test_core_rejects_unknown_agent_filters(tmp_path):

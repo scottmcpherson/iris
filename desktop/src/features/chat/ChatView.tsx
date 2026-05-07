@@ -28,12 +28,14 @@ import {
 import { Streamdown, type StreamdownProps } from "streamdown";
 import { StickToBottom, useStickToBottomContext } from "use-stick-to-bottom";
 import type { Message, MessageAttachment } from "../../app/types";
+import { agentUICoreAttachmentUrl } from "../../lib/agentuiCore";
 import type {
   HermesModelCatalog,
   HermesModelProvider,
   HermesModelSelection,
   HermesParsedEvents,
   HermesProfile,
+  HermesRuntimeConfig,
   HermesSlashCommand,
   HermesStreamToolEvent,
 } from "../../types/hermes";
@@ -66,6 +68,7 @@ type ChatViewProps = {
   lockedModelSelection: HermesModelSelection | null;
   modelLoading: boolean;
   modelError: string | null;
+  runtimeConfig: HermesRuntimeConfig;
   onModelSelect: (selection: HermesModelSelection) => void;
   slashCommands: HermesSlashCommand[];
   slashCommandsLoading: boolean;
@@ -74,8 +77,12 @@ type ChatViewProps = {
 };
 
 type AttachmentDraft = MessageAttachment & {
+  file?: File;
   previewUrl?: string;
   previewRevocable?: boolean;
+  upload?: MessageAttachment;
+  uploadStatus: "local" | "uploading" | "uploaded" | "error";
+  uploadError?: string;
 };
 
 type ModelMenuOption = {
@@ -105,6 +112,7 @@ export function ChatView({
   lockedModelSelection,
   modelLoading,
   modelError,
+  runtimeConfig,
   onModelSelect,
   slashCommands,
   slashCommandsLoading,
@@ -329,8 +337,10 @@ export function ChatView({
           mimeType,
           size: file.size,
           lastModified: file.lastModified,
+          file,
           previewUrl: image ? URL.createObjectURL(file) : undefined,
           previewRevocable: image,
+          uploadStatus: "local",
         } satisfies AttachmentDraft;
       }),
     ]);
@@ -351,8 +361,9 @@ export function ChatView({
           mimeType: mimeTypeFromPath(path),
           size: -1,
           lastModified: Date.now(),
-          path,
+          localPath: path,
           previewUrl: image ? convertFileSrc(path) : undefined,
+          uploadStatus: "local",
         } satisfies AttachmentDraft;
       }),
     ]);
@@ -558,7 +569,9 @@ export function ChatView({
                         <span>System</span>
                       </div>
                     ) : null}
-                    {message.attachments?.length ? <MessageAttachments attachments={message.attachments} /> : null}
+                    {message.attachments?.length ? (
+                      <MessageAttachments attachments={message.attachments} runtimeConfig={runtimeConfig} />
+                    ) : null}
                     <div className="message-body">
                       <MessageContent message={message} />
                       {eventCount(message.events) ? <MessageEvents events={message.events} /> : null}
@@ -1002,11 +1015,17 @@ function MessageContent({ message }: { message: Message }) {
   );
 }
 
-function MessageAttachments({ attachments }: { attachments: MessageAttachment[] }) {
+function MessageAttachments({
+  attachments,
+  runtimeConfig,
+}: {
+  attachments: MessageAttachment[];
+  runtimeConfig: HermesRuntimeConfig;
+}) {
   return (
     <div className="message-attachments" aria-label="Attached files">
       {attachments.map((attachment) => {
-        const previewUrl = attachmentPreviewUrl(attachment);
+        const previewUrl = attachmentPreviewUrl(attachment, runtimeConfig);
         return (
           <div key={attachment.id} className="message-attachment-card" title={attachment.name}>
             {previewUrl ? (
@@ -1024,9 +1043,12 @@ function MessageAttachments({ attachments }: { attachments: MessageAttachment[] 
   );
 }
 
-function attachmentPreviewUrl(attachment: MessageAttachment) {
-  if (attachment.previewUrl) return attachment.previewUrl;
-  if (attachment.kind === "image" && attachment.path) return convertFileSrc(attachment.path);
+function attachmentPreviewUrl(attachment: MessageAttachment, runtimeConfig: HermesRuntimeConfig) {
+  if (attachment.previewUrl) return agentUICoreAttachmentUrl(runtimeConfig, attachment.previewUrl);
+  if (attachment.kind === "image" && attachment.id.startsWith("att_")) {
+    return agentUICoreAttachmentUrl(runtimeConfig, `/v1/attachments/${encodeURIComponent(attachment.id)}/preview`);
+  }
+  if (attachment.kind === "image" && attachment.localPath) return convertFileSrc(attachment.localPath);
   return "";
 }
 

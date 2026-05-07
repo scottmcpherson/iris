@@ -16,10 +16,18 @@ def test_core_store_creates_only_core_owned_schema(tmp_path):
         }
     )
 
-    assert store.health()["schemaVersion"] == 2
+    assert store.health()["schemaVersion"] == 4
     assert store.health()["sourceOfTruthMigration"] == "complete"
     assert runtime["id"] == "runtime_local_hermes"
-    assert set(store.tables()) == {"schema_meta", "devices", "runtimes", "device_cursors"}
+    assert set(store.tables()) == {
+        "schema_meta",
+        "devices",
+        "runtimes",
+        "device_cursors",
+        "client_message_metadata",
+        "attachments",
+        "message_attachments",
+    }
 
 
 def test_source_of_truth_migration_drops_duplicate_tables_and_preserves_core_data(tmp_path):
@@ -66,6 +74,14 @@ def test_source_of_truth_migration_drops_duplicate_tables_and_preserves_core_dat
     assert result["status"] == "complete"
     assert result["backupPath"]
     assert "agents" in result["tablesDropped"]
-    assert set(store.tables()) == {"schema_meta", "devices", "runtimes", "device_cursors"}
+    assert set(store.tables()) == {
+        "schema_meta",
+        "devices",
+        "runtimes",
+        "device_cursors",
+        "client_message_metadata",
+        "attachments",
+        "message_attachments",
+    }
     assert store.list_devices()[0]["id"] == "dev_1"
     assert store.list_runtimes()[0]["id"] == "runtime_local_hermes"

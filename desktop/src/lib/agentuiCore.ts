@@ -74,6 +74,18 @@ export type AgentUICoreAutomation = {
   metadata: Record<string, unknown>;
 };
 
+export type AgentUICoreAttachment = {
+  id: string;
+  name: string;
+  kind: "image" | "file";
+  mimeType: string;
+  size: number;
+  sha256?: string;
+  createdAt?: number;
+  previewUrl?: string;
+  downloadUrl?: string;
+};
+
 function coreBaseUrl(runtime?: HermesRuntimeConfig) {
   const base = (runtime?.managementApiUrl || "http://127.0.0.1:8765").replace(/\/+$/, "");
   return base.endsWith("/v1") ? base : `${base}/v1`;
@@ -123,6 +135,15 @@ async function coreRequest<T>(
   } finally {
     if (timeout) clearTimeout(timeout);
   }
+}
+
+function coreAttachmentUrl(runtime: HermesRuntimeConfig | undefined, path: string | undefined) {
+  if (!path) return "";
+  if (/^(https?|blob|data|asset):/i.test(path)) return path;
+  const base = coreBaseUrl(runtime);
+  if (path.startsWith("/v1/")) return `${base.replace(/\/v1$/, "")}${path}`;
+  const normalizedPath = path.startsWith("/") ? path : `/${path}`;
+  return `${base}${normalizedPath}`;
 }
 
 function coreRequestViaBridge<T>(
@@ -235,6 +256,79 @@ export async function sendAgentUICoreMessage(
     payload,
     { idempotencyKey: payload.clientMessageId, timeoutMs: 12_000 },
   );
+}
+
+export async function uploadAgentUICoreAttachment(
+  payload: {
+    file?: File;
+    localPath?: string;
+    name: string;
+    mimeType?: string;
+    kind?: "image" | "file";
+    profile: string;
+    conversationId?: string;
+    messageId?: string;
+    runtimeId?: string;
+    metadata?: Record<string, unknown>;
+  },
+  runtime?: HermesRuntimeConfig,
+) {
+  if (payload.file) {
+    const form = new FormData();
+    form.set("file", payload.file, payload.name || payload.file.name);
+    form.set("profile", payload.profile);
+    form.set("runtimeId", payload.runtimeId || "runtime_local_hermes");
+    form.set("kind", payload.kind || (payload.mimeType?.startsWith("image/") ? "image" : "file"));
+    if (payload.conversationId) form.set("conversationId", payload.conversationId);
+    if (payload.messageId) form.set("messageId", payload.messageId);
+    if (payload.metadata) form.set("metadata", JSON.stringify(payload.metadata));
+    try {
+      const response = await fetch(`${coreBaseUrl(runtime)}/attachments`, {
+        method: "POST",
+        headers: { Accept: "application/json" },
+        body: form,
+      });
+      const parsed = await response.json().catch(() => ({}));
+      if (!response.ok && parsed.ok !== false) {
+        return { ok: false, error: parsed.error || `HTTP ${response.status}` } as CoreResponse<{ attachment: AgentUICoreAttachment }>;
+      }
+      return normalizeAttachmentUploadResponse(parsed as CoreResponse<{ attachment: AgentUICoreAttachment }>, runtime);
+    } catch (error) {
+      return {
+        ok: false,
+        error: error instanceof Error ? error.message : "Attachment upload failed.",
+      } as CoreResponse<{ attachment: AgentUICoreAttachment }>;
+    }
+  }
+
+  if (payload.localPath) {
+    const result = await invoke<CoreResponse<{ attachment: AgentUICoreAttachment }>>("hermes_bridge", {
+      action: "core_upload_path",
+      payload: { ...payload, runtime },
+    });
+    return normalizeAttachmentUploadResponse(result, runtime);
+  }
+
+  return { ok: false, error: "Attachment file is required." } as CoreResponse<{ attachment: AgentUICoreAttachment }>;
+}
+
+export function agentUICoreAttachmentUrl(runtime: HermesRuntimeConfig | undefined, path: string | undefined) {
+  return coreAttachmentUrl(runtime, path);
+}
+
+function normalizeAttachmentUploadResponse(
+  result: CoreResponse<{ attachment: AgentUICoreAttachment }>,
+  runtime: HermesRuntimeConfig | undefined,
+) {
+  if (!result.ok || !result.attachment) return result;
+  return {
+    ...result,
+    attachment: {
+      ...result.attachment,
+      previewUrl: coreAttachmentUrl(runtime, result.attachment.previewUrl),
+      downloadUrl: coreAttachmentUrl(runtime, result.attachment.downloadUrl),
+    },
+  };
 }
 
 export async function cancelAgentUICoreMessage(conversationId: string, runtime?: HermesRuntimeConfig) {

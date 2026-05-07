@@ -16,7 +16,7 @@ from ..core_store import (
     agent_from_profile_summary,
     conversation_from_runtime_summary,
     core_message_from_hermes,
-    stable_hash,
+    message_content_hash_candidates,
 )
 from ..hermes_store import HermesStore
 from ..security import ManagementError
@@ -26,6 +26,29 @@ DEFAULT_GATEWAY_URL = "http://127.0.0.1:8642"
 DEFAULT_MANAGEMENT_URL = "http://127.0.0.1:8765"
 DEFAULT_AGENTUI_GATEWAY_URL = "http://127.0.0.1:8766"
 AGENTUI_GATEWAY_PORT_OFFSET = 124
+
+
+def text_with_runtime_attachments(text: str, attachments: Any) -> str:
+    if not isinstance(attachments, list) or not attachments:
+        return text
+    rows: list[str] = []
+    for index, item in enumerate(attachments):
+        if not isinstance(item, dict):
+            continue
+        runtime = item.get("runtime") if isinstance(item.get("runtime"), dict) else {}
+        runtime_path = str(runtime.get("path") or item.get("localPath") or "").strip()
+        name = str(item.get("name") or "attachment").strip()
+        mime_type = str(item.get("mimeType") or item.get("kind") or "file").strip()
+        size = item.get("size")
+        size_label = f", {size} bytes" if isinstance(size, int) and size >= 0 else ""
+        path_label = f", path: {runtime_path}" if runtime_path else ""
+        rows.append(f"{index + 1}. {name} ({mime_type}{size_label}{path_label})")
+    if not rows:
+        return text
+    visible_text = text.strip() or "Use the attached files as context."
+    if "\n\nAttached files:\n" in visible_text:
+        return visible_text
+    return f"{visible_text}\n\nAttached files:\n" + "\n".join(rows)
 
 
 def local_runtime_config(*, management_url: str | None = None) -> dict[str, Any]:
@@ -160,9 +183,16 @@ class HermesRuntimeAdapter:
             if message.get("role") != "user":
                 enriched.append(message)
                 continue
-            overlay = by_message_id.get(str(message.get("id") or "")) or by_content_hash.get(
-                stable_hash(str(message.get("content") or ""), length=32)
-            )
+            overlay = by_message_id.get(str(message.get("id") or ""))
+            if not overlay:
+                overlay = next(
+                    (
+                        by_content_hash[content_hash]
+                        for content_hash in message_content_hash_candidates(str(message.get("content") or ""))
+                        if content_hash in by_content_hash
+                    ),
+                    None,
+                )
             if not overlay:
                 enriched.append(message)
                 continue
@@ -198,6 +228,8 @@ class HermesRuntimeAdapter:
         if not self.token:
             return {"ok": False, "error": "IRIS_TOKEN or AGENTUI_TOKEN is required for Iris gateway chat."}
         url = f"{self.agentui_gateway_url(profile).rstrip('/')}/agentui/messages"
+        metadata_payload = metadata if isinstance(metadata, dict) else {}
+        runtime_text = text_with_runtime_attachments(text, metadata_payload.get("attachments"))
         body: dict[str, Any] = {
             "chatId": chat_id,
             "chatName": chat_name or chat_id,
@@ -205,10 +237,10 @@ class HermesRuntimeAdapter:
             "userId": user_id,
             "userName": user_name,
             "messageId": message_id,
-            "text": text,
+            "text": runtime_text,
         }
-        if metadata:
-            body["metadata"] = metadata
+        if metadata_payload:
+            body["metadata"] = metadata_payload
         result = http_json(url, method="POST", token=self.token, body=body)
         if not result.get("ok"):
             return {

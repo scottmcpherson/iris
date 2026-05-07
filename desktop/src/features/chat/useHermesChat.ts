@@ -12,6 +12,7 @@ import {
   getAgentUICoreEvents,
   getAgentUICoreAgentForProfile,
   sendAgentUICoreMessage,
+  uploadAgentUICoreAttachment,
   type AgentUICoreEvent,
 } from "../../lib/agentuiCore";
 import type {
@@ -35,9 +36,16 @@ type PendingProfileConversationSelection = {
 };
 
 type SendMessageOptions = {
-  attachments?: MessageAttachment[];
+  attachments?: SendableAttachment[];
   modelSelection?: HermesModelSelection | null;
   currentModelSelection?: HermesModelSelection | null;
+};
+
+export type SendableAttachment = MessageAttachment & {
+  file?: File;
+  upload?: MessageAttachment;
+  uploadStatus?: "local" | "uploading" | "uploaded" | "error";
+  uploadError?: string;
 };
 
 const coreDeliveryEventNames = [
@@ -161,24 +169,41 @@ export function useAgentUIChat({ profile, runtimeConfig }: UseHermesChatOptions)
   }, [runtimeConfig.managementApiUrl, profile, hasActiveRequest]);
 
   async function sendMessage(options: SendMessageOptions | MessageAttachment[] = {}) {
-    const attachments = Array.isArray(options) ? options : options.attachments || [];
+    const draftAttachments = Array.isArray(options) ? options : options.attachments || [];
     const modelSelection = Array.isArray(options) ? null : options.modelSelection || null;
     const currentModelSelection = Array.isArray(options) ? null : options.currentModelSelection || null;
     const prompt = input.trim();
-    if (!prompt && !attachments.length) return false;
+    if (!prompt && !draftAttachments.length) return false;
     if (sendInFlightRef.current) return false;
     sendInFlightRef.current = true;
-    const displayedPrompt = prompt || "Use the attached files as context.";
-    const attachmentContext = attachments.map(({ previewUrl: _previewUrl, ...attachment }) => attachment);
-    const promptWithAttachments = formatPromptWithAttachments(prompt, attachments);
     const previousConversationId = selectedConversationIdRef.current;
+    const userMessageId = crypto.randomUUID();
+    const assistantId = crypto.randomUUID();
+    const optimisticConversationId = previousConversationId ? "" : `optimistic-${userMessageId}`;
+    let conversationId = previousConversationId || optimisticConversationId;
+    let activeConversationId = conversationId;
+    let attachments: MessageAttachment[] = [];
+    try {
+      attachments = await uploadAttachmentsForSend(draftAttachments, {
+        profile,
+        messageId: userMessageId,
+        conversationId: isCoreConversationId(conversationId) ? conversationId : "",
+        runtimeConfig,
+      });
+    } catch (error) {
+      setInput(prompt);
+      sendInFlightRef.current = false;
+      return false;
+    }
+    const displayedPrompt = prompt || "Use the attached files as context.";
+    const attachmentRefs = attachments.map((attachment) => ({ id: attachment.id }));
+    const promptWithAttachments = formatPromptWithAttachments(prompt, attachments);
     const userMessage: Message = {
-      id: crypto.randomUUID(),
+      id: userMessageId,
       role: "user",
       content: displayedPrompt,
       attachments,
     };
-    const assistantId = crypto.randomUUID();
     const assistantMessage: Message = {
       id: assistantId,
       role: "assistant",
@@ -186,11 +211,8 @@ export function useAgentUIChat({ profile, runtimeConfig }: UseHermesChatOptions)
       streaming: true,
     };
     const activeConversationTitle = conversationTitleFromPrompt(promptWithAttachments);
-    const optimisticConversationId = previousConversationId ? "" : `optimistic-${userMessage.id}`;
     let coreCreatedConversation: HermesConversation | null = null;
     let linkedFromConversationId = "";
-    let conversationId = previousConversationId || optimisticConversationId;
-    let activeConversationId = conversationId;
     let gatewayChatId = previousConversationId ? chatIdForConversation(previousConversationId) : "";
     if (!conversationId || activeRequestIdsByConversationRef.current[conversationId]) {
       sendInFlightRef.current = false;
@@ -317,12 +339,11 @@ export function useAgentUIChat({ profile, runtimeConfig }: UseHermesChatOptions)
       const coreMetadata: Record<string, unknown> = {};
       if (gatewayChatId) coreMetadata.chatId = gatewayChatId;
       if (switchSelection) coreMetadata.modelSwitch = switchSelection;
-      if (attachmentContext.length) coreMetadata.attachments = attachmentContext;
       const result = await sendAgentUICoreMessage(
         conversationId,
         {
-          text: promptWithAttachments,
-          attachments: attachmentContext,
+          text: displayedPrompt,
+          attachments: attachmentRefs,
           model: modelSelection || null,
           clientMessageId: userMessage.id,
           metadata: coreMetadata,
@@ -1017,14 +1038,71 @@ export function useAgentUIChat({ profile, runtimeConfig }: UseHermesChatOptions)
 
 export const useHermesChat = useAgentUIChat;
 
+async function uploadAttachmentsForSend(
+  attachments: SendableAttachment[],
+  context: {
+    profile: string;
+    messageId: string;
+    conversationId: string;
+    runtimeConfig: HermesRuntimeConfig;
+  },
+): Promise<MessageAttachment[]> {
+  const uploaded: MessageAttachment[] = [];
+  for (const attachment of attachments) {
+    if (attachment.upload?.id) {
+      uploaded.push(mergeUploadedAttachment(attachment, attachment.upload));
+      continue;
+    }
+    if (attachment.id.startsWith("att_") && !attachment.file && !attachment.localPath) {
+      uploaded.push(attachment);
+      continue;
+    }
+    const result = await uploadAgentUICoreAttachment(
+      {
+        file: attachment.file,
+        localPath: attachment.localPath,
+        name: attachment.name,
+        mimeType: attachment.mimeType,
+        kind: attachment.kind,
+        profile: context.profile,
+        conversationId: context.conversationId,
+        messageId: context.messageId,
+        metadata: {
+          clientDraftId: attachment.id,
+          lastModified: attachment.lastModified || 0,
+        },
+      },
+      context.runtimeConfig,
+    );
+    if (!result.ok || !result.attachment) {
+      throw new Error(result.error || `Could not upload ${attachment.name}.`);
+    }
+    uploaded.push(mergeUploadedAttachment(attachment, result.attachment));
+  }
+  return uploaded;
+}
+
+export function mergeUploadedAttachment(draft: SendableAttachment, uploaded: MessageAttachment): MessageAttachment {
+  return {
+    id: uploaded.id,
+    name: uploaded.name || draft.name,
+    kind: uploaded.kind || draft.kind,
+    mimeType: uploaded.mimeType || draft.mimeType,
+    size: uploaded.size >= 0 ? uploaded.size : draft.size,
+    lastModified: draft.lastModified,
+    previewUrl: uploaded.previewUrl || draft.previewUrl,
+    downloadUrl: uploaded.downloadUrl,
+    localPath: draft.localPath,
+  };
+}
+
 function formatPromptWithAttachments(prompt: string, attachments: MessageAttachment[]) {
   if (!attachments.length) return prompt;
   const attachmentSummary = attachments
     .map((attachment, index) => {
       const type = attachment.mimeType || (attachment.kind === "image" ? "image" : "file");
       const size = attachment.size >= 0 ? formatAttachmentSize(attachment.size) : "size unknown";
-      const path = attachment.path ? `, path: ${attachment.path}` : "";
-      return `${index + 1}. ${attachment.name} (${type}, ${size}${path})`;
+      return `${index + 1}. ${attachment.name} (${type}, ${size})`;
     })
     .join("\n");
 
@@ -1130,8 +1208,15 @@ function attachmentsFromMetadata(metadata: Record<string, unknown> | undefined):
     const mimeType = typeof candidate.mimeType === "string" ? candidate.mimeType : "";
     const size = typeof candidate.size === "number" ? candidate.size : -1;
     const lastModified = typeof candidate.lastModified === "number" ? candidate.lastModified : 0;
-    const path = typeof candidate.path === "string" ? candidate.path : undefined;
-    return [{ id, name, kind, mimeType, size, lastModified, path }];
+    const previewUrl = typeof candidate.previewUrl === "string" ? candidate.previewUrl : undefined;
+    const downloadUrl = typeof candidate.downloadUrl === "string" ? candidate.downloadUrl : undefined;
+    const localPath = typeof candidate.localPath === "string"
+      ? candidate.localPath
+      : typeof candidate.path === "string"
+        ? candidate.path
+        : undefined;
+    const legacyLocalPath = candidate.legacyLocalPath === true || (Boolean(localPath) && !previewUrl);
+    return [{ id, name, kind, mimeType, size, lastModified, previewUrl, downloadUrl, localPath, legacyLocalPath }];
   });
 }
 
@@ -1986,7 +2071,9 @@ function attachmentSignature(attachments: MessageAttachment[] | undefined) {
         attachment.kind,
         attachment.mimeType,
         attachment.name,
-        attachment.path || "",
+        attachment.localPath || "",
+        attachment.previewUrl || "",
+        attachment.downloadUrl || "",
         attachment.size,
       ].join(":"),
     )

@@ -4,31 +4,37 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import hashlib
 import json
+import mimetypes
 import os
 import re
 import secrets
 import time
 from collections import deque
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 import uvicorn
-from fastapi import Depends, FastAPI, Query, Request
+from fastapi import Depends, FastAPI, File, Form, Query, Request, UploadFile
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.responses import StreamingResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from .core_store import (
     DEFAULT_RUNTIME_ID,
     CoreStore,
+    MAX_ATTACHMENT_SIZE_BYTES,
     chat_id_for_conversation,
     clamp_int,
+    client_attachment_payload,
     draft_conversation,
     now,
     random_id,
+    runtime_attachment_payload,
     stable_hash,
 )
 from .hermes_store import HermesStore, checked_at, normalize_hermes_home
@@ -233,6 +239,57 @@ def model_switch_command(value: Any) -> str:
     return f"/model {model}{f' --provider {provider}' if provider else ''}"
 
 
+def safe_attachment_name(value: str) -> str:
+    name = Path(value or "attachment").name.strip()
+    return name or "attachment"
+
+
+def attachment_mime_type(*, filename: str, content_type: str, head: bytes) -> str:
+    if head.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if head.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+    if head.startswith(b"GIF87a") or head.startswith(b"GIF89a"):
+        return "image/gif"
+    if head.startswith(b"%PDF-"):
+        return "application/pdf"
+    if head.startswith(b"RIFF") and len(head) >= 12 and head[8:12] == b"WEBP":
+        return "image/webp"
+    guessed = mimetypes.guess_type(filename)[0] or ""
+    mime_type = (content_type or guessed or "application/octet-stream").split(";", 1)[0].strip().lower()
+    if mime_type == "image/jpg":
+        return "image/jpeg"
+    return mime_type
+
+
+def attachment_kind(mime_type: str, hint: str = "") -> str:
+    if hint == "image" or mime_type.startswith("image/"):
+        return "image"
+    return "file"
+
+
+def parse_attachment_metadata(value: str) -> dict[str, Any]:
+    if not value.strip():
+        return {}
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError as exc:
+        raise ManagementError(f"Attachment metadata must be valid JSON: {exc}", status_code=400) from exc
+    if not isinstance(parsed, dict):
+        raise ManagementError("Attachment metadata must be a JSON object.", status_code=400)
+    return parsed
+
+
+def normalize_attachment_refs(refs: list[Any]) -> list[dict[str, Any]]:
+    normalized: list[dict[str, Any]] = []
+    for ref in refs:
+        if hasattr(ref, "model_dump"):
+            ref = ref.model_dump()
+        if isinstance(ref, dict):
+            normalized.append(ref)
+    return normalized
+
+
 def create_app(settings: Settings | None = None) -> FastAPI:
     app_settings = settings or Settings.from_env()
     store = HermesStore(app_settings.hermes_home)
@@ -321,6 +378,122 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "profilesRootExists": store.profiles_root.is_dir(),
             "core": core_store.health(),
         }
+
+    @app.post("/v1/attachments")
+    async def core_create_attachment(
+        request: Request,
+        file: UploadFile = File(...),
+        conversationId: str = Form(""),
+        messageId: str = Form(""),
+        runtimeId: str = Form(DEFAULT_RUNTIME_ID),
+        profile: str = Form("default"),
+        kind: str = Form(""),
+        metadata: str = Form(""),
+        _auth: None = Depends(require_auth),
+    ) -> dict[str, Any]:
+        filename = safe_attachment_name(file.filename or "attachment")
+        metadata_payload = parse_attachment_metadata(metadata)
+        temp_path = core_store.tmp_attachment_path()
+        hasher = hashlib.sha256()
+        size = 0
+        head = b""
+        try:
+            with temp_path.open("wb") as handle:
+                while True:
+                    chunk = await file.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    if not head:
+                        head = chunk[:512]
+                    size += len(chunk)
+                    if size > MAX_ATTACHMENT_SIZE_BYTES:
+                        raise ManagementError("Attachment exceeds the 25 MB limit.", status_code=413)
+                    hasher.update(chunk)
+                    handle.write(chunk)
+            if size <= 0:
+                raise ManagementError("Attachment file is empty.", status_code=400)
+            mime_type = attachment_mime_type(
+                filename=filename,
+                content_type=file.content_type or "",
+                head=head,
+            )
+            try:
+                attachment = core_store.create_attachment(
+                    source_path=temp_path,
+                    runtime_id=runtimeId or DEFAULT_RUNTIME_ID,
+                    profile=profile or "default",
+                    conversation_id=conversationId,
+                    message_id=messageId,
+                    owner_device_id=str(getattr(getattr(request, "state", None), "agentui_device", {}).get("id", "")),
+                    name=filename,
+                    mime_type=mime_type,
+                    kind=attachment_kind(mime_type, kind),
+                    size_bytes=size,
+                    sha256=hasher.hexdigest(),
+                    metadata=metadata_payload,
+                )
+            except ValueError as exc:
+                raise ManagementError(str(exc), status_code=400) from exc
+        finally:
+            temp_path.unlink(missing_ok=True)
+            await file.close()
+        return {"ok": True, "attachment": client_attachment_payload(attachment)}
+
+    @app.get("/v1/attachments/{attachment_id}/content")
+    async def core_attachment_content(attachment_id: str, _auth: None = Depends(require_auth)) -> FileResponse:
+        attachment = core_store.get_attachment(attachment_id, include_storage=True)
+        if not attachment:
+            raise ManagementError("Attachment was not found.", status_code=404)
+        try:
+            path = core_store.attachment_content_path(attachment_id)
+        except ValueError as exc:
+            raise ManagementError(str(exc), status_code=404) from exc
+        return FileResponse(
+            path,
+            media_type=str(attachment.get("mimeType") or "application/octet-stream"),
+            filename=str(attachment.get("name") or "attachment"),
+            headers={"ETag": f"\"{attachment.get('sha256') or ''}\""},
+        )
+
+    @app.get("/v1/attachments/{attachment_id}/preview")
+    async def core_attachment_preview(attachment_id: str, _auth: None = Depends(require_auth)) -> Response:
+        attachment = core_store.get_attachment(attachment_id, include_storage=True)
+        if not attachment:
+            raise ManagementError("Attachment was not found.", status_code=404)
+        if not str(attachment.get("mimeType") or "").startswith("image/"):
+            return JSONResponse(
+                status_code=415,
+                content={"ok": False, "error": "Preview is only available for image attachments."},
+            )
+        try:
+            path = core_store.attachment_content_path(attachment_id)
+        except ValueError as exc:
+            raise ManagementError(str(exc), status_code=404) from exc
+        return FileResponse(
+            path,
+            media_type=str(attachment.get("mimeType") or "application/octet-stream"),
+            headers={
+                "Content-Disposition": f"inline; filename=\"{safe_attachment_name(str(attachment.get('name') or 'preview'))}\"",
+                "ETag": f"\"{attachment.get('sha256') or ''}\"",
+            },
+        )
+
+    @app.post("/v1/runtime/attachments/resolve")
+    async def core_runtime_attachments_resolve(
+        request: Request,
+        _auth: None = Depends(require_auth),
+    ) -> dict[str, Any]:
+        payload = await request.json()
+        if not isinstance(payload, dict):
+            raise ManagementError("Request body must be a JSON object.", status_code=400)
+        runtime_id = str(payload.get("runtimeId") or DEFAULT_RUNTIME_ID)
+        profile = str(payload.get("profile") or "default")
+        refs = payload.get("attachments") if isinstance(payload.get("attachments"), list) else []
+        attachments = [
+            runtime_attachment_payload(attachment)
+            for attachment in core_store.runtime_attachments(runtime_id=runtime_id, profile=profile, refs=refs)
+        ]
+        return {"ok": True, "attachments": attachments}
 
     @app.get("/v1/devices")
     async def core_devices(_auth: None = Depends(require_auth)) -> dict[str, Any]:
@@ -574,7 +747,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if not agent:
             raise ManagementError("Agent was not found.", status_code=404)
         text = request.text.strip()
-        if not text and not request.attachments:
+        attachment_refs = normalize_attachment_refs(request.attachments)
+        if not text and not attachment_refs:
             raise ManagementError("Message text is required.", status_code=400)
         message_id = request.clientMessageId or random_id("msg")
         idempotency_key = http_request.headers.get("Idempotency-Key") or request.clientMessageId
@@ -593,13 +767,26 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if not conversation["externalChatId"]:
             conversation = {**conversation, "externalChatId": chat_id}
             remember_active_conversation(app, conversation)
+        try:
+            resolved_attachments = app.state.core_store.resolve_message_attachments(
+                runtime_id=agent["runtimeId"],
+                profile=agent["runtimeProfile"],
+                conversation_id=conversation_id,
+                chat_id=chat_id,
+                message_id=message_id,
+                refs=attachment_refs,
+            )
+        except ValueError as exc:
+            raise ManagementError(str(exc), status_code=400) from exc
+        client_attachments = [client_attachment_payload(attachment) for attachment in resolved_attachments]
+        runtime_attachments = [runtime_attachment_payload(attachment) for attachment in resolved_attachments]
         runtime_metadata = {
             key: value
             for key, value in request.metadata.items()
             if key not in {"modelSwitch", "chatId"}
         }
-        if request.attachments and "attachments" not in runtime_metadata:
-            runtime_metadata["attachments"] = request.attachments
+        if runtime_attachments:
+            runtime_metadata["attachments"] = runtime_attachments
         runtime_metadata.update({
                     "agentuiConversationId": conversation_id,
                     "chatId": chat_id,
@@ -691,7 +878,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             chat_id=accepted_chat_id,
             message_id=message_id,
             content=text,
-            metadata=runtime_metadata,
+            metadata={
+                **{
+                    key: value
+                    for key, value in runtime_metadata.items()
+                    if key != "attachments"
+                },
+                **({"attachments": client_attachments} if client_attachments else {}),
+            },
         )
         app.state.accepted_client_messages.add(accepted_key)
         return {

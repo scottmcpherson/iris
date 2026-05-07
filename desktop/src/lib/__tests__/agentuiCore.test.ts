@@ -1,5 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { getAgentUICoreEvents, sendAgentUICoreMessage } from "../agentuiCore";
+import {
+  agentUICoreAttachmentUrl,
+  getAgentUICoreEvents,
+  sendAgentUICoreMessage,
+  uploadAgentUICoreAttachment,
+} from "../agentuiCore";
 import { defaultRuntimeConfig } from "../../app/runtimeConfig";
 
 const invoke = vi.fn();
@@ -95,5 +100,65 @@ describe("agentuiCore", () => {
 
     expect(result).toEqual({ ok: false, error: "timed out" });
     expect(invoke).not.toHaveBeenCalled();
+  });
+
+  it("uploads file attachments as multipart form data and resolves Core URLs", async () => {
+    const fetch = vi.fn(async (_url: string, init: RequestInit) => {
+      const form = init.body as FormData;
+      expect(form.get("profile")).toBe("default");
+      expect(form.get("kind")).toBe("image");
+      expect(form.get("messageId")).toBe("client-message-1");
+      expect(form.get("file")).toBeInstanceOf(File);
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          ok: true,
+          attachment: {
+            id: "att_123",
+            name: "photo.png",
+            kind: "image",
+            mimeType: "image/png",
+            size: 12,
+            previewUrl: "/v1/attachments/att_123/preview",
+            downloadUrl: "/v1/attachments/att_123/content",
+          },
+        }),
+      };
+    });
+    vi.stubGlobal("fetch", fetch);
+
+    const result = await uploadAgentUICoreAttachment(
+      {
+        file: new File(["image-bytes"], "photo.png", { type: "image/png" }),
+        name: "photo.png",
+        mimeType: "image/png",
+        kind: "image",
+        profile: "default",
+        messageId: "client-message-1",
+      },
+      defaultRuntimeConfig,
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.attachment.previewUrl).toBe("http://127.0.0.1:8765/v1/attachments/att_123/preview");
+    expect(result.attachment.downloadUrl).toBe("http://127.0.0.1:8765/v1/attachments/att_123/content");
+    expect(fetch).toHaveBeenCalledWith(
+      "http://127.0.0.1:8765/v1/attachments",
+      expect.objectContaining({
+        method: "POST",
+        headers: { Accept: "application/json" },
+      }),
+    );
+  });
+
+  it("does not rewrite browser or Tauri local preview URLs as Core paths", () => {
+    expect(agentUICoreAttachmentUrl(defaultRuntimeConfig, "asset://localhost/%2FUsers%2Fscott%2FDesktop%2Fphoto.png")).toBe(
+      "asset://localhost/%2FUsers%2Fscott%2FDesktop%2Fphoto.png",
+    );
+    expect(agentUICoreAttachmentUrl(defaultRuntimeConfig, "blob:http://localhost/local-preview")).toBe(
+      "blob:http://localhost/local-preview",
+    );
+    expect(agentUICoreAttachmentUrl(defaultRuntimeConfig, "data:image/png;base64,abc")).toBe("data:image/png;base64,abc");
   });
 });

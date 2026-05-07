@@ -38,9 +38,11 @@ export type MessageAttachment = {
   kind: "image" | "file";
   mimeType: string;
   size: number;
-  lastModified: number;
-  path?: string;
+  lastModified?: number;
   previewUrl?: string;
+  downloadUrl?: string;
+  localPath?: string;
+  legacyLocalPath?: boolean;
 };
 
 export type ProfileAction = "create" | "clone" | "rename" | "switch" | "delete";

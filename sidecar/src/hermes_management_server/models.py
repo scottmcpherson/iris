@@ -161,9 +161,13 @@ class CoreConversationCreateRequest(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
+class CoreMessageAttachmentRef(BaseModel):
+    id: str
+
+
 class CoreMessageCreateRequest(BaseModel):
     text: str
-    attachments: list[dict[str, Any]] = Field(default_factory=list)
+    attachments: list[CoreMessageAttachmentRef | dict[str, Any]] = Field(default_factory=list)
     model: dict[str, Any] | None = None
     clientMessageId: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)

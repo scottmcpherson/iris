@@ -11,6 +11,7 @@ import {
   mergeCompletedDelivery,
   mergeConversationChatIdMap,
   mergeMessageLists,
+  mergeUploadedAttachment,
   mergeStreamDelivery,
   preserveActiveConversationTitles,
   shouldApplyConversationDetailSelection,
@@ -100,7 +101,7 @@ describe("Hermes chat inbox merging", () => {
       kind: "image" as const,
       mimeType: "image/png",
       name: "statue.png",
-      path: "/Users/scott/Desktop/statue.png",
+      localPath: "/Users/scott/Desktop/statue.png",
       size: -1,
       lastModified: 1,
     };
@@ -144,6 +145,32 @@ describe("Hermes chat inbox merging", () => {
     );
 
     expect(merged.map((message) => message.id)).toEqual(["1090", "1091", "current-user"]);
+  });
+
+  it("prefers uploaded Core previews over local draft previews after attachment upload", () => {
+    const merged = mergeUploadedAttachment(
+      {
+        id: "draft-1",
+        kind: "image",
+        mimeType: "image/png",
+        name: "photo.png",
+        previewUrl: "asset://localhost/%2FUsers%2Fscott%2FDesktop%2Fphoto.png",
+        localPath: "/Users/scott/Desktop/photo.png",
+        size: 42,
+      },
+      {
+        id: "att_123",
+        kind: "image",
+        mimeType: "image/png",
+        name: "photo.png",
+        previewUrl: "http://127.0.0.1:8765/v1/attachments/att_123/preview",
+        downloadUrl: "http://127.0.0.1:8765/v1/attachments/att_123/content",
+        size: 42,
+      },
+    );
+
+    expect(merged.previewUrl).toBe("http://127.0.0.1:8765/v1/attachments/att_123/preview");
+    expect(merged.localPath).toBe("/Users/scott/Desktop/photo.png");
   });
 
   it("keeps repeated persisted messages even when their rendered content matches", () => {

@@ -8,6 +8,7 @@ so the native shell can evolve without baking Hermes internals into the UI.
 from __future__ import annotations
 
 import json
+import mimetypes
 import os
 import re
 import shutil
@@ -59,6 +60,7 @@ def main() -> None:
             "remote_credential_save": remote_credential_save,
             "remote_credential_delete": remote_credential_delete,
             "core_request": core_request,
+            "core_upload_path": core_upload_path,
         }
         handler = handlers.get(action)
         if handler is None:
@@ -245,6 +247,40 @@ def core_request(payload: dict[str, Any]) -> dict[str, Any]:
     return management_request(payload, path, method=method, body=body, timeout=12)
 
 
+def core_upload_path(payload: dict[str, Any]) -> dict[str, Any]:
+    path = Path(str(payload.get("localPath") or payload.get("path") or "")).expanduser()
+    if not path.is_file():
+        return {"ok": False, "error": "Attachment file does not exist."}
+    if path.stat().st_size > 25 * 1024 * 1024:
+        return {"ok": False, "error": "Attachment exceeds the 25 MB limit."}
+    filename = str(payload.get("name") or path.name or "attachment")
+    mime_type = str(payload.get("mimeType") or mimetypes.guess_type(filename)[0] or "application/octet-stream")
+    fields = {
+        "profile": str(payload.get("profile") or "default"),
+        "runtimeId": str(payload.get("runtimeId") or "runtime_local_hermes"),
+        "kind": str(payload.get("kind") or ("image" if mime_type.startswith("image/") else "file")),
+        "conversationId": str(payload.get("conversationId") or ""),
+        "messageId": str(payload.get("messageId") or ""),
+        "metadata": json.dumps(payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {}),
+    }
+    try:
+        content = path.read_bytes()
+    except OSError as exc:
+        return {"ok": False, "error": f"Could not read attachment: {exc}"}
+    body, content_type = multipart_body(fields, file_field="file", filename=filename, mime_type=mime_type, content=content)
+    url = management_endpoint(management_base_url(payload), "/attachments")
+    result = http_multipart_request(url, payload, body=body, content_type=content_type, timeout=30, token_kind="sidecar")
+    if not result.get("ok"):
+        return {
+            "ok": False,
+            "url": result.get("url") or url,
+            "status": result.get("status"),
+            "error": result.get("error") or "Attachment upload failed.",
+        }
+    parsed = result.get("json") if isinstance(result.get("json"), dict) else {}
+    return {**parsed, "ok": parsed.get("ok", True), "url": result.get("url") or url, "status": result.get("status")}
+
+
 def profile_name_from_payload(payload: dict[str, Any]) -> str:
     return str(payload.get("profile") or "default")
 
@@ -370,6 +406,71 @@ def http_json_request(
     if body is not None:
         headers["Content-Type"] = "application/json"
     request = urllib.request.Request(url, data=data, headers=headers, method=method)
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            text = response.read().decode("utf-8", errors="replace")
+            status_code = response.status
+    except urllib.error.HTTPError as exc:
+        text = exc.read().decode("utf-8", errors="replace")
+        return {
+            "ok": False,
+            "url": url,
+            "status": exc.code,
+            "error": api_error_text(text) or f"HTTP {exc.code}",
+        }
+    except Exception as exc:
+        return {"ok": False, "url": url, "error": str(exc)}
+
+    try:
+        parsed = json.loads(text) if text else {}
+    except json.JSONDecodeError as exc:
+        return {"ok": False, "url": url, "status": status_code, "error": f"Invalid JSON: {exc}"}
+    if not isinstance(parsed, dict):
+        return {"ok": False, "url": url, "status": status_code, "error": "Expected a JSON object."}
+    return {"ok": True, "url": url, "status": status_code, "json": parsed}
+
+
+def multipart_body(
+    fields: dict[str, str],
+    *,
+    file_field: str,
+    filename: str,
+    mime_type: str,
+    content: bytes,
+) -> tuple[bytes, str]:
+    boundary = f"----IrisAttachment{int(time.time() * 1000)}"
+    chunks: list[bytes] = []
+    for key, value in fields.items():
+        chunks.extend([
+            f"--{boundary}\r\n".encode("utf-8"),
+            f'Content-Disposition: form-data; name="{key}"\r\n\r\n'.encode("utf-8"),
+            str(value).encode("utf-8"),
+            b"\r\n",
+        ])
+    safe_filename = filename.replace('"', "")
+    chunks.extend([
+        f"--{boundary}\r\n".encode("utf-8"),
+        f'Content-Disposition: form-data; name="{file_field}"; filename="{safe_filename}"\r\n'.encode("utf-8"),
+        f"Content-Type: {mime_type}\r\n\r\n".encode("utf-8"),
+        content,
+        b"\r\n",
+        f"--{boundary}--\r\n".encode("utf-8"),
+    ])
+    return b"".join(chunks), f"multipart/form-data; boundary={boundary}"
+
+
+def http_multipart_request(
+    url: str,
+    payload: dict[str, Any],
+    *,
+    body: bytes,
+    content_type: str,
+    timeout: int = 30,
+    token_kind: str = "hermes",
+) -> dict[str, Any]:
+    headers = http_headers(payload, token_kind)
+    headers["Content-Type"] = content_type
+    request = urllib.request.Request(url, data=body, headers=headers, method="POST")
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
             text = response.read().decode("utf-8", errors="replace")

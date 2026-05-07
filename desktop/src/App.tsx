@@ -468,6 +468,7 @@ function App() {
         lockedModelSelection={chat.selectedModelSelection}
         modelLoading={modelCatalog.loading}
         modelError={modelCatalog.error}
+        runtimeConfig={hermes.runtimeConfig}
         onModelSelect={modelCatalog.selectDraftModel}
         slashCommands={slashCommands.commands}
         slashCommandsLoading={slashCommands.loading}

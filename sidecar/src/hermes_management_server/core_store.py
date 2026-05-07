@@ -15,9 +15,20 @@ from typing import Any
 from .models import ConversationMessage, ConversationSummary, ProfileSummary
 
 
-CORE_SCHEMA_VERSION = 3
+CORE_SCHEMA_VERSION = 4
 DEFAULT_RUNTIME_ID = "runtime_local_hermes"
 PROFILE_SLUG_RE = re.compile(r"[^A-Za-z0-9_.-]+")
+MAX_ATTACHMENT_SIZE_BYTES = 25 * 1024 * 1024
+MAX_ATTACHMENTS_PER_MESSAGE = 8
+ALLOWED_ATTACHMENT_MIME_TYPES = {
+    "image/png",
+    "image/jpeg",
+    "image/webp",
+    "image/gif",
+    "application/pdf",
+    "text/plain",
+    "text/markdown",
+}
 DUPLICATE_RUNTIME_TABLES = (
     "agents",
     "conversations",
@@ -26,7 +37,15 @@ DUPLICATE_RUNTIME_TABLES = (
     "conversation_messages",
     "automations",
 )
-CORE_OWNED_TABLES = ("schema_meta", "devices", "runtimes", "device_cursors", "client_message_metadata")
+CORE_OWNED_TABLES = (
+    "schema_meta",
+    "devices",
+    "runtimes",
+    "device_cursors",
+    "client_message_metadata",
+    "attachments",
+    "message_attachments",
+)
 
 
 def default_core_store_path() -> Path:
@@ -35,6 +54,10 @@ def default_core_store_path() -> Path:
 
 def legacy_core_store_path() -> Path:
     return Path.home() / ".agent-ui" / "core.sqlite3"
+
+
+def default_attachment_root() -> Path:
+    return Path.home() / ".iris" / "attachments"
 
 
 def migrate_default_core_store_path() -> Path:
@@ -105,6 +128,7 @@ class CoreStore:
         self.explicit_path = path is not None
         self.path = Path(path).expanduser() if path else migrate_default_core_store_path()
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.attachment_root = self.path.parent / "attachments" if self.explicit_path else default_attachment_root()
         self.migration_warning = ""
         self._initialize(auto_migrate=auto_migrate)
 
@@ -170,6 +194,46 @@ class CoreStore:
 
                 create index if not exists idx_client_message_metadata_content
                   on client_message_metadata(runtime_id, profile, chat_id, content_hash);
+
+                create table if not exists attachments (
+                  id text primary key,
+                  owner_device_id text,
+                  runtime_id text not null,
+                  profile text not null,
+                  conversation_id text,
+                  message_id text,
+                  name text not null,
+                  mime_type text not null,
+                  kind text not null,
+                  size_bytes integer not null,
+                  sha256 text not null,
+                  storage_kind text not null,
+                  storage_path text not null,
+                  created_at integer not null,
+                  updated_at integer not null,
+                  deleted_at integer,
+                  metadata_json text not null
+                );
+
+                create index if not exists idx_attachments_conversation
+                  on attachments(runtime_id, profile, conversation_id);
+
+                create index if not exists idx_attachments_message
+                  on attachments(runtime_id, profile, message_id);
+
+                create index if not exists idx_attachments_sha256
+                  on attachments(sha256);
+
+                create table if not exists message_attachments (
+                  runtime_id text not null,
+                  profile text not null,
+                  chat_id text not null,
+                  message_id text not null,
+                  attachment_id text not null,
+                  position integer not null,
+                  created_at integer not null,
+                  primary key (runtime_id, profile, chat_id, message_id, attachment_id)
+                );
                 """
             )
         if auto_migrate:
@@ -222,6 +286,7 @@ class CoreStore:
             ).fetchone()
         return {
             "path": str(self.path),
+            "attachmentRoot": str(self.attachment_root),
             "schemaVersion": int(schema_version["value"]) if schema_version else CORE_SCHEMA_VERSION,
             "sourceOfTruthMigration": self.schema_meta_value("source_of_truth_migration") or "",
             "migrationWarning": self.migration_warning,
@@ -327,9 +392,9 @@ class CoreStore:
     ) -> dict[str, dict[str, dict[str, Any]]]:
         message_ids = sorted({str(message.get("id") or "") for message in messages if message.get("id")})
         content_hashes = sorted({
-            stable_hash(str(message.get("content") or ""), length=32)
+            hash_value
             for message in messages
-            if str(message.get("content") or "")
+            for hash_value in message_content_hash_candidates(str(message.get("content") or ""))
         })
         if not runtime_id or not profile or not chat_id or (not message_ids and not content_hashes):
             return {"byMessageId": {}, "byContentHash": {}}
@@ -357,6 +422,179 @@ class CoreStore:
                 by_message_id[str(row["message_id"])] = metadata
                 by_content_hash[str(row["content_hash"])] = metadata
         return {"byMessageId": by_message_id, "byContentHash": by_content_hash}
+
+    def create_attachment(
+        self,
+        *,
+        source_path: Path,
+        runtime_id: str,
+        profile: str,
+        name: str,
+        mime_type: str,
+        kind: str,
+        size_bytes: int,
+        sha256: str,
+        owner_device_id: str = "",
+        conversation_id: str = "",
+        message_id: str = "",
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        if not runtime_id or not profile:
+            raise ValueError("runtime_id and profile are required.")
+        if size_bytes < 0 or size_bytes > MAX_ATTACHMENT_SIZE_BYTES:
+            raise ValueError("Attachment is too large.")
+        normalized_mime = normalize_attachment_mime_type(mime_type)
+        if normalized_mime not in ALLOWED_ATTACHMENT_MIME_TYPES:
+            raise ValueError(f"Unsupported attachment type: {normalized_mime}.")
+        normalized_kind = "image" if kind == "image" or normalized_mime.startswith("image/") else "file"
+        attachment_id = random_id("att")
+        blob_path = self.blob_path_for_sha256(sha256)
+        blob_path.parent.mkdir(parents=True, exist_ok=True)
+        if not blob_path.exists():
+            shutil.move(str(source_path), str(blob_path))
+        else:
+            source_path.unlink(missing_ok=True)
+        timestamp = now()
+        with self.connect() as connection:
+            connection.execute(
+                """
+                insert into attachments(
+                  id, owner_device_id, runtime_id, profile, conversation_id, message_id,
+                  name, mime_type, kind, size_bytes, sha256, storage_kind, storage_path,
+                  created_at, updated_at, deleted_at, metadata_json
+                ) values(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, null, ?)
+                """,
+                (
+                    attachment_id,
+                    owner_device_id or "",
+                    runtime_id,
+                    profile,
+                    conversation_id or None,
+                    message_id or None,
+                    name.strip() or "attachment",
+                    normalized_mime,
+                    normalized_kind,
+                    size_bytes,
+                    sha256,
+                    "local_file",
+                    str(blob_path),
+                    timestamp,
+                    timestamp,
+                    dumps(metadata or {}),
+                ),
+            )
+        attachment = self.get_attachment(attachment_id)
+        if not attachment:
+            raise ValueError("Attachment could not be stored.")
+        return attachment
+
+    def blob_path_for_sha256(self, sha256: str) -> Path:
+        safe_hash = re.sub(r"[^a-fA-F0-9]", "", sha256).lower()
+        if len(safe_hash) != 64:
+            raise ValueError("Invalid attachment hash.")
+        return self.attachment_root / "blobs" / safe_hash[:2] / safe_hash
+
+    def tmp_attachment_path(self) -> Path:
+        directory = self.attachment_root / "tmp"
+        directory.mkdir(parents=True, exist_ok=True)
+        return directory / f"upload-{random_id('tmp')}"
+
+    def get_attachment(self, attachment_id: str, *, include_storage: bool = False) -> dict[str, Any] | None:
+        with self.connect() as connection:
+            row = connection.execute(
+                "select * from attachments where id = ? and deleted_at is null",
+                (attachment_id,),
+            ).fetchone()
+        return attachment_from_row(row, include_storage=include_storage) if row else None
+
+    def attachment_content_path(self, attachment_id: str) -> Path:
+        attachment = self.get_attachment(attachment_id, include_storage=True)
+        if not attachment:
+            raise ValueError("Attachment was not found.")
+        path = Path(str(attachment.get("storagePath") or ""))
+        resolved_path = path.resolve()
+        try:
+            resolved_path.relative_to(self.attachment_root.resolve())
+        except ValueError as exc:
+            raise ValueError("Attachment storage path is invalid.") from exc
+        if not resolved_path.is_file():
+            raise ValueError("Attachment content is missing.")
+        return resolved_path
+
+    def resolve_message_attachments(
+        self,
+        *,
+        runtime_id: str,
+        profile: str,
+        conversation_id: str,
+        chat_id: str,
+        message_id: str,
+        refs: list[Any],
+    ) -> list[dict[str, Any]]:
+        if len(refs) > MAX_ATTACHMENTS_PER_MESSAGE:
+            raise ValueError(f"Messages may include at most {MAX_ATTACHMENTS_PER_MESSAGE} attachments.")
+        resolved: list[dict[str, Any]] = []
+        timestamp = now()
+        with self.connect() as connection:
+            for position, ref in enumerate(refs):
+                if not isinstance(ref, dict):
+                    raise ValueError("Attachment references must be objects.")
+                attachment_id = str(ref.get("id") or "").strip()
+                if not attachment_id:
+                    legacy = legacy_attachment_from_ref(ref)
+                    if legacy:
+                        resolved.append(legacy)
+                        continue
+                    raise ValueError("Attachment id is required.")
+                row = connection.execute(
+                    """
+                    select * from attachments
+                    where id = ? and runtime_id = ? and profile = ? and deleted_at is null
+                    """,
+                    (attachment_id, runtime_id, profile),
+                ).fetchone()
+                if not row:
+                    raise ValueError("Attachment was not found for this profile.")
+                if row["conversation_id"] and str(row["conversation_id"]) != conversation_id:
+                    raise ValueError("Attachment belongs to a different conversation.")
+                connection.execute(
+                    """
+                    update attachments
+                    set conversation_id = coalesce(conversation_id, ?),
+                        message_id = coalesce(message_id, ?),
+                        updated_at = ?
+                    where id = ?
+                    """,
+                    (conversation_id, message_id, timestamp, attachment_id),
+                )
+                connection.execute(
+                    """
+                    insert or replace into message_attachments(
+                      runtime_id, profile, chat_id, message_id, attachment_id, position, created_at
+                    ) values(?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (runtime_id, profile, chat_id, message_id, attachment_id, position, timestamp),
+                )
+                resolved.append(attachment_from_row(row, include_storage=True))
+        return resolved
+
+    def runtime_attachments(self, *, runtime_id: str, profile: str, refs: list[Any]) -> list[dict[str, Any]]:
+        resolved: list[dict[str, Any]] = []
+        for ref in refs:
+            if not isinstance(ref, dict):
+                continue
+            attachment_id = str(ref.get("id") or "").strip()
+            if not attachment_id:
+                continue
+            attachment = self.get_attachment(attachment_id, include_storage=True)
+            if (
+                not attachment
+                or str(attachment.get("runtimeId") or "") != runtime_id
+                or str(attachment.get("profile") or "") != profile
+            ):
+                continue
+            resolved.append(attachment)
+        return resolved
 
     def update_runtime_probe(self, runtime_id: str, probe: dict[str, Any]) -> None:
         with self.connect() as connection:
@@ -487,6 +725,106 @@ def device_from_row(row: sqlite3.Row) -> dict[str, Any]:
         "lastSeenAt": int(row["last_seen_at"]) if row["last_seen_at"] is not None else None,
         "revokedAt": int(row["revoked_at"]) if row["revoked_at"] is not None else None,
         "metadata": loads(row["metadata_json"]),
+    }
+
+
+def normalize_attachment_mime_type(value: str) -> str:
+    mime_type = str(value or "").split(";", 1)[0].strip().lower()
+    if mime_type == "image/jpg":
+        return "image/jpeg"
+    return mime_type or "application/octet-stream"
+
+
+def message_content_hash_candidates(content: str) -> set[str]:
+    value = str(content or "")
+    if not value:
+        return set()
+    candidates = {stable_hash(value, length=32)}
+    stripped = strip_attachment_summary(value)
+    if stripped and stripped != value:
+        candidates.add(stable_hash(stripped, length=32))
+    return candidates
+
+
+def strip_attachment_summary(content: str) -> str:
+    return re.sub(r"\n\nAttached files:\n[\s\S]*$", "", content).strip()
+
+
+def attachment_from_row(row: sqlite3.Row, *, include_storage: bool = False) -> dict[str, Any]:
+    attachment = {
+        "id": str(row["id"]),
+        "runtimeId": str(row["runtime_id"]),
+        "profile": str(row["profile"]),
+        "conversationId": str(row["conversation_id"] or ""),
+        "messageId": str(row["message_id"] or ""),
+        "name": str(row["name"]),
+        "kind": str(row["kind"]),
+        "mimeType": str(row["mime_type"]),
+        "size": int(row["size_bytes"]),
+        "sha256": str(row["sha256"]),
+        "createdAt": int(row["created_at"]),
+        "updatedAt": int(row["updated_at"]),
+        "previewUrl": f"/v1/attachments/{row['id']}/preview",
+        "downloadUrl": f"/v1/attachments/{row['id']}/content",
+        "metadata": loads(row["metadata_json"]),
+    }
+    if include_storage:
+        attachment.update({
+            "storageKind": str(row["storage_kind"]),
+            "storagePath": str(row["storage_path"]),
+            "runtime": {
+                "type": "local_path",
+                "path": str(row["storage_path"]),
+            },
+        })
+    return attachment
+
+
+def client_attachment_payload(attachment: dict[str, Any]) -> dict[str, Any]:
+    payload = {
+        "id": str(attachment.get("id") or ""),
+        "name": str(attachment.get("name") or "attachment"),
+        "kind": "image" if attachment.get("kind") == "image" else "file",
+        "mimeType": str(attachment.get("mimeType") or ""),
+        "size": int(attachment.get("size") if isinstance(attachment.get("size"), int) else -1),
+        "sha256": str(attachment.get("sha256") or ""),
+        "previewUrl": str(attachment.get("previewUrl") or ""),
+        "downloadUrl": str(attachment.get("downloadUrl") or ""),
+    }
+    if attachment.get("legacyLocalPath"):
+        payload["legacyLocalPath"] = True
+        payload["localPath"] = str(attachment.get("localPath") or "")
+    return payload
+
+
+def runtime_attachment_payload(attachment: dict[str, Any]) -> dict[str, Any]:
+    payload = client_attachment_payload(attachment)
+    runtime = attachment.get("runtime") if isinstance(attachment.get("runtime"), dict) else {}
+    storage_path = str(attachment.get("storagePath") or runtime.get("path") or "")
+    if storage_path:
+        payload["runtime"] = {"type": "local_path", "path": storage_path}
+    return payload
+
+
+def legacy_attachment_from_ref(ref: dict[str, Any]) -> dict[str, Any] | None:
+    path = str(ref.get("path") or ref.get("localPath") or "").strip()
+    if not path:
+        return None
+    name = str(ref.get("name") or Path(path).name or "Attached file")
+    kind = "image" if ref.get("kind") == "image" else "file"
+    mime_type = normalize_attachment_mime_type(str(ref.get("mimeType") or "application/octet-stream"))
+    return {
+        "id": str(ref.get("id") or random_id("legacy_att")),
+        "name": name,
+        "kind": kind,
+        "mimeType": mime_type,
+        "size": int(ref.get("size")) if isinstance(ref.get("size"), int) else -1,
+        "sha256": "",
+        "previewUrl": "",
+        "downloadUrl": "",
+        "legacyLocalPath": True,
+        "localPath": path,
+        "runtime": {"type": "local_path", "path": path},
     }
 
 
