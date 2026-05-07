@@ -1,13 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { loadJsonValue, saveJsonValue, storageKeys } from "../../app/storage";
 import { getHermesModelCatalog } from "../../lib/hermes";
+import { stringValue } from "../../shared/strings";
 import type {
   HermesModelCatalog,
   HermesModelSelection,
   HermesProfile,
   HermesRuntimeConfig,
 } from "../../types/hermes";
-
-const modelSelectionStorageKey = "hermes.desktop.modelSelectionByProfile";
 
 type UseHermesModelCatalogOptions = {
   profile: string;
@@ -185,10 +185,6 @@ function profileProviderName(provider: string, modelConfig: string) {
   return modelConfig.match(/['"]provider['"]\s*:\s*['"]([^'"]+)['"]/)?.[1] || "";
 }
 
-function stringValue(value: unknown) {
-  return typeof value === "string" ? value.trim() : "";
-}
-
 function fallbackCatalog(
   profile: string,
   current: HermesModelSelection | null,
@@ -205,25 +201,17 @@ function fallbackCatalog(
 }
 
 function loadStoredSelections() {
-  try {
-    const parsed = JSON.parse(localStorage.getItem(modelSelectionStorageKey) || "{}");
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
-    return Object.fromEntries(
-      Object.entries(parsed as Record<string, unknown>)
-        .map(([profile, value]) => [profile, validSelection(value)])
-        .filter((entry): entry is [string, HermesModelSelection] => Boolean(entry[0] && entry[1])),
-    );
-  } catch {
-    return {};
-  }
+  const parsed = loadJsonValue<Record<string, unknown>>(storageKeys.modelSelectionByProfile, {});
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+  return Object.fromEntries(
+    Object.entries(parsed)
+      .map(([profile, value]) => [profile, validSelection(value)])
+      .filter((entry): entry is [string, HermesModelSelection] => Boolean(entry[0] && entry[1])),
+  );
 }
 
 function saveStoredSelections(value: Record<string, HermesModelSelection>) {
-  try {
-    localStorage.setItem(modelSelectionStorageKey, JSON.stringify(value));
-  } catch {
-    // Session state is still enough if localStorage is unavailable.
-  }
+  saveJsonValue(storageKeys.modelSelectionByProfile, value);
 }
 
 function validSelection(value: unknown): HermesModelSelection | null {

@@ -14,6 +14,7 @@ import {
   saveRemoteCredential,
 } from "../../lib/hermes";
 import { endpointLabel } from "../../shared/format";
+import { rawStringValue } from "../../shared/strings";
 import type {
   HermesProfile,
   HermesRuntimeConfig,
@@ -589,8 +590,8 @@ function healthLabel(status: HermesStatus["activeApiStatus"]) {
 
 function modelSummary(provider: string, model: string) {
   const parsed = parseModelConfig(model);
-  const resolvedProvider = stringValue(parsed?.provider) || provider || "Provider unavailable";
-  const resolvedModel = stringValue(parsed?.default) || stringValue(parsed?.model) || model || "Model unavailable";
+  const resolvedProvider = rawStringValue(parsed?.provider) || provider || "Provider unavailable";
+  const resolvedModel = rawStringValue(parsed?.default) || rawStringValue(parsed?.model) || model || "Model unavailable";
   return {
     model: resolvedModel,
     provider: resolvedProvider,
@@ -615,10 +616,6 @@ function parseModelConfig(model: string): Record<string, unknown> | null {
 
 function prettyModelConfig(model: string, provider: string) {
   return JSON.stringify({ provider, model }, null, 2);
-}
-
-function stringValue(value: unknown) {
-  return typeof value === "string" ? value : "";
 }
 
 function formatTimestamp(value: number) {

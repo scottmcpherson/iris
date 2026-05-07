@@ -1,7 +1,6 @@
 import type { PreviewArtifact, PreviewMode, PreviewPermissions } from "../../app/types";
+import { loadJsonValue, saveJsonValue, storageKeys } from "../../app/storage";
 import { defaultPreviewSource } from "./previewSamples";
-
-const artifactStorageKey = "hermes.preview.artifacts.v1";
 
 export const defaultPreviewPermissions: PreviewPermissions = {
   scripts: true,
@@ -35,19 +34,13 @@ export function createInitialPreviewArtifacts() {
 }
 
 export function loadPreviewArtifacts() {
-  try {
-    const stored = localStorage.getItem(artifactStorageKey);
-    if (!stored) return createInitialPreviewArtifacts();
-    const parsed = JSON.parse(stored) as PreviewArtifact[];
-    if (!Array.isArray(parsed) || parsed.length === 0) return createInitialPreviewArtifacts();
-    return parsed.map(normalizeArtifact);
-  } catch {
-    return createInitialPreviewArtifacts();
-  }
+  const parsed = loadJsonValue<PreviewArtifact[]>(storageKeys.previewArtifacts, []);
+  if (!Array.isArray(parsed) || parsed.length === 0) return createInitialPreviewArtifacts();
+  return parsed.map(normalizeArtifact);
 }
 
 export function savePreviewArtifacts(artifacts: PreviewArtifact[]) {
-  localStorage.setItem(artifactStorageKey, JSON.stringify(artifacts));
+  saveJsonValue(storageKeys.previewArtifacts, artifacts);
 }
 
 export function duplicatePreviewArtifact(artifact: PreviewArtifact): PreviewArtifact {

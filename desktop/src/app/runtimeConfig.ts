@@ -1,6 +1,5 @@
 import type { HermesRuntimeConfig } from "../types/hermes";
-
-const runtimeConfigKey = "hermes.desktop.runtime";
+import { loadJsonValue, saveJsonValue, storageKeys } from "./storage";
 
 export const defaultRuntimeConfig: HermesRuntimeConfig = {
   connectionMode: "local",
@@ -17,7 +16,7 @@ export const defaultRuntimeConfig: HermesRuntimeConfig = {
 
 export function loadRuntimeConfig(): HermesRuntimeConfig {
   try {
-    const stored = JSON.parse(localStorage.getItem(runtimeConfigKey) || "{}") as Partial<HermesRuntimeConfig>;
+    const stored = loadJsonValue<Partial<HermesRuntimeConfig>>(storageKeys.runtimeConfig, {});
     return {
       ...defaultRuntimeConfig,
       ...stored,
@@ -34,16 +33,16 @@ export function loadRuntimeConfig(): HermesRuntimeConfig {
 }
 
 export function saveRuntimeConfig(config: HermesRuntimeConfig) {
-  localStorage.setItem(
-    runtimeConfigKey,
-    JSON.stringify({
+  saveJsonValue(
+    storageKeys.runtimeConfig,
+    {
       ...config,
       gatewayUrl: normalizeServerUrl(config.gatewayUrl) || defaultRuntimeConfig.gatewayUrl,
       managementApiUrl: normalizeServerUrl(config.managementApiUrl) || defaultRuntimeConfig.managementApiUrl,
       agentuiGatewayUrls: normalizeProfileApiUrls(config.agentuiGatewayUrls),
       profileApiUrls: normalizeProfileApiUrls(config.profileApiUrls),
       profileSidecarUrls: normalizeProfileApiUrls(config.profileSidecarUrls),
-    }),
+    },
   );
 }
 

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { loadStringValue, saveStringValue, storageKeys } from "../../app/storage";
 import {
   createAgentUICoreAutomation,
   deleteAgentUICoreAutomation,
@@ -10,9 +11,8 @@ import {
   runAgentUICoreAutomation,
 } from "../../lib/agentuiCore";
 import { coreEventToInboxMessage } from "../../lib/hermes";
+import { rawStringValue } from "../../shared/strings";
 import type { HermesInboxMessage, HermesJob, HermesJobStatus, HermesRuntimeConfig } from "../../types/hermes";
-
-const deliveryTargetStorageKey = "hermes.desktop.jobs.deliveryTarget";
 
 export type CreateScheduledMessageInput = {
   message: string;
@@ -46,7 +46,7 @@ export function useAgentUIAutomations(runtimeConfig: HermesRuntimeConfig, profil
   function updateDeliveryTarget(value: string) {
     const normalized = value.trim() || "agentui:desktop";
     setDeliveryTarget(normalized);
-    localStorage.setItem(deliveryTargetStorageKey, normalized);
+    saveStringValue(storageKeys.jobsDeliveryTarget, normalized);
   }
 
   async function refresh() {
@@ -199,17 +199,17 @@ function normalizeJob(row: Record<string, unknown>): HermesJob {
     ? row.metadata as Record<string, unknown>
     : {};
   return {
-    id: stringValue(row.id || row.jobId || row.job_id),
-    name: stringValue(row.name) || "Untitled job",
-    schedule: stringValue(row.schedule_display || schedule?.display || row.schedule || row.scheduleText || row.cron || row.when),
-    prompt: stringValue(row.prompt),
-    deliver: stringValue(row.deliver || row.delivery || metadata.deliver || row.deliverToConversationId),
+    id: rawStringValue(row.id || row.jobId || row.job_id),
+    name: rawStringValue(row.name) || "Untitled job",
+    schedule: rawStringValue(row.schedule_display || schedule?.display || row.schedule || row.scheduleText || row.cron || row.when),
+    prompt: rawStringValue(row.prompt),
+    deliver: rawStringValue(row.deliver || row.delivery || metadata.deliver || row.deliverToConversationId),
     status: normalizeJobStatus(row.status || row.state || (row.enabled === false ? "paused" : "active")),
     nextRunAt: timestampValue(row.nextRunAt || row.next_run_at || row.nextRun || row.next_run || schedule?.run_at),
     lastRunAt: timestampValue(row.lastRunAt || row.last_run_at || row.lastRun || row.last_run),
-    lastStatus: stringValue(row.lastStatus || row.last_status),
-    lastError: stringValue(row.lastError || row.last_error),
-    lastDeliveryError: stringValue(row.lastDeliveryError || row.last_delivery_error),
+    lastStatus: rawStringValue(row.lastStatus || row.last_status),
+    lastError: rawStringValue(row.lastError || row.last_error),
+    lastDeliveryError: rawStringValue(row.lastDeliveryError || row.last_delivery_error),
     runCount: Math.floor(numberValue(row.runCount || row.run_count || row.runs || repeat?.completed) || 0),
     repeat: numberValue(repeat?.times || row.repeat || metadata.repeat),
     createdAt: timestampValue(row.createdAt || row.created_at),
@@ -218,7 +218,7 @@ function normalizeJob(row: Record<string, unknown>): HermesJob {
 }
 
 function normalizeJobStatus(value: unknown): HermesJobStatus {
-  const status = stringValue(value).toLowerCase();
+  const status = rawStringValue(value).toLowerCase();
   if (status.includes("pause")) return "paused";
   if (status.includes("complete") || status.includes("done")) return "completed";
   if (status.includes("error") || status.includes("fail")) return "error";
@@ -230,10 +230,6 @@ function normalizeJobStatus(value: unknown): HermesJobStatus {
     status.includes("pending")
   ) return "active";
   return "unknown";
-}
-
-function stringValue(value: unknown) {
-  return typeof value === "string" ? value : value == null ? "" : String(value);
 }
 
 function numberValue(value: unknown): number | null {
@@ -251,11 +247,7 @@ function timestampValue(value: unknown): number | null {
 }
 
 function loadDeliveryTarget() {
-  try {
-    return localStorage.getItem(deliveryTargetStorageKey) || "agentui:desktop";
-  } catch {
-    return "agentui:desktop";
-  }
+  return loadStringValue(storageKeys.jobsDeliveryTarget, "agentui:desktop");
 }
 
 function agentError(value: unknown) {

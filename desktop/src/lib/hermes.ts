@@ -8,10 +8,12 @@ import {
   getAgentUICoreEvents,
   getAgentUICoreModels,
   getAgentUICoreSlashCommands,
-  type AgentUICoreConversation,
-  type AgentUICoreEvent,
-  type AgentUICoreMessage,
 } from "./agentuiCore";
+import {
+  coreConversationToHermes,
+  coreEventToInboxMessage,
+  coreMessageToHermes,
+} from "./coreHermesCompat";
 import type {
   HermesMemory,
   HermesMemorySaveResult,
@@ -28,6 +30,9 @@ import type {
   RemoteCredentialKind,
   RemoteCredentialStatus,
 } from "../types/hermes";
+
+// Compatibility facade: existing desktop UI code still imports Hermes-shaped
+// functions and types, while the active read path is backed by Iris Core.
 
 type BridgeResponse<T> = T & {
   ok: boolean;
@@ -388,59 +393,4 @@ function agentResultError(result: unknown, fallback: string) {
   return fallback;
 }
 
-function coreConversationToHermes(conversation: AgentUICoreConversation) {
-  const origin = {
-    ...(conversation.origin || {}),
-    runtimeId: conversation.runtimeId,
-    runtimeProfile: conversation.runtimeProfile,
-    externalSessionId: conversation.externalSessionId,
-    externalChatId: conversation.externalChatId,
-  };
-  return {
-    id: conversation.id,
-    source: "agentui-core",
-    model: String(conversation.metadata?.model || ""),
-    title: conversation.title || conversation.summary || "Untitled session",
-    preview: conversation.summary || String(conversation.metadata?.preview || ""),
-    chatId: conversation.externalChatId || "",
-    origin,
-    startedAt: conversation.createdAt || null,
-    endedAt: null,
-    lastActiveAt: conversation.updatedAt || conversation.createdAt || null,
-    messageCount: Number(conversation.metadata?.messageCount || 0),
-  };
-}
-
-function coreMessageToHermes(message: AgentUICoreMessage, conversationId: string) {
-  return {
-    id: message.id,
-    sessionId: conversationId,
-    role: message.role,
-    content: message.content,
-    status: message.status,
-    toolName: String(message.metadata?.toolName || ""),
-    toolCallId: String(message.metadata?.toolCallId || ""),
-    toolCalls: Array.isArray(message.metadata?.toolCalls) ? message.metadata.toolCalls : [],
-    timestamp: message.createdAt || null,
-    metadata: message.metadata || {},
-  };
-}
-
-export function coreEventToInboxMessage(event: AgentUICoreEvent, fallbackProfile: string) {
-  const metadata = event.metadata || {};
-  return {
-    cursor: event.cursor,
-    id: event.id,
-    source: String(metadata.source || "agentui-core-events"),
-    platform: "agentui",
-    profile: String(metadata.profile || fallbackProfile),
-    chatId: String(metadata.chatId || event.conversationId),
-    content: event.content,
-    metadata: {
-      ...metadata,
-      replyTo: metadata.replyTo || event.parentEventId || undefined,
-    },
-    createdAt: event.createdAt,
-    acknowledgedAt: null,
-  };
-}
+export { coreEventToInboxMessage } from "./coreHermesCompat";

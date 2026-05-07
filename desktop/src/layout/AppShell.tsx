@@ -19,11 +19,10 @@ import {
   X,
 } from "lucide-react";
 import { navItems, viewTitle } from "../app/navigation";
+import { loadJsonValue, saveJsonValue, storageKeys } from "../app/storage";
 import type { ProfileActionHandler, View } from "../app/types";
 import { offlineProfile } from "../app/offlineProfile";
 import type { HermesConversation, HermesProfile, HermesStatus } from "../types/hermes";
-
-const collapsedSessionsStorageKey = "hermes.desktop.sidebar.collapsedSessions";
 
 type ProfileDialog =
   | { action: "create"; name: string }
@@ -846,25 +845,16 @@ function isProfileActionFailure(message: string) {
 }
 
 function loadCollapsedSessionProfiles() {
-  try {
-    const raw = localStorage.getItem(collapsedSessionsStorageKey);
-    const parsed = raw ? JSON.parse(raw) : {};
-    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
-      ? Object.fromEntries(
-          Object.entries(parsed).map(([key, value]) => [key, Boolean(value)]),
-        )
-      : {};
-  } catch {
-    return {};
-  }
+  const parsed = loadJsonValue<Record<string, unknown>>(storageKeys.collapsedSessionProfiles, {});
+  return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+    ? Object.fromEntries(
+        Object.entries(parsed).map(([key, value]) => [key, Boolean(value)]),
+      )
+    : {};
 }
 
 function saveCollapsedSessionProfiles(value: Record<string, boolean>) {
-  try {
-    localStorage.setItem(collapsedSessionsStorageKey, JSON.stringify(value));
-  } catch {
-    // Ignore storage failures; the disclosure still works for this session.
-  }
+  saveJsonValue(storageKeys.collapsedSessionProfiles, value);
 }
 
 function timeLabel(value: number | null) {

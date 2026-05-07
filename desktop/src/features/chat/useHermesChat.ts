@@ -12,40 +12,45 @@ import {
   getAgentUICoreEvents,
   getAgentUICoreAgentForProfile,
   sendAgentUICoreMessage,
-  uploadAgentUICoreAttachment,
   type AgentUICoreEvent,
 } from "../../lib/agentuiCore";
 import type {
   HermesConversation,
   HermesConversationMessage,
-  HermesHistoryToolCall,
   HermesInboxMessage,
   HermesModelSelection,
   HermesRuntimeConfig,
-  HermesStreamToolEvent,
 } from "../../types/hermes";
+import { compactText } from "../../shared/strings";
+import { formatPromptWithAttachments, uploadAttachmentsForSend } from "./chatAttachments";
+import type { PendingProfileConversationSelection, SendMessageOptions } from "./chatTypes";
+import {
+  booleanMetadata,
+  isHiddenDeliveryMetadata,
+  stringMetadata,
+  toAppMessages,
+} from "./chatHistory";
+import {
+  deliveryCompletesActiveStream,
+  mergeCompletedDelivery,
+  mergeMessageLists,
+  mergeStreamDelivery,
+} from "./chatStreamMerging";
+
+export { isHiddenDeliveryMetadata, stripModelSwitchNote, toAppMessages } from "./chatHistory";
+export {
+  coalescePostStreamAttachments,
+  deliveryCompletesActiveStream,
+  mergeCompletedDelivery,
+  mergeMessageLists,
+  mergeStreamDelivery,
+} from "./chatStreamMerging";
+export { mergeUploadedAttachment } from "./chatAttachments";
+export type { SendableAttachment } from "./chatTypes";
 
 type UseHermesChatOptions = {
   profile: string;
   runtimeConfig: HermesRuntimeConfig;
-};
-
-type PendingProfileConversationSelection = {
-  profile: string;
-  conversationId: string;
-};
-
-type SendMessageOptions = {
-  attachments?: SendableAttachment[];
-  modelSelection?: HermesModelSelection | null;
-  currentModelSelection?: HermesModelSelection | null;
-};
-
-export type SendableAttachment = MessageAttachment & {
-  file?: File;
-  upload?: MessageAttachment;
-  uploadStatus?: "local" | "uploading" | "uploaded" | "error";
-  uploadError?: string;
 };
 
 const coreDeliveryEventNames = [
@@ -319,7 +324,7 @@ export function useAgentUIChat({ profile, runtimeConfig }: UseHermesChatOptions)
         const localConversation = {
           ...coreCreatedConversation,
           lastActiveAt: Math.max(coreCreatedConversation.lastActiveAt || 0, optimisticTimestamp),
-          preview: compactConversationText(promptWithAttachments, 180) || coreCreatedConversation.preview,
+          preview: compactText(promptWithAttachments, 180) || coreCreatedConversation.preview,
           messageCount: Math.max(coreCreatedConversation.messageCount || 0, 1),
         };
         setConversationsByProfile((current) =>
@@ -724,7 +729,7 @@ export function useAgentUIChat({ profile, runtimeConfig }: UseHermesChatOptions)
         source: "agentui-core",
         model,
         title: created.conversation.title,
-        preview: compactConversationText(promptText, 180),
+        preview: compactText(promptText, 180),
         chatId: created.conversation.externalChatId,
         origin: created.conversation.origin || {},
         startedAt: created.conversation.createdAt,
@@ -1038,358 +1043,6 @@ export function useAgentUIChat({ profile, runtimeConfig }: UseHermesChatOptions)
 
 export const useHermesChat = useAgentUIChat;
 
-async function uploadAttachmentsForSend(
-  attachments: SendableAttachment[],
-  context: {
-    profile: string;
-    messageId: string;
-    conversationId: string;
-    runtimeConfig: HermesRuntimeConfig;
-  },
-): Promise<MessageAttachment[]> {
-  const uploaded: MessageAttachment[] = [];
-  for (const attachment of attachments) {
-    if (attachment.upload?.id) {
-      uploaded.push(mergeUploadedAttachment(attachment, attachment.upload));
-      continue;
-    }
-    if (attachment.id.startsWith("att_") && !attachment.file && !attachment.localPath) {
-      uploaded.push(attachment);
-      continue;
-    }
-    const result = await uploadAgentUICoreAttachment(
-      {
-        file: attachment.file,
-        localPath: attachment.localPath,
-        name: attachment.name,
-        mimeType: attachment.mimeType,
-        kind: attachment.kind,
-        profile: context.profile,
-        conversationId: context.conversationId,
-        messageId: context.messageId,
-        metadata: {
-          clientDraftId: attachment.id,
-          lastModified: attachment.lastModified || 0,
-        },
-      },
-      context.runtimeConfig,
-    );
-    if (!result.ok || !result.attachment) {
-      throw new Error(result.error || `Could not upload ${attachment.name}.`);
-    }
-    uploaded.push(mergeUploadedAttachment(attachment, result.attachment));
-  }
-  return uploaded;
-}
-
-export function mergeUploadedAttachment(draft: SendableAttachment, uploaded: MessageAttachment): MessageAttachment {
-  return {
-    id: uploaded.id,
-    name: uploaded.name || draft.name,
-    kind: uploaded.kind || draft.kind,
-    mimeType: uploaded.mimeType || draft.mimeType,
-    size: uploaded.size >= 0 ? uploaded.size : draft.size,
-    lastModified: draft.lastModified,
-    previewUrl: uploaded.previewUrl || draft.previewUrl,
-    downloadUrl: uploaded.downloadUrl,
-    localPath: draft.localPath,
-  };
-}
-
-function formatPromptWithAttachments(prompt: string, attachments: MessageAttachment[]) {
-  if (!attachments.length) return prompt;
-  const attachmentSummary = attachments
-    .map((attachment, index) => {
-      const type = attachment.mimeType || (attachment.kind === "image" ? "image" : "file");
-      const size = attachment.size >= 0 ? formatAttachmentSize(attachment.size) : "size unknown";
-      return `${index + 1}. ${attachment.name} (${type}, ${size})`;
-    })
-    .join("\n");
-
-  return [prompt || "Use the attached files as context.", `Attached files:\n${attachmentSummary}`].join("\n\n");
-}
-
-function formatAttachmentSize(bytes: number) {
-  if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
-  const units = ["B", "KB", "MB", "GB"];
-  let value = bytes;
-  let unitIndex = 0;
-  while (value >= 1024 && unitIndex < units.length - 1) {
-    value /= 1024;
-    unitIndex += 1;
-  }
-  const precision = value >= 10 || unitIndex === 0 ? 0 : 1;
-  return `${value.toFixed(precision)} ${units[unitIndex]}`;
-}
-
-export function toAppMessages(messages: HermesConversationMessage[]): Message[] {
-  const normalized: Message[] = [];
-  let pendingToolEvents: HermesStreamToolEvent[] = [];
-
-  for (const message of messages) {
-    if (isHiddenConversationMessage(message)) {
-      continue;
-    }
-
-    if (message.role === "assistant" && message.toolCalls?.length) {
-      pendingToolEvents = message.toolCalls.reduce(
-        (current, toolCall, index) =>
-          mergeStreamToolEvent(current, streamToolEventFromHistoryCall(message, toolCall, index)),
-        pendingToolEvents,
-      );
-      if (!message.content.trim()) {
-        continue;
-      }
-    }
-
-    if (message.role === "tool") {
-      pendingToolEvents = mergeStreamToolEvent(pendingToolEvents, streamToolEventFromHistory(message));
-      continue;
-    }
-
-    const appMessage = toAppMessage(message);
-    if (appMessage.role === "assistant" && !appMessage.content.trim()) {
-      continue;
-    }
-
-    if (appMessage.role === "assistant" && pendingToolEvents.length) {
-      normalized.push({
-        ...appMessage,
-        streamEvents: pendingToolEvents,
-      });
-      pendingToolEvents = [];
-      continue;
-    }
-
-    if (pendingToolEvents.length) {
-      normalized.push(toolEventMessage(message.sessionId || message.id, pendingToolEvents));
-      pendingToolEvents = [];
-    }
-    normalized.push(appMessage);
-  }
-
-  if (pendingToolEvents.length) {
-    normalized.push(toolEventMessage("history-tools", pendingToolEvents));
-  }
-
-  return normalized;
-}
-
-function toolEventMessage(id: string, streamEvents: HermesStreamToolEvent[]): Message {
-  return {
-    id: `${id}-tool-events`,
-    role: "assistant",
-    content: "",
-    streamEvents,
-  };
-}
-
-function toAppMessage(message: HermesConversationMessage): Message {
-  const attachments = message.role === "user" ? attachmentsFromMetadata(message.metadata) : [];
-  const content = message.role === "user"
-    ? stripModelSwitchNote(message.content)
-    : message.content;
-  return {
-    id: message.id,
-    role: message.role,
-    content: message.toolName ? `${message.toolName}\n${content}`.trim() : displayContentForAttachments(content, attachments),
-    attachments: attachments.length ? attachments : undefined,
-  };
-}
-
-function attachmentsFromMetadata(metadata: Record<string, unknown> | undefined): MessageAttachment[] {
-  if (!metadata || !Array.isArray(metadata.attachments)) return [];
-  return metadata.attachments.flatMap((item) => {
-    if (!item || typeof item !== "object") return [];
-    const candidate = item as Record<string, unknown>;
-    const id = typeof candidate.id === "string" && candidate.id ? candidate.id : crypto.randomUUID();
-    const name = typeof candidate.name === "string" && candidate.name ? candidate.name : "Attached file";
-    const kind = candidate.kind === "image" ? "image" : "file";
-    const mimeType = typeof candidate.mimeType === "string" ? candidate.mimeType : "";
-    const size = typeof candidate.size === "number" ? candidate.size : -1;
-    const lastModified = typeof candidate.lastModified === "number" ? candidate.lastModified : 0;
-    const previewUrl = typeof candidate.previewUrl === "string" ? candidate.previewUrl : undefined;
-    const downloadUrl = typeof candidate.downloadUrl === "string" ? candidate.downloadUrl : undefined;
-    const localPath = typeof candidate.localPath === "string"
-      ? candidate.localPath
-      : typeof candidate.path === "string"
-        ? candidate.path
-        : undefined;
-    const legacyLocalPath = candidate.legacyLocalPath === true || (Boolean(localPath) && !previewUrl);
-    return [{ id, name, kind, mimeType, size, lastModified, previewUrl, downloadUrl, localPath, legacyLocalPath }];
-  });
-}
-
-function displayContentForAttachments(content: string, attachments: MessageAttachment[]) {
-  if (!attachments.length) return content;
-  return stripAttachmentSummary(content) || "Use the attached files as context.";
-}
-
-function stripAttachmentSummary(content: string) {
-  return content.replace(/\n\nAttached files:\n[\s\S]*$/u, "").trim();
-}
-
-function isHiddenConversationMessage(message: HermesConversationMessage) {
-  return isHiddenDeliveryMetadata(message.metadata || {});
-}
-
-export function isHiddenDeliveryMetadata(metadata: Record<string, unknown>) {
-  return (
-    booleanMetadata(metadata, "hidden") === true ||
-    stringMetadata(metadata, "kind") === "model-switch" ||
-    stringMetadata(metadata, "replyTo").endsWith("-model") ||
-    stringMetadata(metadata, "reply_to").endsWith("-model")
-  );
-}
-
-export function stripModelSwitchNote(content: string) {
-  return content.replace(
-    /^\s*\[Note:\s*model was just switched from [^\]]+\]\s*/i,
-    "",
-  );
-}
-
-function streamToolEventFromHistory(message: HermesConversationMessage): HermesStreamToolEvent {
-  const parsed = parseHistoryToolPayload(message.content);
-  const toolName = historyToolName(message, parsed);
-  const status = historyToolStatus(parsed);
-
-  return {
-    id: message.id,
-    callId: message.toolCallId || message.id,
-    toolName,
-    label: historyToolLabel(toolName, parsed),
-    status,
-    output: message.content,
-  };
-}
-
-function streamToolEventFromHistoryCall(
-  message: HermesConversationMessage,
-  toolCall: HermesHistoryToolCall,
-  index: number,
-): HermesStreamToolEvent {
-  const functionCall = toolCall.function || {};
-  const toolName = stringValue(functionCall.name) || stringValue(toolCall.name) || "tool";
-  const argumentsText = stringValue(functionCall.arguments) || stringValue(toolCall.arguments);
-  const callId = stringValue(toolCall.call_id) || stringValue(toolCall.id) || `${message.id}-call-${index}`;
-
-  return {
-    id: callId,
-    callId,
-    toolName,
-    label: historyToolLabel(toolName, parseHistoryToolPayload(argumentsText)),
-    status: "running",
-    arguments: argumentsText || undefined,
-  };
-}
-
-function mergeStreamToolEvent(
-  current: HermesStreamToolEvent[],
-  next: HermesStreamToolEvent,
-): HermesStreamToolEvent[] {
-  const key = next.callId || next.id;
-  const index = current.findIndex((event) => (event.callId || event.id) === key);
-  if (index === -1) return [...current, next];
-  return current.map((event, itemIndex) =>
-    itemIndex === index
-      ? {
-          ...event,
-          ...next,
-          id: event.id || next.id,
-          toolName: next.toolName === "tool" ? event.toolName : next.toolName,
-          label: next.output && !next.arguments ? event.label : next.label || event.label,
-          arguments: next.arguments || event.arguments,
-          output: next.output || event.output,
-        }
-      : event,
-  );
-}
-
-function parseHistoryToolPayload(content: string): Record<string, unknown> | null {
-  const trimmed = content.trim();
-  if (!trimmed.startsWith("{")) return null;
-  try {
-    const parsed: unknown = JSON.parse(trimmed);
-    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as Record<string, unknown> : null;
-  } catch {
-    return null;
-  }
-}
-
-function historyToolName(message: HermesConversationMessage, data: Record<string, unknown> | null) {
-  if (message.toolName) return message.toolName;
-  if (!data) return "tool";
-  if (isSkillViewPayload(data)) return "skill_view";
-  if (stringValue(data.snapshot) || stringValue(data.url) || typeof data.element_count === "number") return "browser";
-  if (
-    stringValue(data.output) ||
-    typeof data.exit_code === "number" ||
-    typeof data.duration_seconds === "number" ||
-    typeof data.tool_calls_made === "number"
-  ) {
-    return "terminal";
-  }
-  return stringValue(data.name) || "tool";
-}
-
-function historyToolLabel(toolName: string, data: Record<string, unknown> | null) {
-  if (toolName === "skill_view") return skillDisplayName(data) || "skill";
-  if (toolName === "terminal") {
-    const command = stringValue(data?.command);
-    return command ? `terminal: ${command}` : "terminal";
-  }
-  if (toolName === "browser") {
-    const title = stringValue(data?.title);
-    const url = stringValue(data?.url);
-    return title && !/just a moment/i.test(title) ? `browser: ${title}` : url ? `browser: ${url}` : "browser";
-  }
-  return titleCase(toolName);
-}
-
-function historyToolStatus(data: Record<string, unknown> | null): HermesStreamToolEvent["status"] {
-  if (!data) return "completed";
-  const status = stringValue(data.status).toLowerCase();
-  const error = data.error;
-  const exitCode = typeof data.exit_code === "number" ? data.exit_code : null;
-  if (
-    status.includes("error") ||
-    status.includes("fail") ||
-    data.success === false ||
-    (exitCode !== null && exitCode !== 0) ||
-    (error !== null && error !== undefined && String(error).trim())
-  ) {
-    return "error";
-  }
-  return "completed";
-}
-
-function isSkillViewPayload(data: Record<string, unknown>) {
-  return (
-    data.success === true &&
-    typeof data.name === "string" &&
-    (typeof data.content === "string" || typeof data.file === "string" || typeof data.skill_dir === "string")
-  );
-}
-
-function skillDisplayName(data: Record<string, unknown> | null) {
-  const name = stringValue(data?.name);
-  if (name) return name;
-  const path = stringValue(data?.path);
-  if (path) return parentOrLastPathSegment(path.split("/").filter(Boolean));
-  const skillDir = stringValue(data?.skill_dir);
-  if (skillDir) return lastPathSegment(skillDir.split(/[\\/]/).filter(Boolean));
-  return "";
-}
-
-function parentOrLastPathSegment(parts: string[]) {
-  return parts.length > 1 ? parts[parts.length - 2] : lastPathSegment(parts);
-}
-
-function lastPathSegment(parts: string[]) {
-  return parts.length ? parts[parts.length - 1] : "";
-}
-
 export function shouldSendModelSwitch(
   selected: HermesModelSelection | null,
   current: HermesModelSelection | null,
@@ -1682,16 +1335,6 @@ function historyMessageStillStreaming(metadata: Record<string, unknown>) {
   return false;
 }
 
-function stringMetadata(metadata: Record<string, unknown>, key: string) {
-  const value = metadata[key];
-  return typeof value === "string" ? value : "";
-}
-
-function booleanMetadata(metadata: Record<string, unknown>, key: string) {
-  const value = metadata[key];
-  return typeof value === "boolean" ? value : null;
-}
-
 function parseCoreEvent(data: string): AgentUICoreEvent | null {
   try {
     const parsed: unknown = JSON.parse(data);
@@ -1711,259 +1354,6 @@ function runtimeChatId(runtime: Record<string, unknown> | undefined) {
 
 function streamDeliveryFinalized(metadata: Record<string, unknown>) {
   return booleanMetadata(metadata, "finalize") === true || booleanMetadata(metadata, "streaming") === false;
-}
-
-export function mergeStreamDelivery(
-  existing: Message[],
-  delivery: HermesInboxMessage,
-  streamMessageId: string,
-  finalized: boolean,
-) {
-  const content = delivery.content;
-  const streaming = !finalized;
-  const updateMessage = (message: Message): Message => ({
-    ...message,
-    id: message.id || streamMessageId,
-    streamMessageId,
-    content: mergedStreamSnapshotContent(message.content, content),
-    streaming,
-  });
-  const streamIndex = existing.findIndex(
-    (message) => message.streamMessageId === streamMessageId || message.id === streamMessageId,
-  );
-  if (streamIndex !== -1) {
-    return existing.map((message, index) => (index === streamIndex ? updateMessage(message) : message));
-  }
-
-  const placeholderIndex = existing.findIndex(
-    (message) => message.role === "assistant" && message.streaming && !message.streamMessageId,
-  );
-  const assistantMessage: Message = {
-    id: streamMessageId,
-    role: "assistant",
-    content,
-    streaming,
-    streamMessageId,
-  };
-  if (placeholderIndex !== -1) {
-    return coalescePostStreamAttachments(existing.map((message, index) => (index === placeholderIndex ? assistantMessage : message)));
-  }
-  return coalescePostStreamAttachments([...existing, assistantMessage]);
-}
-
-export function mergeCompletedDelivery(
-  existing: Message[],
-  delivery: HermesInboxMessage,
-  replyTo: string,
-) {
-  const streamingIndex = lastStreamingAssistantIndex(existing);
-  if (streamingIndex === -1) {
-    const duplicateIndex = duplicateCompletedDeliveryIndex(existing, delivery, replyTo);
-    if (duplicateIndex !== -1) {
-      return coalescePostStreamAttachments(
-        existing.map((message, index) =>
-          index === duplicateIndex
-            ? {
-                ...message,
-                content: mergedCompletedStreamContent(message.content, delivery.content),
-                streaming: false,
-              }
-            : message,
-        ),
-      );
-    }
-
-    const attachIndex = postStreamAttachmentIndex(existing, delivery);
-    if (attachIndex !== -1) {
-      return coalescePostStreamAttachments(
-        existing.map((message, index) =>
-          index === attachIndex
-            ? {
-                ...message,
-                content: appendMessageContent(message.content, delivery.content),
-              }
-            : message,
-        ),
-      );
-    }
-
-    const assistantMessage: Message = {
-      id: delivery.id,
-      role: "assistant",
-      content: delivery.content,
-      streaming: false,
-    };
-    return coalescePostStreamAttachments([
-      ...existing,
-      assistantMessage,
-    ]);
-  }
-
-  return coalescePostStreamAttachments(
-    existing.map((message, index) =>
-      index === streamingIndex
-        ? completedStreamingMessage(message, delivery)
-        : message,
-    ),
-  );
-}
-
-function completedStreamingMessage(message: Message, delivery: HermesInboxMessage): Message {
-  if (!message.streamMessageId) {
-    return {
-      ...message,
-      id: delivery.id,
-      content: delivery.content,
-      streaming: false,
-    };
-  }
-  return {
-    ...message,
-    content: mergedCompletedStreamContent(message.content, delivery.content),
-    streaming: false,
-  };
-}
-
-function lastStreamingAssistantIndex(messages: Message[]) {
-  for (let index = messages.length - 1; index >= 0; index -= 1) {
-    const message = messages[index];
-    if (message.role === "assistant" && message.streaming) return index;
-  }
-  return -1;
-}
-
-function postStreamAttachmentIndex(messages: Message[], delivery: HermesInboxMessage) {
-  if (delivery.source !== "hermes-gateway" || !delivery.content.trim()) return -1;
-  if (!isPostStreamAttachmentContent(delivery.content)) return -1;
-  for (let index = messages.length - 1; index >= 0; index -= 1) {
-    const message = messages[index];
-    if (message.role === "user") return -1;
-    if (message.role === "assistant" && message.streamMessageId) return index;
-  }
-  return -1;
-}
-
-function duplicateCompletedDeliveryIndex(messages: Message[], delivery: HermesInboxMessage, replyTo: string) {
-  const content = normalizeMessageContent(delivery.content);
-  if (!content || isPostStreamAttachmentContent(delivery.content)) return -1;
-  for (let index = messages.length - 1; index >= 0; index -= 1) {
-    const message = messages[index];
-    if (message.role === "user") return -1;
-    if (message.role !== "assistant") continue;
-    const canCoalesce = Boolean(message.streamMessageId || replyTo);
-    if (canCoalesce && equivalentMessageContent(message.content, delivery.content)) return index;
-  }
-  return -1;
-}
-
-function normalizeMessageContent(content: string) {
-  return content.trim().split("\n").map((line) => line.trimEnd()).join("\n");
-}
-
-function equivalentMessageContent(left: string, right: string) {
-  return compactWhitespace(left) === compactWhitespace(right);
-}
-
-function compactWhitespace(content: string) {
-  return normalizeMessageContent(content)
-    .replace(/\s+/g, " ")
-    .replace(/\s+([,.;:!?])/g, "$1")
-    .trim();
-}
-
-function mergedCompletedStreamContent(existing: string, delivery: string) {
-  const existingContent = existing.trimEnd();
-  const deliveryContent = delivery.trim();
-  if (!existingContent) return deliveryContent;
-  if (!deliveryContent) return existingContent;
-  if (compactWhitespace(existingContent) === compactWhitespace(deliveryContent)) return deliveryContent;
-  if (compactWhitespace(deliveryContent).startsWith(compactWhitespace(existingContent))) return deliveryContent;
-  if (compactWhitespace(existingContent).includes(compactWhitespace(deliveryContent))) return existingContent;
-  const overlapped = overlappingMessageContent(existingContent, deliveryContent);
-  if (overlapped) return overlapped;
-  return appendMessageContent(existingContent, deliveryContent);
-}
-
-function mergedStreamSnapshotContent(existing: string, delivery: string) {
-  const existingContent = existing.trimEnd();
-  const deliveryContent = delivery.trim();
-  if (!existingContent) return deliveryContent;
-  if (!deliveryContent) return existingContent;
-  const compactExisting = compactWhitespace(existingContent);
-  const compactDelivery = compactWhitespace(deliveryContent);
-  if (compactDelivery.startsWith(compactExisting)) return deliveryContent;
-  if (compactExisting.startsWith(compactDelivery)) return existingContent;
-  return compactDelivery.length >= compactExisting.length ? deliveryContent : existingContent;
-}
-
-function overlappingMessageContent(existing: string, delivery: string) {
-  const maxOverlap = Math.min(existing.length, delivery.length);
-  for (let length = maxOverlap; length > 11; length -= 1) {
-    const prefix = delivery.slice(0, length);
-    const index = existing.lastIndexOf(prefix);
-    if (index !== -1) return `${existing.slice(0, index)}${delivery}`;
-  }
-  return "";
-}
-
-function appendMessageContent(content: string, addition: string) {
-  const left = content.trimEnd();
-  const right = addition.trim();
-  if (!left) return right;
-  if (!right || left.includes(right) || equivalentMessageContent(left, right)) return left;
-  if (/^[,.;:!?)]/.test(right)) return `${left}${right}`;
-  if (!/[.!?:;)]$/.test(left) && /^[a-z]/.test(right)) return `${left} ${right}`;
-  return `${left}\n\n${right}`;
-}
-
-export function coalescePostStreamAttachments(messages: Message[]) {
-  const coalesced: Message[] = [];
-  for (let index = 0; index < messages.length; index += 1) {
-    const message = messages[index];
-    const next = messages[index + 1];
-
-    if (isPostStreamAttachmentMessage(message) && next && next.role === "assistant" && next.streamMessageId) {
-      coalesced.push({
-        ...next,
-        content: appendMessageContent(next.content, message.content),
-      });
-      index += 1;
-      continue;
-    }
-
-    if (message.role === "assistant" && message.streamMessageId && next && isPostStreamAttachmentMessage(next)) {
-      coalesced.push({
-        ...message,
-        content: appendMessageContent(message.content, next.content),
-      });
-      index += 1;
-      continue;
-    }
-
-    coalesced.push(message);
-  }
-  return coalesced;
-}
-
-function isPostStreamAttachmentMessage(message: Message) {
-  return message.role === "assistant" && isPostStreamAttachmentContent(message.content);
-}
-
-function isPostStreamAttachmentContent(content: string) {
-  const trimmed = content.trim();
-  return (
-    /^(?:🖼️\s*)?Image:\s+/i.test(trimmed) ||
-    /^(?:📎\s*)?File:\s+/i.test(trimmed) ||
-    /^Media:\s+/i.test(trimmed)
-  );
-}
-
-export function deliveryCompletesActiveStream(messages: Message[], delivery: HermesInboxMessage) {
-  if (delivery.source !== "hermes-gateway" || !delivery.content.trim()) return false;
-  if (isPostStreamAttachmentContent(delivery.content)) return false;
-  return messages.some((message) =>
-    message.role === "assistant" && Boolean(message.streamMessageId) && message.streaming,
-  );
 }
 
 function dedupeInboxDeliveries(deliveries: HermesInboxMessage[]) {
@@ -2031,64 +1421,6 @@ function migrateConversationMessages(
   return next;
 }
 
-export function mergeMessageLists(primary: Message[], secondary: Message[]) {
-  const byId = new Set(primary.map((message) => message.id));
-  const merged = [...primary];
-  for (const message of secondary) {
-    if (byId.has(message.id)) continue;
-    const duplicateLocalIndex = merged.findIndex((existing) =>
-      shouldReplaceLocalDuplicateMessage(existing, message),
-    );
-    if (duplicateLocalIndex !== -1) {
-      byId.delete(merged[duplicateLocalIndex].id);
-      merged[duplicateLocalIndex] = message;
-      byId.add(message.id);
-      continue;
-    }
-    byId.add(message.id);
-    merged.push(message);
-  }
-  return merged;
-}
-
-function shouldReplaceLocalDuplicateMessage(existing: Message, incoming: Message) {
-  if (!messagesRenderEquivalently(existing, incoming)) return false;
-  if (isPersistedHistoryMessageId(existing.id) && isPersistedHistoryMessageId(incoming.id)) return false;
-  return isLikelyLocalMessageId(existing.id) || isPersistedHistoryMessageId(incoming.id);
-}
-
-function messagesRenderEquivalently(left: Message, right: Message) {
-  return left.role === right.role &&
-    equivalentMessageContent(left.content, right.content) &&
-    attachmentSignature(left.attachments) === attachmentSignature(right.attachments);
-}
-
-function attachmentSignature(attachments: MessageAttachment[] | undefined) {
-  if (!attachments?.length) return "";
-  return attachments
-    .map((attachment) =>
-      [
-        attachment.kind,
-        attachment.mimeType,
-        attachment.name,
-        attachment.localPath || "",
-        attachment.previewUrl || "",
-        attachment.downloadUrl || "",
-        attachment.size,
-      ].join(":"),
-    )
-    .sort()
-    .join("|");
-}
-
-function isPersistedHistoryMessageId(messageId: string) {
-  return /^\d+$/.test(messageId);
-}
-
-function isLikelyLocalMessageId(messageId: string) {
-  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(messageId);
-}
-
 function migrateActiveRequestId(
   current: Record<string, string>,
   fromConversationId: string,
@@ -2144,7 +1476,7 @@ function optimisticConversationFromPrompt(
     source: "optimistic",
     model,
     title: conversationTitleFromPrompt(prompt),
-    preview: compactConversationText(prompt, 180),
+    preview: compactText(prompt, 180),
     chatId,
     origin: {},
     startedAt,
@@ -2163,13 +1495,7 @@ function conversationTitleFromPrompt(prompt: string) {
     .split(/\r?\n/)
     .map((line) => line.trim())
     .find(Boolean);
-  return compactConversationText(firstLine || "New conversation", 90);
-}
-
-function compactConversationText(value: string, maxLength: number) {
-  const compacted = value.replace(/\s+/g, " ").trim();
-  if (compacted.length <= maxLength) return compacted;
-  return `${compacted.slice(0, Math.max(0, maxLength - 3)).trimEnd()}...`;
+  return compactText(firstLine || "New conversation", 90);
 }
 
 export function isTransientConversationLoadError(message?: string | null) {
@@ -2183,14 +1509,4 @@ export function isTransientConversationLoadError(message?: string | null) {
     normalized.includes("networkerror") ||
     normalized.includes("failed to fetch")
   );
-}
-
-function stringValue(value: unknown) {
-  return typeof value === "string" ? value.trim() : "";
-}
-
-function titleCase(value: string) {
-  return value
-    .replace(/[_-]+/g, " ")
-    .replace(/\w\S*/g, (word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase());
 }

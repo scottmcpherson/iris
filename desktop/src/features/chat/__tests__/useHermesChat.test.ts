@@ -4,15 +4,8 @@ import type { HermesInboxMessage } from "../../../types/hermes";
 import {
   activeConversationReplacements,
   activeRequestCompletedByHistory,
-  coalescePostStreamAttachments,
-  deliveryCompletesActiveStream,
-  isHiddenDeliveryMetadata,
   isTransientConversationLoadError,
-  mergeCompletedDelivery,
   mergeConversationChatIdMap,
-  mergeMessageLists,
-  mergeUploadedAttachment,
-  mergeStreamDelivery,
   preserveActiveConversationTitles,
   shouldApplyConversationDetailSelection,
   shouldPreserveLocalMessagesOnEmptyHistory,
@@ -20,9 +13,20 @@ import {
   shouldRetryUnmappedDelivery,
   shouldSendModelSwitch,
   shouldSkipConversationDetailLoad,
+} from "../useHermesChat";
+import {
+  coalescePostStreamAttachments,
+  deliveryCompletesActiveStream,
+  mergeCompletedDelivery,
+  mergeMessageLists,
+  mergeStreamDelivery,
+} from "../chatStreamMerging";
+import {
+  isHiddenDeliveryMetadata,
   stripModelSwitchNote,
   toAppMessages,
-} from "../useHermesChat";
+} from "../chatHistory";
+import { mergeUploadedAttachment } from "../chatAttachments";
 
 function inboxMessage(
   overrides: Partial<HermesInboxMessage> & { id: string; content: string },

@@ -1,34 +1,21 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type {
-  ComponentProps,
   DragEvent,
   KeyboardEvent as ReactKeyboardEvent,
-  MouseEvent as ReactMouseEvent,
 } from "react";
 import { convertFileSrc, isTauri } from "@tauri-apps/api/core";
-import { openUrl } from "@tauri-apps/plugin-opener";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import {
   ArrowDown,
-  ChevronDown,
-  Check,
-  Command,
-  FileText,
   Mic,
   Paperclip,
   Plus,
-  Search,
   Send,
-  ShieldCheck,
   Sparkles,
   Square,
-  Zap,
-  X,
 } from "lucide-react";
-import { Streamdown, type StreamdownProps } from "streamdown";
 import { StickToBottom, useStickToBottomContext } from "use-stick-to-bottom";
 import type { Message, MessageAttachment } from "../../app/types";
-import { agentUICoreAttachmentUrl } from "../../lib/agentuiCore";
 import type {
   HermesModelCatalog,
   HermesModelProvider,
@@ -37,9 +24,8 @@ import type {
   HermesProfile,
   HermesRuntimeConfig,
   HermesSlashCommand,
-  HermesStreamToolEvent,
 } from "../../types/hermes";
-import { normalizeChatMarkdown } from "./markdown";
+import { filenameFromPath, isImagePath, mimeTypeFromPath } from "../../shared/files";
 import {
   filterSlashCommands,
   moveSlashCommandIndex,
@@ -47,6 +33,11 @@ import {
   slashCommandTokenIsPartial,
   slashTokenAtCursor,
 } from "./slashCommands";
+import { AttachmentTray } from "./components/AttachmentTray";
+import { SlashCommandMenu } from "./components/SlashCommandMenu";
+import { ProfileMenu } from "./components/ProfileMenu";
+import { ModelMenu } from "./components/ModelMenu";
+import { MessageAttachments, MessageContent } from "./components/MessageContent";
 
 type ChatViewProps = {
   messages: Message[];
@@ -90,10 +81,6 @@ type ModelMenuOption = {
   providerName: string;
   model: string;
 };
-
-const markdownComponents = {
-  a: MarkdownLink,
-} as StreamdownProps["components"];
 
 export function ChatView({
   messages,
@@ -646,90 +633,19 @@ export function ChatView({
             onKeyDown={handleComposerKeyDown}
           />
           {slashMenuOpen ? (
-            <div
-              id="composer-slash-menu"
-              className="composer-slash-menu"
-              role="listbox"
-              aria-label="Slash commands"
-            >
-              {slashCommandsLoading && !filteredSlashCommands.length ? (
-                <div className="composer-slash-empty">Loading commands...</div>
-              ) : null}
-              {slashCommandsError && !filteredSlashCommands.length ? (
-                <button
-                  type="button"
-                  className="composer-slash-row disabled"
-                  onClick={onSlashCommandsRefresh}
-                >
-                  <span className="composer-slash-icon"><Command size={14} /></span>
-                  <span className="composer-slash-main">
-                    <strong>Commands unavailable</strong>
-                    <small>Click to retry</small>
-                  </span>
-                </button>
-              ) : null}
-              {!slashCommandsLoading && !slashCommandsError && !filteredSlashCommands.length ? (
-                <div className="composer-slash-empty">No matching commands</div>
-              ) : null}
-              {filteredSlashCommands.map((command, index) => {
-                const active = index === activeSlashIndex;
-                const meta = command.description || command.category || command.source;
-                return (
-                  <button
-                    key={command.id}
-                    ref={(node) => {
-                      slashCommandRefs.current[command.id] = node;
-                    }}
-                    type="button"
-                    className="composer-slash-row"
-                    role="option"
-                    aria-selected={active}
-                    data-active={active}
-                    onMouseDown={(event) => event.preventDefault()}
-                    onMouseEnter={() => setActiveSlashIndex(index)}
-                    onClick={() => insertSlashCommand(command)}
-                  >
-                    <span className="composer-slash-icon">
-                      {command.source === "skill" ? <Sparkles size={14} /> : <Command size={14} />}
-                    </span>
-                    <span className="composer-slash-main">
-                      <strong>{command.label || command.text}</strong>
-                      {meta ? <small>{meta}</small> : null}
-                    </span>
-                    <span className="composer-slash-meta">{active ? "Tab" : command.category}</span>
-                  </button>
-                );
-              })}
-            </div>
+            <SlashCommandMenu
+              commands={filteredSlashCommands}
+              activeIndex={activeSlashIndex}
+              loading={slashCommandsLoading}
+              error={slashCommandsError}
+              commandRefs={slashCommandRefs}
+              onRefresh={onSlashCommandsRefresh}
+              onActiveIndex={setActiveSlashIndex}
+              onSelect={insertSlashCommand}
+            />
           ) : null}
         </div>
-        {attachments.length ? (
-          <div className="attachment-tray" aria-label="Attached files">
-            {attachments.map((attachment) => (
-              <div key={attachment.id} className="attachment-pill">
-                {attachment.previewUrl ? (
-                  <img src={attachment.previewUrl} alt="" />
-                ) : (
-                  <span className="attachment-icon">
-                    <Paperclip size={14} />
-                  </span>
-                )}
-                <span className="attachment-name">{attachment.name}</span>
-                <span className="attachment-size">
-                  {attachment.size >= 0 ? formatAttachmentSize(attachment.size) : "local path"}
-                </span>
-                <button
-                  type="button"
-                  className="attachment-remove"
-                  onClick={() => removeAttachment(attachment.id)}
-                  title={`Remove ${attachment.name}`}
-                >
-                  <X size={13} />
-                </button>
-              </div>
-            ))}
-          </div>
-        ) : null}
+        <AttachmentTray attachments={attachments} onRemove={removeAttachment} />
         <div className="composer-toolbar">
           <div className="composer-tools">
             <div className="composer-add-menu-wrap" ref={addMenuRef}>
@@ -753,117 +669,37 @@ export function ChatView({
               ) : null}
             </div>
             <div className="composer-profile-menu-wrap" ref={profileMenuRef}>
-              <button
-                type="button"
-                className="composer-access-button"
-                title={profileSelectorTitle}
-                aria-haspopup="menu"
-                aria-expanded={profileMenuOpen}
-                aria-label={
-                  profileSelectionLocked
-                    ? `Conversation profile ${profile}`
-                    : `Agent profile ${connected ? profile : "Offline"}`
-                }
+              <ProfileMenu
+                profile={profile}
+                profiles={profiles}
+                connected={connected}
+                open={profileMenuOpen}
                 disabled={profileSelectionDisabled}
-                onClick={() => setProfileMenuOpen((open) => !open)}
-              >
-                <ShieldCheck size={15} />
-                <span>{connected ? profile : "Offline"}</span>
-                <ChevronDown size={14} />
-              </button>
-              {profileMenuOpen ? (
-                <div className="composer-profile-menu" role="menu" aria-label="Choose agent profile">
-                  {profiles.map((item) => (
-                    <button
-                      key={item.name}
-                      type="button"
-                      role="menuitemradio"
-                      aria-checked={item.name === profile}
-                      onClick={() => selectProfile(item.name)}
-                    >
-                      <span>{item.name}</span>
-                      {item.name === profile ? <Check size={14} /> : null}
-                    </button>
-                  ))}
-                </div>
-              ) : null}
+                title={profileSelectorTitle}
+                locked={profileSelectionLocked}
+                onToggle={() => setProfileMenuOpen((open) => !open)}
+                onSelect={selectProfile}
+              />
             </div>
           </div>
           <div className="composer-tools">
             <div className="composer-model-menu-wrap" ref={modelMenuRef}>
-              <button
-                type="button"
-                className="composer-model-button"
-                title={modelSelectorTitle}
-                aria-haspopup="menu"
-                aria-expanded={modelMenuOpen}
-                aria-label={`Model ${displayedModelSelection?.model || "unavailable"}`}
+              <ModelMenu
+                open={modelMenuOpen}
                 disabled={modelSelectionDisabled}
-                onClick={() => setModelMenuOpen((open) => !open)}
-              >
-                <Zap size={14} />
-                <span>{displayedModelSelection?.model || "Model"}</span>
-                <ChevronDown size={13} />
-              </button>
-              {modelMenuOpen ? (
-                <div className="composer-model-menu" role="menu" aria-label="Choose model">
-                  <label className="composer-model-search">
-                    <Search size={14} />
-                    <input
-                      ref={modelSearchRef}
-                      value={modelSearch}
-                      placeholder="Search models"
-                      aria-label="Search models"
-                      onChange={(event) => setModelSearch(event.target.value)}
-                      onKeyDown={handleModelSearchKeyDown}
-                    />
-                  </label>
-                  {modelError ? <div className="composer-menu-note">{modelError}</div> : null}
-                  {filteredModelProviders.length ? null : (
-                    <div className="composer-menu-note">No matching models</div>
-                  )}
-                  {filteredModelProviders.map((provider) =>
-                    provider.models.length ? (
-                      <div key={provider.slug || provider.name} className="composer-model-group">
-                        <div className="composer-model-provider">{provider.name}</div>
-                        {provider.models.map((model) => {
-                          const optionKey = modelOptionKey({
-                            provider: provider.slug,
-                            providerName: provider.name,
-                            model,
-                          });
-                          const selected =
-                            displayedModelSelection?.provider === provider.slug &&
-                            displayedModelSelection?.model === model;
-                          const active = activeModelOptionKey === optionKey;
-                          return (
-                            <button
-                              key={optionKey}
-                              ref={(node) => {
-                                modelOptionRefs.current[optionKey] = node;
-                              }}
-                              type="button"
-                              role="menuitemradio"
-                              aria-checked={selected}
-                              data-active={active}
-                              onClick={() =>
-                                selectModel({
-                                  provider: provider.slug,
-                                  model,
-                                  providerName: provider.name,
-                                })
-                              }
-                            >
-                              <span>{model}</span>
-                              {selected ? <Check size={14} /> : null}
-                            </button>
-                          );
-                        })}
-                      </div>
-                    ) : null,
-                  )}
-                </div>
-              ) : null}
+                title={modelSelectorTitle}
+                selection={displayedModelSelection}
+                providers={filteredModelProviders}
+                activeOptionKey={activeModelOptionKey}
+                modelSearch={modelSearch}
+                modelError={modelError}
+                searchRef={modelSearchRef}
+                optionRefs={modelOptionRefs}
+                onToggle={() => setModelMenuOpen((open) => !open)}
+                onSearch={setModelSearch}
+                onSearchKeyDown={handleModelSearchKeyDown}
+                onSelect={selectModel}
+              />
             </div>
             <button type="button" className="composer-icon-button" title="Voice input">
               <Mic size={16} />
@@ -909,49 +745,12 @@ function ScrollToBottomButton() {
   );
 }
 
-function formatAttachmentSize(bytes: number) {
-  if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
-  const units = ["B", "KB", "MB", "GB"];
-  let value = bytes;
-  let unitIndex = 0;
-  while (value >= 1024 && unitIndex < units.length - 1) {
-    value /= 1024;
-    unitIndex += 1;
-  }
-  const precision = value >= 10 || unitIndex === 0 ? 0 : 1;
-  return `${value.toFixed(precision)} ${units[unitIndex]}`;
-}
-
 function revokeAttachmentPreview(attachment: AttachmentDraft) {
   if (attachment.previewUrl && attachment.previewRevocable) URL.revokeObjectURL(attachment.previewUrl);
 }
 
 function pointInRect(x: number, y: number, rect: DOMRect) {
   return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
-}
-
-function filenameFromPath(path: string) {
-  return path.split(/[\\/]/).filter(Boolean).pop() || path;
-}
-
-function isImagePath(path: string) {
-  return /\.(avif|gif|heic|heif|jpe?g|png|webp)$/i.test(path);
-}
-
-function mimeTypeFromPath(path: string) {
-  const extension = path.split(".").pop()?.toLowerCase();
-  if (!extension) return "";
-  const imageTypes: Record<string, string> = {
-    avif: "image/avif",
-    gif: "image/gif",
-    heic: "image/heic",
-    heif: "image/heif",
-    jpg: "image/jpeg",
-    jpeg: "image/jpeg",
-    png: "image/png",
-    webp: "image/webp",
-  };
-  return imageTypes[extension] || "";
 }
 
 function shouldRenderMessage(message: Message) {
@@ -996,284 +795,6 @@ function modelOptionKey(option: ModelMenuOption | undefined) {
 
 function modelOptionKeyForSelection(selection: HermesModelSelection | null) {
   return selection ? `${selection.provider}:${selection.model}` : "";
-}
-
-function MessageContent({ message }: { message: Message }) {
-  if (message.role === "tool") return <StreamToolEvents events={[streamToolEventFromLegacyContent(message.content)]} />;
-  const content = message.content.trim();
-  const thinking = message.streaming && content === "Thinking...";
-  const hasToolEvents = Boolean(message.streamEvents?.length);
-  if (thinking && !hasToolEvents) {
-    return <span className="thinking-shimmer">Thinking...</span>;
-  }
-  return (
-    <>
-      {hasToolEvents ? <StreamToolEvents events={message.streamEvents || []} /> : null}
-      {content && !thinking ? <MarkdownMessage content={message.content} streaming={message.streaming} /> : null}
-      {message.streaming ? <span className="typing-caret" /> : null}
-    </>
-  );
-}
-
-function MessageAttachments({
-  attachments,
-  runtimeConfig,
-}: {
-  attachments: MessageAttachment[];
-  runtimeConfig: HermesRuntimeConfig;
-}) {
-  return (
-    <div className="message-attachments" aria-label="Attached files">
-      {attachments.map((attachment) => {
-        const previewUrl = attachmentPreviewUrl(attachment, runtimeConfig);
-        return (
-          <div key={attachment.id} className="message-attachment-card" title={attachment.name}>
-            {previewUrl ? (
-              <img src={previewUrl} alt={attachment.name} />
-            ) : (
-              <span className="message-attachment-file">
-                <FileText size={28} />
-              </span>
-            )}
-            <span className="message-attachment-label">{attachment.name}</span>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
-function attachmentPreviewUrl(attachment: MessageAttachment, runtimeConfig: HermesRuntimeConfig) {
-  if (attachment.previewUrl) return agentUICoreAttachmentUrl(runtimeConfig, attachment.previewUrl);
-  if (attachment.kind === "image" && attachment.id.startsWith("att_")) {
-    return agentUICoreAttachmentUrl(runtimeConfig, `/v1/attachments/${encodeURIComponent(attachment.id)}/preview`);
-  }
-  if (attachment.kind === "image" && attachment.localPath) return convertFileSrc(attachment.localPath);
-  return "";
-}
-
-function MarkdownMessage({ content, streaming }: { content: string; streaming?: boolean }) {
-  return (
-    <Streamdown
-      className="message-markdown"
-      components={markdownComponents}
-      controls={false}
-      isAnimating={Boolean(streaming)}
-      linkSafety={{ enabled: false }}
-      parseIncompleteMarkdown
-    >
-      {normalizeChatMarkdown(content)}
-    </Streamdown>
-  );
-}
-
-function MarkdownLink({
-  children,
-  href,
-  onClick,
-  rel,
-  target,
-  ...props
-}: ComponentProps<"a">) {
-  function handleClick(event: ReactMouseEvent<HTMLAnchorElement>) {
-    onClick?.(event);
-    if (event.defaultPrevented || event.button !== 0 || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) {
-      return;
-    }
-
-    const externalHref = href ? externalUrlFromHref(href) : null;
-    if (!externalHref) return;
-
-    event.preventDefault();
-    void openUrl(externalHref).catch(() => {
-      window.open(externalHref, "_blank", "noopener,noreferrer");
-    });
-  }
-
-  return (
-    <a
-      href={href}
-      onClick={handleClick}
-      rel={rel || "noopener noreferrer"}
-      target={target || "_blank"}
-      {...props}
-    >
-      {children}
-    </a>
-  );
-}
-
-function externalUrlFromHref(href: string) {
-  try {
-    const url = new URL(href, window.location.href);
-    if (["http:", "https:", "mailto:", "tel:"].includes(url.protocol)) return url.toString();
-  } catch {
-    return null;
-  }
-  return null;
-}
-
-function StreamToolEvents({ events }: { events: HermesStreamToolEvent[] }) {
-  return (
-    <div className="tool-progress-list" aria-label="Live tool activity">
-      {events.map((event) => {
-        const detail = toolEventDetail(event);
-        const key = event.callId || event.id || `${event.toolName}-${event.label}`;
-        const summary = (
-          <>
-            <span className="tool-progress-icon">
-              {event.status === "running" ? <Command size={15} /> : <Check size={15} />}
-            </span>
-            <span className="tool-progress-title">{event.label || titleCase(event.toolName)}</span>
-            <span className="tool-progress-status">{toolStatusLabel(event.status)}</span>
-            {detail ? <ChevronDown className="tool-progress-chevron" size={14} /> : null}
-          </>
-        );
-
-        if (!detail) {
-          return (
-            <div key={key} className={`tool-progress-item ${event.status}`}>
-              <div className="tool-progress-summary">{summary}</div>
-            </div>
-          );
-        }
-
-        return (
-          <details key={key} className={`tool-progress-item ${event.status}`}>
-            <summary className="tool-progress-summary" aria-label={`${event.label || event.toolName} details`}>
-              {summary}
-            </summary>
-            <pre className="tool-progress-detail">{detail}</pre>
-          </details>
-        );
-      })}
-    </div>
-  );
-}
-
-function streamToolEventFromLegacyContent(content: string): HermesStreamToolEvent {
-  const parsed = parseJsonObject(content.trim());
-  const toolName = legacyToolName(parsed);
-  return {
-    id: `legacy-${content.slice(0, 40)}`,
-    toolName,
-    label: legacyToolLabel(toolName, parsed),
-    status: legacyToolStatus(parsed),
-    output: content,
-  };
-}
-
-function toolStatusLabel(status: HermesStreamToolEvent["status"]) {
-  if (status === "completed") return "Done";
-  if (status === "error") return "Error";
-  return "Running";
-}
-
-function toolEventDetail(event: HermesStreamToolEvent) {
-  const sections = [];
-  if (event.arguments) sections.push(`input\n${prettyToolText(event.arguments)}`);
-  if (event.output) sections.push(`output\n${prettyToolText(event.output)}`);
-  return sections.join("\n\n");
-}
-
-function prettyToolText(value: string) {
-  const trimmed = value.trim();
-  if (!trimmed) return "";
-  try {
-    return JSON.stringify(JSON.parse(trimmed), null, 2);
-  } catch {
-    return trimmed;
-  }
-}
-
-function legacyToolName(data: Record<string, unknown> | null) {
-  if (!data) return "tool";
-  if (
-    data.success === true &&
-    typeof data.name === "string" &&
-    (typeof data.content === "string" || typeof data.file === "string" || typeof data.skill_dir === "string")
-  ) {
-    return "skill_view";
-  }
-  if (stringValue(data.snapshot) || stringValue(data.url) || typeof data.element_count === "number") return "browser";
-  if (
-    stringValue(data.output) ||
-    typeof data.exit_code === "number" ||
-    typeof data.duration_seconds === "number" ||
-    typeof data.tool_calls_made === "number"
-  ) {
-    return "terminal";
-  }
-  return stringValue(data.name) || "tool";
-}
-
-function legacyToolLabel(toolName: string, data: Record<string, unknown> | null) {
-  if (toolName === "skill_view") return skillDisplayName(data) || "skill";
-  if (toolName === "terminal") return "terminal";
-  if (toolName === "browser") {
-    const title = stringValue(data?.title);
-    const url = stringValue(data?.url);
-    return title && !/just a moment/i.test(title) ? `browser: ${title}` : url ? `browser: ${url}` : "browser";
-  }
-  return titleCase(toolName);
-}
-
-function skillDisplayName(data: Record<string, unknown> | null) {
-  const name = stringValue(data?.name);
-  if (name) return name;
-  const path = stringValue(data?.path);
-  if (path) return parentOrLastPathSegment(path.split("/").filter(Boolean));
-  const skillDir = stringValue(data?.skill_dir);
-  if (skillDir) return lastPathSegment(skillDir.split(/[\\/]/).filter(Boolean));
-  return "";
-}
-
-function parentOrLastPathSegment(parts: string[]) {
-  return parts.length > 1 ? parts[parts.length - 2] : lastPathSegment(parts);
-}
-
-function lastPathSegment(parts: string[]) {
-  return parts.length ? parts[parts.length - 1] : "";
-}
-
-function legacyToolStatus(data: Record<string, unknown> | null): HermesStreamToolEvent["status"] {
-  if (!data) return "completed";
-  const status = stringValue(data.status).toLowerCase();
-  const error = data.error;
-  const exitCode = typeof data.exit_code === "number" ? data.exit_code : null;
-  if (
-    status.includes("error") ||
-    status.includes("fail") ||
-    data.success === false ||
-    (exitCode !== null && exitCode !== 0) ||
-    (error !== null && error !== undefined && String(error).trim())
-  ) {
-    return "error";
-  }
-  return "completed";
-}
-
-function parseJsonObject(value: string) {
-  if (!value.startsWith("{")) return null;
-  try {
-    const parsed: unknown = JSON.parse(value);
-    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-      return parsed as Record<string, unknown>;
-    }
-  } catch {
-    return null;
-  }
-  return null;
-}
-
-function stringValue(value: unknown) {
-  return typeof value === "string" ? value.trim() : "";
-}
-
-function titleCase(value: string) {
-  return value
-    .replace(/[_-]+/g, " ")
-    .replace(/\w\S*/g, (word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase());
 }
 
 function MessageEvents({ events }: { events?: HermesParsedEvents }) {

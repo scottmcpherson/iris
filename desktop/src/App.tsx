@@ -36,9 +36,7 @@ import { CommandMenu } from "./features/polish/CommandMenu";
 import { NotificationCenter } from "./features/polish/NotificationCenter";
 import { OnboardingOverlay } from "./features/polish/OnboardingOverlay";
 import { AppShell } from "./layout/AppShell";
-
-const onboardingStorageKey = "hermes.desktop.onboarding.dismissed";
-const previewOpenStorageKey = "hermes.desktop.preview.open";
+import { loadBooleanValue, saveBooleanValue, storageKeys } from "./app/storage";
 
 function App() {
   const [activeView, setActiveView] = useState<View>("chat");
@@ -48,7 +46,7 @@ function App() {
   const [commandMenuOpen, setCommandMenuOpen] = useState(false);
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
   const [onboardingOpen, setOnboardingOpen] = useState(
-    () => localStorage.getItem(onboardingStorageKey) !== "true",
+    () => !loadBooleanValue(storageKeys.onboardingDismissed),
   );
   const [previewArtifacts, setPreviewArtifacts] = useState<PreviewArtifact[]>(() =>
     loadPreviewArtifacts(),
@@ -298,7 +296,7 @@ function App() {
   }
 
   function dismissOnboarding() {
-    localStorage.setItem(onboardingStorageKey, "true");
+    saveBooleanValue(storageKeys.onboardingDismissed, true);
     setOnboardingOpen(false);
   }
 
@@ -488,19 +486,11 @@ function ensureExtension(name: string, extension: string) {
 }
 
 function loadPreviewOpenPreference() {
-  try {
-    return localStorage.getItem(previewOpenStorageKey) === "true";
-  } catch {
-    return false;
-  }
+  return loadBooleanValue(storageKeys.previewOpen);
 }
 
 function savePreviewOpenPreference(open: boolean) {
-  try {
-    localStorage.setItem(previewOpenStorageKey, String(open));
-  } catch {
-    // Ignore storage failures; the preview toggle still works for this session.
-  }
+  saveBooleanValue(storageKeys.previewOpen, open);
 }
 
 function profileActionTitle(action: ProfileAction) {

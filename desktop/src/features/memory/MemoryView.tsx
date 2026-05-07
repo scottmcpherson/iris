@@ -13,6 +13,7 @@ import {
   ShieldCheck,
   Undo2,
 } from "lucide-react";
+import { loadJsonValue, saveJsonValue, storageKeys } from "../../app/storage";
 import { ViewHeader } from "../../shared/ViewHeader";
 import { endpointLabel, formatBytes } from "../../shared/format";
 import type { HermesMemory, HermesMemoryFile, HermesMemoryHistoryEntry, HermesStatus } from "../../types/hermes";
@@ -42,8 +43,6 @@ const fileLabels: Record<MemoryFileKey, string> = {
   memory: "MEMORY.md",
   user: "USER.md",
 };
-
-const providerStorageKey = "hermes-memory-provider-controls";
 
 export function MemoryView({
   memory,
@@ -99,7 +98,7 @@ export function MemoryView({
   }, [profile, memoryFile.content, userFile.content]);
 
   useEffect(() => {
-    localStorage.setItem(providerStorageKey, JSON.stringify(providers));
+    saveJsonValue(storageKeys.memoryProviders, providers);
   }, [providers]);
 
   return (
@@ -358,16 +357,12 @@ function emptyMemoryFile(name: string, file?: HermesMemoryFile): HermesMemoryFil
 }
 
 function loadProviderControls(): MemoryProviderControls {
-  try {
-    const parsed = JSON.parse(localStorage.getItem(providerStorageKey) || "");
-    return {
-      builtin: parsed.builtin ?? true,
-      external: parsed.external ?? false,
-      workspace: parsed.workspace ?? true,
-    };
-  } catch {
-    return { builtin: true, external: false, workspace: true };
-  }
+  const parsed = loadJsonValue<Partial<MemoryProviderControls>>(storageKeys.memoryProviders, {});
+  return {
+    builtin: parsed.builtin ?? true,
+    external: parsed.external ?? false,
+    workspace: parsed.workspace ?? true,
+  };
 }
 
 function formatDate(timestamp: number | null) {
