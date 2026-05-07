@@ -12,6 +12,7 @@
   "app": {
     "windows": [
       {
+        "label": "main",
         "title": "Iris",
         "width": 1440,
         "height": 920,

@@ -8,6 +8,7 @@ from hermes_management_server.hermes_store import (
     HermesStore,
     decode_skill_id,
     encode_skill_id,
+    skill_entrypoint_paths,
     normalize_hermes_home,
     validate_profile_name,
 )
@@ -82,6 +83,23 @@ def test_skill_discovery_and_detail_use_safe_ids(tmp_path):
     assert summary.tags == ["deploy", "ops"]
     assert detail.path == str(skill)
     assert content.endswith("Body")
+
+
+def test_skill_discovery_skips_deep_assets_and_symlinks(tmp_path):
+    root = tmp_path / ".hermes"
+    profile_root = root / "profiles" / "work"
+    skills = profile_root / "skills"
+    good = skills / "ops" / "deploy" / "SKILL.md"
+    deep_asset = skills / "ops" / "deploy" / "node_modules" / "nested" / "SKILL.md"
+    good.parent.mkdir(parents=True)
+    deep_asset.parent.mkdir(parents=True)
+    good.write_text("# Deploy\n", encoding="utf-8")
+    deep_asset.write_text("# Should not be scanned\n", encoding="utf-8")
+    (skills / "ops" / "loop").symlink_to(skills / "ops", target_is_directory=True)
+
+    paths = skill_entrypoint_paths(skills, profile_root)
+
+    assert paths == [good]
 
 
 def test_profile_name_rejects_traversal():

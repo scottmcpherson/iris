@@ -121,6 +121,7 @@ export function ChatView({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const dragDepthRef = useRef(0);
   const attachmentsRef = useRef<AttachmentDraft[]>([]);
+  const sendPendingRef = useRef(false);
   const [addMenuOpen, setAddMenuOpen] = useState(false);
   const [profileMenuOpen, setProfileMenuOpen] = useState(false);
   const [modelMenuOpen, setModelMenuOpen] = useState(false);
@@ -131,12 +132,14 @@ export function ChatView({
   const [dismissedSlashToken, setDismissedSlashToken] = useState("");
   const [attachments, setAttachments] = useState<AttachmentDraft[]>([]);
   const [dragActive, setDragActive] = useState(false);
+  const [sendPending, setSendPending] = useState(false);
   const renderedMessages = messages.filter(shouldRenderMessage);
   const newChat = !selectedConversationId && renderedMessages.length === 0;
-  const profileSelectionLocked = !newChat || requestActive;
+  const composerBusy = requestActive || sendPending;
+  const profileSelectionLocked = !newChat || composerBusy;
   const profileSelectionDisabled = profileSelectionLocked || !connected || profiles.length < 2;
   const displayedModelSelection = lockedModelSelection || modelSelection;
-  const modelSelectionLocked = !newChat || requestActive;
+  const modelSelectionLocked = !newChat || composerBusy;
   const modelOptionsAvailable = Boolean(modelCatalog?.providers?.some((provider) => provider.models.length));
   const modelSelectionDisabled = modelSelectionLocked || !connected || modelLoading || !modelOptionsAvailable;
   const modelSelectorTitle = modelSelectionLocked
@@ -364,16 +367,24 @@ export function ChatView({
   }
 
   async function sendWithAttachments() {
-    const attachmentContext = attachments.map(({ previewUrl: _previewUrl, ...attachment }) => attachment);
-    const sent = await onSend({
-      attachments: attachmentContext,
-      modelSelection: displayedModelSelection,
-    });
-    if (sent === false) return;
-    setAttachments((current) => {
-      current.forEach(revokeAttachmentPreview);
-      return [];
-    });
+    if (requestActive || sendPendingRef.current) return;
+    sendPendingRef.current = true;
+    setSendPending(true);
+    try {
+      const attachmentContext = attachments.map(({ previewUrl: _previewUrl, ...attachment }) => attachment);
+      const sent = await onSend({
+        attachments: attachmentContext,
+        modelSelection: displayedModelSelection,
+      });
+      if (sent === false) return;
+      setAttachments((current) => {
+        current.forEach(revokeAttachmentPreview);
+        return [];
+      });
+    } finally {
+      sendPendingRef.current = false;
+      setSendPending(false);
+    }
   }
 
   function selectProfile(nextProfile: string) {
@@ -847,7 +858,13 @@ export function ChatView({
                 <Square size={15} />
               </button>
             ) : (
-              <button type="submit" className="send-button" title="Send message">
+              <button
+                type="submit"
+                className="send-button"
+                title={sendPending ? "Sending message" : "Send message"}
+                disabled={sendPending}
+                aria-busy={sendPending}
+              >
                 <Send size={16} />
               </button>
             )}

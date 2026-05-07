@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import json
 import os
 import re
 import shutil
@@ -173,21 +174,43 @@ def memory_file_stats(directory: Path) -> tuple[int, int | None]:
 
 
 def count_skills(skills_dir: Path, profile_root: Path) -> int:
+    return len(skill_entrypoint_paths(skills_dir, profile_root))
+
+
+def skill_entrypoint_paths(skills_dir: Path, profile_root: Path) -> list[Path]:
     if not skills_dir.is_dir():
-        return 0
-    assert_within_base(skills_dir, profile_root)
-    count = 0
-    for path in skills_dir.rglob("SKILL.md"):
-        assert_within_base(path, profile_root)
-        count += 1
-    return count
+        return []
+    root = assert_within_base(skills_dir, profile_root)
+    paths: list[Path] = []
+    stack: list[tuple[Path, int]] = [(root, 0)]
+    while stack:
+        directory, depth = stack.pop()
+        skill_file = directory / "SKILL.md"
+        if skill_file.is_file():
+            paths.append(assert_within_base(skill_file, profile_root))
+            continue
+        if depth >= 2:
+            continue
+        try:
+            children = list(directory.iterdir())
+        except OSError:
+            continue
+        for child in sorted(children, key=lambda item: item.name.lower(), reverse=True):
+            if child.name in {".git", "__pycache__", "node_modules", ".venv", "venv"}:
+                continue
+            if child.is_symlink() or not child.is_dir():
+                continue
+            stack.append((assert_within_base(child, profile_root), depth + 1))
+    return sorted(paths, key=lambda item: item.as_posix().lower())
 
 
 def gateway_running(directory: Path) -> bool:
     pid_path = directory / "gateway.pid"
     try:
-        pid = int(safe_read_text(pid_path, directory).strip())
-    except ValueError:
+        raw_pid = safe_read_text(pid_path, directory).strip()
+        pid_data = json.loads(raw_pid)
+        pid = int(pid_data.get("pid") if isinstance(pid_data, dict) else pid_data)
+    except (ValueError, TypeError, json.JSONDecodeError):
         return False
     if pid <= 0:
         return False
@@ -438,13 +461,9 @@ class HermesStore:
     def skills(self, profile: str) -> list[SkillSummary]:
         directory = self.profile_directory(validate_profile_name(profile))
         skills_dir = directory / "skills"
-        if not skills_dir.is_dir():
-            return []
-        assert_within_base(skills_dir, directory)
         rows: list[SkillSummary] = []
-        for path in sorted(skills_dir.rglob("SKILL.md"), key=lambda item: item.as_posix().lower()):
-            safe_path = assert_within_base(path, directory)
-            rows.append(skill_payload(safe_path, directory, skills_dir.resolve()))
+        for path in skill_entrypoint_paths(skills_dir, directory):
+            rows.append(skill_payload(path, directory, skills_dir.resolve()))
         return rows
 
     def skill_detail(self, profile: str, skill_id: str) -> tuple[SkillSummary, str]:

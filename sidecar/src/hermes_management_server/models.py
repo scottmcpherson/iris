@@ -155,6 +155,8 @@ class SkillDetailResponse(SkillSummary):
 class CoreConversationCreateRequest(BaseModel):
     agentId: str
     title: str = "New conversation"
+    externalChatId: str | None = None
+    externalSessionId: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 

@@ -6,6 +6,7 @@ import argparse
 import asyncio
 import json
 import os
+import re
 import secrets
 from dataclasses import dataclass
 from typing import Any
@@ -199,6 +200,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         hermes_api_token=hermes_api_token(store.root),
     )
     app.state.runtime_registry.ensure_default_runtime()
+    app.state.core_conversation_sync_started = {}
 
     if app_settings.cors_origins:
         app.add_middleware(
@@ -206,7 +208,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             allow_origins=list(app_settings.cors_origins),
             allow_credentials=True,
             allow_methods=["GET", "POST", "PATCH", "DELETE"],
-            allow_headers=["Authorization", "Content-Type"],
+            allow_headers=["Authorization", "Content-Type", "Idempotency-Key"],
         )
 
     @app.exception_handler(ManagementError)
@@ -371,7 +373,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         agent = next((row for row in app.state.runtime_registry.agents() if row["runtimeId"] == runtime_id and row["isDefault"]), None)
         if agent:
             profile = agent["runtimeProfile"]
-        probe = app.state.runtime_registry.probe(runtime_id, profile=profile)
+        probe = await asyncio.to_thread(app.state.runtime_registry.probe, runtime_id, profile=profile)
         return {"ok": True, "runtime": runtime, "probe": probe}
 
     @app.get("/v1/agents")
@@ -396,7 +398,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         limit = clamp_int(limit, default=80, minimum=1, maximum=200)
         if agentId and not app.state.runtime_registry.agent(agentId):
             raise ManagementError("Agent was not found.", status_code=404)
-        sync_core_conversations(app, agentId, limit)
+        await maybe_sync_core_conversations(app, agentId, limit)
         return {
             "ok": True,
             "conversations": core_store.list_conversations(agent_id=agentId, limit=limit),
@@ -410,7 +412,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         agent = app.state.runtime_registry.agent(request.agentId)
         if not agent:
             raise ManagementError("Agent was not found.", status_code=404)
-        conversation = core_store.create_conversation(agent, title=request.title, metadata=request.metadata)
+        conversation = core_store.create_conversation(
+            agent,
+            title=request.title,
+            external_chat_id=(request.externalChatId or "").strip(),
+            metadata=request.metadata,
+        )
+        external_session_id = (request.externalSessionId or "").strip()
+        if external_session_id:
+            core_store.update_conversation_link(conversation["id"], external_session_id=external_session_id)
+            conversation = core_store.get_conversation(conversation["id"]) or conversation
         return {"ok": True, "conversation": conversation}
 
     @app.get("/v1/conversations/{conversation_id}")
@@ -470,6 +481,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise ManagementError("Message text is required.", status_code=400)
         message_id = request.clientMessageId or random_id("msg")
         idempotency_key = http_request.headers.get("Idempotency-Key") or request.clientMessageId
+        user_event_id = f"evt_user_{message_id}"
+        existing_user_event = core_store.get_event(user_event_id)
+        if existing_user_event and existing_user_event["conversationId"] == conversation_id:
+            return {
+                "ok": True,
+                "conversationId": conversation_id,
+                "messageId": message_id,
+                "accepted": True,
+                "eventCursor": existing_user_event["cursor"],
+                "duplicate": True,
+            }
         user_event = core_store.append_event(
             conversation_id=conversation_id,
             agent_id=agent["id"],
@@ -480,7 +502,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             external_message_id=message_id,
             idempotency_key=idempotency_key,
             metadata={"attachments": request.attachments, "model": request.model, **request.metadata},
-            event_id=f"evt_user_{message_id}",
+            event_id=user_event_id,
         )
         core_store.upsert_message(
             conversation_id=conversation_id,
@@ -506,7 +528,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         })
         switch_command = model_switch_command(request.metadata.get("modelSwitch"))
         if switch_command:
-            switch_result = adapter.send_message(
+            switch_result = await asyncio.to_thread(
+                adapter.send_message,
                 profile=agent["runtimeProfile"],
                 chat_id=chat_id,
                 chat_name=conversation["title"],
@@ -543,7 +566,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     "eventCursor": user_event["cursor"],
                     "error": switch_result.get("error") or "Hermes gateway did not accept the model switch.",
                 }
-        result = adapter.send_message(
+        result = await asyncio.to_thread(
+            adapter.send_message,
             profile=agent["runtimeProfile"],
             chat_id=chat_id,
             chat_name=conversation["title"],
@@ -594,7 +618,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if not agent:
             raise ManagementError("Agent was not found.", status_code=404)
         adapter = app.state.runtime_registry.adapter_for_runtime(agent["runtimeId"])
-        result = adapter.send_message(
+        result = await asyncio.to_thread(
+            adapter.send_message,
             profile=agent["runtimeProfile"],
             chat_id=conversation["externalChatId"] or chat_id_for_conversation(conversation_id),
             chat_name=conversation["title"],
@@ -715,20 +740,32 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "source": delivery.source,
             **delivery.metadata,
         }
+        event_metadata = mark_hidden_model_switch_reply(event_metadata, delivery.replyTo or "")
         if has_stream_message_id(delivery.metadata):
             event_metadata["streamMessageId"] = stream_message_id
-        event = core_store.append_event(
-            conversation_id=conversation_id,
-            agent_id=agent["id"],
-            runtime_id=delivery.runtimeId,
-            event_type=event_type,
-            role="assistant",
+        event_content, event_metadata, suppress_event = prepare_assistant_delivery_event(
+            core_store.list_messages(conversation_id),
             content=delivery.content,
-            parent_event_id=delivery.replyTo,
-            external_message_id=delivery.messageId,
             metadata=event_metadata,
-            event_id=f"evt_delivery_{delivery.messageId}",
+            stream_message_id=stream_message_id,
+            has_stream_id=has_stream_message_id(delivery.metadata),
+            reply_to=delivery.replyTo or "",
+            status="completed" if is_final or not is_streaming else "streaming",
         )
+        event = None
+        if not suppress_event:
+            event = core_store.append_event(
+                conversation_id=conversation_id,
+                agent_id=agent["id"],
+                runtime_id=delivery.runtimeId,
+                event_type=event_type,
+                role="assistant",
+                content=event_content,
+                parent_event_id=delivery.replyTo or str(event_metadata.get("replyTo") or ""),
+                external_message_id=delivery.messageId,
+                metadata=event_metadata,
+                event_id=f"evt_delivery_{delivery.messageId}",
+            )
         materialized = materialize_runtime_delivery(
             core_store=core_store,
             conversation_id=conversation_id,
@@ -737,9 +774,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             is_streaming=is_streaming,
             is_final=is_final,
         )
-        if materialized and event.get("metadata") is not None:
+        if materialized and event and event.get("metadata") is not None:
             event["metadata"]["materializedMessageId"] = materialized["id"]
-        return {"ok": True, "conversationId": conversation_id, "event": event}
+        return {
+            "ok": True,
+            "conversationId": conversation_id,
+            "event": event,
+            "suppressed": suppress_event,
+        }
 
     @app.get("/v1/automations")
     async def core_automations(
@@ -749,7 +791,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     ) -> dict[str, Any]:
         if agentId and not app.state.runtime_registry.agent(agentId):
             raise ManagementError("Agent was not found.", status_code=404)
-        sync_core_automations(app, agentId)
+        await asyncio.to_thread(sync_core_automations, app, agentId)
         return {
             "ok": True,
             "automations": core_store.list_automations(agent_id=agentId, limit=limit),
@@ -765,7 +807,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise ManagementError("Agent was not found.", status_code=404)
         payload = automation_create_payload(core_store, agent, dump_model(request))
         adapter = app.state.runtime_registry.adapter_for_runtime(agent["runtimeId"])
-        result = adapter.create_automation(payload)
+        result = await asyncio.to_thread(adapter.create_automation, payload)
         if not result.get("ok"):
             return {
                 "ok": False,
@@ -803,7 +845,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         result: dict[str, Any] = {"ok": True}
         if automation["externalJobId"]:
             adapter = app.state.runtime_registry.adapter_for_runtime(automation["runtimeId"])
-            result = adapter.update_automation(automation["externalJobId"], automation_update_payload(updates))
+            result = await asyncio.to_thread(
+                adapter.update_automation,
+                automation["externalJobId"],
+                automation_update_payload(updates),
+            )
             if not result.get("ok"):
                 return {"ok": False, "error": result.get("error") or "Could not update Hermes job.", "runtime": result}
         record_updates = automation_store_updates(core_store, agent, automation, updates)
@@ -818,7 +864,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         result: dict[str, Any] = {"ok": True}
         if automation["externalJobId"]:
             adapter = app.state.runtime_registry.adapter_for_runtime(automation["runtimeId"])
-            result = adapter.delete_automation(automation["externalJobId"])
+            result = await asyncio.to_thread(adapter.delete_automation, automation["externalJobId"])
             if not result.get("ok") and "not found" not in str(result.get("error") or "").lower():
                 return {"ok": False, "error": result.get("error") or "Could not delete Hermes job.", "runtime": result}
         core_store.delete_automation(automation_id)
@@ -826,15 +872,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.post("/v1/automations/{automation_id}/pause")
     async def core_pause_automation(automation_id: str, _auth: None = Depends(require_auth)) -> dict[str, Any]:
-        return control_core_automation(app, automation_id, "pause", "paused")
+        return await asyncio.to_thread(control_core_automation, app, automation_id, "pause", "paused")
 
     @app.post("/v1/automations/{automation_id}/resume")
     async def core_resume_automation(automation_id: str, _auth: None = Depends(require_auth)) -> dict[str, Any]:
-        return control_core_automation(app, automation_id, "resume", "active")
+        return await asyncio.to_thread(control_core_automation, app, automation_id, "resume", "active")
 
     @app.post("/v1/automations/{automation_id}/run")
     async def core_run_automation(automation_id: str, _auth: None = Depends(require_auth)) -> dict[str, Any]:
-        return control_core_automation(app, automation_id, "run", None)
+        return await asyncio.to_thread(control_core_automation, app, automation_id, "run", None)
 
     @app.get("/v1/agents/{agent_id}/models")
     async def core_agent_models(agent_id: str, _auth: None = Depends(require_auth)) -> dict[str, Any]:
@@ -842,7 +888,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if not agent:
             raise ManagementError("Agent was not found.", status_code=404)
         adapter = app.state.runtime_registry.adapter_for_runtime(agent["runtimeId"])
-        return adapter.models(agent["runtimeProfile"])
+        return await asyncio.to_thread(adapter.models, agent["runtimeProfile"])
 
     @app.get("/v1/agents/{agent_id}/slash-commands")
     async def core_agent_slash_commands(agent_id: str, _auth: None = Depends(require_auth)) -> dict[str, Any]:
@@ -850,7 +896,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if not agent:
             raise ManagementError("Agent was not found.", status_code=404)
         adapter = app.state.runtime_registry.adapter_for_runtime(agent["runtimeId"])
-        return adapter.slash_commands(agent["runtimeProfile"])
+        return await asyncio.to_thread(adapter.slash_commands, agent["runtimeProfile"])
 
     @app.post("/v1/agents/{agent_id}/slash-complete")
     async def core_agent_slash_complete(
@@ -863,7 +909,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise ManagementError("Agent was not found.", status_code=404)
         body = await request.json()
         adapter = app.state.runtime_registry.adapter_for_runtime(agent["runtimeId"])
-        return adapter.slash_complete(agent["runtimeProfile"], text=str(body.get("text") or ""), limit=int(body.get("limit") or 30))
+        return await asyncio.to_thread(
+            adapter.slash_complete,
+            agent["runtimeProfile"],
+            text=str(body.get("text") or ""),
+            limit=int(body.get("limit") or 30),
+        )
 
     @app.get("/v1/profiles", response_model=ProfilesResponse)
     async def profiles(_auth: None = Depends(require_auth)) -> ProfilesResponse:
@@ -991,6 +1042,22 @@ def core_auth_payload(request_app: FastAPI) -> dict[str, Any]:
     }
 
 
+async def maybe_sync_core_conversations(app: FastAPI, agent_id: str | None, limit: int) -> None:
+    sync_started: dict[str, int] = app.state.core_conversation_sync_started
+    sync_key = agent_id or "*"
+    current_time = now()
+    if current_time - int(sync_started.get(sync_key) or 0) < 30:
+        return
+    sync_started[sync_key] = current_time
+    try:
+        await asyncio.wait_for(
+            asyncio.to_thread(sync_core_conversations, app, agent_id, min(limit, 20)),
+            timeout=0.75,
+        )
+    except (asyncio.TimeoutError, ManagementError, Exception):
+        return
+
+
 def sync_core_conversations(app: FastAPI, agent_id: str | None, limit: int) -> None:
     registry: RuntimeRegistry = app.state.runtime_registry
     core_store: CoreStore = app.state.core_store
@@ -1080,29 +1147,51 @@ def mirror_inbox_message_to_core(app: FastAPI, message: dict[str, Any]) -> None:
         "platform": str(message.get("platform") or "agentui"),
         **metadata,
     }
+    event_metadata = mark_hidden_model_switch_reply(event_metadata, str(metadata.get("replyTo") or ""))
     if stream_message_id:
         event_metadata["streamMessageId"] = stream_message_id
-    event = core_store.append_event(
-        conversation_id=conversation_id,
-        agent_id=agent["id"],
-        runtime_id=runtime_id,
-        event_type=event_type,
-        role="assistant",
+    status = "completed" if is_final or not is_streaming else "streaming"
+    event_content, event_metadata, suppress_event = prepare_assistant_delivery_event(
+        core_store.list_messages(conversation_id),
         content=str(message.get("content") or ""),
-        parent_event_id=str(metadata.get("replyTo") or ""),
-        external_message_id=str(message.get("id") or ""),
         metadata=event_metadata,
-        event_id=f"evt_inbox_{message.get('id')}",
+        stream_message_id=stream_message_id,
+        has_stream_id=bool(stream_message_id),
+        reply_to=str(metadata.get("replyTo") or ""),
+        status=status,
     )
+    event = None
+    if not suppress_event:
+        event = core_store.append_event(
+            conversation_id=conversation_id,
+            agent_id=agent["id"],
+            runtime_id=runtime_id,
+            event_type=event_type,
+            role="assistant",
+            content=event_content,
+            parent_event_id=str(metadata.get("replyTo") or event_metadata.get("replyTo") or ""),
+            external_message_id=str(message.get("id") or ""),
+            metadata=event_metadata,
+            event_id=f"evt_inbox_{message.get('id')}",
+        )
     message_id = stream_message_id or str(message.get("id") or random_id("msg"))
     content = str(message.get("content") or "")
-    status = "completed" if is_final or not is_streaming else "streaming"
     messages = core_store.list_messages(conversation_id)
     if stream_message_id:
         existing = message_by_id(messages, stream_message_id)
         if existing and existing["status"] == "completed" and status == "streaming":
             materialized = existing
         else:
+            if existing:
+                if status == "streaming":
+                    content = merged_stream_snapshot_content(str(existing.get("content") or ""), content)
+                else:
+                    content = merged_completed_stream_content(str(existing.get("content") or ""), content)
+                    event_metadata = merged_completion_metadata(
+                        existing,
+                        event_metadata,
+                        reply_to=str(metadata.get("replyTo") or ""),
+                    )
             materialized = core_store.upsert_message(
                 conversation_id=conversation_id,
                 message_id=message_id,
@@ -1112,15 +1201,29 @@ def mirror_inbox_message_to_core(app: FastAPI, message: dict[str, Any]) -> None:
                 metadata=event_metadata,
             )
     else:
-        existing = last_mergeable_assistant_message(
+        fallback = stream_fallback_completion(
             messages,
             reply_to=str(metadata.get("replyTo") or ""),
             content=content,
         )
-        if existing:
+        existing = None if fallback else last_mergeable_assistant_message(
+            messages,
+            reply_to=str(metadata.get("replyTo") or ""),
+            content=content,
+        )
+        if fallback:
+            message_id = str(fallback["messageId"])
+            content = str(fallback["content"])
+            event_metadata = finalized_stream_metadata(
+                event_metadata,
+                existing_metadata=fallback["metadata"],
+                stream_message_id=str(fallback["streamMessageId"]),
+                reply_to=str(metadata.get("replyTo") or fallback.get("replyTo") or ""),
+            )
+        elif existing:
             message_id = existing["id"]
             content = append_message_content(existing["content"], content)
-            event_metadata = {**existing.get("metadata", {}), **event_metadata}
+            event_metadata = merged_completion_metadata(existing, event_metadata, reply_to=str(metadata.get("replyTo") or ""))
         materialized = core_store.upsert_message(
             conversation_id=conversation_id,
             message_id=message_id,
@@ -1129,7 +1232,7 @@ def mirror_inbox_message_to_core(app: FastAPI, message: dict[str, Any]) -> None:
             status=status,
             metadata=event_metadata,
         )
-    if materialized and event.get("metadata") is not None:
+    if materialized and event and event.get("metadata") is not None:
         event["metadata"]["materializedMessageId"] = materialized["id"]
 
 
@@ -1336,12 +1439,76 @@ def json_dumps(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
 
 
+def is_model_switch_reply(reply_to: str, metadata: dict[str, Any]) -> bool:
+    return reply_to.endswith("-model") or str(metadata.get("kind") or "") == "model-switch"
+
+
+def mark_hidden_model_switch_reply(metadata: dict[str, Any], reply_to: str) -> dict[str, Any]:
+    if not is_model_switch_reply(reply_to, metadata):
+        return metadata
+    return {**metadata, "hidden": True, "kind": "model-switch", "replyTo": reply_to}
+
+
 def sse_event(event: dict[str, Any]) -> str:
     return (
         f"event: {event['type']}\n"
         f"id: {event['cursor']}\n"
         f"data: {json_dumps(event)}\n\n"
     )
+
+
+def prepare_assistant_delivery_event(
+    messages: list[dict[str, Any]],
+    *,
+    content: str,
+    metadata: dict[str, Any],
+    stream_message_id: str,
+    has_stream_id: bool,
+    reply_to: str,
+    status: str,
+) -> tuple[str, dict[str, Any], bool]:
+    if has_stream_id:
+        existing = message_by_id(messages, stream_message_id)
+        if not existing:
+            return content, metadata, False
+        existing_content = str(existing.get("content") or "")
+        existing_status = str(existing.get("status") or "")
+        if existing_status == "completed" and status == "streaming":
+            return existing_content, metadata, True
+        if status == "streaming":
+            merged = merged_stream_snapshot_content(existing_content, content)
+            return merged, metadata, same_normalized_content(merged, existing_content)
+        merged = merged_completed_stream_content(existing_content, content)
+        merged_metadata = merged_completion_metadata(existing, metadata, reply_to=reply_to)
+        if existing_status == "completed" and same_normalized_content(merged, existing_content):
+            return existing_content, merged_metadata, True
+        return merged, merged_metadata, False
+
+    if status != "completed":
+        return content, metadata, False
+
+    fallback = stream_fallback_completion(messages, reply_to=reply_to, content=content)
+    if fallback:
+        return (
+            str(fallback["content"]),
+            finalized_stream_metadata(
+                metadata,
+                existing_metadata=fallback["metadata"],
+                stream_message_id=str(fallback["streamMessageId"]),
+                reply_to=reply_to or str(fallback.get("replyTo") or ""),
+            ),
+            False,
+        )
+
+    existing = last_mergeable_assistant_message(messages, reply_to=reply_to, content=content)
+    if not existing:
+        return content, metadata, False
+    existing_content = str(existing.get("content") or "")
+    merged = merged_completed_stream_content(existing_content, content)
+    merged_metadata = merged_completion_metadata(existing, metadata, reply_to=reply_to)
+    if str(existing.get("status") or "") == "completed" and same_normalized_content(merged, existing_content):
+        return existing_content, merged_metadata, True
+    return merged, merged_metadata, False
 
 
 def materialize_runtime_delivery(
@@ -1361,6 +1528,7 @@ def materialize_runtime_delivery(
         "source": delivery.source,
         **delivery.metadata,
     }
+    metadata = mark_hidden_model_switch_reply(metadata, delivery.replyTo or "")
     if has_stream_message_id(delivery.metadata):
         metadata["streamMessageId"] = stream_message_id
     target_id = stream_message_id if stream_message_id else delivery.messageId
@@ -1371,17 +1539,37 @@ def materialize_runtime_delivery(
         existing = message_by_id(messages, target_id)
         if existing and existing["status"] == "completed" and status == "streaming":
             return existing
+        if existing:
+            if status == "streaming":
+                content = merged_stream_snapshot_content(str(existing.get("content") or ""), delivery.content)
+            else:
+                content = merged_completed_stream_content(str(existing.get("content") or ""), delivery.content)
+                metadata = merged_completion_metadata(existing, metadata, reply_to=delivery.replyTo or "")
 
     if not has_stream_message_id(delivery.metadata):
-        existing = last_mergeable_assistant_message(
+        fallback = stream_fallback_completion(
             messages,
             reply_to=delivery.replyTo or "",
             content=delivery.content,
         )
-        if existing:
+        existing = None if fallback else last_mergeable_assistant_message(
+            messages,
+            reply_to=delivery.replyTo or "",
+            content=delivery.content,
+        )
+        if fallback:
+            target_id = str(fallback["messageId"])
+            content = str(fallback["content"])
+            metadata = finalized_stream_metadata(
+                metadata,
+                existing_metadata=fallback["metadata"],
+                stream_message_id=str(fallback["streamMessageId"]),
+                reply_to=delivery.replyTo or str(fallback.get("replyTo") or ""),
+            )
+        elif existing:
             target_id = existing["id"]
-            content = append_message_content(existing["content"], delivery.content)
-            metadata = {**existing.get("metadata", {}), **metadata}
+            content = merged_completed_stream_content(str(existing.get("content") or ""), delivery.content)
+            metadata = merged_completion_metadata(existing, metadata, reply_to=delivery.replyTo or "")
 
     return core_store.upsert_message(
         conversation_id=conversation_id,
@@ -1395,6 +1583,70 @@ def materialize_runtime_delivery(
 
 def has_stream_message_id(metadata: dict[str, Any]) -> bool:
     return bool(metadata.get("streamMessageId") or metadata.get("stream_message_id"))
+
+
+def stream_fallback_completion(
+    messages: list[dict[str, Any]],
+    *,
+    reply_to: str,
+    content: str,
+) -> dict[str, Any] | None:
+    existing = None
+    metadata: dict[str, Any] = {}
+    for message in reversed(messages):
+        if message.get("role") != "assistant" or message.get("status") != "streaming":
+            continue
+        metadata = message.get("metadata") if isinstance(message.get("metadata"), dict) else {}
+        stream_message_id = str(metadata.get("streamMessageId") or metadata.get("stream_message_id") or "")
+        if stream_message_id:
+            existing = message
+            break
+    if not existing or not stream_message_id:
+        return None
+    inferred_reply_to = reply_to or str(metadata.get("replyTo") or "") or last_user_message_id(messages)
+    return {
+        "content": merged_completed_stream_content(str(existing.get("content") or ""), content),
+        "messageId": str(existing.get("id") or stream_message_id),
+        "metadata": metadata,
+        "replyTo": inferred_reply_to,
+        "streamMessageId": stream_message_id,
+    }
+
+
+def finalized_stream_metadata(
+    metadata: dict[str, Any],
+    *,
+    existing_metadata: dict[str, Any],
+    stream_message_id: str,
+    reply_to: str,
+) -> dict[str, Any]:
+    merged = {**existing_metadata, **metadata}
+    merged["streamMessageId"] = stream_message_id
+    merged["streaming"] = False
+    merged["finalize"] = True
+    if reply_to:
+        merged["replyTo"] = reply_to
+    return merged
+
+
+def merged_completion_metadata(existing: dict[str, Any], metadata: dict[str, Any], *, reply_to: str) -> dict[str, Any]:
+    existing_metadata = existing.get("metadata") if isinstance(existing.get("metadata"), dict) else {}
+    stream_message_id = str(existing_metadata.get("streamMessageId") or existing_metadata.get("stream_message_id") or "")
+    if not stream_message_id:
+        return {**existing_metadata, **metadata}
+    return finalized_stream_metadata(
+        metadata,
+        existing_metadata=existing_metadata,
+        stream_message_id=stream_message_id,
+        reply_to=reply_to or str(existing_metadata.get("replyTo") or ""),
+    )
+
+
+def last_user_message_id(messages: list[dict[str, Any]]) -> str:
+    for message in reversed(messages):
+        if message.get("role") == "user":
+            return str(message.get("id") or "")
+    return ""
 
 
 def message_by_id(messages: list[dict[str, Any]], message_id: str) -> dict[str, Any] | None:
@@ -1411,8 +1663,10 @@ def coalesce_core_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any
             previous = coalesced[-1]
             if (
                 previous["role"] == "assistant"
-                and normalize_message_content(str(previous.get("content") or ""))
-                == normalize_message_content(str(message.get("content") or ""))
+                and equivalent_message_content(
+                    str(previous.get("content") or ""),
+                    str(message.get("content") or ""),
+                )
                 and is_gateway_replay_pair(previous, message)
             ):
                 if message.get("status") == "completed" and previous.get("status") != "completed":
@@ -1450,27 +1704,47 @@ def last_mergeable_assistant_message(
     content: str,
 ) -> dict[str, Any] | None:
     normalized_content = normalize_message_content(content)
+    reply_scope_exists = bool(reply_to and any(
+        message.get("role") == "user" and str(message.get("id") or "") == reply_to
+        for message in messages
+    ))
     for message in reversed(messages):
         if message["role"] == "user":
+            if reply_scope_exists and str(message.get("id") or "") == reply_to:
+                continue
             break
         if message["role"] != "assistant":
             continue
         metadata = message.get("metadata") if isinstance(message.get("metadata"), dict) else {}
+        reply_matches = bool(reply_to and metadata.get("replyTo") == reply_to)
+        unscoped_stream_message = bool((not reply_to or not reply_scope_exists) and metadata.get("streamMessageId"))
         if message["status"] == "streaming":
             return message
         if (
             normalized_content
-            and normalize_message_content(str(message.get("content") or "")) == normalized_content
-            and (metadata.get("streamMessageId") or (reply_to and metadata.get("replyTo") == reply_to))
+            and equivalent_message_content(str(message.get("content") or ""), normalized_content)
+            and (reply_matches or unscoped_stream_message)
         ):
             return message
-        if is_post_stream_attachment(content) and (metadata.get("streamMessageId") or metadata.get("replyTo") == reply_to):
+        if is_post_stream_attachment(content) and (reply_matches or unscoped_stream_message):
             return message
     return None
 
 
 def normalize_message_content(content: str) -> str:
     return "\n".join(line.rstrip() for line in content.strip().splitlines())
+
+
+def same_normalized_content(left: str, right: str) -> bool:
+    return normalize_message_content(left) == normalize_message_content(right)
+
+
+def equivalent_message_content(left: str, right: str) -> bool:
+    return compact_message_content(left) == compact_message_content(right)
+
+
+def compact_message_content(content: str) -> str:
+    return re.sub(r"\s+([,.;:!?])", r"\1", " ".join(normalize_message_content(content).split()))
 
 
 def is_post_stream_attachment(content: str) -> bool:
@@ -1489,9 +1763,60 @@ def append_message_content(content: str, addition: str) -> str:
     right = addition.strip()
     if not left:
         return right
-    if not right or right in left:
+    if not right or right in left or equivalent_message_content(left, right):
         return left
+    if re.match(r"^[,.;:!?)]", right):
+        return f"{left}{right}"
+    if not re.search(r"[.!?:;)]$", left) and re.match(r"^[a-z]", right):
+        return f"{left} {right}"
     return f"{left}\n\n{right}"
+
+
+def merged_completed_stream_content(existing: str, delivery: str) -> str:
+    existing_content = existing.rstrip()
+    delivery_content = delivery.strip()
+    if not existing_content:
+        return delivery_content
+    if not delivery_content:
+        return existing_content
+    compact_existing = compact_message_content(existing_content)
+    compact_delivery = compact_message_content(delivery_content)
+    if compact_existing == compact_delivery:
+        return delivery_content
+    if compact_delivery.startswith(compact_existing):
+        return delivery_content
+    if compact_existing.startswith(compact_delivery) or compact_delivery in compact_existing:
+        return existing_content
+    overlapped = overlapping_message_content(existing_content, delivery_content)
+    if overlapped:
+        return overlapped
+    return append_message_content(existing_content, delivery_content)
+
+
+def merged_stream_snapshot_content(existing: str, delivery: str) -> str:
+    existing_content = existing.rstrip()
+    delivery_content = delivery.strip()
+    if not existing_content:
+        return delivery_content
+    if not delivery_content:
+        return existing_content
+    compact_existing = compact_message_content(existing_content)
+    compact_delivery = compact_message_content(delivery_content)
+    if compact_delivery.startswith(compact_existing):
+        return delivery_content
+    if compact_existing.startswith(compact_delivery):
+        return existing_content
+    return delivery_content if len(compact_delivery) >= len(compact_existing) else existing_content
+
+
+def overlapping_message_content(existing: str, delivery: str) -> str:
+    max_overlap = min(len(existing), len(delivery))
+    for length in range(max_overlap, 11, -1):
+        prefix = delivery[:length]
+        index = existing.rfind(prefix)
+        if index != -1:
+            return f"{existing[:index]}{delivery}"
+    return ""
 
 
 def dump_model(model):

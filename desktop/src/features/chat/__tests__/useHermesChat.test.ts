@@ -2,11 +2,14 @@ import { describe, expect, it } from "vitest";
 import type { Message } from "../../../app/types";
 import type { HermesInboxMessage } from "../../../types/hermes";
 import {
+  activeRequestCompletedByHistory,
   coalescePostStreamAttachments,
+  deliveryCompletesActiveStream,
+  isHiddenDeliveryMetadata,
+  isTransientConversationLoadError,
   mergeCompletedDelivery,
   mergeConversationChatIdMap,
   mergeStreamDelivery,
-  modelCommand,
   shouldApplyConversationDetailSelection,
   shouldPreserveLocalMessagesOnEmptyHistory,
   shouldPreserveProfileConversationSelection,
@@ -49,6 +52,43 @@ describe("Hermes chat inbox merging", () => {
     expect(shouldRetryUnmappedDelivery(0)).toBe(true);
     expect(shouldRetryUnmappedDelivery(1)).toBe(true);
     expect(shouldRetryUnmappedDelivery(2)).toBe(false);
+  });
+
+  it("treats model-switch command replies as hidden even when Hermes drops hidden metadata", () => {
+    expect(isHiddenDeliveryMetadata({ replyTo: "client-message-1-model" })).toBe(true);
+    expect(isHiddenDeliveryMetadata({ kind: "model-switch" })).toBe(true);
+    expect(isHiddenDeliveryMetadata({ replyTo: "client-message-1" })).toBe(false);
+  });
+
+  it("omits hidden model-switch replies when loading conversation history", () => {
+    const messages = toAppMessages([
+      {
+        id: "model-reply",
+        sessionId: "session-1",
+        role: "assistant",
+        content: "Model switched to `gpt-5.4-mini`",
+        toolName: "",
+        timestamp: 1,
+        metadata: { replyTo: "client-message-1-model" },
+      },
+      {
+        id: "assistant-1",
+        sessionId: "session-1",
+        role: "assistant",
+        content: "Real answer",
+        toolName: "",
+        timestamp: 2,
+        metadata: {},
+      },
+    ]);
+
+    expect(messages).toEqual([
+      {
+        id: "assistant-1",
+        role: "assistant",
+        content: "Real answer",
+      },
+    ]);
   });
 
   it("replaces the optimistic assistant bubble with the first stream update", () => {
@@ -100,6 +140,33 @@ describe("Hermes chat inbox merging", () => {
       id: "stream-1",
       content: "Starting to answer.",
       streaming: false,
+      streamMessageId: "stream-1",
+    });
+  });
+
+  it("keeps the longer stream snapshot when a later edit replays a shorter prefix", () => {
+    const existing: Message[] = [
+      { id: "user-1", role: "user", content: "Write a long answer" },
+      {
+        id: "stream-1",
+        role: "assistant",
+        content: "Paragraph one.\n\nParagraph two was already visible.",
+        streaming: true,
+        streamMessageId: "stream-1",
+      },
+    ];
+
+    const merged = mergeStreamDelivery(
+      existing,
+      inboxMessage({ id: "stream-1:edit:2", content: "Paragraph one." }),
+      "stream-1",
+      false,
+    );
+
+    expect(merged[1]).toMatchObject({
+      id: "stream-1",
+      content: "Paragraph one.\n\nParagraph two was already visible.",
+      streaming: true,
       streamMessageId: "stream-1",
     });
   });
@@ -219,6 +286,36 @@ describe("Hermes chat inbox merging", () => {
     ]);
   });
 
+  it("treats a fallback completed delivery as the end of the active stream", () => {
+    const existing: Message[] = [
+      { id: "user-1", role: "user", content: "Write a long story" },
+      {
+        id: "stream-1",
+        role: "assistant",
+        content: "The rain began just as Mira opened the door.",
+        streaming: true,
+        streamMessageId: "stream-1",
+      },
+    ];
+    const delivery = inboxMessage({
+      id: "fallback-1",
+      source: "hermes-gateway",
+      content: "Inside, the observatory smelled of dust and old brass.",
+    });
+
+    const merged = mergeCompletedDelivery(existing, delivery, "");
+
+    expect(deliveryCompletesActiveStream(existing, delivery)).toBe(true);
+    expect(merged).toEqual([
+      existing[0],
+      {
+        ...existing[1],
+        content: "The rain began just as Mira opened the door.\n\nInside, the observatory smelled of dust and old brass.",
+        streaming: false,
+      },
+    ]);
+  });
+
   it("ignores replayed completed text after a stream finalizes", () => {
     const existing: Message[] = [
       { id: "user-1", role: "user", content: "Hi" },
@@ -242,6 +339,68 @@ describe("Hermes chat inbox merging", () => {
     );
 
     expect(merged).toEqual(existing);
+  });
+
+  it("repairs a replayed completed duplicate with cleaner punctuation spacing", () => {
+    const existing: Message[] = [
+      { id: "user-1", role: "user", content: "Write a story" },
+      {
+        id: "stream-1",
+        role: "assistant",
+        content: "The sign read\n\n: KEEP STREAMING.",
+        streaming: false,
+        streamMessageId: "stream-1",
+      },
+    ];
+
+    const merged = mergeCompletedDelivery(
+      existing,
+      inboxMessage({
+        id: "final-duplicate-1",
+        source: "hermes-gateway",
+        content: "The sign read: KEEP STREAMING.",
+      }),
+      "user-1",
+    );
+
+    expect(merged).toHaveLength(2);
+    expect(merged[1]).toMatchObject({
+      id: "stream-1",
+      content: "The sign read: KEEP STREAMING.",
+      streaming: false,
+      streamMessageId: "stream-1",
+    });
+  });
+
+  it("merges a fallback tail that overlaps the middle of the streamed text", () => {
+    const existing: Message[] = [
+      { id: "user-1", role: "user", content: "Write a story" },
+      {
+        id: "stream-1",
+        role: "assistant",
+        content: "Verification starts now, she said, uploading the logs live. By morning, the blackout was no longer a rumor",
+        streaming: true,
+        streamMessageId: "stream-1",
+      },
+    ];
+
+    const merged = mergeCompletedDelivery(
+      existing,
+      inboxMessage({
+        id: "fallback-tail-1",
+        source: "hermes-gateway",
+        content: "she said, uploading the logs live. By morning, the blackout was no longer a rumor, and the proof survived.",
+      }),
+      "user-1",
+    );
+
+    expect(merged).toHaveLength(2);
+    expect(merged[1]).toMatchObject({
+      id: "stream-1",
+      content: "Verification starts now, she said, uploading the logs live. By morning, the blackout was no longer a rumor, and the proof survived.",
+      streaming: false,
+      streamMessageId: "stream-1",
+    });
   });
 
   it("shows a final stream plus file delivery provisionally until canonical history reloads", () => {
@@ -364,6 +523,15 @@ describe("Hermes chat profile selection", () => {
   });
 });
 
+describe("Hermes chat conversation loading", () => {
+  it("treats timeout-like conversation list failures as transient", () => {
+    expect(isTransientConversationLoadError("timed out")).toBe(true);
+    expect(isTransientConversationLoadError("AbortError: The operation was aborted")).toBe(true);
+    expect(isTransientConversationLoadError("Failed to fetch")).toBe(true);
+    expect(isTransientConversationLoadError("Could not resolve Iris agent.")).toBe(false);
+  });
+});
+
 describe("Hermes chat model switching", () => {
   it("sends a model switch only when the selected first-message model differs", () => {
     expect(
@@ -379,13 +547,6 @@ describe("Hermes chat model switching", () => {
       ),
     ).toBe(false);
     expect(shouldSendModelSwitch(null, { provider: "openai-codex", model: "gpt-5.5" })).toBe(false);
-  });
-
-  it("formats the hidden Hermes model command with provider scope", () => {
-    expect(modelCommand({ provider: "openai-codex", model: "gpt-5.5" })).toBe(
-      "/model gpt-5.5 --provider openai-codex",
-    );
-    expect(modelCommand({ provider: "", model: "local/model" })).toBe("/model local/model");
   });
 
   it("strips Hermes model switch adapter notes from rendered user messages", () => {
@@ -424,6 +585,84 @@ describe("Hermes chat conversation detail loading", () => {
             timestamp: 1,
           },
         ],
+      ),
+    ).toBe(false);
+  });
+
+  it("recognizes canonical history that completed the active request", () => {
+    expect(
+      activeRequestCompletedByHistory(
+        [
+          {
+            id: "user-1",
+            sessionId: "session-1",
+            role: "user",
+            content: "Hello",
+            status: "completed",
+            toolName: "",
+            timestamp: 1,
+          },
+          {
+            id: "assistant-1",
+            sessionId: "session-1",
+            role: "assistant",
+            content: "Done",
+            status: "completed",
+            toolName: "",
+            timestamp: 2,
+            metadata: { replyTo: "user-1", streaming: false, finalize: true },
+          },
+        ],
+        "user-1",
+      ),
+    ).toBe(true);
+  });
+
+  it("recognizes completed stream history after the active user even without reply metadata", () => {
+    expect(
+      activeRequestCompletedByHistory(
+        [
+          {
+            id: "user-1",
+            sessionId: "session-1",
+            role: "user",
+            content: "Reply exactly",
+            status: "completed",
+            toolName: "",
+            timestamp: 1,
+          },
+          {
+            id: "stream-1",
+            sessionId: "session-1",
+            role: "assistant",
+            content: "Done",
+            status: "completed",
+            toolName: "",
+            timestamp: 2,
+            metadata: { streamMessageId: "stream-1", streaming: false, finalize: true },
+          },
+        ],
+        "user-1",
+      ),
+    ).toBe(true);
+  });
+
+  it("does not reconcile an active request from streaming-only history", () => {
+    expect(
+      activeRequestCompletedByHistory(
+        [
+          {
+            id: "assistant-1",
+            sessionId: "session-1",
+            role: "assistant",
+            content: "Still going",
+            status: "streaming",
+            toolName: "",
+            timestamp: 2,
+            metadata: { replyTo: "user-1", streaming: true },
+          },
+        ],
+        "user-1",
       ),
     ).toBe(false);
   });

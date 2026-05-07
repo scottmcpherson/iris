@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import sqlite3
 
 from fastapi.testclient import TestClient
@@ -77,6 +78,31 @@ def test_health_and_status(tmp_path):
     assert status.json()["profileCount"] == 2
 
 
+def test_core_cors_preflight_allows_idempotency_key(tmp_path):
+    root = tmp_path / ".hermes"
+    app = create_app(
+        Settings(
+            hermes_home=str(root),
+            core_store_path=str(tmp_path / "core.sqlite3"),
+            cors_origins=("tauri://localhost",),
+        )
+    )
+    client = TestClient(app)
+
+    response = client.options(
+        "/v1/conversations/conv_test/messages",
+        headers={
+            "Origin": "tauri://localhost",
+            "Access-Control-Request-Method": "POST",
+            "Access-Control-Request-Headers": "content-type,idempotency-key",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.headers["access-control-allow-origin"] == "tauri://localhost"
+    assert "Idempotency-Key" in response.headers["access-control-allow-headers"]
+
+
 def test_profile_memory_and_skills_endpoints(tmp_path):
     root = tmp_path / ".hermes"
     profile = root / "profiles" / "research"
@@ -104,6 +130,18 @@ def test_profile_memory_and_skills_endpoints(tmp_path):
     assert skills_response.json()["skills"][0]["name"] == "Summarize"
     assert detail_response.status_code == 200
     assert detail_response.json()["content"] == "# Summarize\n\nCondense notes."
+
+
+def test_profile_summary_accepts_json_gateway_pid(tmp_path):
+    root = tmp_path / ".hermes"
+    root.mkdir(parents=True)
+    (root / "gateway.pid").write_text(f'{{"pid": {os.getpid()}, "kind": "hermes-gateway"}}', encoding="utf-8")
+    client = make_client(root)
+
+    response = client.get("/v1/profiles")
+
+    assert response.status_code == 200
+    assert response.json()["profiles"][0]["gatewayRunning"] is True
 
 
 def test_profile_management_endpoints_create_clone_delete(tmp_path):
@@ -329,6 +367,28 @@ def test_legacy_inbox_delivery_mirrors_to_core_conversation(tmp_path):
     ]
 
 
+def test_core_conversation_create_can_link_existing_runtime_chat(tmp_path):
+    client = make_client(tmp_path / ".hermes")
+    agent = client.get("/v1/agents").json()["agents"][0]
+
+    created = client.post(
+        "/v1/conversations",
+        json={
+            "agentId": agent["id"],
+            "title": "Linked legacy chat",
+            "externalChatId": "legacy-chat-1",
+            "externalSessionId": "legacy-session-1",
+            "metadata": {"createdBy": "desktop-legacy-link"},
+        },
+    )
+
+    conversation = created.json()["conversation"]
+    assert created.status_code == 200
+    assert conversation["externalChatId"] == "legacy-chat-1"
+    assert conversation["externalSessionId"] == "legacy-session-1"
+    assert conversation["metadata"]["createdBy"] == "desktop-legacy-link"
+
+
 def test_legacy_inbox_stream_and_completed_replays_coalesce_in_core(tmp_path):
     root = tmp_path / ".hermes"
     app = create_app(
@@ -415,7 +475,7 @@ def test_legacy_inbox_stream_and_completed_replays_coalesce_in_core(tmp_path):
     messages = client.get(f"/v1/conversations/{conversation['id']}/messages").json()["messages"]
     events = client.get(f"/v1/conversations/{conversation['id']}/events?after=0").json()["events"]
 
-    assert len([event for event in events if event["type"].startswith("message.assistant")]) == 5
+    assert len([event for event in events if event["type"].startswith("message.assistant")]) == 1
     assert len(messages) == 1
     assert messages[0]["id"] == "assistant-stream-1"
     assert messages[0]["status"] == "completed"
@@ -509,6 +569,35 @@ def test_core_message_events_and_runtime_delivery_are_replayable(tmp_path):
         "message.assistant.completed",
     ]
     assert messages.json()["messages"][0]["content"] == "Hello from Hermes"
+
+
+def test_core_marks_late_model_switch_replies_hidden(tmp_path):
+    root = tmp_path / ".hermes"
+    client = make_client(root)
+    agent = client.get("/v1/agents").json()["agents"][0]
+    created = client.post("/v1/conversations", json={"agentId": agent["id"], "title": "Core chat"})
+    conversation_id = created.json()["conversation"]["id"]
+
+    delivery = client.post(
+        "/v1/runtime-deliveries/hermes",
+        json={
+            "runtimeId": "runtime_local_hermes",
+            "profile": "default",
+            "chatId": created.json()["conversation"]["externalChatId"],
+            "messageId": "model-switch-reply-1",
+            "replyTo": "client-message-1-model",
+            "content": "Model switched to `gpt-5.4-mini`",
+            "metadata": {},
+        },
+    )
+    event = client.get("/v1/events?after=0&limit=10").json()["events"][-1]
+    message = client.get(f"/v1/conversations/{conversation_id}/messages").json()["messages"][0]
+
+    assert delivery.status_code == 200
+    assert event["metadata"]["hidden"] is True
+    assert event["metadata"]["kind"] == "model-switch"
+    assert message["metadata"]["hidden"] is True
+    assert message["metadata"]["kind"] == "model-switch"
 
 
 def test_core_backfills_hermes_conversations_and_fetches_messages(tmp_path):
@@ -676,6 +765,203 @@ def test_core_runtime_deliveries_materialize_stream_without_duplicates(tmp_path)
     assert messages[0]["content"] == "Hello\n\nFile: /tmp/test.txt"
 
 
+def test_core_runtime_delivery_fallback_finalizes_existing_stream(tmp_path):
+    root = tmp_path / ".hermes"
+    client = make_client(root)
+    agent = client.get("/v1/agents").json()["agents"][0]
+    conversation = client.post(
+        "/v1/conversations",
+        json={"agentId": agent["id"], "title": "Fallback stream"},
+    ).json()["conversation"]
+    client.app.state.core_store.upsert_message(
+        conversation_id=conversation["id"],
+        message_id="user-message-1",
+        role="user",
+        content="Write a story",
+        status="completed",
+        metadata={},
+    )
+    cursor = client.get("/v1/events?after=0").json()["cursor"]
+
+    first = client.post(
+        "/v1/runtime-deliveries/hermes",
+        json={
+            "runtimeId": "runtime_local_hermes",
+            "profile": "default",
+            "chatId": conversation["externalChatId"],
+            "messageId": "stream-message-1",
+            "content": "The rain began.",
+            "metadata": {"streamMessageId": "assistant-stream-1", "streaming": True, "finalize": False},
+        },
+    )
+    fallback = client.post(
+        "/v1/runtime-deliveries/hermes",
+        json={
+            "runtimeId": "runtime_local_hermes",
+            "profile": "default",
+            "chatId": conversation["externalChatId"],
+            "messageId": "fallback-message-1",
+            "source": "hermes-gateway",
+            "content": "Inside, the observatory smelled of dust.",
+            "metadata": {},
+        },
+    )
+    replay = client.get(f"/v1/events?after={cursor}").json()["events"]
+    messages = client.get(f"/v1/conversations/{conversation['id']}/messages").json()["messages"]
+
+    assert first.status_code == 200
+    assert fallback.status_code == 200
+    assert replay[-1]["type"] == "message.assistant.completed"
+    assert replay[-1]["metadata"]["streamMessageId"] == "assistant-stream-1"
+    assert replay[-1]["metadata"]["streaming"] is False
+    assert replay[-1]["metadata"]["finalize"] is True
+    assert replay[-1]["metadata"]["replyTo"] == "user-message-1"
+    assert replay[-1]["content"] == "The rain began.\n\nInside, the observatory smelled of dust."
+    assistant = next(message for message in messages if message["id"] == "assistant-stream-1")
+    assert {message["id"] for message in messages} == {"user-message-1", "assistant-stream-1"}
+    assert assistant["status"] == "completed"
+    assert assistant["metadata"]["streaming"] is False
+    assert assistant["metadata"]["finalize"] is True
+
+
+def test_core_runtime_delivery_ignores_shorter_stream_replay_before_fallback(tmp_path):
+    root = tmp_path / ".hermes"
+    client = make_client(root)
+    agent = client.get("/v1/agents").json()["agents"][0]
+    conversation = client.post(
+        "/v1/conversations",
+        json={"agentId": agent["id"], "title": "Regressive stream"},
+    ).json()["conversation"]
+    client.app.state.core_store.upsert_message(
+        conversation_id=conversation["id"],
+        message_id="user-message-1",
+        role="user",
+        content="Write a story",
+        status="completed",
+        metadata={},
+    )
+    full_content = "The sign read: KEEP STREAMING. The light stayed green."
+
+    client.post(
+        "/v1/runtime-deliveries/hermes",
+        json={
+            "runtimeId": "runtime_local_hermes",
+            "profile": "default",
+            "chatId": conversation["externalChatId"],
+            "messageId": "stream-message-1",
+            "content": full_content,
+            "metadata": {"streamMessageId": "assistant-stream-1", "streaming": True, "finalize": False},
+        },
+    )
+    shorter = client.post(
+        "/v1/runtime-deliveries/hermes",
+        json={
+            "runtimeId": "runtime_local_hermes",
+            "profile": "default",
+            "chatId": conversation["externalChatId"],
+            "messageId": "stream-message-1:edit:1",
+            "content": "The sign read",
+            "metadata": {"streamMessageId": "assistant-stream-1", "streaming": True, "finalize": False},
+        },
+    )
+    fallback = client.post(
+        "/v1/runtime-deliveries/hermes",
+        json={
+            "runtimeId": "runtime_local_hermes",
+            "profile": "default",
+            "chatId": conversation["externalChatId"],
+            "messageId": "fallback-message-1",
+            "source": "hermes-gateway",
+            "content": ": KEEP STREAMING. The light stayed green.",
+            "metadata": {},
+        },
+    )
+    replay = client.post(
+        "/v1/runtime-deliveries/hermes",
+        json={
+            "runtimeId": "runtime_local_hermes",
+            "profile": "default",
+            "chatId": conversation["externalChatId"],
+            "messageId": "fallback-message-2",
+            "replyTo": "user-message-1",
+            "source": "hermes-gateway",
+            "content": full_content,
+            "metadata": {},
+        },
+    )
+    messages = client.get(f"/v1/conversations/{conversation['id']}/messages").json()["messages"]
+
+    assert fallback.status_code == 200
+    assert shorter.status_code == 200
+    assert shorter.json()["event"] is None
+    assert shorter.json()["suppressed"] is True
+    assert fallback.json()["event"]["content"] == full_content
+    assert fallback.json()["event"]["metadata"]["streaming"] is False
+    assert replay.status_code == 200
+    assert replay.json()["event"] is None
+    assert replay.json()["suppressed"] is True
+    assistant_messages = [message for message in messages if message["role"] == "assistant"]
+    assert len(assistant_messages) == 1
+    assert assistant_messages[0]["content"] == full_content
+    assert assistant_messages[0]["status"] == "completed"
+
+
+def test_core_runtime_delivery_merges_overlapping_fallback_tail(tmp_path):
+    root = tmp_path / ".hermes"
+    client = make_client(root)
+    agent = client.get("/v1/agents").json()["agents"][0]
+    conversation = client.post(
+        "/v1/conversations",
+        json={"agentId": agent["id"], "title": "Overlapping tail"},
+    ).json()["conversation"]
+    client.app.state.core_store.upsert_message(
+        conversation_id=conversation["id"],
+        message_id="user-message-1",
+        role="user",
+        content="Write a story",
+        status="completed",
+        metadata={},
+    )
+    visible_content = (
+        "Verification starts now, she said, uploading the logs live. "
+        "By morning, the blackout was no longer a rumor"
+    )
+    final_content = (
+        "Verification starts now, she said, uploading the logs live. "
+        "By morning, the blackout was no longer a rumor, and the proof survived."
+    )
+
+    client.post(
+        "/v1/runtime-deliveries/hermes",
+        json={
+            "runtimeId": "runtime_local_hermes",
+            "profile": "default",
+            "chatId": conversation["externalChatId"],
+            "messageId": "stream-message-1",
+            "content": visible_content,
+            "metadata": {"streamMessageId": "assistant-stream-1", "streaming": True, "finalize": False},
+        },
+    )
+    fallback = client.post(
+        "/v1/runtime-deliveries/hermes",
+        json={
+            "runtimeId": "runtime_local_hermes",
+            "profile": "default",
+            "chatId": conversation["externalChatId"],
+            "messageId": "fallback-message-1",
+            "source": "hermes-gateway",
+            "content": "she said, uploading the logs live. By morning, the blackout was no longer a rumor, and the proof survived.",
+            "metadata": {},
+        },
+    )
+    messages = client.get(f"/v1/conversations/{conversation['id']}/messages").json()["messages"]
+
+    assert fallback.status_code == 200
+    assert fallback.json()["event"]["content"] == final_content
+    assistant = next(message for message in messages if message["role"] == "assistant")
+    assert assistant["content"] == final_content
+
+
 def test_core_automations_create_list_control_and_delete_hermes_jobs(tmp_path, monkeypatch):
     root = tmp_path / ".hermes"
     root.mkdir()
@@ -824,6 +1110,49 @@ def test_core_send_owns_chat_id_and_uses_env_file_token(tmp_path, monkeypatch):
     assert seen[1]["body"]["text"] == "Reply exactly: core phase 3"
     assert seen[1]["body"]["metadata"]["agentuiConversationId"] == conversation["id"]
     assert messages[0]["content"] == "Reply exactly: core phase 3"
+
+
+def test_core_send_dedupes_replayed_client_message_ids(tmp_path, monkeypatch):
+    root = tmp_path / ".hermes"
+    root.mkdir()
+    (root / ".env").write_text("AGENTUI_TOKEN=agentui-local-test\n", encoding="utf-8")
+    seen = []
+
+    def fake_http_json(url, *, method, token, body):
+        seen.append({"url": url, "method": method, "token": token, "body": body})
+        return {
+            "ok": True,
+            "status": 202,
+            "url": url,
+            "json": {
+                "ok": True,
+                "accepted": True,
+                "profile": body["profile"],
+                "chatId": body["chatId"],
+                "messageId": body["messageId"],
+            },
+        }
+
+    monkeypatch.setattr(hermes_adapter, "http_json", fake_http_json)
+    client = make_client(root)
+    agent = client.get("/v1/agents").json()["agents"][0]
+    conversation = client.post(
+        "/v1/conversations",
+        json={"agentId": agent["id"], "title": "Core send"},
+    ).json()["conversation"]
+    payload = {
+        "text": "Reply exactly once",
+        "clientMessageId": "client-message-1",
+        "model": {"provider": "openai-codex", "model": "gpt-5.5"},
+    }
+
+    first = client.post(f"/v1/conversations/{conversation['id']}/messages", json=payload)
+    replay = client.post(f"/v1/conversations/{conversation['id']}/messages", json=payload)
+
+    assert first.status_code == 200
+    assert replay.status_code == 200
+    assert replay.json()["duplicate"] is True
+    assert len(seen) == 1
 
 
 def test_core_rejects_unknown_agent_filters(tmp_path):

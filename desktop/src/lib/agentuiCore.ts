@@ -84,16 +84,27 @@ async function coreRequest<T>(
   method: "GET" | "POST" | "PATCH" | "DELETE",
   path: string,
   body?: unknown,
+  options: { timeoutMs?: number; idempotencyKey?: string } = {},
 ): Promise<CoreResponse<T>> {
   const normalizedPath = path.startsWith("/") ? path : `/${path}`;
   const url = `${coreBaseUrl(runtime)}${normalizedPath}`;
+  const controller = typeof AbortController === "undefined" ? null : new AbortController();
+  let timedOut = false;
+  const timeout = controller
+    ? setTimeout(() => {
+        timedOut = true;
+        controller.abort();
+      }, options.timeoutMs ?? 2500)
+    : null;
   try {
     const response = await fetch(url, {
       method,
       headers: {
         Accept: "application/json",
+        ...(options.idempotencyKey ? { "Idempotency-Key": options.idempotencyKey } : {}),
         ...(body === undefined ? {} : { "Content-Type": "application/json" }),
       },
+      signal: controller?.signal,
       body: body === undefined ? undefined : JSON.stringify(body),
     });
     const parsed = await response.json().catch(() => ({}));
@@ -105,7 +116,12 @@ async function coreRequest<T>(
     }
     return parsed as CoreResponse<T>;
   } catch {
+    if (timedOut && method !== "GET") {
+      return { ok: false, error: "timed out" } as CoreResponse<T>;
+    }
     return coreRequestViaBridge(runtime, method, normalizedPath, body);
+  } finally {
+    if (timeout) clearTimeout(timeout);
   }
 }
 
@@ -149,7 +165,13 @@ export async function getAgentUICoreConversations(agentId: string, limit = 80, r
 }
 
 export async function createAgentUICoreConversation(
-  payload: { agentId: string; title: string; metadata?: Record<string, unknown> },
+  payload: {
+    agentId: string;
+    title: string;
+    externalChatId?: string;
+    externalSessionId?: string;
+    metadata?: Record<string, unknown>;
+  },
   runtime?: HermesRuntimeConfig,
 ) {
   return coreRequest<{ conversation: AgentUICoreConversation }>(runtime, "POST", "/conversations", payload);
@@ -184,7 +206,13 @@ export async function sendAgentUICoreMessage(
     accepted: boolean;
     eventCursor: number;
     runtime?: Record<string, unknown>;
-  }>(runtime, "POST", `/conversations/${encodeURIComponent(conversationId)}/messages`, payload);
+  }>(
+    runtime,
+    "POST",
+    `/conversations/${encodeURIComponent(conversationId)}/messages`,
+    payload,
+    { idempotencyKey: payload.clientMessageId, timeoutMs: 12_000 },
+  );
 }
 
 export async function cancelAgentUICoreMessage(conversationId: string, runtime?: HermesRuntimeConfig) {

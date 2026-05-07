@@ -4,7 +4,6 @@ import {
   coreEventToInboxMessage,
   getHermesConversationDetail,
   getHermesConversations,
-  sendHermesGatewayMessage,
 } from "../../lib/hermes";
 import {
   agentUICoreEventStreamUrl,
@@ -62,11 +61,13 @@ export function useAgentUIChat({ profile, runtimeConfig }: UseHermesChatOptions)
   const [modelSelectionByConversation, setModelSelectionByConversation] = useState<Record<string, HermesModelSelection>>({});
   const eventCursorsByProfileRef = useRef<Record<string, number>>({});
   const processedInboxEventIdsRef = useRef<Set<string>>(new Set());
-  const hiddenGatewayMessageIdsRef = useRef<Set<string>>(new Set());
   const pendingGatewayDeliveriesRef = useRef<HermesInboxMessage[]>([]);
   const pendingUnmappedDeliveryAttemptsRef = useRef<Record<string, number>>({});
   const pendingProfileSelectionRef = useRef<PendingProfileConversationSelection | null>(null);
   const coreEventSourceRef = useRef<EventSource | null>(null);
+  const activeDetailReconcileAtRef = useRef<Record<string, number>>({});
+  const sendInFlightRef = useRef(false);
+  const messagesByConversationRef = useRef(messagesByConversation);
   const activeRequestIdsByConversationRef = useRef(activeRequestIdsByConversation);
   const selectedConversationIdRef = useRef(selectedConversationId);
   const conversationChatIdsByConversationRef = useRef(conversationChatIdsByConversation);
@@ -92,6 +93,7 @@ export function useAgentUIChat({ profile, runtimeConfig }: UseHermesChatOptions)
     ? modelSelectionByConversation[visibleConversationId] || selectionFromConversation(selectedConversation)
     : null;
 
+  messagesByConversationRef.current = messagesByConversation;
   activeRequestIdsByConversationRef.current = activeRequestIdsByConversation;
   selectedConversationIdRef.current = selectedConversationId;
   conversationChatIdsByConversationRef.current = conversationChatIdsByConversation;
@@ -163,28 +165,10 @@ export function useAgentUIChat({ profile, runtimeConfig }: UseHermesChatOptions)
     const currentModelSelection = Array.isArray(options) ? null : options.currentModelSelection || null;
     const prompt = input.trim();
     if (!prompt && !attachments.length) return false;
+    if (sendInFlightRef.current) return false;
+    sendInFlightRef.current = true;
     const promptWithAttachments = formatPromptWithAttachments(prompt, attachments);
-    const previousConversationId = selectedConversationId;
-    let coreCreatedConversation: HermesConversation | null = null;
-    let conversationId = previousConversationId || "";
-    let gatewayChatId = previousConversationId ? chatIdForConversation(previousConversationId) : "";
-    if (!conversationId) {
-      const coreConversation = await createCoreConversationForPrompt(promptWithAttachments, modelSelection?.model || "");
-      if (coreConversation) {
-        coreCreatedConversation = coreConversation;
-        conversationId = coreConversation.id;
-        gatewayChatId = coreConversation.chatId || "";
-      }
-    }
-    const optimisticConversationId = conversationId ? null : `optimistic-${crypto.randomUUID()}`;
-    conversationId = conversationId || optimisticConversationId || "";
-    if (!conversationId || activeRequestIdsByConversation[conversationId]) return false;
-    const optimisticTimestamp = Math.floor(Date.now() / 1000);
-    const shouldSendViaCore = isCoreConversationId(conversationId);
-    if (!shouldSendViaCore) {
-      gatewayChatId = gatewayChatId || `desktop-${crypto.randomUUID()}`;
-    }
-
+    const previousConversationId = selectedConversationIdRef.current;
     const userMessage: Message = {
       id: crypto.randomUUID(),
       role: "user",
@@ -197,86 +181,140 @@ export function useAgentUIChat({ profile, runtimeConfig }: UseHermesChatOptions)
       content: "Thinking...",
       streaming: true,
     };
+    const optimisticConversationId = previousConversationId ? "" : `optimistic-${userMessage.id}`;
+    let coreCreatedConversation: HermesConversation | null = null;
+    let linkedFromConversationId = "";
+    let conversationId = previousConversationId || optimisticConversationId;
+    let activeConversationId = conversationId;
+    let gatewayChatId = previousConversationId ? chatIdForConversation(previousConversationId) : "";
+    if (!conversationId || activeRequestIdsByConversationRef.current[conversationId]) {
+      sendInFlightRef.current = false;
+      return false;
+    }
+    const optimisticTimestamp = Math.floor(Date.now() / 1000);
     setMessagesByConversation((current) => ({
       ...current,
-      [conversationId]: [...(current[conversationId] || []), userMessage, assistantMessage],
+      [activeConversationId]: [
+        ...(current[activeConversationId] || []),
+        userMessage,
+        assistantMessage,
+      ],
     }));
-    setConversationChatIdsByConversation((current) => ({ ...current, [conversationId]: gatewayChatId }));
+    setConversationChatIdsByConversation((current) => ({ ...current, [activeConversationId]: gatewayChatId }));
+    activeRequestIdsByConversationRef.current = {
+      ...activeRequestIdsByConversationRef.current,
+      [activeConversationId]: userMessage.id,
+    };
     setActiveRequestIdsByConversation((current) => ({
       ...current,
-      [conversationId]: userMessage.id,
+      [activeConversationId]: userMessage.id,
     }));
     setInput("");
-    if (optimisticConversationId || coreCreatedConversation) {
-      const localConversation = coreCreatedConversation || optimisticConversationFromPrompt(
-        conversationId,
-        promptWithAttachments,
-        optimisticTimestamp,
-        optimisticTimestamp,
-        gatewayChatId,
-        modelSelection?.model || "",
-      );
-      setSelectedConversationId(conversationId);
+    if (optimisticConversationId) {
+      selectedConversationIdRef.current = optimisticConversationId;
+      setSelectedConversationId(optimisticConversationId);
       setConversationsByProfile((current) =>
-        upsertConversationForProfile(current, profile, localConversation),
+        upsertConversationForProfile(
+          current,
+          profile,
+          optimisticConversationFromPrompt(
+            optimisticConversationId,
+            promptWithAttachments,
+            optimisticTimestamp,
+            optimisticTimestamp,
+            gatewayChatId,
+            modelSelection?.model || "",
+          ),
+        ),
       );
       setConversationsLoadedByProfile((current) => ({ ...current, [profile]: true }));
       setHistoryErrorsByProfile((current) => ({ ...current, [profile]: null }));
     }
 
     try {
+      if (!conversationId || !isCoreConversationId(conversationId)) {
+        const previousId = conversationId;
+        const existingCoreConversation = previousId && !isOptimisticConversationId(previousId)
+          ? coreConversationForLegacySelection(previousId, gatewayChatId)
+          : null;
+        const coreConversation = existingCoreConversation ||
+          await createCoreConversationForPrompt(
+            promptWithAttachments,
+            modelSelection?.model || "",
+            previousId && !isOptimisticConversationId(previousId)
+              ? {
+                  externalChatId: gatewayChatId,
+                  externalSessionId: previousId,
+                  createdBy: "desktop-legacy-link",
+                }
+              : undefined,
+          );
+        if (!coreConversation) throw new Error("Iris Core chat is unavailable. Message was not sent.");
+        coreCreatedConversation = coreConversation;
+        linkedFromConversationId = previousId && previousId !== coreConversation.id ? previousId : "";
+        conversationId = coreConversation.id;
+        activeConversationId = conversationId;
+        gatewayChatId = coreConversation.chatId || gatewayChatId;
+        if (linkedFromConversationId) {
+          selectedConversationIdRef.current = conversationId;
+          setSelectedConversationId(conversationId);
+          setMessagesByConversation((current) =>
+            migrateConversationMessages(current, linkedFromConversationId, conversationId),
+          );
+          activeRequestIdsByConversationRef.current = migrateActiveRequestId(
+            activeRequestIdsByConversationRef.current,
+            linkedFromConversationId,
+            conversationId,
+          );
+          setActiveRequestIdsByConversation((current) =>
+            migrateActiveRequestId(current, linkedFromConversationId, conversationId),
+          );
+          setConversationChatIdsByConversation((current) => {
+            const next = { ...current, [conversationId]: gatewayChatId };
+            delete next[linkedFromConversationId];
+            return next;
+          });
+          setModelSelectionByConversation((current) =>
+            migrateModelSelection(current, linkedFromConversationId, conversationId),
+          );
+        }
+      }
+      if (coreCreatedConversation) {
+        const localConversation = {
+          ...coreCreatedConversation,
+          lastActiveAt: Math.max(coreCreatedConversation.lastActiveAt || 0, optimisticTimestamp),
+          preview: compactConversationText(promptWithAttachments, 180) || coreCreatedConversation.preview,
+          messageCount: Math.max(coreCreatedConversation.messageCount || 0, 1),
+        };
+        setConversationsByProfile((current) =>
+          upsertConversationForProfile(
+            removeConversationForProfile(current, profile, linkedFromConversationId),
+            profile,
+            localConversation,
+          ),
+        );
+        setConversationsLoadedByProfile((current) => ({ ...current, [profile]: true }));
+        setHistoryErrorsByProfile((current) => ({ ...current, [profile]: null }));
+      }
       const switchSelection =
         !previousConversationId && shouldSendModelSwitch(modelSelection, currentModelSelection)
           ? modelSelection
           : null;
-      if (switchSelection && !shouldSendViaCore) {
-        const hiddenMessageId = crypto.randomUUID();
-        hiddenGatewayMessageIdsRef.current.add(hiddenMessageId);
-        const switchResult = await sendHermesGatewayMessage(
-          {
-            text: modelCommand(switchSelection),
-            chatId: gatewayChatId,
-            chatName: conversationTitleFromPrompt(promptWithAttachments),
-            messageId: hiddenMessageId,
-            profile,
-            userId: "agentui-user",
-            userName: "Iris User",
-            metadata: { hidden: true, kind: "model-switch" },
-          },
-          runtimeConfig,
-          );
-        if (!switchResult.ok) {
-          throw new Error(switchResult.error || "Hermes did not accept the model switch.");
-        }
-      }
       const coreMetadata: Record<string, unknown> = {};
       if (gatewayChatId) coreMetadata.chatId = gatewayChatId;
       if (switchSelection) coreMetadata.modelSwitch = switchSelection;
-      const result = shouldSendViaCore
-        ? await sendAgentUICoreMessage(
-            conversationId,
-            {
-              text: promptWithAttachments,
-              attachments,
-              model: modelSelection || null,
-              clientMessageId: userMessage.id,
-              metadata: coreMetadata,
-            },
-            runtimeConfig,
-          )
-        : await sendHermesGatewayMessage(
-            {
-              text: promptWithAttachments,
-              chatId: gatewayChatId,
-              chatName: conversationTitleFromPrompt(promptWithAttachments),
-              messageId: userMessage.id,
-              profile,
-              userId: "agentui-user",
-              userName: "Iris User",
-            },
-            runtimeConfig,
-          );
-      if (!result.ok) throw new Error(result.error || "Hermes gateway did not accept the message.");
+      const result = await sendAgentUICoreMessage(
+        conversationId,
+        {
+          text: promptWithAttachments,
+          attachments,
+          model: modelSelection || null,
+          clientMessageId: userMessage.id,
+          metadata: coreMetadata,
+        },
+        runtimeConfig,
+      );
+      if (!result.ok) throw new Error(result.error || "Iris Core did not accept the message.");
       const acceptedChatId = ("runtime" in result ? runtimeChatId(result.runtime) : "") || gatewayChatId;
       if (acceptedChatId) {
         setConversationChatIdsByConversation((current) => ({ ...current, [conversationId]: acceptedChatId }));
@@ -294,15 +332,24 @@ export function useAgentUIChat({ profile, runtimeConfig }: UseHermesChatOptions)
       const message =
         error instanceof Error
           ? error.message
-          : "Hermes gateway chat is not available yet.";
-      setActiveRequestIdsByConversation((current) => removeActiveRequestIds(current, conversationId));
-      updateConversationMessage(conversationId, assistantId, (current) => ({
+          : "Iris Core chat is not available yet.";
+      activeRequestIdsByConversationRef.current = removeActiveRequestIds(
+        activeRequestIdsByConversationRef.current,
+        activeConversationId,
+        conversationId,
+      );
+      setActiveRequestIdsByConversation((current) =>
+        removeActiveRequestIds(current, activeConversationId, conversationId),
+      );
+      updateConversationMessage(activeConversationId, assistantId, (current) => ({
         ...current,
         content: message,
         streaming: false,
       }));
       setInput(prompt);
       return false;
+    } finally {
+      sendInFlightRef.current = false;
     }
   }
 
@@ -329,26 +376,39 @@ export function useAgentUIChat({ profile, runtimeConfig }: UseHermesChatOptions)
         setConversationChatIdsByConversation((current) =>
           mergeConversationChatIdMap(current, endpointConversations),
         );
-        const selectedChatId = selectedConversationId
-          ? conversationChatIdsByConversation[selectedConversationId]
+        const currentSelectedConversationId = selectedConversationIdRef.current || selectedConversationId;
+        const selectedChatId = currentSelectedConversationId
+          ? conversationChatIdsByConversationRef.current[currentSelectedConversationId] ||
+            conversationChatIdsByConversation[currentSelectedConversationId]
           : "";
-        const selectedReplacement = selectedChatId
-          ? endpointConversations.find((conversation) => conversation.chatId === selectedChatId)
+        const selectedReplacement = currentSelectedConversationId
+          ? replacementForOptimisticConversation(
+              currentSelectedConversationId,
+              endpointConversations,
+              conversationsByProfileRef.current[targetProfile] || [],
+              selectedChatId,
+            )
           : null;
         if (
-          selectedConversationId &&
-          isOptimisticConversationId(selectedConversationId) &&
+          currentSelectedConversationId &&
+          isOptimisticConversationId(currentSelectedConversationId) &&
           selectedReplacement
         ) {
+          selectedConversationIdRef.current = selectedReplacement.id;
           setSelectedConversationId(selectedReplacement.id);
           setMessagesByConversation((current) =>
-            migrateConversationMessages(current, selectedConversationId, selectedReplacement.id),
+            migrateConversationMessages(current, currentSelectedConversationId, selectedReplacement.id),
           );
           setModelSelectionByConversation((current) =>
-            migrateModelSelection(current, selectedConversationId, selectedReplacement.id),
+            migrateModelSelection(current, currentSelectedConversationId, selectedReplacement.id),
+          );
+          activeRequestIdsByConversationRef.current = migrateActiveRequestId(
+            activeRequestIdsByConversationRef.current,
+            currentSelectedConversationId,
+            selectedReplacement.id,
           );
           setActiveRequestIdsByConversation((current) =>
-            migrateActiveRequestId(current, selectedConversationId, selectedReplacement.id),
+            migrateActiveRequestId(current, currentSelectedConversationId, selectedReplacement.id),
           );
           setConversationChatIdsByConversation((current) => ({
             ...current,
@@ -425,10 +485,13 @@ export function useAgentUIChat({ profile, runtimeConfig }: UseHermesChatOptions)
   async function refreshConversationDetail(
     conversationId: string,
     profileName = profile,
-    options: { silent?: boolean; select?: boolean } = {},
+    options: { silent?: boolean; select?: boolean; reconcileActive?: boolean } = {},
   ) {
     if (!conversationId) return false;
-    if (activeRequestIdsByConversationRef.current[conversationId] || isOptimisticConversationId(conversationId)) {
+    if (
+      isOptimisticConversationId(conversationId) ||
+      (activeRequestIdsByConversationRef.current[conversationId] && !options.reconcileActive)
+    ) {
       setHistoryErrorsByProfile((current) => ({ ...current, [profileName]: null }));
       return false;
     }
@@ -472,7 +535,12 @@ export function useAgentUIChat({ profile, runtimeConfig }: UseHermesChatOptions)
           [loadedConversation.id]: loadedConversation.chatId || "",
         }));
       }
-      if (!activeRequestIdsByConversationRef.current[loadedConversation.id]) {
+      const activeRequestId =
+        activeRequestIdsByConversationRef.current[loadedConversation.id] ||
+        activeRequestIdsByConversationRef.current[conversationId] ||
+        "";
+      const canReconcileActive = activeRequestCompletedByHistory(result.messages, activeRequestId);
+      if (!activeRequestId || canReconcileActive) {
         setMessagesByConversation((current) => {
           const localMessages = current[loadedConversation.id] || [];
           if (shouldPreserveLocalMessagesOnEmptyHistory(localMessages, result.messages)) {
@@ -483,6 +551,22 @@ export function useAgentUIChat({ profile, runtimeConfig }: UseHermesChatOptions)
             [loadedConversation.id]: toAppMessages(result.messages),
           };
         });
+      }
+      if (canReconcileActive) {
+        const relatedConversationIds = conversationIdsForChatId(
+          loadedConversation.chatId || "",
+          loadedConversation.id,
+          conversationChatIdsByConversationRef.current,
+        );
+        activeRequestIdsByConversationRef.current = removeActiveRequestIds(
+          activeRequestIdsByConversationRef.current,
+          conversationId,
+          loadedConversation.id,
+          ...relatedConversationIds,
+        );
+        setActiveRequestIdsByConversation((current) =>
+          removeActiveRequestIds(current, conversationId, loadedConversation.id, ...relatedConversationIds),
+        );
       }
       setHistoryErrorsByProfile((current) => ({ ...current, [profileName]: result.warning || null }));
       return true;
@@ -516,7 +600,15 @@ export function useAgentUIChat({ profile, runtimeConfig }: UseHermesChatOptions)
     setHistoryErrorsByProfile((current) => ({ ...current, [profileName]: null }));
   }
 
-  async function createCoreConversationForPrompt(promptText: string, model = "") {
+  async function createCoreConversationForPrompt(
+    promptText: string,
+    model = "",
+    link?: {
+      externalChatId?: string;
+      externalSessionId?: string;
+      createdBy?: string;
+    },
+  ) {
     try {
       const agentResult = await getAgentUICoreAgentForProfile(profile, runtimeConfig);
       if (!agentResult.ok || !agentResult.agent) return null;
@@ -524,7 +616,9 @@ export function useAgentUIChat({ profile, runtimeConfig }: UseHermesChatOptions)
         {
           agentId: agentResult.agent.id,
           title: conversationTitleFromPrompt(promptText),
-          metadata: { model },
+          externalChatId: link?.externalChatId,
+          externalSessionId: link?.externalSessionId,
+          metadata: { model, ...(link?.createdBy ? { createdBy: link.createdBy } : {}) },
         },
         runtimeConfig,
       );
@@ -547,6 +641,17 @@ export function useAgentUIChat({ profile, runtimeConfig }: UseHermesChatOptions)
     }
   }
 
+  function coreConversationForLegacySelection(conversationId: string, chatId = "") {
+    if (!conversationId || isCoreConversationId(conversationId)) return null;
+    if (chatId) {
+      const byChatId = conversations.find(
+        (conversation) => isCoreConversationId(conversation.id) && conversation.chatId === chatId,
+      );
+      if (byChatId) return byChatId;
+    }
+    return null;
+  }
+
   function scheduleConversationRetry(
     targetProfile: string,
     selectConversationId: string | null | undefined,
@@ -565,23 +670,7 @@ export function useAgentUIChat({ profile, runtimeConfig }: UseHermesChatOptions)
   async function cancelMessage() {
     if (!selectedConversationId || !activeRequestId) return;
     const conversationId = selectedConversationId;
-    const chatId = chatIdForConversation(conversationId);
-    if (isCoreConversationId(conversationId)) {
-      await cancelAgentUICoreMessage(conversationId, runtimeConfig);
-    } else if (chatId) {
-      await sendHermesGatewayMessage(
-        {
-          text: "/stop",
-          chatId,
-          chatName: "Iris",
-          messageId: crypto.randomUUID(),
-          profile,
-          userId: "agentui-user",
-          userName: "Iris User",
-        },
-        runtimeConfig,
-      );
-    }
+    if (isCoreConversationId(conversationId)) await cancelAgentUICoreMessage(conversationId, runtimeConfig);
     setActiveRequestIdsByConversation((current) => removeActiveRequestIds(current, conversationId));
   }
 
@@ -596,6 +685,7 @@ export function useAgentUIChat({ profile, runtimeConfig }: UseHermesChatOptions)
       [profile]: result.cursor || cursor,
     };
     handleCoreEvents(result.events);
+    reconcileActiveConversationDetails();
   }
 
   function handleCoreEvents(events: AgentUICoreEvent[]) {
@@ -632,11 +722,9 @@ export function useAgentUIChat({ profile, runtimeConfig }: UseHermesChatOptions)
         continue;
       }
       const replyTo = stringMetadata(delivery.metadata, "replyTo") || stringMetadata(delivery.metadata, "reply_to");
-      const hidden = booleanMetadata(delivery.metadata, "hidden") === true ||
-        hiddenGatewayMessageIdsRef.current.has(replyTo);
+      const hidden = isHiddenDeliveryMetadata(delivery.metadata);
       if (hidden) {
         processedInboxEventIdsRef.current.add(delivery.id);
-        if (replyTo) hiddenGatewayMessageIdsRef.current.delete(replyTo);
         handledDelivery = true;
         continue;
       }
@@ -662,6 +750,12 @@ export function useAgentUIChat({ profile, runtimeConfig }: UseHermesChatOptions)
         conversationId,
         conversationChatIdsByConversationRef.current,
       );
+      const existingBeforeMerge = mergeRelatedConversationMessages(
+        messagesByConversationRef.current,
+        relatedConversationIds,
+      );
+      const completesActiveStream = !isStreamDelivery &&
+        deliveryCompletesActiveStream(existingBeforeMerge, delivery);
 
       handledDelivery = true;
       processedInboxEventIdsRef.current.add(delivery.id);
@@ -686,7 +780,7 @@ export function useAgentUIChat({ profile, runtimeConfig }: UseHermesChatOptions)
         setActiveRequestIdsByConversation((current) =>
           removeActiveRequestIds(current, ...relatedConversationIds),
         );
-      } else if (isFinalStreamDelivery) {
+      } else if (isFinalStreamDelivery || completesActiveStream) {
         setActiveRequestIdsByConversation((current) =>
           removeActiveRequestIds(current, ...relatedConversationIds),
         );
@@ -699,6 +793,19 @@ export function useAgentUIChat({ profile, runtimeConfig }: UseHermesChatOptions)
     pendingGatewayDeliveriesRef.current = remaining.slice(-100);
     if (handledDelivery || unmappedDelivery) {
       void refreshConversations({ profileName: profile, silent: true });
+    }
+  }
+
+  function reconcileActiveConversationDetails() {
+    const nowMs = Date.now();
+    for (const conversationId of Object.keys(activeRequestIdsByConversationRef.current)) {
+      if (isOptimisticConversationId(conversationId)) continue;
+      if (nowMs - (activeDetailReconcileAtRef.current[conversationId] || 0) < 1500) continue;
+      activeDetailReconcileAtRef.current = {
+        ...activeDetailReconcileAtRef.current,
+        [conversationId]: nowMs,
+      };
+      void refreshConversationDetail(conversationId, profile, { silent: true, reconcileActive: true });
     }
   }
 
@@ -843,6 +950,10 @@ export function toAppMessages(messages: HermesConversationMessage[]): Message[] 
   let pendingToolEvents: HermesStreamToolEvent[] = [];
 
   for (const message of messages) {
+    if (isHiddenConversationMessage(message)) {
+      continue;
+    }
+
     if (message.role === "assistant" && message.toolCalls?.length) {
       pendingToolEvents = message.toolCalls.reduce(
         (current, toolCall, index) =>
@@ -905,6 +1016,19 @@ function toAppMessage(message: HermesConversationMessage): Message {
     role: message.role,
     content: message.toolName ? `${message.toolName}\n${content}`.trim() : content,
   };
+}
+
+function isHiddenConversationMessage(message: HermesConversationMessage) {
+  return isHiddenDeliveryMetadata(message.metadata || {});
+}
+
+export function isHiddenDeliveryMetadata(metadata: Record<string, unknown>) {
+  return (
+    booleanMetadata(metadata, "hidden") === true ||
+    stringMetadata(metadata, "kind") === "model-switch" ||
+    stringMetadata(metadata, "replyTo").endsWith("-model") ||
+    stringMetadata(metadata, "reply_to").endsWith("-model")
+  );
 }
 
 export function stripModelSwitchNote(content: string) {
@@ -1055,30 +1179,6 @@ function lastPathSegment(parts: string[]) {
   return parts.length ? parts[parts.length - 1] : "";
 }
 
-function optimisticConversationFromPrompt(
-  id: string,
-  prompt: string,
-  startedAt: number,
-  lastActiveAt = startedAt,
-  chatId = "",
-  model = "",
-): HermesConversation {
-  const title = conversationTitleFromPrompt(prompt);
-  return {
-    id,
-    source: "optimistic",
-    model,
-    title,
-    preview: compactConversationText(prompt, 180) || title,
-    chatId,
-    origin: chatId ? { platform: "agentui", chat_id: chatId } : {},
-    startedAt,
-    endedAt: null,
-    lastActiveAt,
-    messageCount: id.startsWith("optimistic-") ? 1 : 2,
-  };
-}
-
 export function shouldSendModelSwitch(
   selected: HermesModelSelection | null,
   current: HermesModelSelection | null,
@@ -1086,11 +1186,6 @@ export function shouldSendModelSwitch(
   if (!selected?.model) return false;
   if (!current?.model) return true;
   return selected.model !== current.model || selected.provider !== current.provider;
-}
-
-export function modelCommand(selection: HermesModelSelection) {
-  const provider = selection.provider ? ` --provider ${selection.provider}` : "";
-  return `/model ${selection.model}${provider}`;
 }
 
 function selectionFromConversation(conversation: HermesConversation | null): HermesModelSelection | null {
@@ -1124,6 +1219,18 @@ function upsertConversationForProfile(
   };
 }
 
+function removeConversationForProfile(
+  current: Record<string, HermesConversation[]>,
+  profile: string,
+  conversationId: string,
+) {
+  if (!conversationId) return current;
+  const conversations = current[profile] || [];
+  const filtered = conversations.filter((item) => item.id !== conversationId);
+  if (filtered.length === conversations.length) return current;
+  return { ...current, [profile]: filtered };
+}
+
 function mergeOptimisticConversations(
   current: HermesConversation[],
   endpointConversations: HermesConversation[],
@@ -1134,9 +1241,55 @@ function mergeOptimisticConversations(
     (conversation) =>
       isOptimisticConversation(conversation) &&
       !endpointIds.has(conversation.id) &&
-      (!conversation.chatId || !endpointChatIds.has(conversation.chatId)),
+      (!conversation.chatId || !endpointChatIds.has(conversation.chatId)) &&
+      !endpointConversations.some((endpointConversation) =>
+        conversationsLikelyMatch(conversation, endpointConversation),
+      ),
   );
   return sortConversationsByActivity([...optimisticConversations, ...endpointConversations]);
+}
+
+function replacementForOptimisticConversation(
+  conversationId: string,
+  endpointConversations: HermesConversation[],
+  currentConversations: HermesConversation[],
+  selectedChatId = "",
+) {
+  if (!isOptimisticConversationId(conversationId)) return null;
+  if (selectedChatId) {
+    const chatMatch = endpointConversations.find((conversation) => conversation.chatId === selectedChatId);
+    if (chatMatch) return chatMatch;
+  }
+  const optimisticConversation = currentConversations.find((conversation) => conversation.id === conversationId);
+  if (!optimisticConversation) return null;
+  return endpointConversations.find((conversation) =>
+    conversationsLikelyMatch(optimisticConversation, conversation),
+  ) || null;
+}
+
+function conversationsLikelyMatch(left: HermesConversation, right: HermesConversation) {
+  if (isOptimisticConversation(right)) return false;
+  if (left.chatId && right.chatId && left.chatId === right.chatId) return true;
+  const leftTitle = normalizeConversationLabel(left.title);
+  const rightTitle = normalizeConversationLabel(right.title);
+  const leftPreview = normalizeConversationLabel(left.preview);
+  const rightPreview = normalizeConversationLabel(right.preview);
+  const labelMatches = Boolean(
+    (leftTitle && leftTitle === rightTitle) ||
+    (leftPreview && leftPreview === rightPreview) ||
+    (leftTitle && rightPreview && leftTitle === rightPreview) ||
+    (leftPreview && rightTitle && leftPreview === rightTitle),
+  );
+  if (!labelMatches) return false;
+  return conversationActivityTimestamp(right) >= conversationActivityTimestamp(left) - 2;
+}
+
+function normalizeConversationLabel(value: string | null | undefined) {
+  return (value || "").trim();
+}
+
+function conversationActivityTimestamp(conversation: HermesConversation) {
+  return conversation.lastActiveAt || conversation.startedAt || 0;
 }
 
 function isOptimisticConversation(conversation: HermesConversation) {
@@ -1234,6 +1387,24 @@ export function shouldPreserveLocalMessagesOnEmptyHistory(
   return localMessages.length > 0 && historyMessages.length === 0;
 }
 
+export function activeRequestCompletedByHistory(
+  historyMessages: HermesConversationMessage[],
+  activeRequestId: string,
+) {
+  if (!activeRequestId) return false;
+  let sawActiveUser = false;
+  return historyMessages.some((message) => {
+    if (message.role === "user" && message.id === activeRequestId) {
+      sawActiveUser = true;
+      return false;
+    }
+    if (message.role !== "assistant" || message.status !== "completed" || !message.content.trim()) return false;
+    const metadata = message.metadata || {};
+    const replyTo = stringMetadata(metadata, "replyTo") || stringMetadata(metadata, "reply_to");
+    return replyTo === activeRequestId || sawActiveUser;
+  });
+}
+
 function stringMetadata(metadata: Record<string, unknown>, key: string) {
   const value = metadata[key];
   return typeof value === "string" ? value : "";
@@ -1277,7 +1448,7 @@ export function mergeStreamDelivery(
     ...message,
     id: message.id || streamMessageId,
     streamMessageId,
-    content,
+    content: mergedStreamSnapshotContent(message.content, content),
     streaming,
   });
   const streamIndex = existing.findIndex(
@@ -1310,8 +1481,19 @@ export function mergeCompletedDelivery(
 ) {
   const streamingIndex = lastStreamingAssistantIndex(existing);
   if (streamingIndex === -1) {
-    if (duplicateCompletedDeliveryIndex(existing, delivery, replyTo) !== -1) {
-      return coalescePostStreamAttachments(existing);
+    const duplicateIndex = duplicateCompletedDeliveryIndex(existing, delivery, replyTo);
+    if (duplicateIndex !== -1) {
+      return coalescePostStreamAttachments(
+        existing.map((message, index) =>
+          index === duplicateIndex
+            ? {
+                ...message,
+                content: mergedCompletedStreamContent(message.content, delivery.content),
+                streaming: false,
+              }
+            : message,
+        ),
+      );
     }
 
     const attachIndex = postStreamAttachmentIndex(existing, delivery);
@@ -1343,15 +1525,26 @@ export function mergeCompletedDelivery(
   return coalescePostStreamAttachments(
     existing.map((message, index) =>
       index === streamingIndex
-        ? {
-            ...message,
-            id: delivery.id,
-            content: delivery.content,
-            streaming: false,
-          }
+        ? completedStreamingMessage(message, delivery)
         : message,
     ),
   );
+}
+
+function completedStreamingMessage(message: Message, delivery: HermesInboxMessage): Message {
+  if (!message.streamMessageId) {
+    return {
+      ...message,
+      id: delivery.id,
+      content: delivery.content,
+      streaming: false,
+    };
+  }
+  return {
+    ...message,
+    content: mergedCompletedStreamContent(message.content, delivery.content),
+    streaming: false,
+  };
 }
 
 function lastStreamingAssistantIndex(messages: Message[]) {
@@ -1381,7 +1574,7 @@ function duplicateCompletedDeliveryIndex(messages: Message[], delivery: HermesIn
     if (message.role === "user") return -1;
     if (message.role !== "assistant") continue;
     const canCoalesce = Boolean(message.streamMessageId || replyTo);
-    if (canCoalesce && normalizeMessageContent(message.content) === content) return index;
+    if (canCoalesce && equivalentMessageContent(message.content, delivery.content)) return index;
   }
   return -1;
 }
@@ -1390,11 +1583,59 @@ function normalizeMessageContent(content: string) {
   return content.trim().split("\n").map((line) => line.trimEnd()).join("\n");
 }
 
+function equivalentMessageContent(left: string, right: string) {
+  return compactWhitespace(left) === compactWhitespace(right);
+}
+
+function compactWhitespace(content: string) {
+  return normalizeMessageContent(content)
+    .replace(/\s+/g, " ")
+    .replace(/\s+([,.;:!?])/g, "$1")
+    .trim();
+}
+
+function mergedCompletedStreamContent(existing: string, delivery: string) {
+  const existingContent = existing.trimEnd();
+  const deliveryContent = delivery.trim();
+  if (!existingContent) return deliveryContent;
+  if (!deliveryContent) return existingContent;
+  if (compactWhitespace(existingContent) === compactWhitespace(deliveryContent)) return deliveryContent;
+  if (compactWhitespace(deliveryContent).startsWith(compactWhitespace(existingContent))) return deliveryContent;
+  if (compactWhitespace(existingContent).includes(compactWhitespace(deliveryContent))) return existingContent;
+  const overlapped = overlappingMessageContent(existingContent, deliveryContent);
+  if (overlapped) return overlapped;
+  return appendMessageContent(existingContent, deliveryContent);
+}
+
+function mergedStreamSnapshotContent(existing: string, delivery: string) {
+  const existingContent = existing.trimEnd();
+  const deliveryContent = delivery.trim();
+  if (!existingContent) return deliveryContent;
+  if (!deliveryContent) return existingContent;
+  const compactExisting = compactWhitespace(existingContent);
+  const compactDelivery = compactWhitespace(deliveryContent);
+  if (compactDelivery.startsWith(compactExisting)) return deliveryContent;
+  if (compactExisting.startsWith(compactDelivery)) return existingContent;
+  return compactDelivery.length >= compactExisting.length ? deliveryContent : existingContent;
+}
+
+function overlappingMessageContent(existing: string, delivery: string) {
+  const maxOverlap = Math.min(existing.length, delivery.length);
+  for (let length = maxOverlap; length > 11; length -= 1) {
+    const prefix = delivery.slice(0, length);
+    const index = existing.lastIndexOf(prefix);
+    if (index !== -1) return `${existing.slice(0, index)}${delivery}`;
+  }
+  return "";
+}
+
 function appendMessageContent(content: string, addition: string) {
   const left = content.trimEnd();
   const right = addition.trim();
   if (!left) return right;
-  if (!right || left.includes(right)) return left;
+  if (!right || left.includes(right) || equivalentMessageContent(left, right)) return left;
+  if (/^[,.;:!?)]/.test(right)) return `${left}${right}`;
+  if (!/[.!?:;)]$/.test(left) && /^[a-z]/.test(right)) return `${left} ${right}`;
   return `${left}\n\n${right}`;
 }
 
@@ -1437,6 +1678,14 @@ function isPostStreamAttachmentContent(content: string) {
     /^(?:🖼️\s*)?Image:\s+/i.test(trimmed) ||
     /^(?:📎\s*)?File:\s+/i.test(trimmed) ||
     /^Media:\s+/i.test(trimmed)
+  );
+}
+
+export function deliveryCompletesActiveStream(messages: Message[], delivery: HermesInboxMessage) {
+  if (delivery.source !== "hermes-gateway" || !delivery.content.trim()) return false;
+  if (isPostStreamAttachmentContent(delivery.content)) return false;
+  return messages.some((message) =>
+    message.role === "assistant" && Boolean(message.streamMessageId) && message.streaming,
   );
 }
 
@@ -1543,6 +1792,29 @@ function sortConversationsByActivity(conversations: HermesConversation[]) {
   );
 }
 
+function optimisticConversationFromPrompt(
+  conversationId: string,
+  prompt: string,
+  startedAt: number,
+  lastActiveAt: number,
+  chatId: string,
+  model: string,
+): HermesConversation {
+  return {
+    id: conversationId,
+    source: "optimistic",
+    model,
+    title: conversationTitleFromPrompt(prompt),
+    preview: compactConversationText(prompt, 180),
+    chatId,
+    origin: {},
+    startedAt,
+    endedAt: null,
+    lastActiveAt,
+    messageCount: 1,
+  };
+}
+
 function conversationTimestamp(conversation: HermesConversation) {
   return conversation.lastActiveAt || conversation.startedAt || 0;
 }
@@ -1561,8 +1833,17 @@ function compactConversationText(value: string, maxLength: number) {
   return `${compacted.slice(0, Math.max(0, maxLength - 3)).trimEnd()}...`;
 }
 
-function isTransientConversationLoadError(message?: string | null) {
-  return typeof message === "string" && message.toLowerCase().includes("unable to open database file");
+export function isTransientConversationLoadError(message?: string | null) {
+  if (typeof message !== "string") return false;
+  const normalized = message.toLowerCase();
+  return (
+    normalized.includes("unable to open database file") ||
+    normalized.includes("timed out") ||
+    normalized.includes("timeout") ||
+    normalized.includes("aborterror") ||
+    normalized.includes("networkerror") ||
+    normalized.includes("failed to fetch")
+  );
 }
 
 function stringValue(value: unknown) {

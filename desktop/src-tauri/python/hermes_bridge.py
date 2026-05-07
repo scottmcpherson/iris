@@ -23,8 +23,6 @@ from typing import Any
 
 DEFAULT_GATEWAY_URL = "http://127.0.0.1:8642"
 DEFAULT_MANAGEMENT_URL = "http://127.0.0.1:8765"
-DEFAULT_AGENTUI_GATEWAY_URL = "http://127.0.0.1:8766"
-AGENTUI_GATEWAY_PORT_OFFSET = 124
 HERMES_API_TOKEN_ACCOUNT = "hermes-api-token"
 SIDECAR_TOKEN_ACCOUNT = "hermes-sidecar-token"
 REMOTE_TOKEN_SERVICE = "Hermes Agent Desktop"
@@ -52,14 +50,6 @@ def main() -> None:
             "skills": skills,
             "skill_detail": skill_detail,
             "skill_save": skill_save,
-            "conversations": conversations,
-            "conversation_detail": conversation_detail,
-            "models": models,
-            "slash_commands": slash_commands,
-            "slash_complete": slash_complete,
-            "inbox_messages": inbox_messages,
-            "inbox_ack": inbox_ack,
-            "gateway_message": gateway_message,
             "profile_create": profile_create,
             "profile_clone": profile_clone,
             "profile_rename": profile_rename,
@@ -242,90 +232,6 @@ def memory_file_stats(directory: Path) -> dict[str, Any]:
     return {"bytes": total, "updatedAt": int(updated_at) if updated_at else None}
 
 
-def conversations(payload: dict[str, Any]) -> dict[str, Any]:
-    selected = profile_name_from_payload(payload)
-    limit = bounded_int(payload.get("limit"), default=80, minimum=1, maximum=200)
-    path = (
-        f"/profiles/{urllib.parse.quote(selected, safe='')}/conversations"
-        f"?{urllib.parse.urlencode({'limit': limit})}"
-    )
-    result = management_get(payload, path, timeout=8)
-    if not result.get("ok"):
-        return {
-            "ok": False,
-            "profile": selected,
-            "path": management_endpoint(management_base_url(payload), path),
-            "source": "hermes-management",
-            "schemaVersion": None,
-            "conversations": [],
-            "error": result.get("error") or "Could not load conversations from the management API.",
-        }
-    rows = result.get("conversations") if isinstance(result.get("conversations"), list) else []
-    schema_version = number_or_none(result.get("schemaVersion"))
-    return {
-        "ok": True,
-        "profile": str(result.get("profile") or selected),
-        "path": str(result.get("path") or ""),
-        "source": "hermes-management",
-        "schemaVersion": int(schema_version) if schema_version is not None else None,
-        "conversations": [
-            normalize_management_conversation(item)
-            for item in rows
-            if isinstance(item, dict)
-        ],
-        "warning": result.get("warning"),
-    }
-
-
-def conversation_detail(payload: dict[str, Any]) -> dict[str, Any]:
-    conversation_id = str(payload.get("conversationId") or payload.get("sessionId") or "").strip()
-    if not conversation_id:
-        return {"ok": False, "error": "conversationId is required.", "conversation": None, "messages": []}
-
-    management_result = fetch_management_conversation_detail(payload, conversation_id)
-    if management_result.get("ok"):
-        return management_result
-
-    return {
-        "ok": False,
-        "profile": profile_name_from_payload(payload),
-        "path": management_base_url(payload),
-        "source": "hermes-management",
-        "error": "Conversation history is not available from the selected route.",
-        "conversation": None,
-        "messages": [],
-    }
-
-
-def inbox_messages(payload: dict[str, Any]) -> dict[str, Any]:
-    after = bounded_int(payload.get("after"), default=0, minimum=0, maximum=2_000_000_000)
-    limit = bounded_int(payload.get("limit"), default=50, minimum=1, maximum=200)
-    query = {"after": after, "limit": limit}
-    selected = str(payload.get("profile") or "").strip()
-    if selected:
-        query["profile"] = selected
-    path = f"/inbox/messages?{urllib.parse.urlencode(query)}"
-    result = management_get(payload, path, timeout=8)
-    if not result.get("ok"):
-        return {"ok": False, "messages": [], "cursor": after, "error": result.get("error") or "Could not load inbox messages."}
-    return {
-        "ok": True,
-        "messages": result.get("messages") if isinstance(result.get("messages"), list) else [],
-        "cursor": int(number_or_none(result.get("cursor")) or after),
-    }
-
-
-def inbox_ack(payload: dict[str, Any]) -> dict[str, Any]:
-    message_id = required_identifier(payload, "messageId")
-    return management_request(
-        payload,
-        f"/inbox/messages/{urllib.parse.quote(message_id, safe='')}/ack",
-        method="POST",
-        body={},
-        timeout=8,
-    )
-
-
 def core_request(payload: dict[str, Any]) -> dict[str, Any]:
     method = str(payload.get("method") or "GET").upper()
     if method not in {"GET", "POST", "PATCH", "DELETE"}:
@@ -339,101 +245,8 @@ def core_request(payload: dict[str, Any]) -> dict[str, Any]:
     return management_request(payload, path, method=method, body=body, timeout=12)
 
 
-def required_identifier(payload: dict[str, Any], key: str) -> str:
-    value = str(payload.get(key) or payload.get(key.replace("Id", "_id")) or "").strip()
-    if not value:
-        raise ValueError(f"{key} is required.")
-    return value
-
 def profile_name_from_payload(payload: dict[str, Any]) -> str:
     return str(payload.get("profile") or "default")
-
-
-def conversation_summary(row: dict[str, Any]) -> dict[str, Any]:
-    preview = compact_text(message_content_text(row.get("preview") or ""), 160)
-    title = compact_text(str(row.get("title") or ""), 80)
-    return {
-        "id": str(row.get("id") or ""),
-        "source": str(row.get("source") or ""),
-        "model": str(row.get("model") or ""),
-        "title": title or preview or "Untitled session",
-        "preview": preview,
-        "chatId": str(row.get("chatId") or row.get("chat_id") or ""),
-        "origin": row.get("origin") if isinstance(row.get("origin"), dict) else {},
-        "startedAt": number_or_none(row.get("started_at")),
-        "endedAt": number_or_none(row.get("ended_at")),
-        "lastActiveAt": number_or_none(row.get("last_active")) or number_or_none(row.get("ended_at")) or number_or_none(row.get("started_at")),
-        "messageCount": int(row.get("message_count") or 0),
-    }
-
-
-def normalize_management_conversation(row: dict[str, Any]) -> dict[str, Any]:
-    preview = compact_text(message_content_text(row.get("preview") or ""), 180)
-    title = compact_text(str(row.get("title") or ""), 90)
-    started_at = number_or_none(row.get("startedAt") if "startedAt" in row else row.get("started_at"))
-    ended_at = number_or_none(row.get("endedAt") if "endedAt" in row else row.get("ended_at"))
-    last_active_at = number_or_none(row.get("lastActiveAt") if "lastActiveAt" in row else row.get("last_active"))
-    try:
-        message_count = int(row.get("messageCount") if "messageCount" in row else row.get("message_count") or 0)
-    except (TypeError, ValueError):
-        message_count = 0
-    return {
-        "id": str(row.get("id") or ""),
-        "source": str(row.get("source") or "hermes-management"),
-        "model": str(row.get("model") or ""),
-        "title": title or preview or "Untitled session",
-        "preview": preview,
-        "chatId": str(row.get("chatId") or row.get("chat_id") or ""),
-        "origin": row.get("origin") if isinstance(row.get("origin"), dict) else {},
-        "startedAt": started_at,
-        "endedAt": ended_at,
-        "lastActiveAt": last_active_at or ended_at or started_at,
-        "messageCount": message_count,
-    }
-
-
-def safe_message_role(value: Any) -> str:
-    role = str(value or "assistant")
-    return role if role in {"system", "user", "assistant", "tool"} else "assistant"
-
-
-def message_content_text(value: Any) -> str:
-    if value is None:
-        return ""
-    if isinstance(value, str):
-        text = value
-        stripped = text.strip()
-        if stripped.startswith("[") or stripped.startswith("{"):
-            try:
-                return message_content_text(json.loads(stripped))
-            except Exception:
-                return text
-        return text
-    if isinstance(value, list):
-        parts = []
-        for item in value:
-            if isinstance(item, str):
-                parts.append(item)
-            elif isinstance(item, dict):
-                if item.get("type") in {"text", "input_text", "output_text"}:
-                    parts.append(str(item.get("text") or ""))
-                elif item.get("type") in {"image_url", "input_image"}:
-                    parts.append("[image]")
-                else:
-                    parts.append(json.dumps(item, ensure_ascii=False))
-        return "\n".join(part for part in parts if part)
-    if isinstance(value, dict):
-        if value.get("type") in {"text", "input_text", "output_text"}:
-            return str(value.get("text") or "")
-        return json.dumps(value, ensure_ascii=False)
-    return str(value)
-
-
-def compact_text(value: str, limit: int) -> str:
-    text = re.sub(r"\s+", " ", value).strip()
-    if len(text) <= limit:
-        return text
-    return text[: max(0, limit - 1)].rstrip() + "…"
 
 
 def number_or_none(value: Any) -> float | None:
@@ -443,14 +256,6 @@ def number_or_none(value: Any) -> float | None:
         return float(value)
     except (TypeError, ValueError):
         return None
-
-
-def bounded_int(value: Any, *, default: int, minimum: int, maximum: int) -> int:
-    try:
-        number = int(value)
-    except (TypeError, ValueError):
-        number = default
-    return min(max(number, minimum), maximum)
 
 
 def count_skills(skills_dir: Path) -> int:
@@ -735,8 +540,9 @@ def status(payload: dict[str, Any]) -> dict[str, Any]:
         or found_profiles[0]
     )
     active_api = http_probe(config["apiUrl"], payload)
+    management_endpoint_status = endpoint_status(management_status, management_endpoint(config["managementApiUrl"], "/status"))
 
-    connected = bool(active_api.get("ok"))
+    connected = bool(active_api.get("ok") or management_endpoint_status.get("ok"))
 
     return {
         "ok": True,
@@ -757,7 +563,7 @@ def status(payload: dict[str, Any]) -> dict[str, Any]:
         "gatewayStatus": {"ok": False},
         "remoteStatus": {"ok": False},
         "activeApiStatus": active_api,
-        "managementStatus": endpoint_status(management_status, management_endpoint(config["managementApiUrl"], "/status")),
+        "managementStatus": management_endpoint_status,
         "error": None if profiles_result.get("ok") else profiles_result.get("error"),
     }
 
@@ -1196,385 +1002,6 @@ def append_skill_history(skill_dir: Path, rel: Path, path: Path) -> None:
     destination.write_text(json.dumps(history, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
-def gateway_message(payload: dict[str, Any]) -> dict[str, Any]:
-    text = str(payload.get("text") or payload.get("prompt") or "").strip()
-    if not text:
-        return {"ok": False, "error": "Message text is empty."}
-
-    chat_id = str(payload.get("chatId") or payload.get("chat_id") or "desktop").strip()
-    if not chat_id:
-        return {"ok": False, "error": "chatId is required."}
-
-    message_id = str(payload.get("messageId") or payload.get("message_id") or "").strip() or f"agentui-{int(time.time() * 1000)}"
-    selected = profile_name_from_payload(payload)
-    body = {
-        "chatId": chat_id,
-        "chatName": str(payload.get("chatName") or payload.get("chat_name") or chat_id).strip(),
-        "profile": selected,
-        "userId": str(payload.get("userId") or payload.get("user_id") or "agentui-user").strip(),
-        "userName": str(payload.get("userName") or payload.get("user_name") or "Iris User").strip(),
-        "messageId": message_id,
-        "text": text,
-    }
-    metadata = payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {}
-    if metadata:
-        body["metadata"] = {str(key): value for key, value in metadata.items()}
-    url = agentui_gateway_endpoint(payload, "/agentui/messages")
-    token = agentui_platform_token(payload)
-    if not token:
-        return {"ok": False, "error": "IRIS_TOKEN or AGENTUI_TOKEN is required for Iris gateway chat."}
-
-    result = http_json_request(
-        url,
-        {"agentuiToken": token},
-        method="POST",
-        body=body,
-        timeout=8,
-        token_kind="agentui",
-    )
-    if not result.get("ok"):
-        return {
-            "ok": False,
-            "url": result.get("url") or url,
-            "status": result.get("status"),
-            "error": result.get("error") or "Iris gateway message failed.",
-        }
-    parsed = result.get("json") if isinstance(result.get("json"), dict) else {}
-    if parsed.get("ok") is False:
-        return {**parsed, "url": result.get("url") or url, "status": result.get("status")}
-    return {**parsed, "ok": True, "profile": str(parsed.get("profile") or selected), "url": result.get("url") or url, "status": result.get("status")}
-
-
-def models(payload: dict[str, Any]) -> dict[str, Any]:
-    selected = profile_name_from_payload(payload)
-    query = urllib.parse.urlencode({"maxModels": int_value(payload.get("maxModels"), 100, 1, 200)})
-    url = agentui_gateway_endpoint(payload, f"/agentui/models?{query}")
-    token = agentui_platform_token(payload)
-    if not token:
-        return {
-            "ok": False,
-            "profile": selected,
-            "current": None,
-            "providers": [],
-            "generatedAt": int(time.time()),
-            "url": url,
-            "error": "IRIS_TOKEN or AGENTUI_TOKEN is required for model catalog discovery.",
-        }
-
-    result = http_get_json(url, {"agentuiToken": token}, timeout=8, token_kind="agentui")
-    if not result.get("ok"):
-        return {
-            "ok": False,
-            "profile": selected,
-            "current": None,
-            "providers": [],
-            "generatedAt": int(time.time()),
-            "url": result.get("url") or url,
-            "status": result.get("status"),
-            "error": result.get("error") or "Iris model catalog is unavailable.",
-        }
-
-    parsed = result.get("json") if isinstance(result.get("json"), dict) else {}
-    providers = [
-        normalize_model_provider(row)
-        for row in (parsed.get("providers") if isinstance(parsed.get("providers"), list) else [])
-        if isinstance(row, dict)
-    ]
-    current = normalize_model_selection(parsed.get("current"))
-    return {
-        "ok": bool(parsed.get("ok", True)),
-        "profile": str(parsed.get("profile") or selected),
-        "current": current,
-        "providers": providers,
-        "generatedAt": int_value(parsed.get("generatedAt") or parsed.get("generated_at"), int(time.time()), 0, 4_102_444_800),
-        "url": result.get("url") or url,
-        "status": result.get("status"),
-        **({"error": str(parsed.get("error"))} if parsed.get("error") else {}),
-    }
-
-
-def slash_commands(payload: dict[str, Any]) -> dict[str, Any]:
-    selected = profile_name_from_payload(payload)
-    url = agentui_gateway_endpoint(payload, "/agentui/slash-commands")
-    token = agentui_platform_token(payload)
-    if not token:
-        return {
-            "ok": False,
-            "profile": selected,
-            "commands": [],
-            "generatedAt": int(time.time()),
-            "url": url,
-            "error": "IRIS_TOKEN or AGENTUI_TOKEN is required for slash command discovery.",
-        }
-
-    result = http_get_json(url, {"agentuiToken": token}, timeout=8, token_kind="agentui")
-    if not result.get("ok"):
-        return {
-            "ok": False,
-            "profile": selected,
-            "commands": [],
-            "generatedAt": int(time.time()),
-            "url": result.get("url") or url,
-            "status": result.get("status"),
-            "error": result.get("error") or "Iris slash command catalog is unavailable.",
-        }
-
-    parsed = result.get("json") if isinstance(result.get("json"), dict) else {}
-    commands = [
-        normalize_slash_command(row)
-        for row in (parsed.get("commands") if isinstance(parsed.get("commands"), list) else [])
-        if isinstance(row, dict)
-    ]
-    return {
-        "ok": bool(parsed.get("ok", True)),
-        "profile": str(parsed.get("profile") or selected),
-        "commands": commands,
-        "generatedAt": int_value(parsed.get("generatedAt") or parsed.get("generated_at"), int(time.time()), 0, 4_102_444_800),
-        "url": result.get("url") or url,
-        "status": result.get("status"),
-        **({"warning": str(parsed.get("warning"))} if parsed.get("warning") else {}),
-        **({"error": str(parsed.get("error"))} if parsed.get("error") else {}),
-    }
-
-
-def slash_complete(payload: dict[str, Any]) -> dict[str, Any]:
-    text = str(payload.get("text") or "").strip()
-    selected = profile_name_from_payload(payload)
-    url = agentui_gateway_endpoint(payload, "/agentui/slash-complete")
-    token = agentui_platform_token(payload)
-    if not token:
-        return {
-            "ok": False,
-            "items": [],
-            "replaceFrom": 1,
-            "url": url,
-            "error": "IRIS_TOKEN or AGENTUI_TOKEN is required for slash command completion.",
-        }
-
-    result = http_json_request(
-        url,
-        {"agentuiToken": token},
-        method="POST",
-        body={"text": text, "limit": int_value(payload.get("limit"), 30, 1, 100)},
-        timeout=8,
-        token_kind="agentui",
-    )
-    if not result.get("ok"):
-        return {
-            "ok": False,
-            "items": [],
-            "replaceFrom": 1,
-            "url": result.get("url") or url,
-            "status": result.get("status"),
-            "error": result.get("error") or "Iris slash command completion is unavailable.",
-        }
-
-    parsed = result.get("json") if isinstance(result.get("json"), dict) else {}
-    items = [
-        normalize_slash_completion_item(row)
-        for row in (parsed.get("items") if isinstance(parsed.get("items"), list) else [])
-        if isinstance(row, dict)
-    ]
-    return {
-        "ok": bool(parsed.get("ok", True)),
-        "items": items,
-        "replaceFrom": int_value(parsed.get("replaceFrom") or parsed.get("replace_from"), 1, 0, len(text)),
-        "url": result.get("url") or url,
-        "status": result.get("status"),
-        **({"error": str(parsed.get("error"))} if parsed.get("error") else {}),
-        **({"profile": str(parsed.get("profile") or selected)} if parsed.get("profile") else {}),
-    }
-
-
-def fetch_management_conversation_detail(payload: dict[str, Any], conversation_id: str) -> dict[str, Any]:
-    selected = profile_name_from_payload(payload)
-    path = (
-        f"/profiles/{urllib.parse.quote(selected, safe='')}/conversations/"
-        f"{urllib.parse.quote(conversation_id, safe='')}"
-    )
-    result = management_get(payload, path, timeout=8)
-    if not result.get("ok"):
-        return {"ok": False, "error": result.get("error") or "Could not load conversation from management API."}
-
-    conversation = result.get("conversation") if isinstance(result.get("conversation"), dict) else {}
-    messages = result.get("messages") if isinstance(result.get("messages"), list) else []
-    return {
-        "ok": True,
-        "profile": str(result.get("profile") or selected),
-        "path": str(result.get("path") or ""),
-        "source": "hermes-management",
-        "schemaVersion": int(schema_version) if (schema_version := number_or_none(result.get("schemaVersion"))) is not None else None,
-        "conversation": normalize_management_conversation(conversation),
-        "messages": [
-            normalize_management_message(item, conversation_id, index)
-            for index, item in enumerate(messages)
-            if isinstance(item, dict)
-        ],
-        "warning": result.get("warning"),
-    }
-
-
-def normalize_management_message(item: dict[str, Any], conversation_id: str, index: int) -> dict[str, Any]:
-    message_id = str(item.get("id") or f"{conversation_id}-{index}").strip()
-    session_id = str(item.get("sessionId") or item.get("session_id") or conversation_id).strip()
-    return {
-        "id": message_id,
-        "sessionId": session_id,
-        "role": safe_message_role(item.get("role")),
-        "content": message_content_text(item.get("content") or item.get("text") or item.get("message")),
-        "toolName": str(item.get("toolName") or item.get("tool_name") or ""),
-        "toolCallId": str(item.get("toolCallId") or item.get("tool_call_id") or item.get("call_id") or ""),
-        "toolCalls": normalize_tool_calls(item.get("toolCalls") or item.get("tool_calls")),
-        "timestamp": number_or_none(item.get("timestamp") or item.get("createdAt") or item.get("created_at")),
-    }
-
-
-def normalize_tool_calls(value: Any) -> list[dict[str, Any]]:
-    if value in (None, ""):
-        return []
-    loaded: Any = value
-    if isinstance(value, str):
-        try:
-            loaded = json.loads(value)
-        except json.JSONDecodeError:
-            return []
-    if isinstance(loaded, dict):
-        return [loaded]
-    if isinstance(loaded, list):
-        return [item for item in loaded if isinstance(item, dict)]
-    return []
-
-
-def agentui_gateway_base_url(payload: dict[str, Any]) -> str:
-    runtime = payload.get("runtime") if isinstance(payload.get("runtime"), dict) else {}
-    profile = profile_name_from_payload(payload)
-    explicit_routes = runtime.get("agentuiGatewayUrls") if isinstance(runtime.get("agentuiGatewayUrls"), dict) else {}
-    explicit_profile_url = explicit_routes.get(profile) if isinstance(explicit_routes, dict) else ""
-    if explicit_profile_url:
-        return str(explicit_profile_url).strip()
-
-    derived_profile_url = derive_agentui_gateway_url(payload, runtime, profile)
-    if profile != "default" and derived_profile_url:
-        return derived_profile_url
-
-    return str(
-        runtime.get("agentuiGatewayUrl")
-        or payload.get("agentuiGatewayUrl")
-        or os.environ.get("IRIS_TO_HERMES_URL")
-        or os.environ.get("AGENTUI_TO_HERMES_URL")
-        or derived_profile_url
-        or DEFAULT_AGENTUI_GATEWAY_URL
-    ).strip()
-
-
-def derive_agentui_gateway_url(payload: dict[str, Any], runtime: dict[str, Any], profile: str) -> str:
-    source_url = (
-        profile_url_from_runtime(runtime, "profileApiUrls", profile)
-        or str(runtime.get("gatewayUrl") or payload.get("gatewayUrl") or "").strip()
-    )
-    if not source_url:
-        return ""
-    parsed = urllib.parse.urlparse(source_url)
-    if parsed.scheme not in {"http", "https"} or not parsed.hostname or not parsed.port:
-        return ""
-    port = parsed.port + AGENTUI_GATEWAY_PORT_OFFSET
-    netloc = parsed.hostname
-    if ":" in netloc and not netloc.startswith("["):
-        netloc = f"[{netloc}]"
-    return urllib.parse.urlunparse((parsed.scheme, f"{netloc}:{port}", "", "", "", ""))
-
-
-def agentui_gateway_endpoint(payload: dict[str, Any], path: str) -> str:
-    base = agentui_gateway_base_url(payload).rstrip("/")
-    return f"{base}{path if path.startswith('/') else f'/{path}'}"
-
-
-def normalize_model_provider(row: dict[str, Any]) -> dict[str, Any]:
-    models_value = row.get("models")
-    models = [str(item) for item in models_value if str(item).strip()] if isinstance(models_value, list) else []
-    slug = str(row.get("slug") or row.get("provider") or row.get("id") or "").strip()
-    return {
-        "slug": slug,
-        "name": str(row.get("name") or row.get("label") or slug or "Provider").strip(),
-        "isCurrent": bool(row.get("isCurrent", row.get("is_current", False))),
-        "isUserDefined": bool(row.get("isUserDefined", row.get("is_user_defined", False))),
-        "models": models,
-        "totalModels": int_value(row.get("totalModels") or row.get("total_models"), len(models), 0, 100_000),
-        "source": str(row.get("source") or "").strip(),
-    }
-
-
-def normalize_model_selection(value: Any) -> dict[str, str] | None:
-    if not isinstance(value, dict):
-        return None
-    model = str(value.get("model") or "").strip()
-    provider = str(value.get("provider") or value.get("slug") or "").strip()
-    if not model:
-        return None
-    selection = {"provider": provider, "model": model}
-    provider_name = str(value.get("providerName") or value.get("provider_name") or value.get("name") or "").strip()
-    if provider_name:
-        selection["providerName"] = provider_name
-    return selection
-
-
-def normalize_slash_command(row: dict[str, Any]) -> dict[str, Any]:
-    source = str(row.get("source") or "hermes").strip()
-    if source not in {"hermes", "skill", "quick-command", "plugin"}:
-        source = "hermes"
-    text = str(row.get("text") or row.get("label") or row.get("name") or "").strip()
-    if text and not text.startswith("/"):
-        text = f"/{text}"
-    name = str(row.get("name") or text.lstrip("/") or "").strip().lstrip("/")
-    aliases = string_list(row.get("aliases"))
-    subcommands = string_list(row.get("subcommands") or row.get("sub_commands"))
-    args_hint = str(row.get("argsHint") or row.get("args_hint") or "").strip()
-    command_id = str(row.get("id") or f"{source}:{name}" or text).strip()
-    return {
-        "id": command_id,
-        "name": name,
-        "text": text or f"/{name}",
-        "label": str(row.get("label") or text or f"/{name}").strip(),
-        "description": str(row.get("description") or row.get("help") or "").strip(),
-        "category": str(row.get("category") or "Commands").strip(),
-        "source": source,
-        "aliases": aliases,
-        "argsHint": args_hint,
-        "subcommands": subcommands,
-        "requiresArgument": bool(row.get("requiresArgument", row.get("requires_argument", args_hint.startswith("<")))),
-    }
-
-
-def normalize_slash_completion_item(row: dict[str, Any]) -> dict[str, str]:
-    text = str(row.get("text") or row.get("value") or row.get("display") or "").strip()
-    item = {
-        "text": text,
-        "display": str(row.get("display") or text).strip(),
-    }
-    meta = str(row.get("meta") or row.get("description") or "").strip()
-    if meta:
-        item["meta"] = meta
-    return item
-
-
-def string_list(value: Any) -> list[str]:
-    if isinstance(value, list):
-        return [str(item).strip() for item in value if str(item).strip()]
-    if isinstance(value, tuple):
-        return [str(item).strip() for item in value if str(item).strip()]
-    if isinstance(value, str) and value.strip():
-        return [item.strip() for item in re.split(r"[, ]+", value) if item.strip()]
-    return []
-
-
-def int_value(value: Any, default: int, minimum: int, maximum: int) -> int:
-    try:
-        parsed = int(value)
-    except (TypeError, ValueError):
-        parsed = default
-    return min(max(parsed, minimum), maximum)
-
-
 def api_error_message(parsed: dict[str, Any]) -> str:
     error = parsed.get("error")
     if isinstance(error, dict):
@@ -1598,11 +1025,6 @@ def api_error_text(text: str) -> str:
 
 def http_headers(payload: dict[str, Any], token_kind: str = "hermes") -> dict[str, str]:
     headers = {"Content-Type": "application/json", "Accept": "application/json"}
-    if str(token_kind or "").strip() == "agentui":
-        token = str(payload.get("agentuiToken") or "").strip() or agentui_platform_token(payload)
-        if token:
-            headers["Authorization"] = f"Bearer {token}"
-        return headers
     kind = credential_kind(token_kind)
     payload_key = "sidecarToken" if kind == "sidecar" else "hermesApiToken"
     token = str(payload.get(payload_key) or payload.get("remoteToken") or "").strip() or read_remote_token(kind)
@@ -1720,35 +1142,6 @@ def read_env_token(kind: str) -> str:
             or os.environ.get("HERMES_REMOTE_TOKEN", "").strip()
         )
     return os.environ.get("HERMES_API_TOKEN", "").strip() or os.environ.get("HERMES_REMOTE_TOKEN", "").strip()
-
-
-def agentui_platform_token(payload: dict[str, Any] | None = None) -> str:
-    payload = payload or {}
-    runtime = payload.get("runtime") if isinstance(payload.get("runtime"), dict) else {}
-    return (
-        str(payload.get("agentuiToken") or runtime.get("agentuiToken") or "").strip()
-        or os.environ.get("IRIS_TOKEN", "").strip()
-        or os.environ.get("AGENTUI_TOKEN", "").strip()
-        or os.environ.get("IRIS_INBOX_TOKEN", "").strip()
-        or os.environ.get("AGENTUI_INBOX_TOKEN", "").strip()
-        or env_file_value(hermes_root() / ".env", "IRIS_TOKEN")
-        or env_file_value(hermes_root() / ".env", "AGENTUI_TOKEN")
-        or env_file_value(hermes_root() / ".env", "IRIS_INBOX_TOKEN")
-        or env_file_value(hermes_root() / ".env", "AGENTUI_INBOX_TOKEN")
-    )
-
-
-def env_file_value(path: Path, key: str) -> str:
-    text = safe_read(path)
-    if not text:
-        return ""
-    prefix = f"{key}="
-    for line in text.splitlines():
-        stripped = line.strip()
-        if not stripped or stripped.startswith("#") or not stripped.startswith(prefix):
-            continue
-        return stripped[len(prefix):].strip().strip("\"'")
-    return ""
 
 
 def read_keychain_token(account: str) -> str:

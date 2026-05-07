@@ -731,6 +731,13 @@ class CoreStore:
             row = connection.execute("select * from message_events where cursor = ?", (cursor,)).fetchone()
         return event_from_row(row)
 
+    def get_event(self, event_id: str) -> dict[str, Any] | None:
+        if not event_id:
+            return None
+        with self.connect() as connection:
+            row = connection.execute("select * from message_events where id = ?", (event_id,)).fetchone()
+        return event_from_row(row) if row else None
+
     def upsert_message(
         self,
         *,

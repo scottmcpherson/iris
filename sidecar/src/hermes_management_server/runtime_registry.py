@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from typing import Any
 
 from .core_store import CoreStore, DEFAULT_RUNTIME_ID
@@ -24,15 +25,20 @@ class RuntimeRegistry:
         self.management_url = management_url
         self.agentui_token = agentui_token
         self.hermes_api_token = hermes_api_token
+        self._last_agent_sync_at = 0.0
 
     def ensure_default_runtime(self) -> dict[str, Any]:
         runtime = self.core_store.upsert_runtime(local_runtime_config(management_url=self.management_url))
         self.sync_hermes_agents(runtime)
         return runtime
 
-    def sync_hermes_agents(self, runtime: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+    def sync_hermes_agents(self, runtime: dict[str, Any] | None = None, *, force: bool = False) -> list[dict[str, Any]]:
         runtime = runtime or self.core_store.get_runtime(DEFAULT_RUNTIME_ID) or self.ensure_default_runtime()
+        existing_agents = self.core_store.list_agents()
+        if existing_agents and not force and time.monotonic() - self._last_agent_sync_at < 10:
+            return existing_agents
         profiles = self.hermes_store.profiles()
+        self._last_agent_sync_at = time.monotonic()
         return self.core_store.sync_agents_from_profiles(runtime, profiles)
 
     def runtimes(self) -> list[dict[str, Any]]:

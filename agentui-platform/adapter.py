@@ -7,6 +7,7 @@ import logging
 import os
 import re
 import time
+import asyncio
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -36,6 +37,10 @@ MAX_INBOUND_BYTES = 256_000
 class AgentUIAdapter(BasePlatformAdapter):
     SUPPORTS_MESSAGE_EDITING = True
     REQUIRES_EDIT_FINALIZE = True
+    # Compatibility for current Hermes GatewayStreamConsumer, which reads this
+    # class attribute and does not treat 0 as "no limit" yet. The documented
+    # plugin contract below still registers max_message_length=0.
+    MAX_MESSAGE_LENGTH = 1_000_000
 
     def __init__(self, config, **_kwargs):
         super().__init__(config=config, platform=Platform("agentui"))
@@ -297,7 +302,7 @@ class AgentUIAdapter(BasePlatformAdapter):
             raw_message=payload,
             message_id=message_id,
         )
-        await self.handle_message(event)
+        asyncio.create_task(self.handle_message(event))
         return web.json_response(  # type: ignore[union-attr]
             {
                 "ok": True,
@@ -475,7 +480,7 @@ def register(ctx) -> None:
         is_connected=is_connected,
         required_env=["AGENTUI_BASE_URL", "AGENTUI_TOKEN"],
         install_hint="Set IRIS_BASE_URL and IRIS_TOKEN, then restart the Hermes gateway. AGENTUI_BASE_URL and AGENTUI_TOKEN remain compatible.",
-        max_message_length=28000,
+        max_message_length=0,
         pii_safe=False,
         emoji="A",
         allow_update_command=False,

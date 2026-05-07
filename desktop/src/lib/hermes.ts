@@ -16,7 +16,6 @@ import type {
   HermesMemory,
   HermesMemorySaveResult,
   HermesModelCatalog,
-  HermesInboxMessagesResult,
   HermesConversationDetail,
   HermesConversationsResult,
   HermesRuntimeConfig,
@@ -97,51 +96,77 @@ export async function saveHermesSkill(payload: {
 }
 
 export async function getHermesConversations(profile?: string, limit = 80, runtime?: HermesRuntimeConfig) {
+  const targetProfile = profile || "default";
   try {
-    const agentResult = await getAgentUICoreAgentForProfile(profile || "default", runtime);
-    if (agentResult.ok && agentResult.agent) {
-      const result = await getAgentUICoreConversations(agentResult.agent.id, limit, runtime);
-      if (result.ok) {
-        return {
-          ok: true,
-          profile: agentResult.agent.runtimeProfile,
-          path: `${runtime?.managementApiUrl || "http://127.0.0.1:8765"}/v1/conversations`,
-          source: "hermes-management" as const,
-          schemaVersion: null,
-          conversations: result.conversations.map(coreConversationToHermes),
-        };
-      }
+    const agentResult = await getAgentUICoreAgentForProfile(targetProfile, runtime);
+    if (!agentResult.ok || !agentResult.agent) {
+      return emptyConversations(
+        targetProfile,
+        agentResultError(agentResult, "Could not resolve Iris agent."),
+        runtime,
+      );
     }
-  } catch {
-    // Fall back to the legacy bridge below.
+    const result = await getAgentUICoreConversations(agentResult.agent.id, limit, runtime);
+    if (!result.ok) {
+      return emptyConversations(
+        agentResult.agent.runtimeProfile,
+        result.error || "Could not load conversations from Iris Core.",
+        runtime,
+      );
+    }
+    return {
+      ok: true,
+      profile: agentResult.agent.runtimeProfile,
+      path: `${runtime?.managementApiUrl || "http://127.0.0.1:8765"}/v1/conversations`,
+      source: "hermes-management" as const,
+      schemaVersion: null,
+      conversations: result.conversations.map(coreConversationToHermes),
+    };
+  } catch (error) {
+    return emptyConversations(
+      targetProfile,
+      error instanceof Error ? error.message : "Could not load conversations from Iris Core.",
+      runtime,
+    );
   }
-  return bridge<HermesConversationsResult>("conversations", { profile, limit, ...runtimePayload(runtime) });
 }
 
 export async function getHermesModelCatalog(profile?: string, runtime?: HermesRuntimeConfig) {
+  const targetProfile = profile || "default";
   try {
-    const agentResult = await getAgentUICoreAgentForProfile(profile || "default", runtime);
-    if (agentResult.ok && agentResult.agent) {
-      const result = await getAgentUICoreModels(agentResult.agent.id, runtime);
-      if (result.ok) return result as HermesModelCatalog;
+    const agentResult = await getAgentUICoreAgentForProfile(targetProfile, runtime);
+    if (!agentResult.ok || !agentResult.agent) {
+      return emptyModelCatalog(targetProfile, agentResultError(agentResult, "Could not resolve Iris agent."));
     }
-  } catch {
-    // Fall back to the legacy bridge below.
+    const result = await getAgentUICoreModels(agentResult.agent.id, runtime);
+    return result.ok
+      ? result as HermesModelCatalog
+      : emptyModelCatalog(targetProfile, result.error || "Could not load model catalog from Iris Core.");
+  } catch (error) {
+    return emptyModelCatalog(
+      targetProfile,
+      error instanceof Error ? error.message : "Could not load model catalog from Iris Core.",
+    );
   }
-  return bridge<HermesModelCatalog>("models", { profile, ...runtimePayload(runtime) });
 }
 
 export async function getHermesSlashCommands(profile?: string, runtime?: HermesRuntimeConfig) {
+  const targetProfile = profile || "default";
   try {
-    const agentResult = await getAgentUICoreAgentForProfile(profile || "default", runtime);
-    if (agentResult.ok && agentResult.agent) {
-      const result = await getAgentUICoreSlashCommands(agentResult.agent.id, runtime);
-      if (result.ok) return result as HermesSlashCommandsResult;
+    const agentResult = await getAgentUICoreAgentForProfile(targetProfile, runtime);
+    if (!agentResult.ok || !agentResult.agent) {
+      return emptySlashCommands(targetProfile, agentResultError(agentResult, "Could not resolve Iris agent."));
     }
-  } catch {
-    // Fall back to the legacy bridge below.
+    const result = await getAgentUICoreSlashCommands(agentResult.agent.id, runtime);
+    return result.ok
+      ? result as HermesSlashCommandsResult
+      : emptySlashCommands(targetProfile, result.error || "Could not load slash commands from Iris Core.");
+  } catch (error) {
+    return emptySlashCommands(
+      targetProfile,
+      error instanceof Error ? error.message : "Could not load slash commands from Iris Core.",
+    );
   }
-  return bridge<HermesSlashCommandsResult>("slash_commands", { profile, ...runtimePayload(runtime) });
 }
 
 export async function completeHermesSlashCommand(
@@ -151,18 +176,18 @@ export async function completeHermesSlashCommand(
 ) {
   try {
     const agentResult = await getAgentUICoreAgentForProfile(profile || "default", runtime);
-    if (agentResult.ok && agentResult.agent) {
-      const result = await completeAgentUICoreSlashCommand(agentResult.agent.id, text, runtime);
-      if (result.ok) return result as HermesSlashCompletionResult;
+    if (!agentResult.ok || !agentResult.agent) {
+      return emptySlashCompletion(agentResultError(agentResult, "Could not resolve Iris agent."));
     }
-  } catch {
-    // Fall back to the legacy bridge below.
+    const result = await completeAgentUICoreSlashCommand(agentResult.agent.id, text, runtime);
+    return result.ok
+      ? result as HermesSlashCompletionResult
+      : emptySlashCompletion(result.error || "Could not complete slash command through Iris Core.");
+  } catch (error) {
+    return emptySlashCompletion(
+      error instanceof Error ? error.message : "Could not complete slash command through Iris Core.",
+    );
   }
-  return bridge<HermesSlashCompletionResult>("slash_complete", {
-    text,
-    profile,
-    ...runtimePayload(runtime),
-  });
 }
 
 export async function getHermesConversationDetail(
@@ -170,34 +195,46 @@ export async function getHermesConversationDetail(
   conversationId: string,
   runtime?: HermesRuntimeConfig,
 ) {
-  if (conversationId.startsWith("conv_")) {
-    try {
-      const [conversationResult, messagesResult] = await Promise.all([
-        getAgentUICoreConversation(conversationId, runtime),
-        getAgentUICoreConversationMessages(conversationId, runtime),
-      ]);
-      if (conversationResult.ok && messagesResult.ok) {
-        return {
-          ok: true,
-          profile: conversationResult.conversation.runtimeProfile || profile || "default",
-          path: `${runtime?.managementApiUrl || "http://127.0.0.1:8765"}/v1/conversations/${conversationId}`,
-          source: "hermes-management" as const,
-          schemaVersion: null,
-          conversation: coreConversationToHermes(conversationResult.conversation),
-          messages: messagesResult.messages.map((message) => coreMessageToHermes(message, conversationId)),
-          warning: messagesResult.warning,
-          error: undefined,
-        };
-      }
-    } catch {
-      // Fall back to the legacy bridge below.
-    }
+  if (!conversationId.startsWith("conv_")) {
+    return emptyConversationDetail(
+      profile || "default",
+      conversationId,
+      "Legacy conversation history is no longer loaded directly. Start a follow-up to link it through Iris Core.",
+      runtime,
+    );
   }
-  return bridge<HermesConversationDetail>("conversation_detail", {
-    profile,
-    conversationId,
-    ...runtimePayload(runtime),
-  });
+  try {
+    const [conversationResult, messagesResult] = await Promise.all([
+      getAgentUICoreConversation(conversationId, runtime),
+      getAgentUICoreConversationMessages(conversationId, runtime),
+    ]);
+    if (!conversationResult.ok || !messagesResult.ok) {
+      return emptyConversationDetail(
+        profile || "default",
+        conversationId,
+        conversationResult.error || messagesResult.error || "Could not load this conversation from Iris Core.",
+        runtime,
+      );
+    }
+    return {
+      ok: true,
+      profile: conversationResult.conversation.runtimeProfile || profile || "default",
+      path: `${runtime?.managementApiUrl || "http://127.0.0.1:8765"}/v1/conversations/${conversationId}`,
+      source: "hermes-management" as const,
+      schemaVersion: null,
+      conversation: coreConversationToHermes(conversationResult.conversation),
+      messages: messagesResult.messages.map((message) => coreMessageToHermes(message, conversationId)),
+      warning: messagesResult.warning,
+      error: undefined,
+    };
+  } catch (error) {
+    return emptyConversationDetail(
+      profile || "default",
+      conversationId,
+      error instanceof Error ? error.message : "Could not load this conversation from Iris Core.",
+      runtime,
+    );
+  }
 }
 
 export async function getHermesInboxMessages(
@@ -207,10 +244,20 @@ export async function getHermesInboxMessages(
   profile?: string,
 ) {
   try {
-    const agentResult = profile
-      ? await getAgentUICoreAgentForProfile(profile, runtime)
-      : null;
-    const result = await getAgentUICoreEvents(after, limit, runtime, agentResult?.agent?.id || "");
+    let agentId = "";
+    if (profile) {
+      const agentResult = await getAgentUICoreAgentForProfile(profile, runtime);
+      if (!agentResult.ok || !agentResult.agent) {
+        return {
+          ok: false,
+          messages: [],
+          cursor: after,
+          error: agentResultError(agentResult, "Could not resolve Iris agent."),
+        };
+      }
+      agentId = agentResult.agent.id;
+    }
+    const result = await getAgentUICoreEvents(after, limit, runtime, agentId);
     if (result.ok) {
       const messages = result.events
         .filter((event) => event.type.startsWith("message.assistant") || event.type === "message.error")
@@ -221,36 +268,20 @@ export async function getHermesInboxMessages(
         cursor: result.cursor,
       };
     }
-  } catch {
-    // Fall back to the legacy inbox below.
+    return {
+      ok: false,
+      messages: [],
+      cursor: after,
+      error: result.error || "Could not load events from Iris Core.",
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      messages: [],
+      cursor: after,
+      error: error instanceof Error ? error.message : "Could not load events from Iris Core.",
+    };
   }
-  return bridge<HermesInboxMessagesResult>("inbox_messages", { after, limit, profile, ...runtimePayload(runtime) });
-}
-
-export async function acknowledgeHermesInboxMessage(messageId: string, runtime?: HermesRuntimeConfig) {
-  return bridge<{ ok: boolean; error?: string }>("inbox_ack", { messageId, ...runtimePayload(runtime) });
-}
-
-export async function sendHermesGatewayMessage(
-  payload: {
-    text: string;
-    chatId: string;
-    chatName?: string;
-    messageId: string;
-    profile?: string;
-    userId?: string;
-    userName?: string;
-    metadata?: Record<string, unknown>;
-  },
-  runtime?: HermesRuntimeConfig,
-) {
-  return bridge<{
-    accepted?: boolean;
-    platform?: string;
-    chatId?: string;
-    messageId?: string;
-    url?: string;
-  }>("gateway_message", { ...payload, ...runtimePayload(runtime) });
 }
 
 export async function createHermesProfile(name: string, runtime?: HermesRuntimeConfig) {
@@ -285,6 +316,74 @@ export async function deleteRemoteCredential(kind: RemoteCredentialKind) {
   return bridge<RemoteCredentialStatus>("remote_credential_delete", { kind });
 }
 
+function emptyModelCatalog(profile: string, error: string): HermesModelCatalog {
+  return {
+    ok: false,
+    profile,
+    current: null,
+    providers: [],
+    generatedAt: Math.floor(Date.now() / 1000),
+    error,
+  };
+}
+
+function emptyConversations(profile: string, error: string, runtime?: HermesRuntimeConfig): HermesConversationsResult {
+  return {
+    ok: false,
+    profile,
+    path: `${runtime?.managementApiUrl || "http://127.0.0.1:8765"}/v1/conversations`,
+    source: "hermes-management",
+    schemaVersion: null,
+    conversations: [],
+    error,
+  };
+}
+
+function emptyConversationDetail(
+  profile: string,
+  conversationId: string,
+  error: string,
+  runtime?: HermesRuntimeConfig,
+): HermesConversationDetail {
+  return {
+    ok: false,
+    profile,
+    path: `${runtime?.managementApiUrl || "http://127.0.0.1:8765"}/v1/conversations/${conversationId}`,
+    source: "hermes-management",
+    schemaVersion: null,
+    conversation: null,
+    messages: [],
+    error,
+  };
+}
+
+function emptySlashCommands(profile: string, error: string): HermesSlashCommandsResult {
+  return {
+    ok: false,
+    profile,
+    commands: [],
+    generatedAt: Math.floor(Date.now() / 1000),
+    error,
+  };
+}
+
+function emptySlashCompletion(error: string): HermesSlashCompletionResult {
+  return {
+    ok: false,
+    items: [],
+    replaceFrom: 1,
+    error,
+  };
+}
+
+function agentResultError(result: unknown, fallback: string) {
+  if (result && typeof result === "object" && "error" in result) {
+    const error = (result as { error?: unknown }).error;
+    if (typeof error === "string" && error.trim()) return error;
+  }
+  return fallback;
+}
+
 function coreConversationToHermes(conversation: AgentUICoreConversation) {
   return {
     id: conversation.id,
@@ -307,10 +406,12 @@ function coreMessageToHermes(message: AgentUICoreMessage, conversationId: string
     sessionId: conversationId,
     role: message.role,
     content: message.content,
+    status: message.status,
     toolName: String(message.metadata?.toolName || ""),
     toolCallId: String(message.metadata?.toolCallId || ""),
     toolCalls: Array.isArray(message.metadata?.toolCalls) ? message.metadata.toolCalls : [],
     timestamp: message.createdAt || null,
+    metadata: message.metadata || {},
   };
 }
 

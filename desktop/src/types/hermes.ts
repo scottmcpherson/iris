@@ -188,10 +188,12 @@ export type HermesConversationMessage = {
   sessionId: string;
   role: "system" | "user" | "assistant" | "tool";
   content: string;
+  status?: "pending" | "streaming" | "completed" | "error";
   toolName: string;
   toolCallId?: string;
   toolCalls?: HermesHistoryToolCall[];
   timestamp: number | null;
+  metadata?: Record<string, unknown>;
 };
 
 export type HermesHistoryToolCall = {
