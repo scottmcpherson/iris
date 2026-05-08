@@ -277,10 +277,14 @@ class HermesRuntimeAdapter:
         by_content_hash = overlays["byContentHash"]
         enriched: list[dict[str, Any]] = []
         for message in messages:
-            if message.get("role") != "user":
+            if message.get("role") not in {"user", "assistant"}:
                 enriched.append(message)
                 continue
             overlay = by_message_id.get(str(message.get("id") or ""))
+            metadata = message.get("metadata") if isinstance(message.get("metadata"), dict) else {}
+            stream_message_id = str(metadata.get("streamMessageId") or metadata.get("stream_message_id") or "")
+            if not overlay and stream_message_id:
+                overlay = by_message_id.get(stream_message_id)
             if not overlay:
                 overlay = next(
                     (
@@ -293,7 +297,6 @@ class HermesRuntimeAdapter:
             if not overlay:
                 enriched.append(message)
                 continue
-            metadata = message.get("metadata") if isinstance(message.get("metadata"), dict) else {}
             enriched.append({**message, "metadata": {**metadata, **overlay}})
         return enriched
 

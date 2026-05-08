@@ -11,6 +11,7 @@ import os
 import re
 import secrets
 import time
+import urllib.parse
 from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
@@ -368,6 +369,339 @@ def normalize_attachment_refs(refs: list[Any]) -> list[dict[str, Any]]:
         if isinstance(ref, dict):
             normalized.append(ref)
     return normalized
+
+
+GENERATED_FILE_MARKER_RE = re.compile(
+    r"^\s*(?:Generated\s+file:\s*)?(?:[^\w\s/\\.:~-]+\s*)?(MEDIA|Media|Image|File):\s*(.+?)\s*$"
+)
+
+
+def generated_file_refs_from_delivery(content: str, metadata: dict[str, Any]) -> list[dict[str, Any]]:
+    refs: list[dict[str, Any]] = []
+    for item in metadata.get("generatedFiles") if isinstance(metadata.get("generatedFiles"), list) else []:
+        if isinstance(item, dict):
+            refs.extend(generated_file_ref_from_mapping(item, source="metadata.generatedFiles"))
+    for item in metadata.get("attachments") if isinstance(metadata.get("attachments"), list) else []:
+        if isinstance(item, dict):
+            refs.extend(generated_file_ref_from_mapping(item, source="metadata.attachments"))
+    refs.extend(generated_file_refs_from_text(content))
+    return dedupe_generated_file_refs(refs)
+
+
+def generated_file_refs_from_text(content: str) -> list[dict[str, Any]]:
+    refs: list[dict[str, Any]] = []
+    for line in str(content or "").splitlines():
+        marker = generated_file_marker_from_line(line)
+        if not marker:
+            continue
+        refs.append(marker)
+    return dedupe_generated_file_refs(refs)
+
+
+def generated_file_ref_from_mapping(item: dict[str, Any], *, source: str) -> list[dict[str, Any]]:
+    path_value = str(item.get("path") or item.get("localPath") or "").strip()
+    runtime = item.get("runtime") if isinstance(item.get("runtime"), dict) else {}
+    if not path_value and str(runtime.get("type") or "") == "local_path":
+        path_value = str(runtime.get("path") or "").strip()
+    path = generated_local_path(path_value)
+    if not path:
+        return []
+    return [
+        {
+            "path": str(path),
+            "name": safe_attachment_name(str(item.get("name") or path.name)),
+            "mimeType": str(item.get("mimeType") or ""),
+            "kind": str(item.get("kind") or ""),
+            "source": source,
+        }
+    ]
+
+
+def generated_file_marker_from_line(line: str) -> dict[str, Any] | None:
+    match = GENERATED_FILE_MARKER_RE.match(line)
+    if not match:
+        return None
+    path = generated_local_path(match.group(2).strip())
+    if not path:
+        return None
+    marker_kind = match.group(1).lower()
+    return {
+        "path": str(path),
+        "name": safe_attachment_name(path.name),
+        "kind": "image" if marker_kind == "image" else "",
+        "mimeType": "",
+        "source": "content-marker",
+        "marker": line,
+    }
+
+
+def generated_local_path(value: str) -> Path | None:
+    raw = str(value or "").strip().strip("'\"")
+    if not raw:
+        return None
+    if raw.startswith("file://"):
+        parsed = urllib.parse.urlparse(raw)
+        if parsed.scheme != "file" or parsed.netloc not in ("", "localhost"):
+            return None
+        raw = urllib.parse.unquote(parsed.path)
+    path = Path(raw).expanduser()
+    if not path.is_absolute():
+        return None
+    return path.resolve(strict=False)
+
+
+def dedupe_generated_file_refs(refs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    deduped: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for ref in refs:
+        path = str(ref.get("path") or "")
+        if not path or path in seen:
+            continue
+        seen.add(path)
+        deduped.append(ref)
+    return deduped
+
+
+def strip_generated_file_markers(content: str, attachments: list[dict[str, Any]]) -> str:
+    if not attachments:
+        return content
+    imported_paths = {
+        str((attachment.get("metadata") if isinstance(attachment.get("metadata"), dict) else {}).get("originalPath") or "")
+        for attachment in attachments
+    }
+    imported_paths = {path for path in imported_paths if path}
+    if not imported_paths:
+        return content
+    return strip_generated_file_markers_for_paths(content, imported_paths)
+
+
+def strip_generated_file_markers_for_paths(content: str, imported_paths: set[str]) -> str:
+    if not imported_paths:
+        return content
+    lines: list[str] = []
+    for line in str(content or "").splitlines():
+        marker = generated_file_marker_from_line(line)
+        if marker and str(marker.get("path") or "") in imported_paths:
+            continue
+        lines.append(line)
+    return "\n".join(lines).strip()
+
+
+def ingest_generated_file_attachments(
+    app: FastAPI,
+    *,
+    runtime_id: str,
+    profile: str,
+    chat_id: str,
+    conversation_id: str,
+    message_id: str,
+    content: str,
+    metadata: dict[str, Any],
+) -> tuple[str, dict[str, Any]]:
+    refs = generated_file_refs_from_delivery(content, metadata)
+    if not refs:
+        return content, metadata
+
+    imported: list[dict[str, Any]] = []
+    warnings: list[dict[str, str]] = []
+    for ref in refs:
+        source_path = Path(str(ref.get("path") or ""))
+        try:
+            with source_path.open("rb") as file:
+                head = file.read(2048)
+            name = safe_attachment_name(str(ref.get("name") or source_path.name))
+            mime_type = attachment_mime_type(
+                filename=name,
+                content_type=str(ref.get("mimeType") or ""),
+                head=head,
+            )
+            attachment = app.state.core_store.create_attachment_from_path(
+                source_path=source_path,
+                runtime_id=runtime_id,
+                profile=profile,
+                conversation_id=conversation_id,
+                message_id=message_id,
+                name=name,
+                mime_type=mime_type,
+                kind=attachment_kind(mime_type, name, str(ref.get("kind") or "")),
+                metadata={
+                    "createdBy": "assistant",
+                    "source": str(ref.get("source") or "runtime-delivery"),
+                    "originalPath": str(source_path),
+                    "deliveryMessageId": message_id,
+                },
+            )
+            imported.append(attachment)
+        except (OSError, ValueError) as exc:
+            warnings.append({
+                "path": str(source_path),
+                "source": str(ref.get("source") or "runtime-delivery"),
+                "warning": str(exc),
+            })
+
+    if not imported and not warnings:
+        return content, metadata
+
+    if imported:
+        app.state.core_store.link_message_attachments(
+            runtime_id=runtime_id,
+            profile=profile,
+            chat_id=chat_id,
+            message_id=message_id,
+            attachments=imported,
+        )
+
+    client_attachments = [client_attachment_payload(attachment) for attachment in imported]
+    next_metadata = {
+        **metadata,
+        "generatedFiles": refs,
+        **({"attachments": merge_client_attachments(metadata.get("attachments"), client_attachments)} if client_attachments else {}),
+        **({"generatedFileImports": generated_file_import_payloads(imported)} if imported else {}),
+        **({"generatedFileImportWarnings": warnings} if warnings else {}),
+    }
+    return strip_generated_file_markers(content, imported), next_metadata
+
+
+def merge_client_attachments(existing: Any, additions: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    merged: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for item in list(existing if isinstance(existing, list) else []) + additions:
+        if not isinstance(item, dict):
+            continue
+        key = str(item.get("id") or item.get("sha256") or item.get("downloadUrl") or "")
+        if key and key in seen:
+            continue
+        if key:
+            seen.add(key)
+        merged.append(item)
+    return merged
+
+
+def generated_file_import_payloads(attachments: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    payloads: list[dict[str, Any]] = []
+    for attachment in attachments:
+        metadata = attachment.get("metadata") if isinstance(attachment.get("metadata"), dict) else {}
+        payloads.append({
+            "attachmentId": str(attachment.get("id") or ""),
+            "name": str(attachment.get("name") or ""),
+            "originalPath": str(metadata.get("originalPath") or ""),
+            "sha256": str(attachment.get("sha256") or ""),
+        })
+    return payloads
+
+
+def generated_file_paths_from_metadata(metadata: dict[str, Any]) -> set[str]:
+    paths: set[str] = set()
+    for item in metadata.get("generatedFiles") if isinstance(metadata.get("generatedFiles"), list) else []:
+        if not isinstance(item, dict):
+            continue
+        path = generated_local_path(str(item.get("path") or ""))
+        if path:
+            paths.add(str(path))
+    for item in metadata.get("generatedFileImports") if isinstance(metadata.get("generatedFileImports"), list) else []:
+        if not isinstance(item, dict):
+            continue
+        path = generated_local_path(str(item.get("originalPath") or ""))
+        if path:
+            paths.add(str(path))
+    return paths
+
+
+def persist_assistant_attachment_metadata(
+    app: FastAPI,
+    *,
+    runtime_id: str,
+    profile: str,
+    chat_id: str,
+    message_id: str,
+    stream_message_id: str,
+    content: str,
+    original_content: str,
+    metadata: dict[str, Any],
+) -> None:
+    if not metadata.get("attachments"):
+        return
+    message_ids = [message_id]
+    if stream_message_id and stream_message_id not in message_ids:
+        message_ids.append(stream_message_id)
+    contents = [content]
+    if original_content != content:
+        contents.append(original_content)
+    for index, message_key in enumerate(message_ids):
+        for content_index, content_value in enumerate(contents):
+            key = message_key if index == 0 and content_index == 0 else f"{message_key}:overlay:{content_index}"
+            app.state.core_store.upsert_client_message_metadata(
+                runtime_id=runtime_id,
+                profile=profile,
+                chat_id=chat_id,
+                message_id=key,
+                content=content_value,
+                metadata=metadata,
+            )
+
+
+def import_generated_file_history_attachments(
+    app: FastAPI,
+    *,
+    conversation: dict[str, Any],
+    messages: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    chat_id = str(conversation.get("externalChatId") or "")
+    runtime_id = str(conversation.get("runtimeId") or DEFAULT_RUNTIME_ID)
+    profile = str(conversation.get("runtimeProfile") or "default")
+    conversation_id = str(conversation.get("id") or "")
+    if not chat_id or not runtime_id or not profile or not conversation_id:
+        return messages
+
+    enriched: list[dict[str, Any]] = []
+    for message in messages:
+        metadata = message.get("metadata") if isinstance(message.get("metadata"), dict) else {}
+        if message.get("role") != "assistant":
+            enriched.append(message)
+            continue
+        content = str(message.get("content") or "")
+        marker_refs = generated_file_refs_from_text(content)
+        if not marker_refs:
+            enriched.append(message)
+            continue
+        if metadata.get("attachments"):
+            imported_paths = generated_file_paths_from_metadata(metadata)
+            if not imported_paths:
+                imported_paths = {str(ref.get("path") or "") for ref in marker_refs if ref.get("path")}
+            enriched.append({
+                **message,
+                "content": strip_generated_file_markers_for_paths(content, imported_paths),
+                "metadata": metadata,
+            })
+            continue
+        message_id = str(message.get("id") or random_id("history_msg"))
+        cleaned_content, next_metadata = ingest_generated_file_attachments(
+            app,
+            runtime_id=runtime_id,
+            profile=profile,
+            chat_id=chat_id,
+            conversation_id=conversation_id,
+            message_id=message_id,
+            content=content,
+            metadata={**metadata, "source": str(metadata.get("source") or "hermes-history")},
+        )
+        persist_assistant_attachment_metadata(
+            app,
+            runtime_id=runtime_id,
+            profile=profile,
+            chat_id=chat_id,
+            message_id=message_id,
+            stream_message_id=str(next_metadata.get("streamMessageId") or next_metadata.get("stream_message_id") or ""),
+            content=cleaned_content,
+            original_content=content,
+            metadata=next_metadata,
+        )
+        enriched.append({
+            **message,
+            "content": cleaned_content if next_metadata.get("attachments") else content,
+            "metadata": next_metadata,
+        })
+    return enriched
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -961,6 +1295,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             )
         except ManagementError as exc:
             return {"ok": True, "conversationId": conversation_id, "messages": [], "warning": exc.error}
+        messages = import_generated_file_history_attachments(
+            app,
+            conversation=conversation,
+            messages=messages,
+        )
         return {"ok": True, "conversationId": conversation_id, "messages": messages, "source": "hermes-management", "warning": warning}
 
     @app.post("/v1/conversations/{conversation_id}/messages")
@@ -1261,6 +1600,28 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         event_metadata = mark_hidden_model_switch_reply(event_metadata, delivery.replyTo or "")
         if has_stream_message_id(delivery.metadata):
             event_metadata["streamMessageId"] = stream_message_id
+        original_content = delivery.content
+        event_content, event_metadata = ingest_generated_file_attachments(
+            app,
+            runtime_id=delivery.runtimeId,
+            profile=delivery.profile,
+            chat_id=delivery.chatId,
+            conversation_id=conversation_id,
+            message_id=delivery.messageId,
+            content=delivery.content,
+            metadata=event_metadata,
+        )
+        persist_assistant_attachment_metadata(
+            app,
+            runtime_id=delivery.runtimeId,
+            profile=delivery.profile,
+            chat_id=delivery.chatId,
+            message_id=delivery.messageId,
+            stream_message_id=stream_message_id if has_stream_message_id(event_metadata) else "",
+            content=event_content,
+            original_content=original_content,
+            metadata=event_metadata,
+        )
         event = publish_core_event(
             app,
             conversation_id=conversation_id,
@@ -1268,7 +1629,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             runtime_id=delivery.runtimeId,
             event_type=event_type,
             role="assistant",
-            content=delivery.content,
+            content=event_content,
             parent_event_id=delivery.replyTo or str(event_metadata.get("replyTo") or ""),
             external_message_id=delivery.messageId,
             metadata=event_metadata,
@@ -1509,6 +1870,28 @@ def mirror_inbox_message_to_core(app: FastAPI, message: dict[str, Any]) -> dict[
     event_metadata = mark_hidden_model_switch_reply(event_metadata, str(metadata.get("replyTo") or ""))
     if stream_message_id:
         event_metadata["streamMessageId"] = stream_message_id
+    original_content = str(message.get("content") or "")
+    event_content, event_metadata = ingest_generated_file_attachments(
+        app,
+        runtime_id=runtime_id,
+        profile=profile,
+        chat_id=chat_id,
+        conversation_id=conversation_id,
+        message_id=str(message.get("id") or ""),
+        content=original_content,
+        metadata=event_metadata,
+    )
+    persist_assistant_attachment_metadata(
+        app,
+        runtime_id=runtime_id,
+        profile=profile,
+        chat_id=chat_id,
+        message_id=str(message.get("id") or ""),
+        stream_message_id=stream_message_id,
+        content=event_content,
+        original_content=original_content,
+        metadata=event_metadata,
+    )
     return publish_core_event(
         app,
         conversation_id=conversation_id,
@@ -1516,7 +1899,7 @@ def mirror_inbox_message_to_core(app: FastAPI, message: dict[str, Any]) -> dict[
         runtime_id=runtime_id,
         event_type=event_type,
         role="assistant",
-        content=str(message.get("content") or ""),
+        content=event_content,
         parent_event_id=str(metadata.get("replyTo") or event_metadata.get("replyTo") or ""),
         external_message_id=str(message.get("id") or ""),
         metadata=event_metadata,
@@ -1963,6 +2346,9 @@ def finalized_stream_metadata(
     reply_to: str,
 ) -> dict[str, Any]:
     merged = {**existing_metadata, **metadata}
+    attachments = merged_metadata_attachments(existing_metadata, metadata)
+    if attachments:
+        merged["attachments"] = attachments
     merged["streamMessageId"] = stream_message_id
     merged["streaming"] = False
     merged["finalize"] = True
@@ -1975,13 +2361,23 @@ def merged_completion_metadata(existing: dict[str, Any], metadata: dict[str, Any
     existing_metadata = existing.get("metadata") if isinstance(existing.get("metadata"), dict) else {}
     stream_message_id = str(existing_metadata.get("streamMessageId") or existing_metadata.get("stream_message_id") or "")
     if not stream_message_id:
-        return {**existing_metadata, **metadata}
+        merged = {**existing_metadata, **metadata}
+        attachments = merged_metadata_attachments(existing_metadata, metadata)
+        if attachments:
+            merged["attachments"] = attachments
+        return merged
     return finalized_stream_metadata(
         metadata,
         existing_metadata=existing_metadata,
         stream_message_id=stream_message_id,
         reply_to=reply_to or str(existing_metadata.get("replyTo") or ""),
     )
+
+
+def merged_metadata_attachments(left: dict[str, Any], right: dict[str, Any]) -> list[dict[str, Any]]:
+    return merge_client_attachments(left.get("attachments"), [
+        item for item in right.get("attachments", []) if isinstance(item, dict)
+    ] if isinstance(right.get("attachments"), list) else [])
 
 
 def last_user_message_id(messages: list[dict[str, Any]]) -> str:
@@ -2012,11 +2408,17 @@ def coalesce_core_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any
                 and is_gateway_replay_pair(previous, message)
             ):
                 if message.get("status") == "completed" and previous.get("status") != "completed":
+                    metadata = merged_completion_metadata(previous, message.get("metadata") if isinstance(message.get("metadata"), dict) else {}, reply_to="")
                     coalesced[-1] = {
                         **previous,
                         "status": "completed",
                         "updatedAt": message.get("updatedAt") or previous.get("updatedAt"),
+                        "metadata": metadata,
                     }
+                else:
+                    metadata = merged_completion_metadata(previous, message.get("metadata") if isinstance(message.get("metadata"), dict) else {}, reply_to="")
+                    if metadata.get("attachments"):
+                        coalesced[-1] = {**previous, "metadata": metadata}
                 continue
         coalesced.append(message)
     return coalesced

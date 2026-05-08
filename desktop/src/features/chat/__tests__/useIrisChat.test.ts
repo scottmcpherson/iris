@@ -45,6 +45,16 @@ function inboxMessage(
 }
 
 describe("Iris chat inbox merging", () => {
+  const generatedImageAttachment = {
+    id: "att_image_1",
+    kind: "image" as const,
+    mimeType: "image/png",
+    name: "test_image.png",
+    previewUrl: "/v1/attachments/att_image_1/preview",
+    downloadUrl: "/v1/attachments/att_image_1/content",
+    size: 42,
+  };
+
   it("keeps the chat-id map stable when a conversation refresh has no new mappings", () => {
     const current = { "conversation-1": "chat-1" };
 
@@ -97,6 +107,51 @@ describe("Iris chat inbox merging", () => {
         content: "Real answer",
       },
     ]);
+  });
+
+  it("maps assistant metadata attachments from conversation history", () => {
+    const messages = toAppMessages([
+      {
+        id: "assistant-1",
+        sessionId: "session-1",
+        role: "assistant",
+        content: "Done\n\nMEDIA:/tmp/test_image.png",
+        toolName: "",
+        timestamp: 1,
+        metadata: {
+          generatedFiles: [{ path: "/tmp/test_image.png" }],
+          attachments: [generatedImageAttachment],
+        },
+      },
+      {
+        id: "assistant-2",
+        sessionId: "session-1",
+        role: "assistant",
+        content: "Audio ready",
+        toolName: "",
+        timestamp: 2,
+        metadata: {
+          attachments: [
+            {
+              id: "att_audio_1",
+              kind: "audio",
+              mimeType: "audio/mpeg",
+              name: "voice.mp3",
+              downloadUrl: "/v1/attachments/att_audio_1/content",
+              size: 100,
+            },
+          ],
+        },
+      },
+    ]);
+
+    expect(messages[0]).toMatchObject({
+      id: "assistant-1",
+      role: "assistant",
+      content: "Done",
+      attachments: [generatedImageAttachment],
+    });
+    expect(messages[1].attachments?.[0].kind).toBe("audio");
   });
 
   it("replaces local duplicate messages with persisted history rows when merging conversation aliases", () => {
@@ -236,6 +291,40 @@ describe("Iris chat inbox merging", () => {
       content: "Starting to answer.",
       streaming: false,
       streamMessageId: "stream-1",
+    });
+  });
+
+  it("adds attachment metadata from stream deliveries", () => {
+    const existing: Message[] = [
+      { id: "user-1", role: "user", content: "Create an image" },
+      {
+        id: "stream-1",
+        role: "assistant",
+        content: "Creating it.",
+        streaming: true,
+        streamMessageId: "stream-1",
+      },
+    ];
+
+    const merged = mergeStreamDelivery(
+      existing,
+      inboxMessage({
+        id: "stream-1:edit:1",
+        content: "Done\n\nMEDIA:/tmp/test_image.png",
+        metadata: {
+          streamMessageId: "stream-1",
+          generatedFiles: [{ path: "/tmp/test_image.png" }],
+          attachments: [generatedImageAttachment],
+        },
+      }),
+      "stream-1",
+      true,
+    );
+
+    expect(merged[1]).toMatchObject({
+      content: "Done",
+      streaming: false,
+      attachments: [generatedImageAttachment],
     });
   });
 
@@ -379,6 +468,40 @@ describe("Iris chat inbox merging", () => {
         content: "Here’s your test image:\n\n🖼️ Image: /tmp/hermes/test_image.png",
       },
     ]);
+  });
+
+  it("merges a post-stream attachment card into the completed streamed assistant", () => {
+    const existing: Message[] = [
+      { id: "user-1", role: "user", content: "Create an image" },
+      {
+        id: "stream-1",
+        role: "assistant",
+        content: "Here’s your test image:",
+        streaming: false,
+        streamMessageId: "stream-1",
+      },
+    ];
+
+    const merged = mergeCompletedDelivery(
+      existing,
+      inboxMessage({
+        id: "media-1",
+        source: "hermes-gateway",
+        content: "🖼️ Image: /tmp/hermes/test_image.png",
+        metadata: {
+          generatedFiles: [{ path: "/tmp/hermes/test_image.png" }],
+          attachments: [generatedImageAttachment],
+        },
+      }),
+      "",
+    );
+
+    expect(merged[0]).toEqual(existing[0]);
+    expect(merged[1]).toMatchObject({
+      ...existing[1],
+      content: "Here’s your test image:",
+      attachments: [generatedImageAttachment],
+    });
   });
 
   it("treats a fallback completed delivery as the end of the active stream", () => {

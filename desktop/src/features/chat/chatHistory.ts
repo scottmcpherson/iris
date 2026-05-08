@@ -1,6 +1,10 @@
 import type { Message, MessageAttachment } from "../../app/types";
 import type { HermesConversationMessage, HermesStreamToolEvent } from "../../types/hermes";
 import {
+  attachmentsFromMetadata,
+  contentWithoutRenderedAttachmentMarkers,
+} from "./chatStreamMerging";
+import {
   mergeStreamToolEvent,
   streamToolEventFromHistory,
   streamToolEventFromHistoryCall,
@@ -32,7 +36,7 @@ export function toAppMessages(messages: HermesConversationMessage[]): Message[] 
     }
 
     const appMessage = toAppMessage(message);
-    if (appMessage.role === "assistant" && !appMessage.content.trim()) {
+    if (appMessage.role === "assistant" && !appMessage.content.trim() && !appMessage.attachments?.length) {
       continue;
     }
 
@@ -69,39 +73,21 @@ function toolEventMessage(id: string, streamEvents: HermesStreamToolEvent[]): Me
 }
 
 function toAppMessage(message: HermesConversationMessage): Message {
-  const attachments = message.role === "user" ? attachmentsFromMetadata(message.metadata) : [];
+  const attachments = message.role === "user" || message.role === "assistant"
+    ? attachmentsFromMetadata(message.metadata)
+    : [];
   const content = message.role === "user"
     ? stripModelSwitchNote(message.content)
     : message.content;
+  const displayContent = message.role === "assistant"
+    ? contentWithoutRenderedAttachmentMarkers(content, attachments, message.metadata)
+    : displayContentForAttachments(content, attachments);
   return {
     id: message.id,
     role: message.role,
-    content: message.toolName ? `${message.toolName}\n${content}`.trim() : displayContentForAttachments(content, attachments),
+    content: message.toolName ? `${message.toolName}\n${content}`.trim() : displayContent,
     attachments: attachments.length ? attachments : undefined,
   };
-}
-
-function attachmentsFromMetadata(metadata: Record<string, unknown> | undefined): MessageAttachment[] {
-  if (!metadata || !Array.isArray(metadata.attachments)) return [];
-  return metadata.attachments.flatMap((item) => {
-    if (!item || typeof item !== "object") return [];
-    const candidate = item as Record<string, unknown>;
-    const id = typeof candidate.id === "string" && candidate.id ? candidate.id : crypto.randomUUID();
-    const name = typeof candidate.name === "string" && candidate.name ? candidate.name : "Attached file";
-    const kind = candidate.kind === "image" ? "image" : "file";
-    const mimeType = typeof candidate.mimeType === "string" ? candidate.mimeType : "";
-    const size = typeof candidate.size === "number" ? candidate.size : -1;
-    const lastModified = typeof candidate.lastModified === "number" ? candidate.lastModified : 0;
-    const previewUrl = typeof candidate.previewUrl === "string" ? candidate.previewUrl : undefined;
-    const downloadUrl = typeof candidate.downloadUrl === "string" ? candidate.downloadUrl : undefined;
-    const localPath = typeof candidate.localPath === "string"
-      ? candidate.localPath
-      : typeof candidate.path === "string"
-        ? candidate.path
-        : undefined;
-    const legacyLocalPath = candidate.legacyLocalPath === true || (Boolean(localPath) && !previewUrl);
-    return [{ id, name, kind, mimeType, size, lastModified, previewUrl, downloadUrl, localPath, legacyLocalPath }];
-  });
 }
 
 function displayContentForAttachments(content: string, attachments: MessageAttachment[]) {

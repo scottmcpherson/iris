@@ -1,5 +1,7 @@
-import type { Message, MessageAttachment } from "../../app/types";
+import type { AttachmentKind, Message, MessageAttachment } from "../../app/types";
 import type { HermesInboxMessage } from "../../types/hermes";
+
+const attachmentKinds = new Set<AttachmentKind>(["image", "document", "audio", "video", "archive", "code", "file"]);
 
 export function mergeStreamDelivery(
   existing: Message[],
@@ -7,13 +9,17 @@ export function mergeStreamDelivery(
   streamMessageId: string,
   finalized: boolean,
 ) {
-  const content = delivery.content;
+  const deliveryAttachments = attachmentsFromDelivery(delivery);
+  const content = contentWithoutRenderedAttachmentMarkers(delivery.content, deliveryAttachments, delivery.metadata);
   const streaming = !finalized;
   const updateMessage = (message: Message): Message => ({
     ...message,
     id: message.id || streamMessageId,
     streamMessageId,
-    content: mergedStreamSnapshotContent(message.content, content),
+    content: finalized && deliveryAttachments.length && content.trim()
+      ? content
+      : mergedStreamSnapshotContent(message.content, content),
+    attachments: mergeMessageAttachments(message.attachments, deliveryAttachments),
     streaming,
   });
   const streamIndex = existing.findIndex(
@@ -32,6 +38,7 @@ export function mergeStreamDelivery(
     content,
     streaming,
     streamMessageId,
+    attachments: deliveryAttachments.length ? deliveryAttachments : undefined,
   };
   if (placeholderIndex !== -1) {
     return coalescePostStreamAttachments(existing.map((message, index) => (index === placeholderIndex ? assistantMessage : message)));
@@ -44,6 +51,8 @@ export function mergeCompletedDelivery(
   delivery: HermesInboxMessage,
   replyTo: string,
 ) {
+  const deliveryAttachments = attachmentsFromDelivery(delivery);
+  const deliveryContent = contentWithoutRenderedAttachmentMarkers(delivery.content, deliveryAttachments, delivery.metadata);
   const streamingIndex = lastStreamingAssistantIndex(existing);
   if (streamingIndex === -1) {
     const duplicateIndex = duplicateCompletedDeliveryIndex(existing, delivery, replyTo);
@@ -53,7 +62,8 @@ export function mergeCompletedDelivery(
           index === duplicateIndex
             ? {
                 ...message,
-                content: mergedCompletedStreamContent(message.content, delivery.content),
+                content: mergedCompletedStreamContent(message.content, deliveryContent),
+                attachments: mergeMessageAttachments(message.attachments, deliveryAttachments),
                 streaming: false,
               }
             : message,
@@ -68,7 +78,8 @@ export function mergeCompletedDelivery(
           index === attachIndex
             ? {
                 ...message,
-                content: appendMessageContent(message.content, delivery.content),
+                content: appendMessageContent(message.content, deliveryContent),
+                attachments: mergeMessageAttachments(message.attachments, deliveryAttachments),
               }
             : message,
         ),
@@ -78,8 +89,9 @@ export function mergeCompletedDelivery(
     const assistantMessage: Message = {
       id: delivery.id,
       role: "assistant",
-      content: delivery.content,
+      content: deliveryContent,
       streaming: false,
+      attachments: deliveryAttachments.length ? deliveryAttachments : undefined,
     };
     return coalescePostStreamAttachments([
       ...existing,
@@ -90,24 +102,31 @@ export function mergeCompletedDelivery(
   return coalescePostStreamAttachments(
     existing.map((message, index) =>
       index === streamingIndex
-        ? completedStreamingMessage(message, delivery)
+        ? completedStreamingMessage(message, delivery, deliveryContent, deliveryAttachments)
         : message,
     ),
   );
 }
 
-function completedStreamingMessage(message: Message, delivery: HermesInboxMessage): Message {
+function completedStreamingMessage(
+  message: Message,
+  delivery: HermesInboxMessage,
+  deliveryContent: string,
+  deliveryAttachments: MessageAttachment[],
+): Message {
   if (!message.streamMessageId) {
     return {
       ...message,
       id: delivery.id,
-      content: delivery.content,
+      content: deliveryContent,
+      attachments: mergeMessageAttachments(message.attachments, deliveryAttachments),
       streaming: false,
     };
   }
   return {
     ...message,
-    content: mergedCompletedStreamContent(message.content, delivery.content),
+    content: mergedCompletedStreamContent(message.content, deliveryContent),
+    attachments: mergeMessageAttachments(message.attachments, deliveryAttachments),
     streaming: false,
   };
 }
@@ -121,8 +140,8 @@ function lastStreamingAssistantIndex(messages: Message[]) {
 }
 
 function postStreamAttachmentIndex(messages: Message[], delivery: HermesInboxMessage) {
-  if (delivery.source !== "hermes-gateway" || !delivery.content.trim()) return -1;
-  if (!isPostStreamAttachmentContent(delivery.content)) return -1;
+  if (delivery.source !== "hermes-gateway" || (!delivery.content.trim() && !attachmentsFromDelivery(delivery).length)) return -1;
+  if (!isPostStreamAttachmentContent(delivery.content) && !attachmentsFromDelivery(delivery).length) return -1;
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const message = messages[index];
     if (message.role === "user") return -1;
@@ -213,7 +232,8 @@ export function coalescePostStreamAttachments(messages: Message[]) {
     if (isPostStreamAttachmentMessage(message) && next && next.role === "assistant" && next.streamMessageId) {
       coalesced.push({
         ...next,
-        content: appendMessageContent(next.content, message.content),
+        content: appendMessageContent(next.content, contentWithoutRenderedAttachmentMarkers(message.content, message.attachments)),
+        attachments: mergeMessageAttachments(next.attachments, message.attachments),
       });
       index += 1;
       continue;
@@ -222,7 +242,8 @@ export function coalescePostStreamAttachments(messages: Message[]) {
     if (message.role === "assistant" && message.streamMessageId && next && isPostStreamAttachmentMessage(next)) {
       coalesced.push({
         ...message,
-        content: appendMessageContent(message.content, next.content),
+        content: appendMessageContent(message.content, contentWithoutRenderedAttachmentMarkers(next.content, next.attachments)),
+        attachments: mergeMessageAttachments(message.attachments, next.attachments),
       });
       index += 1;
       continue;
@@ -234,7 +255,7 @@ export function coalescePostStreamAttachments(messages: Message[]) {
 }
 
 function isPostStreamAttachmentMessage(message: Message) {
-  return message.role === "assistant" && isPostStreamAttachmentContent(message.content);
+  return message.role === "assistant" && (isPostStreamAttachmentContent(message.content) || Boolean(message.attachments?.length));
 }
 
 function isPostStreamAttachmentContent(content: string) {
@@ -252,6 +273,92 @@ export function deliveryCompletesActiveStream(messages: Message[], delivery: Her
   return messages.some((message) =>
     message.role === "assistant" && Boolean(message.streamMessageId) && message.streaming,
   );
+}
+
+export function attachmentsFromDelivery(delivery: HermesInboxMessage): MessageAttachment[] {
+  return attachmentsFromMetadata(delivery.metadata);
+}
+
+export function attachmentsFromMetadata(metadata: Record<string, unknown> | undefined): MessageAttachment[] {
+  if (!metadata || !Array.isArray(metadata.attachments)) return [];
+  return metadata.attachments.flatMap((item) => {
+    if (!item || typeof item !== "object") return [];
+    const candidate = item as Record<string, unknown>;
+    const id = typeof candidate.id === "string" && candidate.id ? candidate.id : crypto.randomUUID();
+    const name = typeof candidate.name === "string" && candidate.name ? candidate.name : "Attached file";
+    const kind = attachmentKind(candidate.kind);
+    const mimeType = typeof candidate.mimeType === "string" ? candidate.mimeType : "";
+    const size = typeof candidate.size === "number" ? candidate.size : -1;
+    const lastModified = typeof candidate.lastModified === "number" ? candidate.lastModified : 0;
+    const previewUrl = typeof candidate.previewUrl === "string" ? candidate.previewUrl : undefined;
+    const downloadUrl = typeof candidate.downloadUrl === "string" ? candidate.downloadUrl : undefined;
+    const localPath = typeof candidate.localPath === "string"
+      ? candidate.localPath
+      : typeof candidate.path === "string"
+        ? candidate.path
+        : undefined;
+    const legacyLocalPath = candidate.legacyLocalPath === true || (Boolean(localPath) && !previewUrl);
+    return [{ id, name, kind, mimeType, size, lastModified, previewUrl, downloadUrl, localPath, legacyLocalPath }];
+  });
+}
+
+export function mergeMessageAttachments(
+  left: MessageAttachment[] | undefined,
+  right: MessageAttachment[] | undefined,
+): MessageAttachment[] | undefined {
+  const merged: MessageAttachment[] = [];
+  const seen = new Set<string>();
+  for (const attachment of [...(left || []), ...(right || [])]) {
+    const sha256 = typeof (attachment as unknown as Record<string, unknown>).sha256 === "string"
+      ? String((attachment as unknown as Record<string, unknown>).sha256)
+      : "";
+    const key = attachment.id || sha256 || attachment.downloadUrl || attachment.previewUrl || attachment.localPath || attachment.name;
+    if (key && seen.has(key)) continue;
+    if (key) seen.add(key);
+    merged.push(attachment);
+  }
+  return merged.length ? merged : undefined;
+}
+
+export function contentWithoutRenderedAttachmentMarkers(
+  content: string,
+  attachments: MessageAttachment[] | undefined,
+  metadata: Record<string, unknown> | undefined = undefined,
+) {
+  if (!attachments?.length) return content;
+  const generatedPaths = new Set(generatedFilePaths(metadata));
+  const attachmentNames = new Set(attachments.map((attachment) => attachment.name).filter(Boolean));
+  const lines = content.split("\n").filter((line) => {
+    const marker = generatedFileMarkerValue(line);
+    if (!marker) return true;
+    if (generatedPaths.has(marker)) return false;
+    const markerName = marker.split(/[\\/]/).pop() || marker;
+    return !attachmentNames.has(markerName);
+  });
+  return lines.join("\n").trim();
+}
+
+function attachmentKind(value: unknown): AttachmentKind {
+  return typeof value === "string" && attachmentKinds.has(value as AttachmentKind)
+    ? value as AttachmentKind
+    : "file";
+}
+
+function generatedFilePaths(metadata: Record<string, unknown> | undefined) {
+  if (!metadata || !Array.isArray(metadata.generatedFiles)) return [];
+  return metadata.generatedFiles.flatMap((item) => {
+    if (!item || typeof item !== "object") return [];
+    const value = (item as Record<string, unknown>).path;
+    return typeof value === "string" && value ? [value] : [];
+  });
+}
+
+function generatedFileMarkerValue(line: string) {
+  const match = line.match(/^\s*(?:Generated\s+file:\s*)?(?:[^\w\s/\\.:~-]+\s*)?(?:MEDIA|Media|Image|File):\s*(.+?)\s*$/);
+  if (!match) return "";
+  const value = match[1].trim().replace(/^file:\/\/(?:localhost)?/, "");
+  if (!value.startsWith("/") && !/^file:\/\//.test(match[1].trim())) return "";
+  return value;
 }
 
 export function mergeMessageLists(primary: Message[], secondary: Message[]) {

@@ -586,13 +586,16 @@ export function ChatView({
                         <span>System</span>
                       </div>
                     ) : null}
-                    {message.attachments?.length ? (
+                    {message.attachments?.length && message.role !== "assistant" ? (
                       <MessageAttachments attachments={message.attachments} runtimeConfig={runtimeConfig} />
                     ) : null}
                     <div className="message-body">
                       <MessageContent message={message} />
                       {eventCount(message.events) ? <MessageEvents events={message.events} /> : null}
                     </div>
+                    {message.attachments?.length && message.role === "assistant" ? (
+                      <MessageAttachments attachments={message.attachments} runtimeConfig={runtimeConfig} />
+                    ) : null}
                   </article>
                 ))
               ) : (

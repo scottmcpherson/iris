@@ -1366,6 +1366,16 @@ button:disabled {
   max-width: min(74%, 720px);
 }
 
+.message.assistant .message-attachments {
+  align-self: flex-start;
+  justify-content: flex-start;
+}
+
+.message.user .message-attachments {
+  align-self: flex-end;
+  justify-content: flex-end;
+}
+
 .message-attachment-card {
   position: relative;
   display: inline-flex;

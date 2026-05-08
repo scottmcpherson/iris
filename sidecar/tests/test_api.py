@@ -8,6 +8,14 @@ from fastapi.testclient import TestClient
 from hermes_management_server.main import Settings, coalesce_core_messages, create_app
 from hermes_management_server.runtime_adapters import hermes as hermes_adapter
 
+PNG_BYTES = (
+    b"\x89PNG\r\n\x1a\n"
+    b"\x00\x00\x00\rIHDR"
+    b"\x00\x00\x00\x01\x00\x00\x00\x01\x08\x02\x00\x00\x00\x90wS\xde"
+    b"\x00\x00\x00\x0cIDATx\x9cc\xf8\x0f\x00\x01\x01\x01\x00\x18\xdd\x8d\xb0"
+    b"\x00\x00\x00\x00IEND\xaeB`\x82"
+)
+
 
 def make_client(root):
     app = create_app(Settings(hermes_home=str(root), core_store_path=str(root.parent / "core.sqlite3")))
@@ -583,6 +591,44 @@ def test_core_message_read_coalesces_existing_gateway_replay_rows():
     assert coalesced[1]["status"] == "completed"
 
 
+def test_core_message_coalescing_merges_attachment_metadata():
+    messages = [
+        {
+            "id": "stream-1",
+            "role": "assistant",
+            "content": "Done",
+            "status": "streaming",
+            "metadata": {"source": "hermes-gateway-stream", "streamMessageId": "stream-1"},
+        },
+        {
+            "id": "completed-1",
+            "role": "assistant",
+            "content": "Done",
+            "status": "completed",
+            "metadata": {
+                "source": "hermes-gateway",
+                "replyTo": "user-1",
+                "attachments": [
+                    {
+                        "id": "att_1",
+                        "name": "image.png",
+                        "kind": "image",
+                        "mimeType": "image/png",
+                        "size": 10,
+                        "downloadUrl": "/v1/attachments/att_1/content",
+                    }
+                ],
+            },
+        },
+    ]
+
+    coalesced = coalesce_core_messages(messages)
+
+    assert [message["id"] for message in coalesced] == ["stream-1"]
+    assert coalesced[0]["status"] == "completed"
+    assert coalesced[0]["metadata"]["attachments"][0]["id"] == "att_1"
+
+
 def test_core_lists_runtimes_agents_and_backfilled_conversations(tmp_path):
     root = tmp_path / ".hermes"
     profile = root / "profiles" / "research"
@@ -629,6 +675,112 @@ def test_core_runtime_delivery_is_live_replay_not_transcript_storage(tmp_path):
     assert [event["type"] for event in events.json()["events"]] == ["message.assistant.completed"]
     assert events.json()["events"][0]["content"] == "Hello from Hermes"
     assert client.get(f"/v1/conversations/{conversation_id}/messages").json()["messages"] == []
+
+
+def test_runtime_delivery_imports_generated_image_attachment(tmp_path):
+    generated = tmp_path / "red_hue_relief.png"
+    generated.write_bytes(PNG_BYTES)
+    root = tmp_path / ".hermes"
+    client = make_client(root)
+    agent = client.get("/v1/agents").json()["agents"][0]
+    conversation = client.post(
+        "/v1/conversations",
+        json={"agentId": agent["id"], "title": "Generated image"},
+    ).json()["conversation"]
+
+    delivery = client.post(
+        "/v1/runtime-deliveries/hermes",
+        json={
+            "runtimeId": "runtime_local_hermes",
+            "profile": "default",
+            "chatId": conversation["externalChatId"],
+            "messageId": "assistant-image-1",
+            "replyTo": "user-message-1",
+            "content": f"Done\n\nMEDIA:{generated}",
+            "metadata": {},
+        },
+    )
+    event = client.get("/v1/events?after=0&limit=10").json()["events"][-1]
+    attachment = event["metadata"]["attachments"][0]
+    preview = client.get(attachment["previewUrl"])
+    content = client.get(attachment["downloadUrl"])
+
+    assert delivery.status_code == 200
+    assert event["content"] == "Done"
+    assert attachment["name"] == "red_hue_relief.png"
+    assert attachment["kind"] == "image"
+    assert attachment["mimeType"] == "image/png"
+    assert attachment["downloadUrl"].startswith("/v1/attachments/att_")
+    assert preview.status_code == 200
+    assert preview.headers["content-type"].startswith("image/png")
+    assert content.status_code == 200
+    assert content.content == PNG_BYTES
+    assert generated.exists()
+
+
+def test_runtime_delivery_missing_generated_file_preserves_marker_with_warning(tmp_path):
+    missing = tmp_path / "missing.png"
+    root = tmp_path / ".hermes"
+    client = make_client(root)
+    agent = client.get("/v1/agents").json()["agents"][0]
+    conversation = client.post(
+        "/v1/conversations",
+        json={"agentId": agent["id"], "title": "Missing generated image"},
+    ).json()["conversation"]
+
+    delivery = client.post(
+        "/v1/runtime-deliveries/hermes",
+        json={
+            "runtimeId": "runtime_local_hermes",
+            "profile": "default",
+            "chatId": conversation["externalChatId"],
+            "messageId": "assistant-image-1",
+            "replyTo": "user-message-1",
+            "content": f"Done\n\nMEDIA:{missing}",
+            "metadata": {},
+        },
+    )
+    event = client.get("/v1/events?after=0&limit=10").json()["events"][-1]
+
+    assert delivery.status_code == 200
+    assert event["content"] == f"Done\n\nMEDIA:{missing}"
+    assert "attachments" not in event["metadata"]
+    assert event["metadata"]["generatedFileImportWarnings"][0]["path"] == str(missing)
+
+
+def test_runtime_delivery_imports_non_image_without_preview_url(tmp_path):
+    generated = tmp_path / "notes.txt"
+    generated.write_text("hello from a generated file", encoding="utf-8")
+    root = tmp_path / ".hermes"
+    client = make_client(root)
+    agent = client.get("/v1/agents").json()["agents"][0]
+    conversation = client.post(
+        "/v1/conversations",
+        json={"agentId": agent["id"], "title": "Generated doc"},
+    ).json()["conversation"]
+
+    client.post(
+        "/v1/runtime-deliveries/hermes",
+        json={
+            "runtimeId": "runtime_local_hermes",
+            "profile": "default",
+            "chatId": conversation["externalChatId"],
+            "messageId": "assistant-file-1",
+            "content": f"File: {generated}",
+            "metadata": {},
+        },
+    )
+    event = client.get("/v1/events?after=0&limit=10").json()["events"][-1]
+    attachment = event["metadata"]["attachments"][0]
+    preview = client.get(f"/v1/attachments/{attachment['id']}/preview")
+    content = client.get(attachment["downloadUrl"])
+
+    assert event["content"] == ""
+    assert attachment["name"] == "notes.txt"
+    assert attachment["kind"] == "code"
+    assert attachment["previewUrl"] == ""
+    assert preview.status_code == 415
+    assert content.content == b"hello from a generated file"
 
 
 def test_core_marks_late_model_switch_replies_hidden(tmp_path):
@@ -727,6 +879,75 @@ def test_core_merges_client_attachment_metadata_into_hermes_history(tmp_path):
     user_message = messages.json()["messages"][0]
     assert user_message["content"] == "Look at this\n\nAttached files:\n1. image.png (image/png, 12 KB)"
     assert user_message["metadata"]["attachments"][0]["name"] == "image.png"
+
+
+def test_core_merges_assistant_attachment_metadata_into_hermes_history(tmp_path):
+    generated = tmp_path / "history-image.png"
+    generated.write_bytes(PNG_BYTES)
+    root = tmp_path / ".hermes"
+    create_core_history_db(
+        root / "state.db",
+        session_id="default-session",
+        title="Assistant attachment history",
+        user_text="Create an image",
+        assistant_text=f"Done\n\nMEDIA:{generated}",
+        chat_id="default-chat",
+    )
+    client = make_client(root)
+    agent = client.get("/v1/agents").json()["agents"][0]
+    conversation = client.get(f"/v1/conversations?agentId={agent['id']}").json()["conversations"][0]
+
+    delivered = client.post(
+        "/v1/runtime-deliveries/hermes",
+        json={
+            "runtimeId": "runtime_local_hermes",
+            "profile": "default",
+            "chatId": "default-chat",
+            "messageId": "assistant-delivery-image",
+            "content": f"Done\n\nMEDIA:{generated}",
+            "metadata": {},
+        },
+    )
+    messages = client.get(f"/v1/conversations/{conversation['id']}/messages")
+
+    assert delivered.status_code == 200
+    assistant_message = messages.json()["messages"][1]
+    assert assistant_message["content"] == "Done"
+    assert assistant_message["metadata"]["attachments"][0]["name"] == "history-image.png"
+    assert assistant_message["metadata"]["attachments"][0]["kind"] == "image"
+
+
+def test_core_imports_generated_pdf_marker_from_hermes_history(tmp_path):
+    generated = tmp_path / "20260410_SUBSIDY_redacted.pdf"
+    generated.write_bytes(b"%PDF-1.4\n1 0 obj\n<<>>\nendobj\ntrailer\n<<>>\n%%EOF\n")
+    root = tmp_path / ".hermes"
+    create_core_history_db(
+        root / "state.db",
+        session_id="default-session",
+        title="PDF attachment history",
+        user_text="redact the addresses and names and give me a new pdf",
+        assistant_text=f"Done - I created a new PDF:\n\nMEDIA:{generated}",
+        chat_id="default-chat",
+    )
+    client = make_client(root)
+    agent = client.get("/v1/agents").json()["agents"][0]
+    conversation = client.get(f"/v1/conversations?agentId={agent['id']}").json()["conversations"][0]
+
+    messages = client.get(f"/v1/conversations/{conversation['id']}/messages")
+    assistant_message = messages.json()["messages"][1]
+    attachment = assistant_message["metadata"]["attachments"][0]
+    preview = client.get(attachment["previewUrl"] or f"/v1/attachments/{attachment['id']}/preview")
+    content = client.get(attachment["downloadUrl"])
+
+    assert messages.status_code == 200
+    assert assistant_message["content"] == "Done - I created a new PDF:"
+    assert attachment["name"] == "20260410_SUBSIDY_redacted.pdf"
+    assert attachment["kind"] == "document"
+    assert attachment["mimeType"] == "application/pdf"
+    assert attachment["previewUrl"] == ""
+    assert preview.status_code == 415
+    assert content.status_code == 200
+    assert content.content.startswith(b"%PDF-1.4")
 
 
 def test_core_conversations_and_events_are_profile_isolated(tmp_path):

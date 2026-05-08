@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import mimetypes
 import os
 import re
 import secrets
@@ -534,6 +535,59 @@ class CoreStore:
             raise ValueError("Attachment could not be stored.")
         return attachment
 
+    def create_attachment_from_path(
+        self,
+        *,
+        source_path: Path,
+        runtime_id: str,
+        profile: str,
+        conversation_id: str,
+        message_id: str,
+        name: str = "",
+        kind: str = "",
+        mime_type: str = "",
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        source = Path(source_path).expanduser()
+        if not source.is_absolute():
+            raise ValueError("Generated attachment path must be absolute.")
+        if not source.is_file():
+            raise ValueError("Generated attachment was not found.")
+        size_bytes = source.stat().st_size
+        if size_bytes <= 0:
+            raise ValueError("Generated attachment is empty.")
+        if size_bytes > max_attachment_size_bytes():
+            raise ValueError(f"Attachment exceeds the {attachment_size_limit_label()} limit.")
+
+        sha256 = hashlib.sha256()
+        with source.open("rb") as file:
+            for chunk in iter(lambda: file.read(1024 * 1024), b""):
+                sha256.update(chunk)
+
+        filename = name.strip() or source.name or "attachment"
+        normalized_mime = normalize_attachment_mime_type(
+            mime_type or mimetypes.guess_type(filename)[0] or "application/octet-stream"
+        )
+        normalized_kind = normalize_attachment_kind(kind, normalized_mime)
+        temp_path = self.tmp_attachment_path()
+        try:
+            shutil.copy2(source, temp_path)
+            return self.create_attachment(
+                source_path=temp_path,
+                runtime_id=runtime_id,
+                profile=profile,
+                conversation_id=conversation_id,
+                message_id=message_id,
+                name=filename,
+                mime_type=normalized_mime,
+                kind=normalized_kind,
+                size_bytes=size_bytes,
+                sha256=sha256.hexdigest(),
+                metadata=metadata,
+            )
+        finally:
+            temp_path.unlink(missing_ok=True)
+
     def blob_path_for_sha256(self, sha256: str) -> Path:
         safe_hash = re.sub(r"[^a-fA-F0-9]", "", sha256).lower()
         if len(safe_hash) != 64:
@@ -623,6 +677,44 @@ class CoreStore:
                 )
                 resolved.append(attachment_from_row(row, include_storage=True))
         return resolved
+
+    def link_message_attachments(
+        self,
+        *,
+        runtime_id: str,
+        profile: str,
+        chat_id: str,
+        message_id: str,
+        attachments: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        if len(attachments) > MAX_ATTACHMENTS_PER_MESSAGE:
+            raise ValueError(f"Messages may include at most {MAX_ATTACHMENTS_PER_MESSAGE} attachments.")
+        timestamp = now()
+        linked: list[dict[str, Any]] = []
+        with self.connect() as connection:
+            for position, attachment in enumerate(attachments):
+                attachment_id = str(attachment.get("id") or "").strip()
+                if not attachment_id:
+                    continue
+                row = connection.execute(
+                    """
+                    select * from attachments
+                    where id = ? and runtime_id = ? and profile = ? and deleted_at is null
+                    """,
+                    (attachment_id, runtime_id, profile),
+                ).fetchone()
+                if not row:
+                    continue
+                connection.execute(
+                    """
+                    insert or replace into message_attachments(
+                      runtime_id, profile, chat_id, message_id, attachment_id, position, created_at
+                    ) values(?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (runtime_id, profile, chat_id, message_id, attachment_id, position, timestamp),
+                )
+                linked.append(attachment_from_row(row, include_storage=True))
+        return linked
 
     def runtime_attachments(self, *, runtime_id: str, profile: str, refs: list[Any]) -> list[dict[str, Any]]:
         resolved: list[dict[str, Any]] = []
@@ -822,11 +914,24 @@ def message_content_hash_candidates(content: str) -> set[str]:
     stripped = strip_attachment_summary(value)
     if stripped and stripped != value:
         candidates.add(stable_hash(stripped, length=32))
+    stripped_generated_markers = strip_generated_file_marker_lines(value)
+    if stripped_generated_markers and stripped_generated_markers != value:
+        candidates.add(stable_hash(stripped_generated_markers, length=32))
     return candidates
 
 
 def strip_attachment_summary(content: str) -> str:
     return re.sub(r"\n\nAttached files:\n[\s\S]*$", "", content).strip()
+
+
+def strip_generated_file_marker_lines(content: str) -> str:
+    marker = re.compile(
+        r"^\s*(?:Generated\s+file:\s*)?(?:[^\w\s/\\.:~-]+\s*)?(?:MEDIA|Media|Image|File):\s*(?:file://(?:localhost)?/|/).+?\s*$"
+    )
+    return "\n".join(
+        line for line in str(content or "").splitlines()
+        if not marker.match(line)
+    ).strip()
 
 
 def attachment_from_row(row: sqlite3.Row, *, include_storage: bool = False) -> dict[str, Any]:
