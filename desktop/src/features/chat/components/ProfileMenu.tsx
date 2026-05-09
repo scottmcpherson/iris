@@ -1,4 +1,4 @@
-import { Check, ChevronDown, ShieldCheck } from "lucide-react";
+import { Bot, Check, ChevronDown } from "lucide-react";
 import type { HermesProfile } from "../../../types/hermes";
 
 type ProfileMenuProps = {
@@ -40,12 +40,13 @@ export function ProfileMenu({
         disabled={disabled}
         onClick={onToggle}
       >
-        <ShieldCheck size={15} />
+        <Bot size={15} />
         <span>{connected ? profile : "Offline"}</span>
         <ChevronDown size={14} />
       </button>
       {open ? (
         <div className="composer-profile-menu" role="menu" aria-label="Choose agent">
+          <div className="composer-menu-header" role="presentation">Agents</div>
           {profiles.map((item) => (
             <button
               key={item.name}

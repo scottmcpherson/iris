@@ -90,6 +90,7 @@ export function mergeCompletedDelivery(
       id: delivery.id,
       role: "assistant",
       content: deliveryContent,
+      ...(delivery.source === "hermes-cron" ? { source: delivery.source } : {}),
       streaming: false,
       attachments: deliveryAttachments.length ? deliveryAttachments : undefined,
     };

@@ -37,6 +37,18 @@ export type AgentUICoreConversation = {
   origin?: Record<string, unknown>;
 };
 
+export type IrisProject = {
+  id: string;
+  name: string;
+  slug: string;
+  defaultAgentId: string;
+  systemPrompt: string;
+  createdAt: number;
+  updatedAt: number;
+  archivedAt: number | null;
+  metadata?: Record<string, unknown>;
+};
+
 export type AgentUICoreMessage = {
   id: string;
   conversationId: string;
@@ -268,6 +280,74 @@ export async function deleteAgentUICoreAgent(agentId: string, runtime?: HermesRu
   );
 }
 
+export async function getIrisProjects(runtime?: HermesRuntimeConfig) {
+  return coreRequest<{ projects: IrisProject[] }>(runtime, "GET", "/projects");
+}
+
+export async function createIrisProject(
+  payload: {
+    name: string;
+    defaultAgentId: string;
+    systemPrompt?: string;
+    metadata?: Record<string, unknown>;
+  },
+  runtime?: HermesRuntimeConfig,
+) {
+  return coreRequest<{ project: IrisProject }>(runtime, "POST", "/projects", payload);
+}
+
+export async function updateIrisProject(
+  projectId: string,
+  payload: {
+    name?: string;
+    defaultAgentId?: string;
+    systemPrompt?: string;
+    metadata?: Record<string, unknown>;
+  },
+  runtime?: HermesRuntimeConfig,
+) {
+  return coreRequest<{ project: IrisProject }>(
+    runtime,
+    "PATCH",
+    `/projects/${encodeURIComponent(projectId)}`,
+    payload,
+  );
+}
+
+export async function archiveIrisProject(projectId: string, runtime?: HermesRuntimeConfig) {
+  return coreRequest<{ project: IrisProject }>(
+    runtime,
+    "DELETE",
+    `/projects/${encodeURIComponent(projectId)}`,
+  );
+}
+
+export async function getIrisProjectConversations(
+  projectId: string,
+  limit = 80,
+  runtime?: HermesRuntimeConfig,
+) {
+  const query = new URLSearchParams({ limit: String(limit) });
+  return coreRequest<{ conversations: AgentUICoreConversation[] }>(
+    runtime,
+    "GET",
+    `/projects/${encodeURIComponent(projectId)}/conversations?${query}`,
+  );
+}
+
+export async function linkIrisProjectConversation(
+  projectId: string,
+  conversationId: string,
+  runtime?: HermesRuntimeConfig,
+) {
+  return coreRequest<{ conversation: AgentUICoreConversation }>(
+    runtime,
+    "POST",
+    `/projects/${encodeURIComponent(projectId)}/conversations`,
+    { conversationId },
+  );
+}
+
 export async function getAgentUICoreConversations(agentId: string, limit = 80, runtime?: HermesRuntimeConfig) {
   const query = new URLSearchParams({ agentId, limit: String(limit) });
   return coreRequest<{ conversations: AgentUICoreConversation[] }>(runtime, "GET", `/conversations?${query}`);
@@ -279,6 +359,7 @@ export async function createAgentUICoreConversation(
     title: string;
     externalChatId?: string;
     externalSessionId?: string;
+    projectId?: string | null;
     metadata?: Record<string, unknown>;
   },
   runtime?: HermesRuntimeConfig,
@@ -296,6 +377,19 @@ export async function getAgentUICoreConversation(
     runtime,
     "GET",
     `/conversations/${encodeURIComponent(conversationId)}${query}`,
+  );
+}
+
+export async function updateAgentUICoreConversation(
+  conversationId: string,
+  payload: { title?: string; metadata?: Record<string, unknown> },
+  runtime?: HermesRuntimeConfig,
+) {
+  return coreRequest<{ conversation: AgentUICoreConversation }>(
+    runtime,
+    "PATCH",
+    `/conversations/${encodeURIComponent(conversationId)}`,
+    payload,
   );
 }
 

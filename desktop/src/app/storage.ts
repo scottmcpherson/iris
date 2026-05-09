@@ -6,7 +6,11 @@ export const storageKeys = {
   jobsDeliveryTarget: "hermes.desktop.jobs.deliveryTarget",
   memoryProviders: "hermes-memory-provider-controls",
   modelSelectionByProfile: "hermes.desktop.modelSelectionByProfile",
+  collapsedSidebarSections: "iris.desktop.sidebar.collapsedSections",
   collapsedSessionProfiles: "hermes.desktop.sidebar.collapsedSessions",
+  collapsedProjects: "iris.desktop.sidebar.collapsedProjects",
+  selectedProjectId: "iris.desktop.selectedProjectId",
+  pinnedConversations: "hermes.desktop.sidebar.pinnedConversations",
 } as const;
 
 export function loadJsonValue<T>(key: string, fallback: T): T {

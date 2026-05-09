@@ -7,11 +7,26 @@ import json
 import os
 import re
 import shutil
+import sqlite3
 import time
 from pathlib import Path
 from typing import Any
 
-from .hermes_conversations import ConversationDetail, ConversationDiscovery, discover_conversation_detail, discover_conversations
+from .hermes_conversations import (
+    ID_COLUMNS,
+    TITLE_COLUMNS,
+    ConversationDetail,
+    ConversationDiscovery,
+    assert_within_profile,
+    choose_session_table,
+    discover_conversation_detail,
+    discover_conversations,
+    inspect_sqlite_schema,
+    normalize_columns,
+    normalize_session_file,
+    quote_identifier,
+    sqlite_candidates,
+)
 from ..models import FileContent, ProfileSummary, SkillSummary
 from ..security import ManagementError
 
@@ -606,3 +621,75 @@ class HermesStore:
     def conversation_detail(self, profile: str, conversation_id: str) -> ConversationDetail:
         directory = self.profile_directory(validate_profile_name(profile))
         return discover_conversation_detail(directory, conversation_id)
+
+    def rename_conversation(self, profile: str, conversation_id: str, title: str) -> ConversationDetail:
+        directory = self.profile_directory(validate_profile_name(profile))
+        clean_title = title.strip()
+        if not clean_title:
+            raise ManagementError("Conversation title is required.", status_code=400)
+        if len(clean_title) > 160:
+            raise ManagementError("Conversation title must be 160 characters or fewer.", status_code=400)
+        if self._rename_sqlite_conversation(directory, conversation_id, clean_title):
+            return self.conversation_detail(profile, conversation_id)
+        if self._rename_session_file_conversation(directory, conversation_id, clean_title):
+            return self.conversation_detail(profile, conversation_id)
+        raise ManagementError("Conversation was not found.", status_code=404)
+
+    def _rename_sqlite_conversation(self, directory: Path, conversation_id: str, title: str) -> bool:
+        for db_path in sqlite_candidates(directory):
+            try:
+                safe_path = assert_within_profile(db_path, directory)
+                connection = sqlite3.connect(f"file:{safe_path.as_posix()}?mode=rw", uri=True)
+            except Exception:
+                continue
+            try:
+                connection.row_factory = sqlite3.Row
+                schema = inspect_sqlite_schema(connection)
+                session_table = choose_session_table(schema.tables)
+                if session_table is None:
+                    continue
+                columns = normalize_columns(schema.tables[session_table])
+                id_column = next((columns[key] for key in ID_COLUMNS if key in columns), "")
+                title_column = next((columns[key] for key in TITLE_COLUMNS if key in columns), "")
+                if not id_column or not title_column:
+                    continue
+                cursor = connection.execute(
+                    (
+                        f"update {quote_identifier(session_table)} "
+                        f"set {quote_identifier(title_column)} = ? "
+                        f"where {quote_identifier(id_column)} = ?"
+                    ),
+                    (title, conversation_id),
+                )
+                connection.commit()
+                if cursor.rowcount:
+                    return True
+            except sqlite3.Error:
+                continue
+            finally:
+                connection.close()
+        return False
+
+    def _rename_session_file_conversation(self, directory: Path, conversation_id: str, title: str) -> bool:
+        sessions_dir = directory / "sessions"
+        try:
+            safe_sessions_dir = assert_within_profile(sessions_dir, directory)
+        except ManagementError:
+            return False
+        if not safe_sessions_dir.is_dir():
+            return False
+        for path in sorted(safe_sessions_dir.glob("*.json"), key=lambda item: item.name.lower()):
+            try:
+                safe_path = assert_within_profile(path, directory)
+                payload = json.loads(safe_path.read_text(encoding="utf-8"))
+            except (OSError, UnicodeDecodeError, json.JSONDecodeError, ManagementError):
+                continue
+            if not isinstance(payload, dict):
+                continue
+            summary = normalize_session_file(payload)
+            if summary is None or summary.id != conversation_id:
+                continue
+            payload["title"] = title
+            safe_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+            return True
+        return False

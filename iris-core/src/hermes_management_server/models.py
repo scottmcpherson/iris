@@ -133,10 +133,16 @@ class SkillSummary(BaseModel):
 
 
 class CoreConversationCreateRequest(BaseModel):
-    agentId: str
+    agentId: str | None = None
     title: str = "New conversation"
     externalChatId: str | None = None
     externalSessionId: str | None = None
+    projectId: str | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class CoreConversationUpdateRequest(BaseModel):
+    title: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -150,6 +156,24 @@ class CoreMessageCreateRequest(BaseModel):
     model: dict[str, Any] | None = None
     clientMessageId: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class ProjectCreateRequest(BaseModel):
+    name: str
+    defaultAgentId: str
+    systemPrompt: str = ""
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class ProjectUpdateRequest(BaseModel):
+    name: str | None = None
+    defaultAgentId: str | None = None
+    systemPrompt: str | None = None
+    metadata: dict[str, Any] | None = None
+
+
+class ProjectConversationLinkRequest(BaseModel):
+    conversationId: str
 
 
 class DeviceCursorUpdateRequest(BaseModel):

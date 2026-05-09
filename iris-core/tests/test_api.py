@@ -463,6 +463,55 @@ def test_core_conversation_create_can_link_existing_runtime_chat(tmp_path):
     assert conversation["metadata"]["createdBy"] == "desktop-legacy-link"
 
 
+def test_project_endpoints_create_link_and_archive_without_transcript_tables(tmp_path):
+    client = make_client(tmp_path / ".hermes")
+    agent = client.get("/v1/agents").json()["agents"][0]
+
+    created_project = client.post(
+        "/v1/projects",
+        json={
+            "name": "AgentUI",
+            "defaultAgentId": agent["id"],
+            "systemPrompt": "Prefer repo-local evidence.",
+        },
+    )
+    project = created_project.json()["project"]
+    created_conversation = client.post(
+        "/v1/conversations",
+        json={
+            "title": "Project chat",
+            "projectId": project["id"],
+            "metadata": {"model": "gpt-test"},
+        },
+    )
+    conversation = created_conversation.json()["conversation"]
+    listed = client.get(f"/v1/projects/{project['id']}/conversations")
+    updated = client.patch(
+        f"/v1/projects/{project['id']}",
+        json={
+            "name": "Iris",
+            "defaultAgentId": agent["id"],
+            "systemPrompt": "Use the updated project brief.",
+        },
+    )
+    archived = client.delete(f"/v1/projects/{project['id']}")
+
+    assert created_project.status_code == 200
+    assert project["slug"] == "agentui"
+    assert created_conversation.status_code == 200
+    assert conversation["agentId"] == agent["id"]
+    assert conversation["metadata"]["project"]["id"] == project["id"]
+    assert listed.status_code == 200
+    assert listed.json()["conversations"][0]["id"] == conversation["id"]
+    assert listed.json()["conversations"][0]["metadata"]["project"]["name"] == "AgentUI"
+    assert updated.status_code == 200
+    assert updated.json()["project"]["name"] == "Iris"
+    assert updated.json()["project"]["defaultAgentId"] == agent["id"]
+    assert updated.json()["project"]["systemPrompt"] == "Use the updated project brief."
+    assert archived.status_code == 200
+    assert "conversation_messages" not in client.app.state.core_store.tables()
+
+
 def test_legacy_inbox_stream_and_completed_replays_remain_live_only(tmp_path):
     root = tmp_path / ".hermes"
     app = create_app(
@@ -836,6 +885,31 @@ def test_core_backfills_hermes_conversations_and_fetches_messages(tmp_path):
         "Default question",
         "Default answer",
     ]
+
+
+def test_core_renames_hermes_conversation_title(tmp_path):
+    root = tmp_path / ".hermes"
+    create_core_history_db(
+        root / "state.db",
+        session_id="default-session",
+        title="Default history",
+        user_text="Default question",
+        assistant_text="Default answer",
+        chat_id="default-chat",
+    )
+    client = make_client(root)
+    agent = client.get("/v1/agents").json()["agents"][0]
+    conversation = client.get(f"/v1/conversations?agentId={agent['id']}").json()["conversations"][0]
+
+    rename = client.patch(
+        f"/v1/conversations/{conversation['id']}",
+        json={"title": "Pinned planning"},
+    )
+    listed = client.get(f"/v1/conversations?agentId={agent['id']}")
+
+    assert rename.status_code == 200
+    assert rename.json()["conversation"]["title"] == "Pinned planning"
+    assert listed.json()["conversations"][0]["title"] == "Pinned planning"
 
 
 def test_core_merges_client_attachment_metadata_into_hermes_history(tmp_path):

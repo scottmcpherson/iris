@@ -21,6 +21,7 @@ import {
   resetAgentUICoreAgentMemory,
   saveAgentUICoreAgentMemory,
   saveAgentUICoreAgentSkill,
+  updateAgentUICoreConversation,
 } from "./agentuiCore";
 import {
   coreConversationToLegacy,
@@ -300,6 +301,46 @@ export async function getIrisConversationDetail(
       error instanceof Error ? error.message : "Could not load this conversation from Iris Core.",
       runtime,
     );
+  }
+}
+
+export async function renameIrisConversation(
+  _profile: string | undefined,
+  conversationId: string,
+  title: string,
+  runtime?: HermesRuntimeConfig,
+) {
+  const cleanTitle = title.trim();
+  if (!cleanTitle) {
+    return { ok: false, conversation: null, error: "Conversation title is required." };
+  }
+  if (!conversationId.startsWith("conv_")) {
+    return {
+      ok: false,
+      conversation: null,
+      error: "Legacy conversation titles cannot be renamed until they are linked through Iris Core.",
+    };
+  }
+  try {
+    const result = await updateAgentUICoreConversation(conversationId, { title: cleanTitle }, runtime);
+    if (!result.ok || !result.conversation) {
+      return {
+        ok: false,
+        conversation: null,
+        error: result.error || "Could not rename this conversation through Iris Core.",
+      };
+    }
+    return {
+      ok: true,
+      conversation: coreConversationToLegacy(result.conversation),
+      error: undefined,
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      conversation: null,
+      error: error instanceof Error ? error.message : "Could not rename this conversation through Iris Core.",
+    };
   }
 }
 

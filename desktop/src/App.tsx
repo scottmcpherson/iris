@@ -21,6 +21,7 @@ import { useIrisRuntime } from "./features/iris/useIrisRuntime";
 import { JobsView } from "./features/jobs/JobsView";
 import { useAgentUIAutomations } from "./features/jobs/useIrisAutomations";
 import { LivePreviewPane } from "./features/preview/LivePreviewPane";
+import { useIrisProjects } from "./features/projects/useIrisProjects";
 import {
   createPreviewArtifact,
   createSkillArtifact,
@@ -37,6 +38,7 @@ import { NotificationCenter } from "./features/polish/NotificationCenter";
 import { OnboardingOverlay } from "./features/polish/OnboardingOverlay";
 import { AppShell } from "./layout/AppShell";
 import { loadBooleanValue, saveBooleanValue, storageKeys } from "./app/storage";
+import { isProjectConversation, mergeProjectConversationsForSidebar } from "./app/projectConversations";
 
 function App() {
   const [activeView, setActiveView] = useState<View>("chat");
@@ -59,6 +61,7 @@ function App() {
     runtimeConfig: iris.runtimeConfig,
   });
   const jobs = useAgentUIAutomations(iris.runtimeConfig, iris.selectedProfile);
+  const projects = useIrisProjects(iris.runtimeConfig);
 
   useEffect(() => {
     savePreviewArtifacts(previewArtifacts);
@@ -138,6 +141,30 @@ function App() {
   });
   const agentTopbarProfile =
     agentProfiles.find((profile) => profile.name === agentDetailProfile) ?? iris.activeProfile;
+  const projectAgentById = useMemo(
+    () => new Map(projects.agents.map((agent) => [agent.id, agent])),
+    [projects.agents],
+  );
+  const projectedConversationIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const conversations of Object.values(projects.conversationsByProject)) {
+      for (const conversation of conversations) ids.add(conversation.id);
+    }
+    return ids;
+  }, [projects.conversationsByProject]);
+  const sidebarConversationsByProject = useMemo(
+    () =>
+      mergeProjectConversationsForSidebar(
+        projects.projects.map((project) => project.id),
+        projects.conversationsByProject,
+        chat.conversations,
+      ),
+    [chat.conversations, projects.conversationsByProject, projects.projects],
+  );
+  const unprojectedConversations = useMemo(
+    () => chat.conversations.filter((conversation) => !isProjectConversation(conversation, projectedConversationIds)),
+    [chat.conversations, projectedConversationIds],
+  );
 
   const commands = useMemo<CommandItem[]>(
     () => [
@@ -222,6 +249,36 @@ function App() {
         coreApiUrl={iris.runtimeConfig.coreApiUrl}
         conversations={chat.conversations}
         conversationsByProfile={chat.conversationsByProfile}
+        projects={projects.projects}
+        projectAgents={projects.agents}
+        conversationsByProject={sidebarConversationsByProject}
+        projectConversationsLoading={projects.projectConversationsLoading}
+        projectConversationsLoaded={projects.projectConversationsLoaded}
+        projectErrors={projects.projectErrors}
+        collapsedProjects={projects.collapsedProjects}
+        unprojectedConversations={unprojectedConversations}
+        selectedProjectId={projects.selectedProjectId}
+        onCreateProject={async (payload) => {
+          const project = await projects.createProject(payload);
+          pushNotification({
+            tone: "success",
+            title: "Project created",
+            message: `${project.name} is ready.`,
+          });
+          return project;
+        }}
+        onUpdateProject={async (projectId, payload) => {
+          const project = await projects.updateProject(projectId, payload);
+          pushNotification({
+            tone: "success",
+            title: "Project updated",
+            message: `${project.name} is current.`,
+          });
+          return project;
+        }}
+        onToggleProjectCollapsed={projects.toggleProjectCollapsed}
+        onRefreshProjects={() => void projects.refreshProjects()}
+        onRefreshProjectConversations={(projectId) => void projects.refreshProjectConversations(projectId)}
         conversationsLoadedByProfile={chat.conversationsLoadedByProfile}
         conversationsLoading={chat.conversationsLoading}
         conversationsLoadingByProfile={chat.conversationsLoadingByProfile}
@@ -229,8 +286,21 @@ function App() {
         historyErrorsByProfile={chat.historyErrorsByProfile}
         selectedConversationId={chat.selectedConversationId}
         activeConversationIds={chat.activeConversationIds}
-        onNewConversation={(profileName) => {
+        onNewConversation={(profileName, projectId) => {
           setActiveView("chat");
+          if (projectId) {
+            const project = projects.projects.find((item) => item.id === projectId);
+            const agent = project ? projectAgentById.get(project.defaultAgentId) : null;
+            projects.selectProject(projectId);
+            if (agent && agent.runtimeProfile !== iris.selectedProfile) {
+              iris.selectProfile(agent.runtimeProfile);
+              chat.startNewConversation(agent.runtimeProfile);
+            } else {
+              chat.startNewConversation(profileName || iris.selectedProfile);
+            }
+            return;
+          }
+          projects.selectProject(null);
           if (profileName && profileName !== iris.selectedProfile) {
             iris.selectProfile(profileName);
           }
@@ -248,8 +318,27 @@ function App() {
         onProfileAction={runProfileActionWithNotice}
         onRefresh={() => void refreshWithNotice()}
         onRefreshConversations={(profileName) => void chat.refreshConversations({ profileName })}
+        onRenameConversation={async (profileName, conversationId, title) => {
+          const message = await chat.renameConversation(profileName, conversationId, title);
+          const failed = isConversationActionFailure(message);
+          pushNotification({
+            tone: failed ? "error" : "success",
+            title: failed ? "Conversation rename failed" : "Conversation renamed",
+            message,
+          });
+          return message;
+        }}
         onSelectConversation={(profileName, conversationId) => {
           setActiveView("chat");
+          projects.selectProject(null);
+          if (profileName !== iris.selectedProfile) {
+            iris.selectProfile(profileName);
+          }
+          void chat.loadConversation(conversationId, profileName);
+        }}
+        onSelectProjectConversation={(projectId, profileName, conversationId) => {
+          setActiveView("chat");
+          projects.selectProject(projectId);
           if (profileName !== iris.selectedProfile) {
             iris.selectProfile(profileName);
           }
@@ -453,13 +542,31 @@ function App() {
             text: options?.text,
             attachments: options?.attachments,
             modelSelection: options?.modelSelection,
+            projectId: (options?.projectId ?? projects.selectedProjectId) || null,
             currentModelSelection: modelCatalog.currentSelection,
             onAttachmentUploadError: options?.onAttachmentUploadError,
+          }).then((sent) => {
+            const projectId = (options?.projectId ?? projects.selectedProjectId) || null;
+            if (sent && projectId) {
+              window.setTimeout(() => void projects.refreshProjectConversations(projectId), 1400);
+            }
+            return sent;
           })
         }
         connected={iris.connected}
         profile={iris.selectedProfile}
         profiles={agentProfiles}
+        projects={projects.projects}
+        selectedProjectId={projects.selectedProjectId}
+        onProjectChange={(projectId) => {
+          projects.selectProject(projectId);
+          if (!projectId) return;
+          const project = projects.projects.find((item) => item.id === projectId);
+          const agent = project ? projectAgentById.get(project.defaultAgentId) : null;
+          if (agent && agent.runtimeProfile !== iris.selectedProfile) {
+            iris.selectProfile(agent.runtimeProfile);
+          }
+        }}
         onProfileChange={iris.selectProfile}
         requestActive={chat.requestActive}
         onCancel={() => void chat.cancelMessage()}
@@ -505,6 +612,10 @@ function profileActionTitle(action: ProfileAction) {
 
 function isProfileActionFailure(message: string) {
   return /\b(error|failed|cannot|already exists|does not exist|enter|invalid)\b/i.test(message);
+}
+
+function isConversationActionFailure(message: string) {
+  return /\b(error|failed|cannot|could not|does not exist|not found|not allowed|enter|invalid|legacy|http|urlopen|connection refused|refused)\b/i.test(message);
 }
 
 export default App;

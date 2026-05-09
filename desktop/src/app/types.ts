@@ -26,6 +26,7 @@ export type Message = {
   role: "user" | "assistant" | "system" | "tool";
   content: string;
   attachments?: MessageAttachment[];
+  source?: string;
   streaming?: boolean;
   streamMessageId?: string;
   events?: HermesParsedEvents;

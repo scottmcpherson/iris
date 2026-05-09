@@ -14,6 +14,8 @@ import {
   saveAgentUICoreAgentMemory,
   saveAgentUICoreAgentSkill,
   sendAgentUICoreMessage,
+  updateAgentUICoreConversation,
+  updateIrisProject,
   uploadAgentUICoreAttachment,
 } from "../agentuiCore";
 import { defaultRuntimeConfig } from "../../app/runtimeConfig";
@@ -111,6 +113,50 @@ describe("agentuiCore", () => {
 
     expect(result).toEqual({ ok: false, error: "timed out" });
     expect(invoke).not.toHaveBeenCalled();
+  });
+
+  it("sends full project edits through the project PATCH endpoint", async () => {
+    const fetch = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        ok: true,
+        project: {
+          id: "project_1",
+          name: "Iris",
+          slug: "iris",
+          defaultAgentId: "agent_default",
+          systemPrompt: "Use repo-local context.",
+          createdAt: 1,
+          updatedAt: 2,
+          archivedAt: null,
+          metadata: {},
+        },
+      }),
+    }));
+    vi.stubGlobal("fetch", fetch);
+
+    await updateIrisProject(
+      "project_1",
+      {
+        name: "Iris",
+        defaultAgentId: "agent_default",
+        systemPrompt: "Use repo-local context.",
+      },
+      defaultRuntimeConfig,
+    );
+
+    expect(fetch).toHaveBeenCalledWith(
+      "http://127.0.0.1:8765/v1/projects/project_1",
+      expect.objectContaining({
+        method: "PATCH",
+        body: JSON.stringify({
+          name: "Iris",
+          defaultAgentId: "agent_default",
+          systemPrompt: "Use repo-local context.",
+        }),
+      }),
+    );
   });
 
   it("uploads file attachments as multipart form data and resolves Core URLs", async () => {
@@ -241,6 +287,7 @@ describe("agentuiCore", () => {
     await cloneAgentUICoreAgent("agent_default", { name: "copy" }, defaultRuntimeConfig);
     await renameAgentUICoreAgent("agent_default", { name: "renamed" }, defaultRuntimeConfig);
     await deleteAgentUICoreAgent("agent_default", defaultRuntimeConfig);
+    await updateAgentUICoreConversation("conv_123", { title: "Pinned plan" }, defaultRuntimeConfig);
 
     expect(calls.map((call) => [call.init.method, new URL(call.url).pathname])).toEqual([
       ["GET", "/v1/agents/agent_default/memory"],
@@ -254,6 +301,7 @@ describe("agentuiCore", () => {
       ["POST", "/v1/agents/agent_default/clone"],
       ["PATCH", "/v1/agents/agent_default"],
       ["DELETE", "/v1/agents/agent_default"],
+      ["PATCH", "/v1/conversations/conv_123"],
     ]);
   });
 });

@@ -2,6 +2,8 @@ import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, FormEvent, PointerEvent as ReactPointerEvent, ReactNode } from "react";
 import {
   AlertCircle,
+  ChevronDown,
+  ChevronRight,
   Copy,
   Ellipsis,
   Folder,
@@ -10,6 +12,7 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   Pencil,
+  Pin,
   PanelRightClose,
   PanelRightOpen,
   Plus,
@@ -24,6 +27,8 @@ import { navItems, viewTitle } from "../app/navigation";
 import { loadJsonValue, saveJsonValue, storageKeys } from "../app/storage";
 import type { ProfileActionHandler, View } from "../app/types";
 import { offlineProfile } from "../app/offlineProfile";
+import { CodeEditor } from "../shared/CodeEditor";
+import type { AgentUICoreAgent, IrisProject } from "../lib/agentuiCore";
 import type { HermesConversation, HermesProfile, HermesStatus } from "../types/hermes";
 
 const SIDEBAR_AUTO_COLLAPSE_WIDTH = 1500;
@@ -36,16 +41,45 @@ type ProfileDialog =
   | { action: "clone"; source: string; name: string }
   | { action: "delete"; source: string; name: string };
 
+type ProjectDialog =
+  | { action: "create"; name: string; defaultAgentId: string; systemPrompt: string }
+  | { action: "edit"; projectId: string; name: string; defaultAgentId: string; systemPrompt: string };
+
 type ProfileMenu = {
   profile: string;
   top: number;
   left: number;
 };
 
+type ProjectMenu = {
+  projectId: string;
+  top: number;
+  left: number;
+};
+
+type ConversationMenu = {
+  conversation: HermesConversation;
+  profileName: string;
+  pinKey: string;
+  top: number;
+  left: number;
+};
+
+type ConversationDialog = {
+  conversation: HermesConversation;
+  profileName: string;
+  name: string;
+};
+
 type ConversationSearchItem = {
   conversation: HermesConversation;
   profileName: string;
+  sourceLabel: string;
+  pinKey: string;
+  select: () => void;
 };
+
+type SidebarSectionId = "projects" | "chats" | "agents";
 
 type AppShellProps = {
   activeView: View;
@@ -60,21 +94,40 @@ type AppShellProps = {
   status: HermesStatus | null;
   conversations: HermesConversation[];
   conversationsByProfile: Record<string, HermesConversation[]>;
+  projects: IrisProject[];
+  projectAgents: AgentUICoreAgent[];
+  conversationsByProject: Record<string, HermesConversation[]>;
+  projectConversationsLoading: Record<string, boolean>;
+  projectConversationsLoaded: Record<string, boolean>;
+  projectErrors: Record<string, string | null>;
+  collapsedProjects: Record<string, boolean>;
+  unprojectedConversations: HermesConversation[];
   conversationsLoadedByProfile: Record<string, boolean>;
   conversationsLoading: boolean;
   conversationsLoadingByProfile: Record<string, boolean>;
   historyError: string | null;
   historyErrorsByProfile: Record<string, string | null>;
   selectedConversationId: string | null;
+  selectedProjectId: string;
   activeConversationIds: string[];
   coreApiUrl: string;
-  onNewConversation: (profileName?: string) => void;
+  onNewConversation: (profileName?: string, projectId?: string) => void;
+  onCreateProject: (payload: { name: string; defaultAgentId: string; systemPrompt: string }) => Promise<IrisProject>;
+  onUpdateProject: (
+    projectId: string,
+    payload: { name: string; defaultAgentId: string; systemPrompt: string },
+  ) => Promise<IrisProject>;
+  onToggleProjectCollapsed: (projectId: string) => void;
+  onRefreshProjects: () => void;
+  onRefreshProjectConversations: (projectId: string) => void;
   onPreviewToggle: () => void;
   onEditProfile: (profile: string) => void;
   onProfileAction: ProfileActionHandler;
   onRefresh: () => void;
   onRefreshConversations: (profileName?: string) => void;
+  onRenameConversation: (profileName: string, conversationId: string, title: string) => Promise<string>;
   onSelectConversation: (profileName: string, conversationId: string) => void;
+  onSelectProjectConversation: (projectId: string, profileName: string, conversationId: string) => void;
   onSelectProfile: (profile: string) => void;
   onSelectView: (view: View) => void;
 };
@@ -92,29 +145,56 @@ export function AppShell({
   status,
   conversations,
   conversationsByProfile,
+  projects,
+  projectAgents,
+  conversationsByProject,
+  projectConversationsLoading,
+  projectConversationsLoaded,
+  projectErrors,
+  collapsedProjects,
+  unprojectedConversations,
   conversationsLoadedByProfile,
   conversationsLoading,
   conversationsLoadingByProfile,
   historyError,
   historyErrorsByProfile,
   selectedConversationId,
+  selectedProjectId,
   activeConversationIds,
   coreApiUrl,
   onNewConversation,
+  onCreateProject,
+  onUpdateProject,
+  onToggleProjectCollapsed,
+  onRefreshProjects,
+  onRefreshProjectConversations,
   onPreviewToggle,
   onEditProfile,
   onProfileAction,
   onRefresh,
   onRefreshConversations,
+  onRenameConversation,
   onSelectConversation,
+  onSelectProjectConversation,
   onSelectProfile,
   onSelectView,
 }: AppShellProps) {
   const profiles = status?.profiles ?? [offlineProfile];
   const [profileMenu, setProfileMenu] = useState<ProfileMenu | null>(null);
+  const [projectMenu, setProjectMenu] = useState<ProjectMenu | null>(null);
+  const [conversationMenu, setConversationMenu] = useState<ConversationMenu | null>(null);
   const [profileDialog, setProfileDialog] = useState<ProfileDialog | null>(null);
+  const [projectDialog, setProjectDialog] = useState<ProjectDialog | null>(null);
+  const [conversationDialog, setConversationDialog] = useState<ConversationDialog | null>(null);
   const [profileActionBusy, setProfileActionBusy] = useState(false);
   const [profileActionError, setProfileActionError] = useState("");
+  const [projectActionBusy, setProjectActionBusy] = useState(false);
+  const [projectActionError, setProjectActionError] = useState("");
+  const [conversationActionBusy, setConversationActionBusy] = useState(false);
+  const [conversationActionError, setConversationActionError] = useState("");
+  const [pinnedConversations, setPinnedConversations] = useState<Record<string, boolean>>(
+    () => loadPinnedConversations(),
+  );
   const [conversationSearchOpen, setConversationSearchOpen] = useState(false);
   const [conversationSearchQuery, setConversationSearchQuery] = useState("");
   const [conversationSearchIndex, setConversationSearchIndex] = useState(0);
@@ -128,6 +208,12 @@ export function AppShell({
   const [collapsedSessionProfiles, setCollapsedSessionProfiles] = useState<Record<string, boolean>>(
     () => loadCollapsedSessionProfiles(),
   );
+  const [collapsedSidebarSections, setCollapsedSidebarSections] = useState<Record<SidebarSectionId, boolean>>(
+    () => loadCollapsedSidebarSections(),
+  );
+  const projectsSectionCollapsed = Boolean(collapsedSidebarSections.projects);
+  const chatsSectionCollapsed = Boolean(collapsedSidebarSections.chats);
+  const agentsSectionCollapsed = Boolean(collapsedSidebarSections.agents);
 
   useEffect(() => {
     sidebarCollapsedRef.current = sidebarCollapsed;
@@ -179,6 +265,36 @@ export function AppShell({
     const seen = new Set<string>();
     const items: ConversationSearchItem[] = [];
 
+    for (const project of projects) {
+      for (const conversation of conversationsByProject[project.id] || []) {
+        const profileName = runtimeProfileForConversation(conversation, selectedProfile);
+        const key = `project:${project.id}:${conversation.id}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        items.push({
+          conversation,
+          profileName,
+          sourceLabel: `${project.name} / ${profileName}`,
+          pinKey: projectConversationPinKey(project.id, conversation.id),
+          select: () => onSelectProjectConversation(project.id, profileName, conversation.id),
+        });
+      }
+    }
+
+    for (const conversation of unprojectedConversations) {
+      const profileName = runtimeProfileForConversation(conversation, selectedProfile);
+      const key = `chat:${profileName}:${conversation.id}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      items.push({
+        conversation,
+        profileName,
+        sourceLabel: `Chats / ${profileName}`,
+        pinKey: unprojectedConversationPinKey(profileName, conversation.id),
+        select: () => onSelectConversation(profileName, conversation.id),
+      });
+    }
+
     for (const profile of profiles) {
       const profileConversations =
         profile.name === selectedProfile
@@ -186,10 +302,16 @@ export function AppShell({
           : conversationsByProfile[profile.name] || [];
 
       for (const conversation of profileConversations) {
-        const key = `${profile.name}:${conversation.id}`;
+        const key = `agent:${profile.name}:${conversation.id}`;
         if (seen.has(key)) continue;
         seen.add(key);
-        items.push({ conversation, profileName: profile.name });
+        items.push({
+          conversation,
+          profileName: profile.name,
+          sourceLabel: profile.name,
+          pinKey: agentConversationPinKey(profile.name, conversation.id),
+          select: () => onSelectConversation(profile.name, conversation.id),
+        });
       }
     }
 
@@ -198,20 +320,42 @@ export function AppShell({
         conversationMillis(right.conversation.lastActiveAt) -
         conversationMillis(left.conversation.lastActiveAt),
     );
-  }, [conversations, conversationsByProfile, profiles, selectedProfile]);
+  }, [
+    conversations,
+    conversationsByProfile,
+    conversationsByProject,
+    onSelectConversation,
+    onSelectProjectConversation,
+    profiles,
+    projects,
+    selectedProfile,
+    unprojectedConversations,
+  ]);
 
   const filteredConversationSearchItems = useMemo(() => {
     const query = conversationSearchQuery.trim().toLowerCase();
     const source = query
-      ? conversationSearchItems.filter(({ conversation, profileName }) =>
-          `${conversation.title} ${profileName} ${conversation.id}`.toLowerCase().includes(query),
+      ? conversationSearchItems.filter(({ conversation, profileName, sourceLabel }) =>
+          `${conversation.title} ${profileName} ${sourceLabel} ${conversation.id}`.toLowerCase().includes(query),
         )
       : conversationSearchItems;
 
     return source.slice(0, 9);
   }, [conversationSearchItems, conversationSearchQuery]);
 
+  const pinnedConversationItems = useMemo(() => {
+    const items = conversationSearchItems.filter(({ pinKey }) =>
+      Boolean(pinnedConversations[pinKey]),
+    );
+    return items.sort(
+      (left, right) =>
+        conversationMillis(right.conversation.lastActiveAt) -
+        conversationMillis(left.conversation.lastActiveAt),
+    );
+  }, [conversationSearchItems, pinnedConversations]);
+
   useEffect(() => {
+    if (agentsSectionCollapsed) return;
     for (const profile of profiles) {
       if (collapsedSessionProfiles[profile.name]) continue;
       if (conversationsLoadedByProfile[profile.name]) continue;
@@ -219,6 +363,7 @@ export function AppShell({
       onRefreshConversations(profile.name);
     }
   }, [
+    agentsSectionCollapsed,
     collapsedSessionProfiles,
     conversationsLoadedByProfile,
     conversationsLoadingByProfile,
@@ -252,6 +397,60 @@ export function AppShell({
       window.removeEventListener("scroll", closeOnLayoutChange, true);
     };
   }, [profileMenu]);
+
+  useEffect(() => {
+    if (!projectMenu) return undefined;
+
+    const closeMenu = (event: PointerEvent) => {
+      const target = event.target instanceof Element ? event.target : null;
+      if (target?.closest(".project-menu-wrap, .profile-context-menu")) return;
+      setProjectMenu(null);
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setProjectMenu(null);
+    };
+    const closeOnLayoutChange = () => {
+      setProjectMenu(null);
+    };
+
+    window.addEventListener("pointerdown", closeMenu);
+    window.addEventListener("keydown", closeOnEscape);
+    window.addEventListener("resize", closeOnLayoutChange);
+    window.addEventListener("scroll", closeOnLayoutChange, true);
+    return () => {
+      window.removeEventListener("pointerdown", closeMenu);
+      window.removeEventListener("keydown", closeOnEscape);
+      window.removeEventListener("resize", closeOnLayoutChange);
+      window.removeEventListener("scroll", closeOnLayoutChange, true);
+    };
+  }, [projectMenu]);
+
+  useEffect(() => {
+    if (!conversationMenu) return undefined;
+
+    const closeMenu = (event: PointerEvent) => {
+      const target = event.target instanceof Element ? event.target : null;
+      if (target?.closest(".conversation-context-menu, .sidebar-session-row")) return;
+      setConversationMenu(null);
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setConversationMenu(null);
+    };
+    const closeOnLayoutChange = () => {
+      setConversationMenu(null);
+    };
+
+    window.addEventListener("pointerdown", closeMenu);
+    window.addEventListener("keydown", closeOnEscape);
+    window.addEventListener("resize", closeOnLayoutChange);
+    window.addEventListener("scroll", closeOnLayoutChange, true);
+    return () => {
+      window.removeEventListener("pointerdown", closeMenu);
+      window.removeEventListener("keydown", closeOnEscape);
+      window.removeEventListener("resize", closeOnLayoutChange);
+      window.removeEventListener("scroll", closeOnLayoutChange, true);
+    };
+  }, [conversationMenu]);
 
   useEffect(() => {
     if (!conversationSearchOpen) return undefined;
@@ -310,6 +509,10 @@ export function AppShell({
     conversationsLoadingByProfile,
     onNewConversation,
     onRefreshConversations,
+    onRefreshProjectConversations,
+    projectConversationsLoaded,
+    projectConversationsLoading,
+    projects,
     profiles,
     selectedProfile,
   ]);
@@ -401,143 +604,222 @@ export function AppShell({
           })}
         </nav>
 
-        <div className="sidebar-section profile-tree">
-          <div className="profile-tree-header">
-            <p className="sidebar-label">Agents</p>
-            <div className="profile-tree-actions">
-              <button
-                type="button"
-                className="sidebar-icon-button"
-                onClick={() => openProfileCreateDialog()}
-                aria-label="Create agent"
-                title="Create agent"
-              >
-                <Plus size={14} />
-              </button>
-              <button
-                type="button"
-                className="sidebar-icon-button"
-                onClick={() => onRefreshConversations(selectedProfile)}
-                disabled={conversationsLoading}
-                title="Refresh conversations"
-              >
-                <RefreshCcw size={13} className={conversationsLoading ? "spin" : ""} />
-              </button>
+        <div className="sidebar-scroll-region">
+          {pinnedConversationItems.length ? (
+            <div className="sidebar-section pinned-tree">
+              <div className="profile-tree-header">
+                <p className="sidebar-label">Pinned</p>
+              </div>
+              <div className="pinned-list">
+                {pinnedConversationItems.map((item) =>
+                  renderConversationRow(item.profileName, item.conversation, {
+                    pinnedSection: true,
+                    rightLabel: timeLabel(item.conversation.lastActiveAt),
+                    pinKey: item.pinKey,
+                    onSelect: item.select,
+                  }),
+                )}
+              </div>
             </div>
+          ) : null}
+
+          <div className="sidebar-section profile-tree projects-tree">
+            <div className="profile-tree-header">
+              {renderSidebarSectionToggle("projects", "Projects", projectsSectionCollapsed)}
+              <div className="profile-tree-actions sidebar-section-actions">
+                <button
+                  type="button"
+                  className="sidebar-icon-button"
+                  onClick={onRefreshProjects}
+                  title="Refresh projects"
+                >
+                  <RefreshCcw size={13} />
+                </button>
+                <button
+                  type="button"
+                  className="sidebar-icon-button"
+                  onClick={openProjectCreateDialog}
+                  aria-label="Create project"
+                  title="Create project"
+                >
+                  <Plus size={14} />
+                </button>
+              </div>
+            </div>
+            {!projectsSectionCollapsed ? (
+              <div className="profile-list" id="sidebar-projects-section">
+                {projects.length ? (
+                  projects.map((project) => renderProjectNode(project))
+                ) : (
+                  <div className="history-empty compact">
+                    {projectErrors.list ? projectErrors.list : "No projects yet."}
+                  </div>
+                )}
+              </div>
+            ) : null}
           </div>
-          <div className="profile-list">
-            {profiles.map((profile) => {
-              const selected = profile.name === selectedProfile;
-              const collapsed = Boolean(collapsedSessionProfiles[profile.name]);
-              const profileConversations = selected
-                ? conversations
-                : conversationsByProfile[profile.name] || [];
-              const profileLoading = selected
-                ? conversationsLoading
-                : Boolean(conversationsLoadingByProfile[profile.name]);
-              const profileError = selected
-                ? historyError
-                : historyErrorsByProfile[profile.name] || null;
-              const showSessionBranch =
-                !collapsed &&
-                (selected ||
-                  Boolean(profileError) ||
-                  profileLoading ||
-                  !conversationsLoadedByProfile[profile.name] ||
-                  profileConversations.length > 0);
-              const ProfileFolderIcon = collapsed ? Folder : FolderOpen;
-              return (
-                <div key={profile.name} className="profile-node">
-                  <div className="profile-node-row">
-                    <button
-                      type="button"
-                      className="profile-node-button"
-                      aria-expanded={!collapsed}
-                      onClick={() => {
-                        const willExpand = collapsed;
-                        toggleSessionsCollapsed(profile.name);
-                        if (
-                          willExpand &&
-                          !conversationsLoadedByProfile[profile.name] &&
-                          !conversationsLoadingByProfile[profile.name]
-                        ) {
-                          onRefreshConversations(profile.name);
-                        }
-                      }}
-                    >
-                      <ProfileFolderIcon size={16} />
-                      <span>{profile.name}</span>
-                    </button>
-                    <div className="profile-row-actions">
-                      <div className="profile-menu-wrap">
+
+          <div className="sidebar-section profile-tree chats-tree">
+            <div className="profile-tree-header">
+              {renderSidebarSectionToggle("chats", "Chats", chatsSectionCollapsed)}
+            </div>
+            {!chatsSectionCollapsed ? (
+              <div className="profile-list flat-chat-list" id="sidebar-chats-section">
+                {unpinnedScopedConversations(
+                  unprojectedConversations,
+                  (conversation) =>
+                    unprojectedConversationPinKey(runtimeProfileForConversation(conversation, selectedProfile), conversation.id),
+                  pinnedConversations,
+                ).length ? (
+                  unpinnedScopedConversations(
+                    unprojectedConversations,
+                    (conversation) =>
+                      unprojectedConversationPinKey(runtimeProfileForConversation(conversation, selectedProfile), conversation.id),
+                    pinnedConversations,
+                  ).map((conversation) => {
+                    const profileName = runtimeProfileForConversation(conversation, selectedProfile);
+                    return renderConversationRow(profileName, conversation, {
+                      pinKey: unprojectedConversationPinKey(profileName, conversation.id),
+                      selected: !selectedProjectId && profileName === selectedProfile && conversation.id === selectedConversationId,
+                      keySuffix: "unprojected",
+                    });
+                  })
+                ) : (
+                  <div className="history-empty compact">No unprojected chats yet.</div>
+                )}
+              </div>
+            ) : null}
+          </div>
+
+          <div className="sidebar-section profile-tree">
+            <div className="profile-tree-header">
+              {renderSidebarSectionToggle("agents", "Agents", agentsSectionCollapsed)}
+              <div className="profile-tree-actions sidebar-section-actions">
+                <button
+                  type="button"
+                  className="sidebar-icon-button"
+                  onClick={() => onRefreshConversations(selectedProfile)}
+                  disabled={conversationsLoading}
+                  title="Refresh conversations"
+                >
+                  <RefreshCcw size={13} className={conversationsLoading ? "spin" : ""} />
+                </button>
+                <button
+                  type="button"
+                  className="sidebar-icon-button"
+                  onClick={() => openProfileCreateDialog()}
+                  aria-label="Create agent"
+                  title="Create agent"
+                >
+                  <Plus size={14} />
+                </button>
+              </div>
+            </div>
+            {!agentsSectionCollapsed ? (
+              <div className="profile-list" id="sidebar-agents-section">
+                {profiles.map((profile) => {
+                  const selected = profile.name === selectedProfile;
+                  const collapsed = Boolean(collapsedSessionProfiles[profile.name]);
+                  const profileConversations = selected
+                    ? conversations
+                    : conversationsByProfile[profile.name] || [];
+                  const visibleProfileConversations = unpinnedProfileConversations(
+                    profile.name,
+                    profileConversations,
+                    pinnedConversations,
+                  );
+                  const profileLoading = selected
+                    ? conversationsLoading
+                    : Boolean(conversationsLoadingByProfile[profile.name]);
+                  const profileError = selected
+                    ? historyError
+                    : historyErrorsByProfile[profile.name] || null;
+                  const showSessionBranch =
+                    !collapsed &&
+                    (selected ||
+                      Boolean(profileError) ||
+                      profileLoading ||
+                      !conversationsLoadedByProfile[profile.name] ||
+                      visibleProfileConversations.length > 0);
+                  const ProfileFolderIcon = collapsed ? Folder : FolderOpen;
+                  return (
+                    <div key={profile.name} className="profile-node">
+                      <div className="profile-node-row">
                         <button
                           type="button"
-                          className="profile-row-action profile-menu-trigger"
-                          title={`More actions for ${profile.name}`}
-                          aria-label={`More actions for ${profile.name}`}
-                          aria-haspopup="menu"
-                          aria-expanded={profileMenu?.profile === profile.name}
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            toggleProfileMenu(profile.name, event.currentTarget);
+                          className="profile-node-button"
+                          aria-expanded={!collapsed}
+                          onClick={() => {
+                            const willExpand = collapsed;
+                            toggleSessionsCollapsed(profile.name);
+                            if (
+                              willExpand &&
+                              !conversationsLoadedByProfile[profile.name] &&
+                              !conversationsLoadingByProfile[profile.name]
+                            ) {
+                              onRefreshConversations(profile.name);
+                            }
                           }}
                         >
-                          <Ellipsis size={17} />
+                          <ProfileFolderIcon size={16} />
+                          <span>{profile.name}</span>
                         </button>
-                      </div>
-                      <button
-                        type="button"
-                        className="profile-row-action profile-new-chat-action"
-                        title={`Start new chat in ${profile.name}`}
-                        aria-label={`Start new chat in ${profile.name}`}
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          if (!selected) onSelectProfile(profile.name);
-                          expandSessions(profile.name);
-                          onNewConversation(profile.name);
-                        }}
-                      >
-                        <SquarePen size={16} />
-                      </button>
-                    </div>
-                  </div>
-                  {showSessionBranch ? (
-                    <div className="session-branch">
-                      {profileError ? <div className="history-notice">{profileError}</div> : null}
-                      {profileConversations.length ? (
-                        profileConversations.map((conversation) => {
-                          const running = activeConversationIds.includes(conversation.id);
-                          return (
+                        <div className="profile-row-actions">
+                          <div className="profile-menu-wrap">
                             <button
                               type="button"
-                              key={conversation.id}
-                              className={[
-                                "sidebar-session",
-                                selected && conversation.id === selectedConversationId ? "active" : "",
-                                running ? "running" : "",
-                              ].filter(Boolean).join(" ")}
-                              onClick={() => onSelectConversation(profile.name, conversation.id)}
+                              className="profile-row-action profile-menu-trigger"
+                              title={`More actions for ${profile.name}`}
+                              aria-label={`More actions for ${profile.name}`}
+                              aria-haspopup="menu"
+                              aria-expanded={profileMenu?.profile === profile.name}
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                toggleProfileMenu(profile.name, event.currentTarget);
+                              }}
                             >
-                              <span>{conversation.title}</span>
-                              <em
-                                className={running ? "sidebar-session-status streaming" : "sidebar-session-status"}
-                                aria-label={running ? "Streaming response" : undefined}
-                              >
-                                {running ? <i aria-hidden="true" /> : timeLabel(conversation.lastActiveAt)}
-                              </em>
+                              <Ellipsis size={17} />
                             </button>
-                          );
-                        })
-                      ) : (
-                        <div className="history-empty compact">
-                          {profileLoading ? "Loading conversations..." : "No conversations yet."}
+                          </div>
+                          <button
+                            type="button"
+                            className="profile-row-action profile-new-chat-action"
+                            title={`Start new chat in ${profile.name}`}
+                            aria-label={`Start new chat in ${profile.name}`}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              if (!selected) onSelectProfile(profile.name);
+                              expandSessions(profile.name);
+                              onNewConversation(profile.name);
+                            }}
+                          >
+                            <SquarePen size={16} />
+                          </button>
                         </div>
-                      )}
+                      </div>
+                      {showSessionBranch ? (
+                        <div className="session-branch">
+                          {profileError ? <div className="history-notice">{profileError}</div> : null}
+                          {visibleProfileConversations.length ? (
+                            visibleProfileConversations.map((conversation) =>
+                              renderConversationRow(profile.name, conversation, {
+                                pinKey: agentConversationPinKey(profile.name, conversation.id),
+                                selected: profile.name === selectedProfile && !selectedProjectId && conversation.id === selectedConversationId,
+                                keySuffix: "profile",
+                              }),
+                            )
+                          ) : (
+                            <div className="history-empty compact">
+                              {profileLoading ? "Loading conversations..." : "No conversations yet."}
+                            </div>
+                          )}
+                        </div>
+                      ) : null}
                     </div>
-                  ) : null}
-                </div>
-              );
-            })}
+                  );
+                })}
+              </div>
+            ) : null}
           </div>
         </div>
 
@@ -603,11 +885,187 @@ export function AppShell({
       </main>
       {conversationSearchOpen ? renderConversationSearch() : null}
       {profileMenu ? renderProfileMenu() : null}
+      {projectMenu ? renderProjectMenu() : null}
+      {conversationMenu ? renderConversationMenu() : null}
       {profileDialog ? renderProfileDialog() : null}
+      {projectDialog ? renderProjectDialog() : null}
+      {conversationDialog ? renderConversationDialog() : null}
     </div>
   );
 
+  function renderProjectNode(project: IrisProject) {
+    const collapsed = Boolean(collapsedProjects[project.id]);
+    const projectConversations = conversationsByProject[project.id] || [];
+    const visibleProjectConversations = unpinnedScopedConversations(
+      projectConversations,
+      (conversation) => projectConversationPinKey(project.id, conversation.id),
+      pinnedConversations,
+    );
+    const projectLoading = Boolean(projectConversationsLoading[project.id]);
+    const projectError = projectErrors[project.id] || null;
+    const showSessionBranch =
+      !collapsed &&
+      (Boolean(projectError) ||
+        projectLoading ||
+        !projectConversationsLoaded[project.id] ||
+        visibleProjectConversations.length > 0);
+    const ProjectFolderIcon = collapsed ? Folder : FolderOpen;
+    const defaultAgent = projectAgents.find((agent) => agent.id === project.defaultAgentId);
+    const profileName = defaultAgent?.runtimeProfile || selectedProfile;
+
+    return (
+      <div key={project.id} className="profile-node project-node">
+        <div
+          className="profile-node-row"
+          onContextMenu={(event) => {
+            event.preventDefault();
+            openProjectMenu(project.id, event.clientX, event.clientY);
+          }}
+        >
+          <button
+            type="button"
+            className="profile-node-button"
+            aria-expanded={!collapsed}
+            onClick={() => {
+              const willExpand = collapsed;
+              onToggleProjectCollapsed(project.id);
+              if (
+                willExpand &&
+                !projectConversationsLoaded[project.id] &&
+                !projectConversationsLoading[project.id]
+              ) {
+                onRefreshProjectConversations(project.id);
+              }
+            }}
+          >
+            <ProjectFolderIcon size={16} />
+            <span>{project.name}</span>
+          </button>
+          <div className="profile-row-actions">
+            <div className="project-menu-wrap">
+              <button
+                type="button"
+                className="profile-row-action profile-menu-trigger"
+                title={`More actions for ${project.name}`}
+                aria-label={`More actions for ${project.name}`}
+                aria-haspopup="menu"
+                aria-expanded={projectMenu?.projectId === project.id}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  toggleProjectMenu(project.id, event.currentTarget);
+                }}
+              >
+                <Ellipsis size={17} />
+              </button>
+            </div>
+            <button
+              type="button"
+              className="profile-row-action profile-new-chat-action"
+              title={`Start new chat in ${project.name}`}
+              aria-label={`Start new chat in ${project.name}`}
+              onClick={(event) => {
+                event.stopPropagation();
+                if (collapsed) onToggleProjectCollapsed(project.id);
+                onNewConversation(profileName, project.id);
+              }}
+            >
+              <SquarePen size={16} />
+            </button>
+          </div>
+        </div>
+        {showSessionBranch ? (
+          <div className="session-branch">
+            {projectError ? <div className="history-notice">{projectError}</div> : null}
+            {visibleProjectConversations.length ? (
+              visibleProjectConversations.map((conversation) => {
+                const conversationProfileName = runtimeProfileForConversation(conversation, profileName);
+                return renderConversationRow(conversationProfileName, conversation, {
+                  pinKey: projectConversationPinKey(project.id, conversation.id),
+                  selected: selectedProjectId === project.id && conversation.id === selectedConversationId,
+                  onSelect: () => onSelectProjectConversation(project.id, conversationProfileName, conversation.id),
+                  keySuffix: `project-${project.id}`,
+                });
+              })
+            ) : (
+              <div className="history-empty compact">
+                {projectLoading ? "Loading conversations..." : "No conversations yet."}
+              </div>
+            )}
+          </div>
+        ) : null}
+      </div>
+    );
+  }
+
+  function renderConversationRow(
+    profileName: string,
+    conversation: HermesConversation,
+    options: {
+      pinnedSection?: boolean;
+      rightLabel?: string;
+      pinKey?: string;
+      selected?: boolean;
+      onSelect?: () => void;
+      keySuffix?: string;
+    } = {},
+  ) {
+    const running = activeConversationIds.includes(conversation.id);
+    const selected = options.selected ?? (profileName === selectedProfile && conversation.id === selectedConversationId);
+    const pinKey = options.pinKey || agentConversationPinKey(profileName, conversation.id);
+    const pinned = isConversationPinned(pinKey);
+    const rightLabel = options.rightLabel || timeLabel(conversation.lastActiveAt);
+    const rowClassName = [
+      "sidebar-session-row",
+      selected ? "active" : "",
+      running ? "running" : "",
+      pinned ? "pinned" : "",
+      options.pinnedSection ? "pinned-section-row" : "",
+    ].filter(Boolean).join(" ");
+
+    return (
+      <div
+        key={`${pinKey}:${options.keySuffix || (options.pinnedSection ? "pinned" : "tree")}`}
+        className={rowClassName}
+        onContextMenu={(event) => {
+          event.preventDefault();
+          openConversationMenu(profileName, conversation, pinKey, event.clientX, event.clientY);
+        }}
+      >
+        <button
+          type="button"
+          className="sidebar-session-pin"
+          aria-label={pinned ? `Unpin ${conversation.title}` : `Pin ${conversation.title}`}
+          title={pinned ? "Unpin conversation" : "Pin conversation"}
+          onClick={(event) => {
+            event.stopPropagation();
+            toggleConversationPinned(pinKey);
+          }}
+        >
+          <Pin size={14} />
+        </button>
+        <button
+          type="button"
+          className="sidebar-session"
+          onClick={options.onSelect || (() => onSelectConversation(profileName, conversation.id))}
+        >
+          <span>{conversation.title}</span>
+          <em
+            className={running ? "sidebar-session-status streaming" : "sidebar-session-status"}
+            aria-label={running ? "Streaming response" : undefined}
+          >
+            {running ? <i aria-hidden="true" /> : rightLabel}
+          </em>
+        </button>
+      </div>
+    );
+  }
+
   function openConversationSearch() {
+    for (const project of projects) {
+      if (projectConversationsLoaded[project.id]) continue;
+      if (projectConversationsLoading[project.id]) continue;
+      onRefreshProjectConversations(project.id);
+    }
     for (const profile of profiles) {
       if (profile.sessionCount < 1) continue;
       if (conversationsLoadedByProfile[profile.name]) continue;
@@ -671,7 +1129,7 @@ export function AppShell({
   function selectConversationSearchItem(item: ConversationSearchItem) {
     closeConversationSearch();
     expandSessions(item.profileName);
-    onSelectConversation(item.profileName, item.conversation.id);
+    item.select();
   }
 
   function renderConversationSearch() {
@@ -749,7 +1207,7 @@ export function AppShell({
                 >
                   <MessageSquare size={16} />
                   <span>{item.conversation.title}</span>
-                  <small>{item.profileName}</small>
+                  <small>{item.sourceLabel}</small>
                   <kbd>{`⌘${index + 1}`}</kbd>
                 </button>
               ))
@@ -772,6 +1230,32 @@ export function AppShell({
     });
   }
 
+  function toggleSidebarSection(section: SidebarSectionId) {
+    setCollapsedSidebarSections((current) => {
+      const next = { ...current, [section]: !current[section] };
+      saveCollapsedSidebarSections(next);
+      return next;
+    });
+  }
+
+  function renderSidebarSectionToggle(section: SidebarSectionId, label: string, collapsed: boolean) {
+    const SectionIcon = collapsed ? ChevronRight : ChevronDown;
+    return (
+      <button
+        type="button"
+        className="sidebar-section-toggle"
+        aria-label={`${collapsed ? "Expand" : "Collapse"} ${label.toLowerCase()} section`}
+        aria-expanded={!collapsed}
+        aria-controls={`sidebar-${section}-section`}
+        title={`${collapsed ? "Expand" : "Collapse"} ${label.toLowerCase()}`}
+        onClick={() => toggleSidebarSection(section)}
+      >
+        <SectionIcon size={13} />
+        <span className="sidebar-label">{label}</span>
+      </button>
+    );
+  }
+
   function expandSessions(profileName: string) {
     setCollapsedSessionProfiles((current) => {
       if (!current[profileName]) return current;
@@ -785,6 +1269,17 @@ export function AppShell({
     setProfileActionError("");
     setProfileMenu(null);
     setProfileDialog({ action: "create", name: nextProfileName("new-agent", profiles) });
+  }
+
+  function openProjectCreateDialog() {
+    setProjectActionError("");
+    setProjectMenu(null);
+    setProjectDialog({
+      action: "create",
+      name: nextProjectName("new-project", projects),
+      defaultAgentId: projectAgents[0]?.id || "",
+      systemPrompt: "",
+    });
   }
 
   function openProfileCloneDialog(source: string) {
@@ -811,6 +1306,71 @@ export function AppShell({
         : below;
       return { profile: profileName, top, left };
     });
+  }
+
+  function toggleProjectMenu(projectId: string, trigger: HTMLElement) {
+    setProjectMenu((current) => {
+      if (current?.projectId === projectId) return null;
+      const rect = trigger.getBoundingClientRect();
+      const menuWidth = 166;
+      const menuHeight = 44;
+      const left = clamp(rect.right - menuWidth, 8, window.innerWidth - menuWidth - 8);
+      const below = rect.bottom + 6;
+      const top = below + menuHeight > window.innerHeight - 8
+        ? Math.max(8, rect.top - menuHeight - 6)
+        : below;
+      return { projectId, top, left };
+    });
+  }
+
+  function openProjectMenu(projectId: string, clientX: number, clientY: number) {
+    const menuWidth = 166;
+    const menuHeight = 44;
+    setProjectMenu({
+      projectId,
+      left: clamp(clientX, 8, window.innerWidth - menuWidth - 8),
+      top: clamp(clientY, 8, window.innerHeight - menuHeight - 8),
+    });
+  }
+
+  function openConversationMenu(
+    profileName: string,
+    conversation: HermesConversation,
+    pinKey: string,
+    clientX: number,
+    clientY: number,
+  ) {
+    const menuWidth = 174;
+    const menuHeight = 76;
+    setConversationMenu({
+      profileName,
+      conversation,
+      pinKey,
+      left: clamp(clientX, 8, window.innerWidth - menuWidth - 8),
+      top: clamp(clientY, 8, window.innerHeight - menuHeight - 8),
+    });
+  }
+
+  function isConversationPinned(pinKey: string) {
+    return Boolean(pinnedConversations[pinKey]);
+  }
+
+  function toggleConversationPinned(pinKey: string) {
+    setPinnedConversations((current) => {
+      const next = { ...current };
+      if (next[pinKey]) {
+        delete next[pinKey];
+      } else {
+        next[pinKey] = true;
+      }
+      savePinnedConversations(next);
+      return next;
+    });
+  }
+
+  function openConversationRenameDialog(profileName: string, conversation: HermesConversation) {
+    setConversationActionError("");
+    setConversationDialog({ profileName, conversation, name: conversation.title });
   }
 
   function renderProfileMenu() {
@@ -864,10 +1424,256 @@ export function AppShell({
     );
   }
 
+  function renderProjectMenu() {
+    if (!projectMenu) return null;
+    const project = projects.find((item) => item.id === projectMenu.projectId);
+    if (!project) return null;
+
+    return (
+      <div
+        className="profile-context-menu"
+        role="menu"
+        style={{ top: projectMenu.top, left: projectMenu.left }}
+      >
+        <button
+          type="button"
+          role="menuitem"
+          onClick={() => {
+            setProjectMenu(null);
+            setProjectActionError("");
+            setProjectDialog({
+              action: "edit",
+              projectId: project.id,
+              name: project.name,
+              defaultAgentId: project.defaultAgentId,
+              systemPrompt: project.systemPrompt,
+            });
+          }}
+        >
+          <Pencil size={14} />
+          Edit
+        </button>
+      </div>
+    );
+  }
+
+  function renderConversationMenu() {
+    if (!conversationMenu) return null;
+    const pinned = isConversationPinned(conversationMenu.pinKey);
+
+    return (
+      <div
+        className="profile-context-menu conversation-context-menu"
+        role="menu"
+        style={{ top: conversationMenu.top, left: conversationMenu.left }}
+      >
+        <button
+          type="button"
+          role="menuitem"
+          onClick={() => {
+            toggleConversationPinned(conversationMenu.pinKey);
+            setConversationMenu(null);
+          }}
+        >
+          <Pin size={14} />
+          {pinned ? "Unpin" : "Pin"}
+        </button>
+        <button
+          type="button"
+          role="menuitem"
+          onClick={() => {
+            const { profileName, conversation } = conversationMenu;
+            setConversationMenu(null);
+            openConversationRenameDialog(profileName, conversation);
+          }}
+        >
+          <Pencil size={14} />
+          Rename
+        </button>
+      </div>
+    );
+  }
+
   function closeProfileDialog() {
     if (profileActionBusy) return;
     setProfileDialog(null);
     setProfileActionError("");
+  }
+
+  function closeProjectDialog() {
+    if (projectActionBusy) return;
+    setProjectDialog(null);
+    setProjectActionError("");
+  }
+
+  function closeConversationDialog() {
+    if (conversationActionBusy) return;
+    setConversationDialog(null);
+    setConversationActionError("");
+  }
+
+  async function submitConversationDialog(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!conversationDialog || conversationActionBusy) return;
+
+    const name = conversationDialog.name.trim();
+    if (!name) {
+      setConversationActionError("Enter a conversation name.");
+      return;
+    }
+
+    setConversationActionBusy(true);
+    setConversationActionError("");
+    const message = await onRenameConversation(
+      conversationDialog.profileName,
+      conversationDialog.conversation.id,
+      name,
+    );
+    setConversationActionBusy(false);
+
+    if (isConversationActionFailure(message)) {
+      setConversationActionError(message);
+      return;
+    }
+    setConversationDialog(null);
+  }
+
+  async function submitProjectDialog(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!projectDialog || projectActionBusy) return;
+
+    const name = projectDialog.name.trim();
+    if (!name) {
+      setProjectActionError("Enter a project name.");
+      return;
+    }
+    if (!projectDialog.defaultAgentId) {
+      setProjectActionError("Choose a default agent.");
+      return;
+    }
+
+    setProjectActionBusy(true);
+    setProjectActionError("");
+    try {
+      if (projectDialog.action === "create") {
+        await onCreateProject({
+          name,
+          defaultAgentId: projectDialog.defaultAgentId,
+          systemPrompt: projectDialog.systemPrompt,
+        });
+      } else {
+        await onUpdateProject(projectDialog.projectId, {
+          name,
+          defaultAgentId: projectDialog.defaultAgentId,
+          systemPrompt: projectDialog.systemPrompt,
+        });
+      }
+      setProjectDialog(null);
+    } catch (error) {
+      setProjectActionError(error instanceof Error ? error.message : "Could not save project.");
+    } finally {
+      setProjectActionBusy(false);
+    }
+  }
+
+  function renderProjectDialog() {
+    const dialog = projectDialog;
+    if (!dialog) return null;
+    const isCreate = dialog.action === "create";
+    const submitDisabled =
+      projectActionBusy ||
+      !dialog.name.trim() ||
+      !dialog.defaultAgentId;
+    const agentOptions = projectAgentOptions(projectAgents, dialog.defaultAgentId);
+
+    return (
+      <div className="profile-action-modal project-action-modal" role="dialog" aria-modal="true" aria-labelledby="project-action-title">
+        <form onSubmit={submitProjectDialog}>
+          <div>
+            <p className="eyebrow">{isCreate ? "Project management" : "Project"}</p>
+            <h2 id="project-action-title">{isCreate ? "New project" : "Edit project"}</h2>
+          </div>
+          <label>
+            <span>Project name</span>
+            <input
+              autoFocus
+              value={dialog.name}
+              placeholder="new-project"
+              onChange={(event) => setProjectDialog({ ...dialog, name: event.target.value })}
+            />
+          </label>
+          <label>
+            <span>Default agent</span>
+            <select
+              value={dialog.defaultAgentId}
+              onChange={(event) => setProjectDialog({ ...dialog, defaultAgentId: event.target.value })}
+            >
+              {agentOptions.map((agent) => (
+                <option key={agent.id} value={agent.id}>
+                  {agent.displayName || agent.runtimeProfile || agent.id}
+                </option>
+              ))}
+            </select>
+          </label>
+          <div className="project-prompt-editor">
+            <span>System prompt</span>
+            <CodeEditor
+              value={dialog.systemPrompt}
+              onChange={(value) => setProjectDialog({ ...dialog, systemPrompt: value })}
+              metadata={[
+                { label: "lines", value: `${dialog.systemPrompt.split("\n").length} lines` },
+                { label: "scope", value: "project only" },
+              ]}
+            />
+          </div>
+          {projectActionError ? <p className="profile-action-error">{projectActionError}</p> : null}
+          <div className="profile-action-modal-actions">
+            <button type="button" className="small-button settings-button" onClick={closeProjectDialog}>
+              Cancel
+            </button>
+            <button type="submit" className="small-button settings-button" disabled={submitDisabled}>
+              {projectActionBusy ? "Working..." : isCreate ? "Create" : "Save"}
+            </button>
+          </div>
+        </form>
+      </div>
+    );
+  }
+
+  function renderConversationDialog() {
+    const dialog = conversationDialog;
+    if (!dialog) return null;
+    const inputValue = dialog.name;
+    const submitDisabled = conversationActionBusy || !inputValue.trim();
+
+    return (
+      <div className="profile-action-modal" role="dialog" aria-modal="true" aria-labelledby="conversation-action-title">
+        <form onSubmit={submitConversationDialog}>
+          <div>
+            <p className="eyebrow">Conversation</p>
+            <h2 id="conversation-action-title">Rename conversation</h2>
+          </div>
+          <label>
+            <span>Conversation name</span>
+            <input
+              autoFocus
+              value={inputValue}
+              placeholder="Conversation name"
+              onChange={(event) => setConversationDialog({ ...dialog, name: event.target.value })}
+            />
+          </label>
+          {conversationActionError ? <p className="profile-action-error">{conversationActionError}</p> : null}
+          <div className="profile-action-modal-actions">
+            <button type="button" className="small-button settings-button" onClick={closeConversationDialog}>
+              Cancel
+            </button>
+            <button type="submit" className="small-button settings-button" disabled={submitDisabled}>
+              {conversationActionBusy ? "Working..." : "Rename"}
+            </button>
+          </div>
+        </form>
+      </div>
+    );
   }
 
   async function submitProfileDialog(event: FormEvent<HTMLFormElement>) {
@@ -964,12 +1770,41 @@ function nextProfileName(base: string, profiles: HermesProfile[]) {
   return `${base}-${Date.now()}`;
 }
 
+function nextProjectName(base: string, projects: IrisProject[]) {
+  const names = new Set(projects.map((project) => project.name));
+  if (!names.has(base)) return base;
+  for (let index = 2; index < 100; index += 1) {
+    const candidate = `${base}-${index}`;
+    if (!names.has(candidate)) return candidate;
+  }
+  return `${base}-${Date.now()}`;
+}
+
+function projectAgentOptions(agents: AgentUICoreAgent[], selectedAgentId: string) {
+  if (!selectedAgentId || agents.some((agent) => agent.id === selectedAgentId)) return agents;
+  return [
+    {
+      id: selectedAgentId,
+      runtimeId: "",
+      runtimeKind: "",
+      displayName: selectedAgentId,
+      runtimeProfile: selectedAgentId,
+      isDefault: false,
+    },
+    ...agents,
+  ];
+}
+
 function clamp(value: number, minimum: number, maximum: number) {
   return Math.max(minimum, Math.min(value, maximum));
 }
 
 function isProfileActionFailure(message: string) {
   return /\b(error|failed|cannot|already exists|does not exist|enter|invalid)\b/i.test(message);
+}
+
+function isConversationActionFailure(message: string) {
+  return /\b(error|failed|cannot|could not|does not exist|not found|not allowed|enter|invalid|legacy|http|urlopen|connection refused|refused)\b/i.test(message);
 }
 
 function loadCollapsedSessionProfiles() {
@@ -981,8 +1816,78 @@ function loadCollapsedSessionProfiles() {
     : {};
 }
 
+function loadCollapsedSidebarSections(): Record<SidebarSectionId, boolean> {
+  const parsed = loadJsonValue<Record<string, unknown>>(storageKeys.collapsedSidebarSections, {});
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return { projects: false, chats: false, agents: false };
+  return {
+    projects: Boolean(parsed.projects),
+    chats: Boolean(parsed.chats),
+    agents: Boolean(parsed.agents),
+  };
+}
+
+function loadPinnedConversations() {
+  const parsed = loadJsonValue<Record<string, unknown>>(storageKeys.pinnedConversations, {});
+  return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+    ? Object.fromEntries(
+        Object.entries(parsed)
+          .filter(([key]) => key.includes(":"))
+          .map(([key, value]) => [key, Boolean(value)]),
+      )
+    : {};
+}
+
+function savePinnedConversations(value: Record<string, boolean>) {
+  saveJsonValue(storageKeys.pinnedConversations, value);
+}
+
+function agentConversationPinKey(profileName: string, conversationId: string) {
+  return `agent:${profileName}:${conversationId}`;
+}
+
+function projectConversationPinKey(projectId: string, conversationId: string) {
+  return `project:${projectId}:${conversationId}`;
+}
+
+function unprojectedConversationPinKey(profileName: string, conversationId: string) {
+  return `chat:${profileName}:${conversationId}`;
+}
+
+function legacyConversationPinKey(profileName: string, conversationId: string) {
+  return `${profileName}:${conversationId}`;
+}
+
+export function unpinnedProfileConversations<T extends { id: string }>(
+  profileName: string,
+  conversations: T[],
+  pinnedConversations: Record<string, boolean>,
+) {
+  return conversations.filter((conversation) =>
+    !pinnedConversations[agentConversationPinKey(profileName, conversation.id)] &&
+    !pinnedConversations[legacyConversationPinKey(profileName, conversation.id)],
+  );
+}
+
+function unpinnedScopedConversations<T extends { id: string }>(
+  conversations: T[],
+  pinKey: (conversation: T) => string,
+  pinnedConversations: Record<string, boolean>,
+) {
+  return conversations.filter((conversation) => !pinnedConversations[pinKey(conversation)]);
+}
+
+function runtimeProfileForConversation(conversation: HermesConversation, fallback: string) {
+  const origin = conversation.origin || {};
+  const metadata = conversation.metadata || {};
+  return String(origin.runtimeProfile || metadata.runtimeProfile || fallback || "default");
+}
+
 function saveCollapsedSessionProfiles(value: Record<string, boolean>) {
   saveJsonValue(storageKeys.collapsedSessionProfiles, value);
+}
+
+function saveCollapsedSidebarSections(value: Record<SidebarSectionId, boolean>) {
+  saveJsonValue(storageKeys.collapsedSidebarSections, value);
 }
 
 function widthBandForWindow() {

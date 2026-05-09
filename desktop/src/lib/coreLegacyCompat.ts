@@ -20,6 +20,7 @@ export function coreConversationToLegacy(conversation: AgentUICoreConversation) 
     preview: conversation.summary || String(conversation.metadata?.preview || ""),
     chatId: conversation.externalChatId || "",
     origin,
+    metadata: conversation.metadata || {},
     startedAt: conversation.createdAt || null,
     endedAt: null,
     lastActiveAt: conversation.updatedAt || conversation.createdAt || null,

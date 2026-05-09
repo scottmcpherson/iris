@@ -17,7 +17,7 @@ from typing import Any
 from .models import ConversationMessage, ConversationSummary, ProfileSummary
 
 
-CORE_SCHEMA_VERSION = 4
+CORE_SCHEMA_VERSION = 5
 DEFAULT_RUNTIME_ID = "runtime_local_hermes"
 PROFILE_SLUG_RE = re.compile(r"[^A-Za-z0-9_.-]+")
 DEFAULT_MAX_ATTACHMENT_SIZE_MB = 250
@@ -75,6 +75,8 @@ CORE_OWNED_TABLES = (
     "client_message_metadata",
     "attachments",
     "message_attachments",
+    "projects",
+    "project_conversations",
 )
 
 
@@ -281,6 +283,39 @@ class CoreStore:
                   created_at integer not null,
                   primary key (runtime_id, profile, chat_id, message_id, attachment_id)
                 );
+
+                create table if not exists projects (
+                  id text primary key,
+                  name text not null,
+                  slug text not null unique,
+                  default_agent_id text not null,
+                  system_prompt text not null,
+                  created_at integer not null,
+                  updated_at integer not null,
+                  archived_at integer,
+                  metadata_json text not null
+                );
+
+                create table if not exists project_conversations (
+                  project_id text not null,
+                  conversation_id text not null,
+                  agent_id text not null,
+                  runtime_id text not null,
+                  runtime_profile text not null,
+                  external_session_id text,
+                  external_chat_id text,
+                  created_at integer not null,
+                  updated_at integer not null,
+                  metadata_json text not null,
+                  primary key (project_id, conversation_id),
+                  foreign key (project_id) references projects(id) on delete cascade
+                );
+
+                create index if not exists idx_project_conversations_project_updated
+                  on project_conversations(project_id, updated_at desc);
+
+                create index if not exists idx_project_conversations_conversation
+                  on project_conversations(conversation_id);
                 """
             )
         if auto_migrate:
@@ -343,6 +378,214 @@ class CoreStore:
         with self.connect() as connection:
             row = connection.execute("select value from schema_meta where key = ?", (key,)).fetchone()
         return str(row["value"]) if row else None
+
+    def create_project(
+        self,
+        *,
+        name: str,
+        default_agent_id: str,
+        system_prompt: str = "",
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        clean_name = name.strip()
+        if not clean_name:
+            raise ValueError("Project name is required.")
+        if not default_agent_id.strip():
+            raise ValueError("Default agent is required.")
+        project_id = random_id("project")
+        timestamp = now()
+        with self.connect() as connection:
+            slug = unique_project_slug(connection, clean_name)
+            connection.execute(
+                """
+                insert into projects(
+                  id, name, slug, default_agent_id, system_prompt,
+                  created_at, updated_at, archived_at, metadata_json
+                ) values(?, ?, ?, ?, ?, ?, ?, null, ?)
+                """,
+                (
+                    project_id,
+                    clean_name,
+                    slug,
+                    default_agent_id.strip(),
+                    system_prompt,
+                    timestamp,
+                    timestamp,
+                    dumps(metadata or {}),
+                ),
+            )
+        project = self.get_project(project_id)
+        if not project:
+            raise ValueError("Project could not be stored.")
+        return project
+
+    def list_projects(self, *, include_archived: bool = False) -> list[dict[str, Any]]:
+        where = "" if include_archived else "where archived_at is null"
+        with self.connect() as connection:
+            rows = connection.execute(
+                f"select * from projects {where} order by updated_at desc, name collate nocase"
+            ).fetchall()
+        return [project_from_row(row) for row in rows]
+
+    def get_project(self, project_id: str) -> dict[str, Any] | None:
+        with self.connect() as connection:
+            row = connection.execute("select * from projects where id = ?", (project_id,)).fetchone()
+        return project_from_row(row) if row else None
+
+    def update_project(
+        self,
+        project_id: str,
+        *,
+        name: str | None = None,
+        default_agent_id: str | None = None,
+        system_prompt: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any] | None:
+        existing = self.get_project(project_id)
+        if not existing:
+            return None
+        next_name = existing["name"] if name is None else name.strip()
+        next_agent_id = existing["defaultAgentId"] if default_agent_id is None else default_agent_id.strip()
+        if not next_name:
+            raise ValueError("Project name is required.")
+        if not next_agent_id:
+            raise ValueError("Default agent is required.")
+        timestamp = now()
+        with self.connect() as connection:
+            slug = existing["slug"]
+            if next_name != existing["name"]:
+                slug = unique_project_slug(connection, next_name, project_id=project_id)
+            connection.execute(
+                """
+                update projects set
+                  name = ?,
+                  slug = ?,
+                  default_agent_id = ?,
+                  system_prompt = ?,
+                  metadata_json = ?,
+                  updated_at = ?
+                where id = ?
+                """,
+                (
+                    next_name,
+                    slug,
+                    next_agent_id,
+                    existing["systemPrompt"] if system_prompt is None else system_prompt,
+                    dumps(existing["metadata"] if metadata is None else metadata),
+                    timestamp,
+                    project_id,
+                ),
+            )
+        return self.get_project(project_id)
+
+    def archive_project(self, project_id: str) -> dict[str, Any] | None:
+        if not self.get_project(project_id):
+            return None
+        timestamp = now()
+        with self.connect() as connection:
+            connection.execute(
+                "update projects set archived_at = ?, updated_at = ? where id = ?",
+                (timestamp, timestamp, project_id),
+            )
+        return self.get_project(project_id)
+
+    def link_project_conversation(
+        self,
+        project_id: str,
+        conversation: dict[str, Any],
+        *,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        if not self.get_project(project_id):
+            raise ValueError("Project was not found.")
+        conversation_id = str(conversation.get("id") or "").strip()
+        if not conversation_id:
+            raise ValueError("Conversation id is required.")
+        timestamp = now()
+        with self.connect() as connection:
+            existing = connection.execute(
+                """
+                select created_at from project_conversations
+                where project_id = ? and conversation_id = ?
+                """,
+                (project_id, conversation_id),
+            ).fetchone()
+            connection.execute(
+                """
+                insert into project_conversations(
+                  project_id, conversation_id, agent_id, runtime_id, runtime_profile,
+                  external_session_id, external_chat_id, created_at, updated_at, metadata_json
+                ) values(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                on conflict(project_id, conversation_id) do update set
+                  agent_id = excluded.agent_id,
+                  runtime_id = excluded.runtime_id,
+                  runtime_profile = excluded.runtime_profile,
+                  external_session_id = excluded.external_session_id,
+                  external_chat_id = excluded.external_chat_id,
+                  updated_at = excluded.updated_at,
+                  metadata_json = excluded.metadata_json
+                """,
+                (
+                    project_id,
+                    conversation_id,
+                    str(conversation.get("agentId") or ""),
+                    str(conversation.get("runtimeId") or DEFAULT_RUNTIME_ID),
+                    str(conversation.get("runtimeProfile") or "default"),
+                    str(conversation.get("externalSessionId") or ""),
+                    str(conversation.get("externalChatId") or ""),
+                    int(existing["created_at"]) if existing else timestamp,
+                    timestamp,
+                    dumps(metadata or {}),
+                ),
+            )
+        link = self.project_conversation_link(project_id, conversation_id)
+        if not link:
+            raise ValueError("Project conversation link could not be stored.")
+        return link
+
+    def unlink_project_conversation(self, project_id: str, conversation_id: str) -> None:
+        with self.connect() as connection:
+            connection.execute(
+                "delete from project_conversations where project_id = ? and conversation_id = ?",
+                (project_id, conversation_id),
+            )
+
+    def list_project_conversation_links(self, project_id: str) -> list[dict[str, Any]]:
+        with self.connect() as connection:
+            rows = connection.execute(
+                """
+                select * from project_conversations
+                where project_id = ?
+                order by updated_at desc, conversation_id
+                """,
+                (project_id,),
+            ).fetchall()
+        return [project_conversation_link_from_row(row) for row in rows]
+
+    def project_conversation_link(self, project_id: str, conversation_id: str) -> dict[str, Any] | None:
+        with self.connect() as connection:
+            row = connection.execute(
+                """
+                select * from project_conversations
+                where project_id = ? and conversation_id = ?
+                """,
+                (project_id, conversation_id),
+            ).fetchone()
+        return project_conversation_link_from_row(row) if row else None
+
+    def project_for_conversation(self, conversation_id: str) -> dict[str, Any] | None:
+        with self.connect() as connection:
+            row = connection.execute(
+                """
+                select p.* from projects p
+                join project_conversations pc on pc.project_id = p.id
+                where pc.conversation_id = ? and p.archived_at is null
+                order by pc.updated_at desc
+                limit 1
+                """,
+                (conversation_id,),
+            ).fetchone()
+        return project_from_row(row) if row else None
 
     def upsert_runtime(self, runtime: dict[str, Any]) -> dict[str, Any]:
         runtime_id = str(runtime["id"])
@@ -990,6 +1233,53 @@ def client_attachment_payload(attachment: dict[str, Any]) -> dict[str, Any]:
         "downloadUrl": str(attachment.get("downloadUrl") or ""),
     }
     return payload
+
+
+def project_slug(value: str) -> str:
+    slug = PROFILE_SLUG_RE.sub("-", value.strip().lower()).strip(".-_")
+    return slug or "project"
+
+
+def unique_project_slug(connection: sqlite3.Connection, name: str, *, project_id: str = "") -> str:
+    base = project_slug(name)
+    for index in range(1, 1000):
+        candidate = base if index == 1 else f"{base}-{index}"
+        row = connection.execute(
+            "select id from projects where slug = ?",
+            (candidate,),
+        ).fetchone()
+        if not row or str(row["id"]) == project_id:
+            return candidate
+    return f"{base}-{stable_hash(name, str(time.time_ns()), length=8)}"
+
+
+def project_from_row(row: sqlite3.Row) -> dict[str, Any]:
+    return {
+        "id": str(row["id"]),
+        "name": str(row["name"]),
+        "slug": str(row["slug"]),
+        "defaultAgentId": str(row["default_agent_id"]),
+        "systemPrompt": str(row["system_prompt"]),
+        "createdAt": int(row["created_at"]),
+        "updatedAt": int(row["updated_at"]),
+        "archivedAt": int(row["archived_at"]) if row["archived_at"] is not None else None,
+        "metadata": loads(row["metadata_json"]),
+    }
+
+
+def project_conversation_link_from_row(row: sqlite3.Row) -> dict[str, Any]:
+    return {
+        "projectId": str(row["project_id"]),
+        "conversationId": str(row["conversation_id"]),
+        "agentId": str(row["agent_id"]),
+        "runtimeId": str(row["runtime_id"]),
+        "runtimeProfile": str(row["runtime_profile"]),
+        "externalSessionId": str(row["external_session_id"] or ""),
+        "externalChatId": str(row["external_chat_id"] or ""),
+        "createdAt": int(row["created_at"]),
+        "updatedAt": int(row["updated_at"]),
+        "metadata": loads(row["metadata_json"]),
+    }
 
 
 def core_message_from_hermes(message: ConversationMessage) -> dict[str, Any]:

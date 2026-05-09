@@ -8,6 +8,7 @@ import {
   Store,
 } from "lucide-react";
 import { getIrisSkillDetail, saveIrisSkill } from "../../lib/irisRuntime";
+import { CodeEditor } from "../../shared/CodeEditor";
 import { ViewHeader } from "../../shared/ViewHeader";
 import type { HermesRuntimeConfig, HermesSkill, HermesSkillDetail } from "../../types/hermes";
 
@@ -99,6 +100,14 @@ export function SkillsView({
   const selectedSkill = allSkills.find((skill) => skillKey(skill) === selectedKey);
   const draftMeta = useMemo(() => extractDraftMetadata(draftContent), [draftContent]);
   const hasFrontmatter = draftContent.trimStart().startsWith("---");
+  const editorMetadata = useMemo(
+    () => [
+      { label: "frontmatter", value: hasFrontmatter ? "frontmatter detected" : "frontmatter missing" },
+      { label: "lines", value: `${draftContent.split("\n").length} lines` },
+      { label: "description", value: draftMeta.description || "description not set" },
+    ],
+    [draftContent, draftMeta.description, hasFrontmatter],
+  );
   const canSave = draftName.trim().length > 0 && draftCategory.trim().length > 0;
 
   useEffect(() => {
@@ -282,19 +291,7 @@ export function SkillsView({
                 <input value={draftCategory} onChange={(event) => setDraftCategory(event.target.value)} />
               </label>
             </div>
-            <div className="syntax-strip">
-              <span>{hasFrontmatter ? "frontmatter detected" : "frontmatter missing"}</span>
-              <span>{draftContent.split("\n").length} lines</span>
-              <span>{draftMeta.description || "description not set"}</span>
-            </div>
-            <div className="skill-code-editor">
-              <pre aria-hidden="true">{lineNumbers(draftContent)}</pre>
-              <textarea
-                spellCheck={false}
-                value={draftContent}
-                onChange={(event) => setDraftContent(event.target.value)}
-              />
-            </div>
+            <CodeEditor value={draftContent} onChange={setDraftContent} metadata={editorMetadata} />
           </div>
 
           {notice ? <p className="settings-notice">{notice}</p> : null}
@@ -369,11 +366,4 @@ function extractDraftMetadata(content: string) {
     if (match) metadata[match[1].toLowerCase()] = match[2].replace(/^["']|["']$/g, "");
   }
   return metadata;
-}
-
-function lineNumbers(content: string) {
-  return content
-    .split("\n")
-    .map((_, index) => index + 1)
-    .join("\n");
 }

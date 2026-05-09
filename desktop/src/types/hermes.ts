@@ -171,6 +171,7 @@ export type HermesConversation = {
   preview: string;
   chatId?: string;
   origin?: Record<string, unknown>;
+  metadata?: Record<string, unknown>;
   startedAt: number | null;
   endedAt: number | null;
   lastActiveAt: number | null;

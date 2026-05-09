@@ -4,6 +4,7 @@ import {
   coreEventToInboxMessage,
   getIrisConversationDetail,
   getIrisConversations,
+  renameIrisConversation,
 } from "../../lib/irisRuntime";
 import {
   agentUICoreEventStreamUrl,
@@ -177,6 +178,7 @@ export function useAgentUIChat({ profile, runtimeConfig }: UseIrisChatOptions) {
     const draftAttachments = Array.isArray(options) ? options : options.attachments || [];
     const modelSelection = Array.isArray(options) ? null : options.modelSelection || null;
     const currentModelSelection = Array.isArray(options) ? null : options.currentModelSelection || null;
+    const projectId = Array.isArray(options) ? null : options.projectId || null;
     const prompt = (Array.isArray(options) ? input : options.text ?? input).trim();
     if (!prompt && !draftAttachments.length) return false;
     if (sendInFlightRef.current) return false;
@@ -263,6 +265,7 @@ export function useAgentUIChat({ profile, runtimeConfig }: UseIrisChatOptions) {
             optimisticTimestamp,
             gatewayChatId,
             modelSelection?.model || "",
+            projectId,
           ),
         ),
       );
@@ -280,6 +283,7 @@ export function useAgentUIChat({ profile, runtimeConfig }: UseIrisChatOptions) {
           await createCoreConversationForPrompt(
             promptWithAttachments,
             modelSelection?.model || "",
+            projectId,
             previousId && !isOptimisticConversationId(previousId)
               ? {
                   externalChatId: gatewayChatId,
@@ -346,6 +350,7 @@ export function useAgentUIChat({ profile, runtimeConfig }: UseIrisChatOptions) {
           : null;
       const coreMetadata: Record<string, unknown> = {};
       if (gatewayChatId) coreMetadata.chatId = gatewayChatId;
+      if (projectId) coreMetadata.projectId = projectId;
       if (switchSelection) coreMetadata.modelSwitch = switchSelection;
       const result = await sendAgentUICoreMessage(
         conversationId,
@@ -423,7 +428,7 @@ export function useAgentUIChat({ profile, runtimeConfig }: UseIrisChatOptions) {
       if (result.ok) {
         const currentProfileConversations = conversationsByProfileRef.current[targetProfile] || [];
         const endpointConversations = preserveActiveConversationTitles(
-          result.conversations || [],
+          preserveLocalConversationProjectMetadata(result.conversations || [], currentProfileConversations),
           currentProfileConversations,
           activeRequestIdsByConversationRef.current,
           activeConversationTitlesByConversationRef.current,
@@ -580,6 +585,20 @@ export function useAgentUIChat({ profile, runtimeConfig }: UseIrisChatOptions) {
     await refreshConversationDetail(conversationId, profileName, { select: true });
   }
 
+  async function renameConversation(profileName: string, conversationId: string, title: string) {
+    const cleanTitle = title.trim();
+    if (!cleanTitle) return "Enter a conversation name.";
+    const result = await renameIrisConversation(profileName, conversationId, cleanTitle, runtimeConfig);
+    if (!result.ok || !result.conversation) {
+      return result.error || "Could not rename this conversation.";
+    }
+    setConversationsByProfile((current) =>
+      upsertConversationForProfile(current, profileName, result.conversation),
+    );
+    setHistoryErrorsByProfile((current) => ({ ...current, [profileName]: null }));
+    return "Conversation renamed.";
+  }
+
   async function refreshConversationDetail(
     conversationId: string,
     profileName = profile,
@@ -644,9 +663,13 @@ export function useAgentUIChat({ profile, runtimeConfig }: UseIrisChatOptions) {
           if (shouldPreserveLocalMessagesOnEmptyHistory(localMessages, result.messages)) {
             return current;
           }
+          const historyMessages = preserveLocalScheduledDeliveries(
+            toAppMessages(result.messages),
+            localMessages,
+          );
           return {
             ...current,
-            [loadedConversation.id]: toAppMessages(result.messages),
+            [loadedConversation.id]: historyMessages,
           };
         });
       }
@@ -707,6 +730,7 @@ export function useAgentUIChat({ profile, runtimeConfig }: UseIrisChatOptions) {
   async function createCoreConversationForPrompt(
     promptText: string,
     model = "",
+    projectId: string | null = null,
     link?: {
       externalChatId?: string;
       externalSessionId?: string;
@@ -722,7 +746,12 @@ export function useAgentUIChat({ profile, runtimeConfig }: UseIrisChatOptions) {
           title: conversationTitleFromPrompt(promptText),
           externalChatId: link?.externalChatId,
           externalSessionId: link?.externalSessionId,
-          metadata: { model, ...(link?.createdBy ? { createdBy: link.createdBy } : {}) },
+          projectId,
+          metadata: {
+            model,
+            ...(projectId ? { projectId } : {}),
+            ...(link?.createdBy ? { createdBy: link.createdBy } : {}),
+          },
         },
         runtimeConfig,
       );
@@ -735,6 +764,7 @@ export function useAgentUIChat({ profile, runtimeConfig }: UseIrisChatOptions) {
         preview: compactText(promptText, 180),
         chatId: created.conversation.externalChatId,
         origin: created.conversation.origin || {},
+        metadata: created.conversation.metadata || {},
         startedAt: created.conversation.createdAt,
         endedAt: null,
         lastActiveAt: created.conversation.updatedAt,
@@ -1034,6 +1064,7 @@ export function useAgentUIChat({ profile, runtimeConfig }: UseIrisChatOptions) {
     input,
     loadConversation,
     messages,
+    renameConversation,
     selectedModelSelection,
     requestActive: Boolean(activeRequestId),
     refreshConversations,
@@ -1123,23 +1154,54 @@ export function preserveActiveConversationTitles(
   activeTitlesByConversation: Record<string, string>,
   chatIdsByConversation: Record<string, string>,
 ) {
-  if (!Object.keys(activeRequestIdsByConversation).length) return endpointConversations;
-  const activeLocalTitles = new Map<string, string>();
+  const preservedTitles = new Map<string, string>();
+  for (const conversation of currentConversations) {
+    const localTitle = conversation.title || "";
+    if (!localTitle || isPlaceholderConversationTitle(localTitle)) continue;
+    preservedTitles.set(`id:${conversation.id}`, localTitle);
+    if (conversation.chatId) preservedTitles.set(`chat:${conversation.chatId}`, localTitle);
+  }
+
   for (const conversationId of Object.keys(activeRequestIdsByConversation)) {
     const localConversation = currentConversations.find((conversation) => conversation.id === conversationId);
-    const localTitle = activeTitlesByConversation[conversationId] || localConversation?.title || "";
+    const localConversationTitle = localConversation?.title || "";
+    const localTitle = localConversationTitle && !isPlaceholderConversationTitle(localConversationTitle)
+      ? localConversationTitle
+      : activeTitlesByConversation[conversationId] || "";
     if (!localTitle || isPlaceholderConversationTitle(localTitle)) continue;
-    activeLocalTitles.set(`id:${conversationId}`, localTitle);
-    if (localConversation?.id) activeLocalTitles.set(`id:${localConversation.id}`, localTitle);
+    preservedTitles.set(`id:${conversationId}`, localTitle);
+    if (localConversation?.id) preservedTitles.set(`id:${localConversation.id}`, localTitle);
     const chatId = chatIdsByConversation[conversationId] || localConversation?.chatId || "";
-    if (chatId) activeLocalTitles.set(`chat:${chatId}`, localTitle);
+    if (chatId) preservedTitles.set(`chat:${chatId}`, localTitle);
   }
-  if (!activeLocalTitles.size) return endpointConversations;
+
+  if (!preservedTitles.size) return endpointConversations;
   return endpointConversations.map((conversation) => {
     if (!isPlaceholderConversationTitle(conversation.title)) return conversation;
-    const preservedTitle = activeLocalTitles.get(`id:${conversation.id}`) ||
-      (conversation.chatId ? activeLocalTitles.get(`chat:${conversation.chatId}`) : "");
+    const preservedTitle = preservedTitles.get(`id:${conversation.id}`) ||
+      (conversation.chatId ? preservedTitles.get(`chat:${conversation.chatId}`) : "");
     return preservedTitle ? { ...conversation, title: preservedTitle } : conversation;
+  });
+}
+
+export function preserveLocalConversationProjectMetadata(
+  endpointConversations: HermesConversation[],
+  currentConversations: HermesConversation[],
+) {
+  const projectMetadata = new Map<string, Record<string, unknown>>();
+  for (const conversation of currentConversations) {
+    const metadata = conversation.metadata || {};
+    if (!conversationProjectId(conversation)) continue;
+    projectMetadata.set(`id:${conversation.id}`, metadata);
+    if (conversation.chatId) projectMetadata.set(`chat:${conversation.chatId}`, metadata);
+  }
+  if (!projectMetadata.size) return endpointConversations;
+  return endpointConversations.map((conversation) => {
+    if (conversationProjectId(conversation)) return conversation;
+    const metadata = projectMetadata.get(`id:${conversation.id}`) ||
+      (conversation.chatId ? projectMetadata.get(`chat:${conversation.chatId}`) : undefined) ||
+      currentConversations.find((current) => conversationsLikelyMatch(current, conversation) && conversationProjectId(current))?.metadata;
+    return metadata ? { ...conversation, metadata: { ...(conversation.metadata || {}), ...metadata } } : conversation;
   });
 }
 
@@ -1208,6 +1270,17 @@ function conversationsLikelyMatch(left: HermesConversation, right: HermesConvers
   );
   if (!labelMatches) return false;
   return conversationActivityTimestamp(right) >= conversationActivityTimestamp(left) - 2;
+}
+
+function conversationProjectId(conversation: HermesConversation) {
+  const metadata = conversation.metadata || {};
+  const project = metadata.project;
+  if (typeof metadata.projectId === "string" && metadata.projectId) return metadata.projectId;
+  if (project && typeof project === "object" && !Array.isArray(project)) {
+    const id = (project as Record<string, unknown>).id;
+    return typeof id === "string" ? id : "";
+  }
+  return "";
 }
 
 function normalizeConversationLabel(value: string | null | undefined) {
@@ -1311,6 +1384,52 @@ export function shouldPreserveLocalMessagesOnEmptyHistory(
   historyMessages: HermesConversationMessage[],
 ) {
   return localMessages.length > 0 && historyMessages.length === 0;
+}
+
+export function preserveLocalScheduledDeliveries(
+  historyMessages: Message[],
+  localMessages: Message[],
+) {
+  const historyIds = new Set(historyMessages.map((message) => message.id));
+  const historyContent = new Set(
+    historyMessages.map((message) => message.content.trim()).filter(Boolean),
+  );
+  const localDeliveries = localMessages.filter((message) =>
+    message.source === "hermes-cron" &&
+    message.role === "assistant" &&
+    !message.streaming &&
+    !historyIds.has(message.id) &&
+    !historyContent.has(message.content.trim()),
+  );
+  if (!localDeliveries.length) return historyMessages;
+
+  let pendingHistory = [...historyMessages];
+  const merged: Message[] = [];
+  for (const localMessage of localMessages) {
+    if (localDeliveries.includes(localMessage)) {
+      merged.push(localMessage);
+      continue;
+    }
+    const historyIndex = pendingHistory.findIndex((historyMessage) =>
+      messagesLikelyRepresentSameTurn(historyMessage, localMessage),
+    );
+    if (historyIndex === -1) continue;
+    merged.push(...pendingHistory.slice(0, historyIndex + 1));
+    pendingHistory = pendingHistory.slice(historyIndex + 1);
+  }
+  merged.push(...pendingHistory);
+  return mergeMessageLists([], merged);
+}
+
+function messagesLikelyRepresentSameTurn(left: Message, right: Message) {
+  if (left.id === right.id) return true;
+  return left.role === right.role &&
+    left.content.trim() === right.content.trim() &&
+    attachmentIds(left).join("|") === attachmentIds(right).join("|");
+}
+
+function attachmentIds(message: Message) {
+  return (message.attachments || []).map((attachment) => attachment.id).sort();
 }
 
 export function activeRequestCompletedByHistory(
@@ -1473,6 +1592,7 @@ function optimisticConversationFromPrompt(
   lastActiveAt: number,
   chatId: string,
   model: string,
+  projectId: string | null = null,
 ): HermesConversation {
   return {
     id: conversationId,
@@ -1482,6 +1602,7 @@ function optimisticConversationFromPrompt(
     preview: compactText(prompt, 180),
     chatId,
     origin: {},
+    metadata: projectId ? { projectId } : {},
     startedAt,
     endedAt: null,
     lastActiveAt,

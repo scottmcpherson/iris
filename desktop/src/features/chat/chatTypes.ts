@@ -11,6 +11,7 @@ export type SendMessageOptions = {
   attachments?: SendableAttachment[];
   modelSelection?: HermesModelSelection | null;
   currentModelSelection?: HermesModelSelection | null;
+  projectId?: string | null;
   onAttachmentUploadError?: (error: AttachmentUploadFailure) => void;
 };
 

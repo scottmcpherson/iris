@@ -49,15 +49,19 @@ from .models import (
     CoreAutomationCreateRequest,
     CoreAutomationUpdateRequest,
     CoreConversationCreateRequest,
+    CoreConversationUpdateRequest,
+    CoreMessageCreateRequest,
     DeviceCursorUpdateRequest,
     DevicePairRequest,
-    CoreMessageCreateRequest,
     ErrorResponse,
     HealthResponse,
     InboxHealthResponse,
     InboxMessageCreateRequest,
     InboxMessageResponse,
     InboxMessagesResponse,
+    ProjectConversationLinkRequest,
+    ProjectCreateRequest,
+    ProjectUpdateRequest,
     ProfileSummary,
     RuntimeDeliveryHermesRequest,
     StatusResponse,
@@ -1191,6 +1195,109 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         adapter = app.state.runtime_registry.adapter_for_runtime(agent["runtimeId"])
         return await asyncio.to_thread(adapter.save_agent_skill, agent, skill_id, dump_model(request))
 
+    @app.get("/v1/projects")
+    async def core_projects(
+        includeArchived: bool = Query(False),
+        _auth: None = Depends(require_auth),
+    ) -> dict[str, Any]:
+        return {
+            "ok": True,
+            "projects": app.state.core_store.list_projects(include_archived=includeArchived),
+        }
+
+    @app.post("/v1/projects")
+    async def core_create_project(
+        request: ProjectCreateRequest,
+        _auth: None = Depends(require_auth),
+    ) -> dict[str, Any]:
+        if not app.state.runtime_registry.agent(request.defaultAgentId):
+            raise ManagementError("Default agent was not found.", status_code=404)
+        try:
+            project = app.state.core_store.create_project(
+                name=request.name,
+                default_agent_id=request.defaultAgentId,
+                system_prompt=request.systemPrompt,
+                metadata=request.metadata,
+            )
+        except ValueError as exc:
+            raise ManagementError(str(exc), status_code=400) from exc
+        return {"ok": True, "project": project}
+
+    @app.get("/v1/projects/{project_id}")
+    async def core_project(project_id: str, _auth: None = Depends(require_auth)) -> dict[str, Any]:
+        project = app.state.core_store.get_project(project_id)
+        if not project:
+            raise ManagementError("Project was not found.", status_code=404)
+        return {"ok": True, "project": project}
+
+    @app.patch("/v1/projects/{project_id}")
+    async def core_update_project(
+        project_id: str,
+        request: ProjectUpdateRequest,
+        _auth: None = Depends(require_auth),
+    ) -> dict[str, Any]:
+        if request.defaultAgentId is not None and not app.state.runtime_registry.agent(request.defaultAgentId):
+            raise ManagementError("Default agent was not found.", status_code=404)
+        try:
+            project = app.state.core_store.update_project(
+                project_id,
+                name=request.name,
+                default_agent_id=request.defaultAgentId,
+                system_prompt=request.systemPrompt,
+                metadata=request.metadata,
+            )
+        except ValueError as exc:
+            raise ManagementError(str(exc), status_code=400) from exc
+        if not project:
+            raise ManagementError("Project was not found.", status_code=404)
+        return {"ok": True, "project": project}
+
+    @app.delete("/v1/projects/{project_id}")
+    async def core_archive_project(project_id: str, _auth: None = Depends(require_auth)) -> dict[str, Any]:
+        project = app.state.core_store.archive_project(project_id)
+        if not project:
+            raise ManagementError("Project was not found.", status_code=404)
+        return {"ok": True, "project": project}
+
+    @app.get("/v1/projects/{project_id}/conversations")
+    async def core_project_conversations(
+        project_id: str,
+        limit: int = Query(80),
+        _auth: None = Depends(require_auth),
+    ) -> dict[str, Any]:
+        project = app.state.core_store.get_project(project_id)
+        if not project:
+            raise ManagementError("Project was not found.", status_code=404)
+        limit = clamp_int(limit, default=80, minimum=1, maximum=200)
+        conversations = project_conversations(app, project)[:limit]
+        return {"ok": True, "conversations": conversations}
+
+    @app.post("/v1/projects/{project_id}/conversations")
+    async def core_link_project_conversation(
+        project_id: str,
+        request: ProjectConversationLinkRequest,
+        _auth: None = Depends(require_auth),
+    ) -> dict[str, Any]:
+        project = app.state.core_store.get_project(project_id)
+        if not project:
+            raise ManagementError("Project was not found.", status_code=404)
+        conversation = resolve_core_conversation(app, request.conversationId)
+        if not conversation:
+            raise ManagementError("Conversation was not found.", status_code=404)
+        link = app.state.core_store.link_project_conversation(project_id, conversation)
+        return {"ok": True, "link": link, "conversation": with_project_metadata(conversation, project)}
+
+    @app.delete("/v1/projects/{project_id}/conversations/{conversation_id}")
+    async def core_unlink_project_conversation(
+        project_id: str,
+        conversation_id: str,
+        _auth: None = Depends(require_auth),
+    ) -> dict[str, Any]:
+        if not app.state.core_store.get_project(project_id):
+            raise ManagementError("Project was not found.", status_code=404)
+        app.state.core_store.unlink_project_conversation(project_id, conversation_id)
+        return {"ok": True, "projectId": project_id, "conversationId": conversation_id}
+
     @app.get("/v1/conversations")
     async def core_conversations(
         agentId: str | None = Query(None),
@@ -1219,19 +1326,29 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         request: CoreConversationCreateRequest,
         _auth: None = Depends(require_auth),
     ) -> dict[str, Any]:
-        agent = app.state.runtime_registry.agent(request.agentId)
+        project = app.state.core_store.get_project(request.projectId) if request.projectId else None
+        if request.projectId and not project:
+            raise ManagementError("Project was not found.", status_code=404)
+        agent_id = request.agentId or (project["defaultAgentId"] if project else "")
+        agent = app.state.runtime_registry.agent(agent_id)
         if not agent:
             raise ManagementError("Agent was not found.", status_code=404)
         external_chat_id = (request.externalChatId or "").strip() or f"core-{secrets.token_urlsafe(18)}"
         external_session_id = (request.externalSessionId or "").strip()
+        metadata = dict(request.metadata)
+        if project:
+            metadata["projectId"] = project["id"]
         conversation = draft_conversation(
             agent,
             title=request.title,
             external_chat_id=external_chat_id,
             external_session_id=external_session_id,
-            metadata=request.metadata,
+            metadata=metadata,
         )
         remember_active_conversation(app, conversation)
+        if project:
+            app.state.core_store.link_project_conversation(project["id"], conversation)
+            conversation = with_project_metadata(conversation, project)
         return {"ok": True, "conversation": conversation}
 
     @app.get("/v1/conversations/{conversation_id}")
@@ -1250,6 +1367,30 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if not conversation:
             raise ManagementError("Conversation was not found.", status_code=404)
         return {"ok": True, "conversation": conversation}
+
+    @app.patch("/v1/conversations/{conversation_id}")
+    async def core_update_conversation(
+        conversation_id: str,
+        request: CoreConversationUpdateRequest,
+        _auth: None = Depends(require_auth),
+    ) -> dict[str, Any]:
+        conversation = resolve_core_conversation(app, conversation_id)
+        if not conversation:
+            raise ManagementError("Conversation was not found.", status_code=404)
+        if request.title is None:
+            return {"ok": True, "conversation": conversation}
+        title = request.title.strip()
+        if not title:
+            raise ManagementError("Conversation title is required.", status_code=400)
+        adapter = app.state.runtime_registry.adapter_for_runtime(conversation["runtimeId"])
+        updated = await asyncio.to_thread(
+            adapter.rename_conversation,
+            conversation_agent(app, conversation),
+            conversation,
+            title,
+        )
+        remember_active_conversation(app, updated)
+        return {"ok": True, "conversation": updated}
 
     @app.get("/v1/conversations/{conversation_id}/messages")
     async def core_conversation_messages(
@@ -1330,11 +1471,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except ValueError as exc:
             raise ManagementError(str(exc), status_code=400) from exc
         client_attachments = [client_attachment_payload(attachment) for attachment in resolved_attachments]
+        project = linked_project_for_message(app, conversation, request.metadata)
         runtime_metadata = {
             key: value
             for key, value in request.metadata.items()
             if key not in {"modelSwitch", "chatId"}
         }
+        if project:
+            runtime_metadata.update(project_runtime_metadata(project))
         runtime_metadata.update({
                     "agentuiConversationId": conversation_id,
                     "chatId": chat_id,
@@ -1423,6 +1567,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if accepted_chat_id != conversation.get("externalChatId"):
             conversation = {**conversation, "externalChatId": accepted_chat_id}
             remember_active_conversation(app, conversation)
+        if project:
+            app.state.core_store.link_project_conversation(project["id"], conversation)
         app.state.core_store.upsert_client_message_metadata(
             runtime_id=agent["runtimeId"],
             profile=agent["runtimeProfile"],
@@ -1926,6 +2072,62 @@ def remember_active_conversation(app: FastAPI, conversation: dict[str, Any]) -> 
         app.state.active_conversations_by_chat[
             (conversation["runtimeId"], conversation["runtimeProfile"], chat_id)
         ] = conversation["id"]
+
+
+def project_runtime_metadata(project: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "projectId": project["id"],
+        "projectName": project["name"],
+        "projectSystemPrompt": project.get("systemPrompt") or "",
+    }
+
+
+def with_project_metadata(conversation: dict[str, Any], project: dict[str, Any]) -> dict[str, Any]:
+    metadata = conversation.get("metadata") if isinstance(conversation.get("metadata"), dict) else {}
+    return {
+        **conversation,
+        "metadata": {
+            **metadata,
+            "project": {
+                "id": project["id"],
+                "name": project["name"],
+                "defaultAgentId": project["defaultAgentId"],
+            },
+            "projectId": project["id"],
+        },
+    }
+
+
+def linked_project_for_message(
+    app: FastAPI,
+    conversation: dict[str, Any],
+    request_metadata: dict[str, Any],
+) -> dict[str, Any] | None:
+    requested_project_id = str(request_metadata.get("projectId") or "").strip()
+    if requested_project_id:
+        project = app.state.core_store.get_project(requested_project_id)
+        if not project:
+            raise ManagementError("Project was not found.", status_code=404)
+        return project
+    return app.state.core_store.project_for_conversation(str(conversation.get("id") or ""))
+
+
+def project_conversations(app: FastAPI, project: dict[str, Any]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for link in app.state.core_store.list_project_conversation_links(project["id"]):
+        conversation = resolve_core_conversation(
+            app,
+            link["conversationId"],
+            runtime_id=link["runtimeId"],
+            runtime_profile=link["runtimeProfile"],
+            external_session_id=link["externalSessionId"],
+            external_chat_id=link["externalChatId"],
+        )
+        if not conversation:
+            continue
+        rows.append(with_project_metadata(conversation, project))
+    rows.sort(key=lambda row: int(row.get("updatedAt") or 0), reverse=True)
+    return rows
 
 
 def agent_for_runtime_profile(app: FastAPI, runtime_id: str, profile: str) -> dict[str, Any] | None:

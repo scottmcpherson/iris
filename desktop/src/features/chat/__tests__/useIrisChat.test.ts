@@ -6,6 +6,8 @@ import {
   activeRequestCompletedByHistory,
   isTransientConversationLoadError,
   mergeConversationChatIdMap,
+  preserveLocalScheduledDeliveries,
+  preserveLocalConversationProjectMetadata,
   preserveActiveConversationTitles,
   shouldApplyConversationDetailSelection,
   shouldPreserveLocalMessagesOnEmptyHistory,
@@ -65,6 +67,34 @@ describe("Iris chat inbox merging", () => {
         { id: "conversation-2", chatId: "" },
       ]),
     ).toBe(current);
+  });
+
+  it("preserves project metadata while agent conversation refresh catches up", () => {
+    const endpoint = [
+      {
+        id: "conv_1",
+        source: "agentui-core",
+        model: "",
+        title: "Project chat",
+        preview: "",
+        chatId: "core-chat-1",
+        origin: {},
+        startedAt: 1,
+        endedAt: null,
+        lastActiveAt: 2,
+        messageCount: 1,
+      },
+    ];
+    const current = [
+      {
+        ...endpoint[0],
+        id: "optimistic-1",
+        source: "optimistic",
+        metadata: { projectId: "project_1" },
+      },
+    ];
+
+    expect(preserveLocalConversationProjectMetadata(endpoint, current)[0].metadata?.projectId).toBe("project_1");
   });
 
   it("caps retries for unmapped inbox deliveries so stale rows cannot refresh forever", () => {
@@ -818,6 +848,72 @@ describe("Iris chat inbox merging", () => {
     );
   });
 
+  it("preserves scheduled delivery bubbles when canonical history reloads without them", () => {
+    const canonical = toAppMessages([
+      {
+        id: "user-1",
+        sessionId: "session-1",
+        role: "user",
+        content: "remind me in 1 minute to walk the dog",
+        toolName: "",
+        timestamp: 1,
+      },
+      {
+        id: "assistant-1",
+        sessionId: "session-1",
+        role: "assistant",
+        content: "Scheduled.",
+        toolName: "",
+        timestamp: 2,
+      },
+    ]);
+    const local: Message[] = [
+      ...canonical,
+      {
+        id: "iris-delivery-1",
+        role: "assistant",
+        source: "hermes-cron",
+        content: "Cronjob Response: walk the dog",
+      },
+    ];
+
+    expect(preserveLocalScheduledDeliveries(canonical, local)).toEqual(local);
+  });
+
+  it("keeps an older scheduled delivery above a newer user turn after history reloads", () => {
+    const firstUser: Message = {
+      id: "user-1",
+      role: "user",
+      content: "remind me in 1 minute to walk the dog",
+    };
+    const firstScheduled: Message = {
+      id: "assistant-1",
+      role: "assistant",
+      content: "Done — I'll remind you in 1 minute to walk the dog.",
+    };
+    const firstCron: Message = {
+      id: "iris-delivery-1",
+      role: "assistant",
+      source: "hermes-cron",
+      content: "Cronjob Response: Walk the dog reminder",
+    };
+    const secondUser: Message = {
+      id: "user-2",
+      role: "user",
+      content: "remind me in 1 minute to stretch",
+    };
+    const secondScheduled: Message = {
+      id: "assistant-2",
+      role: "assistant",
+      content: "Done — I'll remind you in 1 minute to stretch.",
+    };
+
+    const canonical = [firstUser, firstScheduled, secondUser, secondScheduled];
+    const local = [firstUser, firstScheduled, firstCron, secondUser, secondScheduled];
+
+    expect(preserveLocalScheduledDeliveries(canonical, local)).toEqual(local);
+  });
+
   it("coalesces a media delivery that is replayed before the final stream row", () => {
     const existing: Message[] = [
       { id: "user-1", role: "user", content: "Create an image" },
@@ -998,6 +1094,87 @@ describe("Iris chat conversation loading", () => {
     );
 
     expect(endpoint[0].title).toBe("Streaming Verification Answer");
+  });
+
+  it("keeps the previous title when an existing conversation refreshes with a temporary placeholder", () => {
+    const endpoint = preserveActiveConversationTitles(
+      [
+        {
+          id: "conv-existing",
+          source: "agentui-core",
+          title: "Untitled conversation",
+          preview: "",
+          chatId: "chat-existing",
+          origin: {},
+          startedAt: 1,
+          endedAt: null,
+          lastActiveAt: 5,
+          messageCount: 4,
+          model: "",
+        },
+      ],
+      [
+        {
+          id: "conv-existing",
+          source: "agentui-core",
+          title: "Roadmap planning",
+          preview: "",
+          chatId: "chat-existing",
+          origin: {},
+          startedAt: 1,
+          endedAt: null,
+          lastActiveAt: 2,
+          messageCount: 3,
+          model: "",
+        },
+      ],
+      {},
+      {},
+      {},
+    );
+
+    expect(endpoint[0].title).toBe("Roadmap planning");
+    expect(endpoint[0].lastActiveAt).toBe(5);
+  });
+
+  it("prefers an existing conversation title over the latest active prompt title", () => {
+    const endpoint = preserveActiveConversationTitles(
+      [
+        {
+          id: "conv-existing",
+          source: "agentui-core",
+          title: "Untitled conversation",
+          preview: "",
+          chatId: "chat-existing",
+          origin: {},
+          startedAt: 1,
+          endedAt: null,
+          lastActiveAt: 5,
+          messageCount: 4,
+          model: "",
+        },
+      ],
+      [
+        {
+          id: "conv-existing",
+          source: "agentui-core",
+          title: "Roadmap planning",
+          preview: "",
+          chatId: "chat-existing",
+          origin: {},
+          startedAt: 1,
+          endedAt: null,
+          lastActiveAt: 2,
+          messageCount: 3,
+          model: "",
+        },
+      ],
+      { "conv-existing": "user-1" },
+      { "conv-existing": "what about the budget" },
+      { "conv-existing": "chat-existing" },
+    );
+
+    expect(endpoint[0].title).toBe("Roadmap planning");
   });
 
   it("preserves a second active prompt title even after its local row has been replaced", () => {

@@ -276,7 +276,9 @@ class IrisPlatformAdapter(BasePlatformAdapter):
         if not isinstance(payload, dict):
             return web.json_response({"ok": False, "error": "Expected a JSON object"}, status=400)  # type: ignore[union-attr]
 
+        metadata = payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {}
         text = str(payload.get("text") or payload.get("content") or "").strip()
+        project_prompt = project_channel_prompt(metadata)
         try:
             attachments = normalized_inbound_attachments(payload.get("attachments"), uploaded_files)
         except ValueError as exc:
@@ -301,7 +303,6 @@ class IrisPlatformAdapter(BasePlatformAdapter):
             )
 
         message_id = safe_text(payload.get("messageId") or payload.get("message_id"), str(uuid.uuid4()), 160)
-        metadata = payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {}
         source = SessionSource(
             platform=Platform("iris"),
             chat_id=chat_id,
@@ -327,6 +328,7 @@ class IrisPlatformAdapter(BasePlatformAdapter):
             message_id=message_id,
             media_urls=[attachment["path"] for attachment in attachments],
             media_types=[attachment["mimeType"] for attachment in attachments],
+            channel_prompt=project_prompt or None,
         )
         asyncio.create_task(self.handle_message(event))
         return web.json_response(  # type: ignore[union-attr]
@@ -1039,6 +1041,17 @@ def bind_source_to_existing_session(adapter: IrisPlatformAdapter, source: Sessio
 
 def strip_stream_cursor(content: str) -> str:
     return content.removesuffix(" ▉")
+
+
+def project_channel_prompt(metadata: Dict[str, Any]) -> str:
+    prompt = str(metadata.get("projectSystemPrompt") or "").strip()
+    if not prompt:
+        return ""
+    project_name = str(metadata.get("projectName") or "Iris project").strip() or "Iris project"
+    return (
+        f"Project: {project_name}\n\n"
+        f"{prompt}"
+    )
 
 
 def api_error(text: str) -> str:

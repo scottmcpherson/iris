@@ -37,6 +37,12 @@ class RuntimeAdapter(Protocol):
         chat_id: str = "",
         conversation_id: str = "",
     ) -> dict[str, Any] | None: ...
+    def rename_conversation(
+        self,
+        agent: dict[str, Any],
+        conversation: dict[str, Any],
+        title: str,
+    ) -> dict[str, Any]: ...
     def get_conversation_messages(
         self,
         agent: dict[str, Any],

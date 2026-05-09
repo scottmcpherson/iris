@@ -41,6 +41,7 @@ export function useVoiceDictation({
   const chunksRef = useRef<Blob[]>([]);
   const startedAtRef = useRef(0);
   const discardOnStopRef = useRef(false);
+  const requestTokenRef = useRef(0);
 
   useEffect(() => {
     stateRef.current = state;
@@ -55,9 +56,15 @@ export function useVoiceDictation({
       return;
     }
     discardOnStopRef.current = false;
+    const requestToken = requestTokenRef.current + 1;
+    requestTokenRef.current = requestToken;
     setState({ status: "requesting-permission" });
     try {
       const stream = await requestMicrophoneStream(30_000);
+      if (requestTokenRef.current !== requestToken || discardOnStopRef.current) {
+        stream.getTracks().forEach((track) => track.stop());
+        return;
+      }
       const recorder = createRecorder(stream);
       chunksRef.current = [];
       streamRef.current = stream;
@@ -88,6 +95,7 @@ export function useVoiceDictation({
         audioLevels: EMPTY_AUDIO_LEVELS,
       });
     } catch (error) {
+      if (requestTokenRef.current !== requestToken || discardOnStopRef.current) return;
       cleanup();
       setState({ status: "error", message: captureErrorMessage(error) });
     }
@@ -103,6 +111,7 @@ export function useVoiceDictation({
 
   function cancel() {
     discardOnStopRef.current = true;
+    requestTokenRef.current += 1;
     stopTracks();
     stopRecorder();
     cleanup();

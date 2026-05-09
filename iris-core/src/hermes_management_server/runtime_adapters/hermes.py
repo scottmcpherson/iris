@@ -252,6 +252,25 @@ class HermesRuntimeAdapter:
                 return conversation
         return None
 
+    def rename_conversation(
+        self,
+        agent: dict[str, Any],
+        conversation: dict[str, Any],
+        title: str,
+    ) -> dict[str, Any]:
+        clean_title = title.strip()
+        if not clean_title:
+            raise ManagementError("Conversation title is required.", status_code=400)
+        external_session_id = str(conversation.get("externalSessionId") or "").strip()
+        if not external_session_id:
+            return {**conversation, "title": clean_title, "updatedAt": int(time.time())}
+        detail = self.require_store().rename_conversation(
+            str(agent["runtimeProfile"]),
+            external_session_id,
+            clean_title,
+        )
+        return conversation_from_runtime_summary(agent, detail.conversation)
+
     def get_conversation_messages(
         self,
         agent: dict[str, Any],

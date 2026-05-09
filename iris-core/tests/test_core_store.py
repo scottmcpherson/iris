@@ -17,7 +17,7 @@ def test_core_store_creates_only_core_owned_schema(tmp_path):
         }
     )
 
-    assert store.health()["schemaVersion"] == 4
+    assert store.health()["schemaVersion"] == 5
     assert store.health()["sourceOfTruthMigration"] == "complete"
     assert runtime["id"] == "runtime_local_hermes"
     assert set(store.tables()) == {
@@ -28,6 +28,8 @@ def test_core_store_creates_only_core_owned_schema(tmp_path):
         "client_message_metadata",
         "attachments",
         "message_attachments",
+        "projects",
+        "project_conversations",
     }
 
 
@@ -83,9 +85,48 @@ def test_source_of_truth_migration_drops_duplicate_tables_and_preserves_core_dat
         "client_message_metadata",
         "attachments",
         "message_attachments",
+        "projects",
+        "project_conversations",
     }
     assert store.list_devices()[0]["id"] == "dev_1"
     assert store.list_runtimes()[0]["id"] == "runtime_local_hermes"
+
+
+def test_core_store_project_crud_and_conversation_links(tmp_path):
+    store = CoreStore(tmp_path / "core.sqlite3")
+    project = store.create_project(
+        name="AgentUI",
+        default_agent_id="agent_default",
+        system_prompt="Use repo-local context.",
+    )
+    renamed = store.update_project(
+        project["id"],
+        name="Iris",
+        default_agent_id="agent_research",
+        system_prompt="Use project notes.",
+        metadata={"color": "green"},
+    )
+    conversation = {
+        "id": "conv_1",
+        "agentId": "agent_default",
+        "runtimeId": "runtime_local_hermes",
+        "runtimeProfile": "default",
+        "externalSessionId": "session-1",
+        "externalChatId": "chat-1",
+    }
+    link = store.link_project_conversation(project["id"], conversation)
+
+    assert renamed["name"] == "Iris"
+    assert renamed["slug"] == "iris"
+    assert renamed["defaultAgentId"] == "agent_research"
+    assert renamed["systemPrompt"] == "Use project notes."
+    assert renamed["metadata"]["color"] == "green"
+    assert link["projectId"] == project["id"]
+    assert store.project_for_conversation("conv_1")["id"] == project["id"]
+    assert store.list_project_conversation_links(project["id"])[0]["conversationId"] == "conv_1"
+    archived = store.archive_project(project["id"])
+    assert archived["archivedAt"] is not None
+    assert store.list_projects() == []
 
 
 def test_core_store_accepts_general_attachment_mime_types(tmp_path):
