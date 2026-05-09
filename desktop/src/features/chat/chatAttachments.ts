@@ -88,7 +88,8 @@ export function formatPromptWithAttachments(prompt: string, attachments: Message
     })
     .join("\n");
 
-  return [prompt || "Use the attached files as context.", `Attached files:\n${attachmentSummary}`].join("\n\n");
+  if (!prompt.trim()) return attachmentSummary;
+  return [prompt, `Attached files:\n${attachmentSummary}`].join("\n\n");
 }
 
 function uploadErrorMessage(name: string, error = "") {

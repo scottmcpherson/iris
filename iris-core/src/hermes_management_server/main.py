@@ -38,7 +38,6 @@ from .core_store import (
     normalize_attachment_mime_type,
     now,
     random_id,
-    runtime_attachment_payload,
     stable_hash,
 )
 from .models import (
@@ -283,8 +282,11 @@ def attachment_mime_type(*, filename: str, content_type: str, head: bytes) -> st
         return "video/mp4"
     if lower_head.startswith(b"<svg") or (lower_head.startswith(b"<?xml") and b"<svg" in lower_head):
         return "image/svg+xml"
+    normalized_content_type = normalize_attachment_mime_type(content_type or "")
+    if normalized_content_type and normalized_content_type != "application/octet-stream":
+        return normalized_content_type
     guessed = mimetypes.guess_type(filename)[0] or ""
-    return normalize_attachment_mime_type(guessed or content_type or "application/octet-stream")
+    return normalize_attachment_mime_type(guessed or normalized_content_type or "application/octet-stream")
 
 
 def office_or_zip_mime_type(filename: str) -> str:
@@ -400,9 +402,6 @@ def generated_file_refs_from_text(content: str) -> list[dict[str, Any]]:
 
 def generated_file_ref_from_mapping(item: dict[str, Any], *, source: str) -> list[dict[str, Any]]:
     path_value = str(item.get("path") or item.get("localPath") or "").strip()
-    runtime = item.get("runtime") if isinstance(item.get("runtime"), dict) else {}
-    if not path_value and str(runtime.get("type") or "") == "local_path":
-        path_value = str(runtime.get("path") or "").strip()
     path = generated_local_path(path_value)
     if not path:
         return []
@@ -746,7 +745,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.active_conversations_by_chat = {}
     app.state.accepted_client_messages = set()
     app.state.inbox_acknowledged_at = {}
-
     if app_settings.cors_origins:
         app.add_middleware(
             CORSMiddleware,
@@ -805,6 +803,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         runtimeId: str = Form(DEFAULT_RUNTIME_ID),
         profile: str = Form("default"),
         kind: str = Form(""),
+        mimeType: str = Form(""),
         metadata: str = Form(""),
         _auth: None = Depends(require_auth),
     ) -> dict[str, Any]:
@@ -834,7 +833,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 raise ManagementError("Attachment file is empty.", status_code=400)
             mime_type = attachment_mime_type(
                 filename=filename,
-                content_type=file.content_type or "",
+                content_type=mimeType or file.content_type or "",
                 head=head,
             )
             try:
@@ -897,23 +896,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "ETag": f"\"{attachment.get('sha256') or ''}\"",
             },
         )
-
-    @app.post("/v1/runtime/attachments/resolve")
-    async def core_runtime_attachments_resolve(
-        request: Request,
-        _auth: None = Depends(require_auth),
-    ) -> dict[str, Any]:
-        payload = await request.json()
-        if not isinstance(payload, dict):
-            raise ManagementError("Request body must be a JSON object.", status_code=400)
-        runtime_id = str(payload.get("runtimeId") or DEFAULT_RUNTIME_ID)
-        profile = str(payload.get("profile") or "default")
-        refs = payload.get("attachments") if isinstance(payload.get("attachments"), list) else []
-        attachments = [
-            runtime_attachment_payload(attachment)
-            for attachment in core_store.runtime_attachments(runtime_id=runtime_id, profile=profile, refs=refs)
-        ]
-        return {"ok": True, "attachments": attachments}
 
     @app.get("/v1/devices")
     async def core_devices(_auth: None = Depends(require_auth)) -> dict[str, Any]:
@@ -1348,14 +1330,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except ValueError as exc:
             raise ManagementError(str(exc), status_code=400) from exc
         client_attachments = [client_attachment_payload(attachment) for attachment in resolved_attachments]
-        runtime_attachments = [runtime_attachment_payload(attachment) for attachment in resolved_attachments]
         runtime_metadata = {
             key: value
             for key, value in request.metadata.items()
             if key not in {"modelSwitch", "chatId"}
         }
-        if runtime_attachments:
-            runtime_metadata["attachments"] = runtime_attachments
         runtime_metadata.update({
                     "agentuiConversationId": conversation_id,
                     "chatId": chat_id,
@@ -1371,6 +1350,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 chat_name=conversation["title"],
                 message_id=f"{message_id}-model",
                 text=switch_command,
+                session_id=conversation.get("externalSessionId") or "",
                 metadata={
                     **runtime_metadata,
                     "hidden": True,
@@ -1410,7 +1390,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             chat_name=conversation["title"],
             message_id=message_id,
             text=text,
+            session_id=conversation.get("externalSessionId") or "",
             metadata=runtime_metadata,
+            attachments=resolved_attachments,
         )
         if not result.get("ok"):
             error_event = publish_core_event(
@@ -1453,6 +1435,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     for key, value in runtime_metadata.items()
                     if key != "attachments"
                 },
+                "clientContent": text,
                 **({"attachments": client_attachments} if client_attachments else {}),
             },
         )
@@ -1482,6 +1465,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             chat_name=conversation["title"],
             message_id=random_id("msg"),
             text="/stop",
+            session_id=conversation.get("externalSessionId") or "",
             metadata={"kind": "cancel", "agentuiConversationId": conversation_id},
         )
         return {"ok": bool(result.get("ok")), "conversationId": conversation_id, "runtime": result}
@@ -2106,7 +2090,7 @@ def automation_create_payload(app: FastAPI, agent: dict[str, Any], request: dict
         conversation = resolve_core_conversation(app, conversation_id)
         if not conversation or conversation["agentId"] != agent["id"]:
             raise ManagementError("Delivery conversation was not found for this agent.", status_code=404)
-        deliver = deliver or f"agentui:{conversation['externalChatId'] or chat_id_for_conversation(conversation_id)}"
+        deliver = deliver or f"iris:{conversation['externalChatId'] or chat_id_for_conversation(conversation_id)}"
     payload: dict[str, Any] = {
         "name": str(request.get("name") or "Iris reminder"),
         "schedule": schedule,
@@ -2570,7 +2554,7 @@ def dump_model(model):
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Run the Hermes management sidecar server.")
+    parser = argparse.ArgumentParser(description="Run the Iris Core server.")
     parser.add_argument(
         "command",
         nargs="?",

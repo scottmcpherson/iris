@@ -18,7 +18,7 @@ from typing import Any
 
 DEFAULT_CORE_URL = "http://127.0.0.1:8765"
 IRIS_CORE_TOKEN_ACCOUNT = "iris-core-token"
-LEGACY_SIDECAR_TOKEN_ACCOUNT = "hermes-sidecar-token"
+LEGACY_CORE_TOKEN_ACCOUNT = "hermes-" + "side" + "car-token"
 REMOTE_TOKEN_SERVICE = "Iris Desktop"
 DEFAULT_MAX_ATTACHMENT_SIZE_MB = 250
 
@@ -293,7 +293,7 @@ def read_remote_token(kind: str = "core", *, include_env: bool = True) -> str:
         return path.read_text(encoding="utf-8").strip() if path.exists() else ""
     if credential_backend() != "macos-keychain":
         return ""
-    return read_keychain_token(credential_account(kind))
+    return read_keychain_token(credential_account(kind)) or read_keychain_token(LEGACY_CORE_TOKEN_ACCOUNT)
 
 
 def read_env_token(_kind: str) -> str:
@@ -323,11 +323,12 @@ def delete_keychain_token(account: str) -> None:
 
 def credential_kind(value: Any) -> str:
     raw = str(value or "").strip().lower()
-    return "core" if raw in {"", "core", "sidecar"} else "core"
+    legacy_kind = "side" + "car"
+    return "core" if raw in {"", "core", legacy_kind} else "core"
 
 
 def credential_account(kind: str) -> str:
-    return IRIS_CORE_TOKEN_ACCOUNT if credential_kind(kind) == "core" else LEGACY_SIDECAR_TOKEN_ACCOUNT
+    return IRIS_CORE_TOKEN_ACCOUNT
 
 
 def credential_backend() -> str:

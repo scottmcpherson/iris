@@ -92,11 +92,27 @@ function toAppMessage(message: HermesConversationMessage): Message {
 
 function displayContentForAttachments(content: string, attachments: MessageAttachment[]) {
   if (!attachments.length) return content;
-  return stripAttachmentSummary(content) || "Use the attached files as context.";
+  const displayContent = stripAttachmentSummary(content);
+  return isAttachmentOnlyContent(displayContent, attachments) ? "" : displayContent;
 }
 
 function stripAttachmentSummary(content: string) {
-  return content.replace(/\n\nAttached files:\n[\s\S]*$/u, "").trim();
+  const withoutTrailingSummary = content.replace(/\n\nAttached files:\n[\s\S]*$/u, "").trim();
+  return withoutTrailingSummary.replace(/^Attached files:\n[\s\S]*$/u, "").trim();
+}
+
+function isAttachmentOnlyContent(content: string, attachments: MessageAttachment[]) {
+  const trimmed = content.trim();
+  if (!trimmed) return true;
+  if (/^Use the attached files as context\.?$/iu.test(trimmed)) return true;
+  const attachmentNames = new Set(attachments.map((attachment) => attachment.name).filter(Boolean));
+  if (!attachmentNames.size) return false;
+  const lines = trimmed.split("\n").map((line) => line.trim()).filter(Boolean);
+  return lines.length > 0 && lines.every((line) => {
+    if (/^Runtime path:\s+/iu.test(line)) return true;
+    if (!/^\d+\.\s+/u.test(line)) return false;
+    return Array.from(attachmentNames).some((name) => line.includes(name));
+  });
 }
 
 function isHiddenConversationMessage(message: HermesConversationMessage) {

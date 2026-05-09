@@ -41,7 +41,7 @@ The web dev surface runs on `http://127.0.0.1:1420/`. The full desktop shell is 
 
 The desktop app expects one HTTP route:
 
-- Iris Core API: agents, conversations, automations, device auth, runtime routing, memory, skills, status, runtime health, model catalogs, slash commands, and conversation reads come from the monorepo service in `../sidecar`, defaulting to `http://127.0.0.1:8765/v1`.
+- Iris Core API: agents, conversations, automations, device auth, runtime routing, memory, skills, status, runtime health, model catalogs, slash commands, and conversation reads come from the monorepo service in `../iris-core`, defaulting to `http://127.0.0.1:8765/v1`.
 
 Settings edits only the Iris Core URL and Core bearer token. Runtime-specific routes, including Hermes gateway and adapter URLs, belong to Iris Core runtime configuration. The desktop app does not read local runtime files or SQLite history directly and does not keep a browser-side conversation cache.
 

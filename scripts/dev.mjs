@@ -7,12 +7,12 @@ import { fileURLToPath } from "node:url";
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const args = new Set(process.argv.slice(2));
 const webOnly = args.has("--web");
-const withSidecar = !args.has("--no-sidecar");
+const withCore = !args.has("--no-core");
 const children = [];
 
 const binDir = process.platform === "win32" ? "Scripts" : "bin";
 const exe = process.platform === "win32" ? ".exe" : "";
-const sidecarBin = join(root, "sidecar", ".venv", binDir, `hermes-sidecar${exe}`);
+const coreBin = join(root, "iris-core", ".venv", binDir, `iris-core${exe}`);
 const npm = process.platform === "win32" ? "npm.cmd" : "npm";
 const hermesHome = expandHome(process.env.HERMES_HOME ?? join(homedir(), ".hermes"));
 const coreHost = process.env.IRIS_CORE_HOST ?? process.env.HERMES_MGMT_HOST ?? "127.0.0.1";
@@ -33,7 +33,6 @@ const inboxToken = irisInboxToken || agentuiInboxToken;
 const platformToken = irisToken || agentuiToken || inboxToken;
 const coreToken =
   process.env.IRIS_CORE_TOKEN ||
-  process.env.HERMES_SIDECAR_TOKEN ||
   process.env.HERMES_MGMT_TOKEN ||
   process.env.HERMES_REMOTE_TOKEN ||
   inboxToken;
@@ -48,7 +47,7 @@ const devEnv = {
   ...(hermesApiToken ? { HERMES_API_TOKEN: hermesApiToken } : {}),
   ...(platformToken ? { IRIS_TOKEN: platformToken, AGENTUI_TOKEN: platformToken } : {}),
   ...(inboxToken ? { IRIS_INBOX_TOKEN: inboxToken, AGENTUI_INBOX_TOKEN: inboxToken } : {}),
-  ...(coreToken ? { IRIS_CORE_TOKEN: coreToken, HERMES_SIDECAR_TOKEN: coreToken } : {}),
+  ...(coreToken ? { IRIS_CORE_TOKEN: coreToken } : {}),
 };
 
 function prefix(label, chunk) {
@@ -156,16 +155,16 @@ async function coreIsAlreadyRunning() {
   }
 }
 
-if (withSidecar) {
-  if (!existsSync(sidecarBin)) {
-    console.error("Missing sidecar/.venv. Run `npm run sidecar:setup` first.");
+if (withCore) {
+  if (!existsSync(coreBin)) {
+    console.error("Missing iris-core/.venv. Run `npm run core:setup` first.");
     process.exit(1);
   }
 
   if (await coreIsAlreadyRunning()) {
     console.log(`[iris-core] using existing server at http://${coreHost}:${corePort}`);
   } else {
-    run("iris-core", sidecarBin, ["--hermes-home", hermesHome, "--host", coreHost, "--port", corePort], {
+    run("iris-core", coreBin, ["--hermes-home", hermesHome, "--host", coreHost, "--port", corePort], {
       env: devEnv,
     });
   }

@@ -332,7 +332,7 @@ export type HermesInboxMessagesResult = {
   error?: string;
 };
 
-export type RemoteCredentialKind = "core" | "sidecar";
+export type RemoteCredentialKind = "core";
 
 export type RemoteCredentialStatus = {
   ok: boolean;

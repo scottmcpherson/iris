@@ -29,7 +29,7 @@ Phase 1 makes Hermes able to send scheduled job results to Iris. Iris can create
 Create a plugin that installs on the Hermes machine:
 
 ```text
-agentui-platform/
+iris-platform/
   plugin.yaml
   __init__.py
   adapter.py
@@ -39,7 +39,7 @@ agentui-platform/
 `plugin.yaml`:
 
 ```yaml
-name: agentui-platform
+name: iris-platform
 kind: platform
 version: 0.1.0
 description: Iris delivery adapter for Hermes.
@@ -50,7 +50,7 @@ requires_env:
 
 `adapter.py` should register a platform via `ctx.register_platform(...)`:
 
-- `name="agentui"`
+- `name="iris"`
 - `label="Iris"`
 - `adapter_factory=lambda cfg: IrisAdapter(cfg)`
 - `check_fn` returns true when `AGENTUI_BASE_URL` and `AGENTUI_TOKEN` are present or config equivalents exist.
@@ -89,7 +89,7 @@ Content-Type: application/json
 Cron delivery should then use:
 
 ```text
-deliver="agentui:scott-desktop"
+deliver="iris:scott-desktop"
 ```
 
 or a default:
@@ -100,9 +100,9 @@ deliver="agentui"
 
 when `AGENTUI_DEFAULT_CHAT_ID` is configured.
 
-### Iris Sidecar
+### Iris Core
 
-Add authenticated inbox endpoints to the Iris sidecar:
+Add authenticated inbox endpoints to the Iris Iris Core:
 
 - `GET /v1/inbox/health`
 - `POST /v1/inbox/messages`
@@ -127,9 +127,9 @@ Message model:
 
 Security requirements:
 
-- Bind Iris sidecar to `127.0.0.1` by default.
+- Bind Iris Iris Core to `127.0.0.1` by default.
 - For remote Hermes, use Tailscale or a private network address.
-- Require `AGENTUI_INBOX_TOKEN` or equivalent sidecar token.
+- Require `AGENTUI_INBOX_TOKEN` or equivalent Iris Core token.
 - Never accept arbitrary file paths or executable payloads through the inbox.
 
 ### Iris Desktop
@@ -181,7 +181,7 @@ For "send me a message in X minutes", create a one-shot job:
   "schedule": "10m",
   "prompt": "Reply exactly with this message: <message>",
   "repeat": 1,
-  "deliver": "agentui:scott-desktop"
+  "deliver": "iris:scott-desktop"
 }
 ```
 
@@ -190,15 +190,15 @@ For "send me a message in X minutes", create a one-shot job:
 On the Hermes machine:
 
 ```bash
-hermes plugins install https://github.com/<org>/agentui-platform.git --enable
+hermes plugins install https://github.com/<org>/iris-platform.git --enable
 ```
 
 or manually:
 
 ```bash
 mkdir -p ~/.hermes/plugins
-cp -R agentui-platform ~/.hermes/plugins/agentui-platform
-hermes plugins enable agentui-platform
+cp -R iris-platform ~/.hermes/plugins/iris-platform
+hermes plugins enable iris-platform
 ```
 
 Configure:
@@ -219,7 +219,7 @@ Verify:
 
 ```bash
 hermes plugins list
-hermes cron create "2m" "Reply exactly: test from Hermes cron" --deliver "agentui:scott-desktop" --name "Iris smoke test"
+hermes cron create "2m" "Reply exactly: test from Hermes cron" --deliver "iris:scott-desktop" --name "Iris smoke test"
 hermes cron status
 ```
 
@@ -235,7 +235,7 @@ hermes cron status
 
 ## Phase 2: Inbound Iris-To-Hermes Routing
 
-Phase 2 makes Iris a true Hermes platform. Messages entered in Iris can enter the Hermes gateway as `platform=agentui`, giving Hermes a real origin for follow-up delivery.
+Phase 2 makes Iris a true Hermes platform. Messages entered in Iris can enter the Hermes gateway as `platform=iris`, giving Hermes a real origin for follow-up delivery.
 
 ### Inbound Transport
 
@@ -248,7 +248,7 @@ intent.
 Suggested Hermes plugin endpoint:
 
 ```http
-POST /agentui/messages
+POST /iris/messages
 Authorization: Bearer <AGENTUI_TOKEN>
 Content-Type: application/json
 ```
@@ -324,14 +324,14 @@ For Hermes plugin changes:
 ```bash
 hermes plugins list
 hermes cron status
-hermes cron create "2m" "Reply exactly: adapter smoke test" --deliver "agentui:scott-desktop" --name "Iris adapter smoke"
+hermes cron create "2m" "Reply exactly: adapter smoke test" --deliver "iris:scott-desktop" --name "Iris adapter smoke"
 ```
 
-Also verify the Iris sidecar receives the POST and the desktop renders the message.
+Also verify the Iris Iris Core receives the POST and the desktop renders the message.
 
 ## Open Questions
 
 - Should the UI label be "Jobs", "Automations", or "Scheduled"?
 - Should delivered cron messages appear inside the chat transcript, a notification inbox, or both?
-- Should Iris store inbox messages in the existing sidecar, a desktop-local store, or both?
+- Should Iris store inbox messages in the existing Iris Core, a desktop-local store, or both?
 - What is the durable device/chat id format for Iris destinations?

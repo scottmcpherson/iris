@@ -23,7 +23,7 @@ describe("runtime jobs helpers", () => {
           state: "scheduled",
           next_run_at: "2026-05-05T05:58:14.423690-04:00",
           last_run_at: null,
-          deliver: "agentui:desktop",
+          deliver: "iris:desktop",
         },
       ],
     });
@@ -34,7 +34,7 @@ describe("runtime jobs helpers", () => {
       status: "active",
       repeat: 1,
       runCount: 0,
-      deliver: "agentui:desktop",
+      deliver: "iris:desktop",
     });
     expect(jobs[0].nextRunAt).toBeGreaterThan(0);
   });
@@ -54,7 +54,7 @@ describe("runtime jobs helpers", () => {
           last_run_at: "2026-05-05T05:59:00-04:00",
           last_status: "success",
           last_error: null,
-          deliver: "agentui:desktop",
+          deliver: "iris:desktop",
         },
       ],
     });
@@ -80,7 +80,7 @@ describe("runtime jobs helpers", () => {
           status: "active",
           nextRunAt: 1_777_777_777,
           metadata: {
-            deliver: "agentui:core-conv_1",
+            deliver: "iris:core-conv_1",
             repeat: 1,
           },
         },
@@ -92,7 +92,7 @@ describe("runtime jobs helpers", () => {
       name: "Core reminder",
       schedule: "10m",
       status: "active",
-      deliver: "agentui:core-conv_1",
+      deliver: "iris:core-conv_1",
       repeat: 1,
       nextRunAt: 1_777_777_777,
     });

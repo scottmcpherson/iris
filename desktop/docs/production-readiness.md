@@ -4,7 +4,7 @@
 
 - `src-tauri/capabilities/default.json` grants only `core:default` and `opener:default` to the main window.
 - File-system, shell, HTTP, and dialog plugins are not exposed to the webview.
-- Hermes chat, management-sidecar profile reads, skill reads, and memory reads stay behind explicit Tauri commands.
+- Hermes chat, Iris Core profile reads, skill reads, and memory reads stay behind explicit Tauri commands.
 - The app CSP is enabled in `src-tauri/tauri.conf.json`. Inline/eval script allowances are intentionally retained for the local preview runtime and should be revisited if preview execution moves into a dedicated plugin or separate origin.
 
 ## Credentials

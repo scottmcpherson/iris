@@ -5,10 +5,10 @@
 Iris chat now correctly routes through Hermes gateway via the `agentui` platform adapter. That fixed profile-aware cron delivery, but it changed the response path:
 
 ```text
-Iris -> Iris platform adapter -> Hermes gateway -> sidecar inbox -> Iris
+Iris -> Iris platform adapter -> Hermes gateway -> Iris Core inbox -> Iris
 ```
 
-The old direct API path streamed SSE chunks through `hermes_stream_message` and Tauri `hermes://stream` events. The new gateway/platform path currently writes only completed outbound messages into the sidecar inbox, so the UI replaces `Thinking...` with the final full response only after Hermes finishes.
+The old direct API path streamed SSE chunks through `hermes_stream_message` and Tauri `hermes://stream` events. The new gateway/platform path currently writes only completed outbound messages into the Iris Core inbox, so the UI replaces `Thinking...` with the final full response only after Hermes finishes.
 
 ## Target Behavior
 
@@ -44,23 +44,23 @@ Do not confuse this with `display.streaming`; that is not enough for gateway pla
 
 Hermes gateway streaming uses `GatewayStreamConsumer`. It sends an initial partial assistant message with `adapter.send(...)`, then updates that message by calling `adapter.edit_message(...)`.
 
-Update `agentui-platform/adapter.py`:
+Update `iris-platform/adapter.py`:
 
 - Advertise message editing support if Hermes expects a flag such as `SUPPORTS_MESSAGE_EDITING = True`.
 - Implement `edit_message(chat_id, message_id, content, finalize=False, metadata=None)`.
 - Preserve `profile` on both initial send and edits.
-- Include stream metadata in outbound sidecar payloads:
+- Include stream metadata in outbound Iris Core payloads:
   - stable message id
   - `streaming: true | false`
   - `finalize: true | false`
   - optional `replyTo`
   - source such as `hermes-gateway-stream`
 
-### 3. Extend Sidecar Inbox for Stream Updates
+### 3. Extend Iris Core Inbox for Stream Updates
 
 The current inbox is append/read by row cursor. If an edit mutates an existing SQLite row, Iris may not see it because the cursor has already advanced. Prefer append-only stream update events.
 
-Add sidecar support for update events, probably still under `/v1/inbox/messages` unless a clearer endpoint emerges.
+Add Iris Core support for update events, probably still under `/v1/inbox/messages` unless a clearer endpoint emerges.
 
 Recommended payload shape:
 
@@ -118,7 +118,7 @@ Phase 1 option:
 
 Better option:
 
-- Add a sidecar SSE endpoint for inbox events.
+- Add a Iris Core SSE endpoint for inbox events.
 - Iris subscribes to profile-filtered events.
 - Keep polling as a fallback.
 
@@ -130,13 +130,13 @@ Required invariants:
 
 - A message sent while `health` is selected goes to the health Iris adapter URL.
 - The Hermes session is created under `~/.hermes/profiles/health`.
-- Sidecar inbox rows/events include `profile: "health"`.
+- Core inbox rows/events include `profile: "health"`.
 - Default chat polling does not consume or render health stream events.
 
 ## Suggested Implementation Order
 
 1. Add/confirm Hermes config notes and defaults for `streaming.enabled`.
-2. Add sidecar tests for profile-scoped stream update events.
+2. Add Iris Core tests for profile-scoped stream update events.
 3. Add adapter `edit_message` support and unit-test payload shape if practical.
 4. Update chat reducer logic to merge stream events by `streamMessageId`.
 5. Speed up active-request polling or add SSE.
@@ -145,7 +145,7 @@ Required invariants:
 ## Verification Checklist
 
 - Run `npm --workspace desktop run test:bridge`.
-- Run `npm run sidecar:test`.
+- Run `npm run core:test`.
 - Run `npm --workspace desktop run test`.
 - Run `npm --workspace desktop run build`.
 - Run `npm run build:mac:app`.

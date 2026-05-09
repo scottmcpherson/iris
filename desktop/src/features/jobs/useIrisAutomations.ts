@@ -44,7 +44,7 @@ export function useAgentUIAutomations(runtimeConfig: HermesRuntimeConfig, profil
   }, [profile, runtimeConfig.coreApiUrl]);
 
   function updateDeliveryTarget(value: string) {
-    const normalized = value.trim() || "agentui:desktop";
+    const normalized = value.trim() || "iris:desktop";
     setDeliveryTarget(normalized);
     saveStringValue(storageKeys.jobsDeliveryTarget, normalized);
   }
@@ -98,7 +98,7 @@ export function useAgentUIAutomations(runtimeConfig: HermesRuntimeConfig, profil
     const message = input.message.trim();
     if (!message) return "Enter a message to schedule.";
     const minutes = Math.max(1, Math.floor(input.minutes || 1));
-    const deliver = (input.deliver || deliveryTarget).trim() || "agentui:desktop";
+    const deliver = (input.deliver || deliveryTarget).trim() || "iris:desktop";
     updateDeliveryTarget(deliver);
     const agentResult = await getAgentUICoreAgentForProfile(profile, runtimeConfig);
     if (!agentResult.ok || !agentResult.agent) return agentError(agentResult) || "Could not resolve Iris agent.";
@@ -247,7 +247,7 @@ function timestampValue(value: unknown): number | null {
 }
 
 function loadDeliveryTarget() {
-  return loadStringValue(storageKeys.jobsDeliveryTarget, "agentui:desktop");
+  return loadStringValue(storageKeys.jobsDeliveryTarget, "iris:desktop");
 }
 
 function agentError(value: unknown) {

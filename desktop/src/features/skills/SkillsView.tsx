@@ -1,17 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
-import type { ReactNode } from "react";
 import {
-  BookOpenCheck,
-  Clock3,
   FileCode2,
   Filter,
-  History,
-  Plus,
   Save,
   Search,
   Sparkles,
   Store,
-  Tags,
 } from "lucide-react";
 import { getIrisSkillDetail, saveIrisSkill } from "../../lib/irisRuntime";
 import { ViewHeader } from "../../shared/ViewHeader";
@@ -201,8 +195,7 @@ export function SkillsView({
     <div className="tool-view skills-workspace">
       <ViewHeader
         icon={<Sparkles size={19} />}
-        eyebrow="Skill browser"
-        title="Curate, edit, and version Iris workflows."
+        title="Skills."
         action="New skill"
         onAction={createNewSkill}
       />
@@ -244,9 +237,6 @@ export function SkillsView({
         <aside className="skill-list-panel">
           <div className="skill-list-heading">
             <span>{visibleSkills.length} skills</span>
-            <button className="icon-button" aria-label="Create skill" onClick={createNewSkill}>
-              <Plus size={15} />
-            </button>
           </div>
           <div className="skill-grid">
             {visibleSkills.map((skill) => (
@@ -281,13 +271,6 @@ export function SkillsView({
             </button>
           </div>
 
-          <div className="skill-metadata-grid">
-            <SkillMeta icon={<BookOpenCheck size={15} />} label="Source" value={detail?.source || "unknown"} />
-            <SkillMeta icon={<Tags size={15} />} label="Version" value={draftMeta.version || detail?.version || "none"} />
-            <SkillMeta icon={<Clock3 size={15} />} label="Updated" value={formatTime(detail?.updatedAt)} />
-            <SkillMeta icon={<History size={15} />} label="History" value={`${detail?.history.length || 0} revisions`} />
-          </div>
-
           <div className="skill-editor-shell">
             <div className="skill-editor-fields">
               <label>
@@ -314,32 +297,6 @@ export function SkillsView({
             </div>
           </div>
 
-          <div className="skills-lower-grid">
-            <div className="skill-history">
-              <p className="eyebrow">Change history</p>
-              {(detail?.history || []).length ? (
-                detail?.history.map((entry) => (
-                  <div key={`${entry.version}-${entry.updatedAt}`} className="history-row">
-                    <strong>{entry.version}</strong>
-                    <span>{entry.summary}</span>
-                    <small>{formatTime(entry.updatedAt)}</small>
-                  </div>
-                ))
-              ) : (
-                <div className="history-empty">Saved revisions will appear here after edits.</div>
-              )}
-            </div>
-            <div className="skills-hub-panel">
-              <p className="eyebrow">Skills Hub</p>
-              {communitySkills.map((skill) => (
-                <button key={skill.path} onClick={() => setSelectedKey(skillKey(skill))}>
-                  <Store size={14} />
-                  <span>{skill.name}</span>
-                  <small>{skill.version}</small>
-                </button>
-              ))}
-            </div>
-          </div>
           {notice ? <p className="settings-notice">{notice}</p> : null}
         </section>
       </div>
@@ -419,24 +376,4 @@ function lineNumbers(content: string) {
     .split("\n")
     .map((_, index) => index + 1)
     .join("\n");
-}
-
-function formatTime(value?: number | null) {
-  if (!value) return "not saved";
-  return new Date(value * 1000).toLocaleDateString(undefined, {
-    month: "short",
-    day: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-  });
-}
-
-function SkillMeta({ icon, label, value }: { icon: ReactNode; label: string; value: string }) {
-  return (
-    <div className="skill-meta">
-      {icon}
-      <span>{label}</span>
-      <strong>{value}</strong>
-    </div>
-  );
 }

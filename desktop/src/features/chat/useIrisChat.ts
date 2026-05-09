@@ -177,7 +177,7 @@ export function useAgentUIChat({ profile, runtimeConfig }: UseIrisChatOptions) {
     const draftAttachments = Array.isArray(options) ? options : options.attachments || [];
     const modelSelection = Array.isArray(options) ? null : options.modelSelection || null;
     const currentModelSelection = Array.isArray(options) ? null : options.currentModelSelection || null;
-    const prompt = input.trim();
+    const prompt = (Array.isArray(options) ? input : options.text ?? input).trim();
     if (!prompt && !draftAttachments.length) return false;
     if (sendInFlightRef.current) return false;
     sendInFlightRef.current = true;
@@ -203,7 +203,7 @@ export function useAgentUIChat({ profile, runtimeConfig }: UseIrisChatOptions) {
       sendInFlightRef.current = false;
       return false;
     }
-    const displayedPrompt = prompt || "Use the attached files as context.";
+    const displayedPrompt = prompt;
     const attachmentRefs = attachments.map((attachment) => ({ id: attachment.id }));
     const promptWithAttachments = formatPromptWithAttachments(prompt, attachments);
     const userMessage: Message = {
@@ -1498,7 +1498,20 @@ function conversationTitleFromPrompt(prompt: string) {
     .split(/\r?\n/)
     .map((line) => line.trim())
     .find(Boolean);
+  const attachmentTitle = titleFromAttachmentSummary(firstLine || "");
+  if (attachmentTitle) return attachmentTitle;
   return compactText(firstLine || "New conversation", 90);
+}
+
+function titleFromAttachmentSummary(firstLine: string) {
+  const match = firstLine.match(/^\d+\.\s+(.+?)\s+\(([^)]*)\)/u);
+  if (!match) return "";
+  const name = match[1].trim();
+  const detail = match[2].toLowerCase();
+  if (detail.includes("audio/") || /\.(aac|flac|m4a|mp3|mp4|mpeg|mpga|ogg|wav|webm)$/i.test(name)) {
+    return "Voice message";
+  }
+  return compactText(name || "Attached file", 90);
 }
 
 export function isTransientConversationLoadError(message?: string | null) {

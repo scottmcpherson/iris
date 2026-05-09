@@ -436,15 +436,23 @@ class CoreStore:
         profile: str,
         chat_id: str,
         messages: list[dict[str, Any]],
-    ) -> dict[str, dict[str, dict[str, Any]]]:
+    ) -> dict[str, Any]:
         message_ids = sorted({str(message.get("id") or "") for message in messages if message.get("id")})
         content_hashes = sorted({
             hash_value
             for message in messages
             for hash_value in message_content_hash_candidates(str(message.get("content") or ""))
         })
-        if not runtime_id or not profile or not chat_id or (not message_ids and not content_hashes):
-            return {"byMessageId": {}, "byContentHash": {}}
+        needs_attachment_fallbacks = any(
+            str(message.get("role") or "") == "user" and
+            is_transformed_voice_message_content(str(message.get("content") or ""))
+            for message in messages
+        )
+        if not runtime_id or not profile or not chat_id:
+            return {"byMessageId": {}, "byContentHash": {}, "attachmentFallbacks": []}
+        if not message_ids and not content_hashes:
+            if not needs_attachment_fallbacks:
+                return {"byMessageId": {}, "byContentHash": {}, "attachmentFallbacks": []}
         clauses: list[str] = []
         values: list[Any] = [runtime_id, profile, chat_id]
         if message_ids:
@@ -453,14 +461,26 @@ class CoreStore:
         if content_hashes:
             clauses.append(f"content_hash in ({', '.join('?' for _ in content_hashes)})")
             values.extend(content_hashes)
+        rows = []
+        fallback_rows = []
         with self.connect() as connection:
-            rows = connection.execute(
-                f"""
-                select message_id, content_hash, metadata_json from client_message_metadata
-                where runtime_id = ? and profile = ? and chat_id = ? and ({' or '.join(clauses)})
-                """,
-                values,
-            ).fetchall()
+            if clauses:
+                rows = connection.execute(
+                    f"""
+                    select message_id, content_hash, metadata_json from client_message_metadata
+                    where runtime_id = ? and profile = ? and chat_id = ? and ({' or '.join(clauses)})
+                    """,
+                    values,
+                ).fetchall()
+            if needs_attachment_fallbacks:
+                fallback_rows = connection.execute(
+                    """
+                    select message_id, metadata_json from client_message_metadata
+                    where runtime_id = ? and profile = ? and chat_id = ?
+                    order by created_at, message_id
+                    """,
+                    (runtime_id, profile, chat_id),
+                ).fetchall()
         by_message_id: dict[str, dict[str, Any]] = {}
         by_content_hash: dict[str, dict[str, Any]] = {}
         for row in rows:
@@ -468,7 +488,16 @@ class CoreStore:
             if isinstance(metadata, dict):
                 by_message_id[str(row["message_id"])] = metadata
                 by_content_hash[str(row["content_hash"])] = metadata
-        return {"byMessageId": by_message_id, "byContentHash": by_content_hash}
+        attachment_fallbacks: list[dict[str, Any]] = []
+        for row in fallback_rows:
+            metadata = loads(row["metadata_json"])
+            if isinstance(metadata, dict) and isinstance(metadata.get("attachments"), list):
+                attachment_fallbacks.append({"messageId": str(row["message_id"]), "metadata": metadata})
+        return {
+            "byMessageId": by_message_id,
+            "byContentHash": by_content_hash,
+            "attachmentFallbacks": attachment_fallbacks,
+        }
 
     def create_attachment(
         self,
@@ -641,10 +670,6 @@ class CoreStore:
                     raise ValueError("Attachment references must be objects.")
                 attachment_id = str(ref.get("id") or "").strip()
                 if not attachment_id:
-                    legacy = legacy_attachment_from_ref(ref)
-                    if legacy:
-                        resolved.append(legacy)
-                        continue
                     raise ValueError("Attachment id is required.")
                 row = connection.execute(
                     """
@@ -715,24 +740,6 @@ class CoreStore:
                 )
                 linked.append(attachment_from_row(row, include_storage=True))
         return linked
-
-    def runtime_attachments(self, *, runtime_id: str, profile: str, refs: list[Any]) -> list[dict[str, Any]]:
-        resolved: list[dict[str, Any]] = []
-        for ref in refs:
-            if not isinstance(ref, dict):
-                continue
-            attachment_id = str(ref.get("id") or "").strip()
-            if not attachment_id:
-                continue
-            attachment = self.get_attachment(attachment_id, include_storage=True)
-            if (
-                not attachment
-                or str(attachment.get("runtimeId") or "") != runtime_id
-                or str(attachment.get("profile") or "") != profile
-            ):
-                continue
-            resolved.append(attachment)
-        return resolved
 
     def update_runtime_probe(self, runtime_id: str, probe: dict[str, Any]) -> None:
         with self.connect() as connection:
@@ -920,6 +927,14 @@ def message_content_hash_candidates(content: str) -> set[str]:
     return candidates
 
 
+def is_transformed_voice_message_content(content: str) -> bool:
+    normalized = str(content or "").strip().lower()
+    return (
+        normalized.startswith("[the user sent a voice message") or
+        normalized.startswith("transcription of voice message:")
+    )
+
+
 def strip_attachment_summary(content: str) -> str:
     return re.sub(r"\n\nAttached files:\n[\s\S]*$", "", content).strip()
 
@@ -956,10 +971,6 @@ def attachment_from_row(row: sqlite3.Row, *, include_storage: bool = False) -> d
         attachment.update({
             "storageKind": str(row["storage_kind"]),
             "storagePath": str(row["storage_path"]),
-            "runtime": {
-                "type": "local_path",
-                "path": str(row["storage_path"]),
-            },
         })
     return attachment
 
@@ -978,41 +989,7 @@ def client_attachment_payload(attachment: dict[str, Any]) -> dict[str, Any]:
         "previewUrl": str(attachment.get("previewUrl") or ""),
         "downloadUrl": str(attachment.get("downloadUrl") or ""),
     }
-    if attachment.get("legacyLocalPath"):
-        payload["legacyLocalPath"] = True
-        payload["localPath"] = str(attachment.get("localPath") or "")
     return payload
-
-
-def runtime_attachment_payload(attachment: dict[str, Any]) -> dict[str, Any]:
-    payload = client_attachment_payload(attachment)
-    runtime = attachment.get("runtime") if isinstance(attachment.get("runtime"), dict) else {}
-    storage_path = str(attachment.get("storagePath") or runtime.get("path") or "")
-    if storage_path:
-        payload["runtime"] = {"type": "local_path", "path": storage_path}
-    return payload
-
-
-def legacy_attachment_from_ref(ref: dict[str, Any]) -> dict[str, Any] | None:
-    path = str(ref.get("path") or ref.get("localPath") or "").strip()
-    if not path:
-        return None
-    name = str(ref.get("name") or Path(path).name or "Attached file")
-    mime_type = normalize_attachment_mime_type(str(ref.get("mimeType") or "application/octet-stream"))
-    kind = normalize_attachment_kind(str(ref.get("kind") or ""), mime_type)
-    return {
-        "id": str(ref.get("id") or random_id("legacy_att")),
-        "name": name,
-        "kind": kind,
-        "mimeType": mime_type,
-        "size": int(ref.get("size")) if isinstance(ref.get("size"), int) else -1,
-        "sha256": "",
-        "previewUrl": "",
-        "downloadUrl": "",
-        "legacyLocalPath": True,
-        "localPath": path,
-        "runtime": {"type": "local_path", "path": path},
-    }
 
 
 def core_message_from_hermes(message: ConversationMessage) -> dict[str, Any]:

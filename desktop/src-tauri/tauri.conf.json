@@ -16,7 +16,7 @@
         "title": "Iris",
         "width": 1440,
         "height": 920,
-        "minWidth": 1120,
+        "minWidth": 480,
         "minHeight": 720,
         "decorations": true,
         "hiddenTitle": true,
@@ -24,7 +24,7 @@
         "backgroundColor": "#07080b",
         "trafficLightPosition": {
           "x": 18,
-          "y": 18
+          "y": 22
         }
       }
     ],

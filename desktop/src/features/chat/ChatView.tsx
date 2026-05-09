@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type {
+  CSSProperties,
   DragEvent,
   KeyboardEvent as ReactKeyboardEvent,
 } from "react";
@@ -44,6 +45,13 @@ import { SlashCommandMenu } from "./components/SlashCommandMenu";
 import { ProfileMenu } from "./components/ProfileMenu";
 import { ModelMenu } from "./components/ModelMenu";
 import { MessageAttachments, MessageContent } from "./components/MessageContent";
+import {
+  DICTATION_WAVEFORM_BAR_COUNT,
+  type DictationState,
+  type VoiceRecording,
+  formatDictationElapsed,
+  useVoiceDictation,
+} from "./useVoiceDictation";
 
 type ChatViewProps = {
   messages: Message[];
@@ -51,6 +59,7 @@ type ChatViewProps = {
   input: string;
   onInput: (value: string) => void;
   onSend: (options?: {
+    text?: string;
     attachments?: MessageAttachment[];
     modelSelection?: HermesModelSelection | null;
     onAttachmentUploadError?: (error: { id: string; name: string; message: string }) => void;
@@ -81,6 +90,12 @@ type AttachmentDraft = MessageAttachment & {
   upload?: MessageAttachment;
   uploadStatus: "local" | "uploading" | "uploaded" | "error";
   uploadError?: string;
+};
+
+type ComposerSendOptions = {
+  text?: string;
+  attachments?: AttachmentDraft[];
+  allowDuringDictation?: boolean;
 };
 
 type ModelMenuOption = {
@@ -136,15 +151,27 @@ export function ChatView({
   const [attachments, setAttachments] = useState<AttachmentDraft[]>([]);
   const [dragActive, setDragActive] = useState(false);
   const [sendPending, setSendPending] = useState(false);
+  const [transcriptScrollSettling, setTranscriptScrollSettling] = useState(false);
   const renderedMessages = messages.filter(shouldRenderMessage);
+  const showEmptyState = shouldShowChatEmptyState(selectedConversationId, renderedMessages.length);
+  const transcriptScrollKey = chatTranscriptScrollKey(selectedConversationId, renderedMessages.length);
+  const transcriptResizeBehavior = requestActive ? "smooth" : "instant";
   const newChat = !selectedConversationId && renderedMessages.length === 0;
+  const inputHasText = input.trim().length > 0;
+  const composerCanSend = inputHasText || attachments.length > 0;
   const composerBusy = requestActive || sendPending;
+  const dictation = useVoiceDictation({
+    onRecordingComplete: sendVoiceRecording,
+  });
+  const dictationStatus = dictation.state.status;
+  const dictationBusy = dictation.active;
+  const dictationToolbarOpen = dictationStatus !== "idle";
   const profileSelectionLocked = !newChat || composerBusy;
-  const profileSelectionDisabled = profileSelectionLocked || !connected || profiles.length < 2;
+  const profileSelectionDisabled = profileSelectionLocked || dictationBusy || !connected || profiles.length < 2;
   const displayedModelSelection = lockedModelSelection || modelSelection;
   const modelSelectionLocked = !newChat || composerBusy;
   const modelOptionsAvailable = Boolean(modelCatalog?.providers?.some((provider) => provider.models.length));
-  const modelSelectionDisabled = modelSelectionLocked || !connected || modelLoading || !modelOptionsAvailable;
+  const modelSelectionDisabled = modelSelectionLocked || dictationBusy || !connected || modelLoading || !modelOptionsAvailable;
   const modelSelectorTitle = modelSelectionLocked
     ? "Model is locked for this conversation"
     : modelLoading
@@ -176,6 +203,23 @@ export function ChatView({
       connected &&
       (filteredSlashCommands.length || slashCommandsLoading || slashCommandsError || slashCommands.length === 0),
   );
+
+  useLayoutEffect(() => {
+    if (newChat || requestActive || !selectedConversationId || renderedMessages.length === 0) {
+      setTranscriptScrollSettling(false);
+      return;
+    }
+
+    setTranscriptScrollSettling(true);
+    const settleTimer = window.setTimeout(() => {
+      setTranscriptScrollSettling(false);
+    }, 240);
+
+    return () => {
+      window.clearTimeout(settleTimer);
+    };
+  }, [newChat, renderedMessages.length, requestActive, selectedConversationId, transcriptScrollKey]);
+
   const profileSelectorTitle = profileSelectionLocked
     ? "Agent is locked for this conversation"
     : !connected
@@ -378,16 +422,20 @@ export function ChatView({
     fileInputRef.current?.click();
   }
 
-  async function sendWithAttachments() {
-    if (requestActive || sendPendingRef.current) return;
+  async function sendWithAttachments(options: ComposerSendOptions = {}) {
+    const draftText = options.text ?? input;
+    const draftAttachments = options.attachments ?? attachments;
+    const hasSendableContent = draftText.trim().length > 0 || draftAttachments.length > 0;
+    if (!hasSendableContent || requestActive || sendPendingRef.current || (dictationBusy && !options.allowDuringDictation)) {
+      return false;
+    }
     sendPendingRef.current = true;
     setSendPending(true);
-    setAttachments((current) =>
-      current.map((attachment) => ({ ...attachment, uploadStatus: "uploading", uploadError: undefined })),
-    );
+    setAttachments(draftAttachments.map((attachment) => ({ ...attachment, uploadStatus: "uploading", uploadError: undefined })));
     try {
       const sent = await onSend({
-        attachments,
+        text: draftText,
+        attachments: draftAttachments,
         modelSelection: displayedModelSelection,
         onAttachmentUploadError: ({ id, message }) => {
           setAttachments((current) =>
@@ -416,6 +464,18 @@ export function ChatView({
     }
   }
 
+  async function sendVoiceRecording(recording: VoiceRecording) {
+    const voiceAttachment = voiceRecordingAttachment(recording);
+    const draftAttachments = [...attachmentsRef.current, voiceAttachment];
+    setAttachments(draftAttachments);
+    const sent = await sendWithAttachments({
+      text: input.trim(),
+      attachments: draftAttachments,
+      allowDuringDictation: true,
+    });
+    if (sent === false) throw new Error("Could not send that voice message.");
+  }
+
   function selectProfile(nextProfile: string) {
     setProfileMenuOpen(false);
     if (nextProfile === profile || profileSelectionDisabled) return;
@@ -433,6 +493,15 @@ export function ChatView({
       start: element.selectionStart,
       end: element.selectionEnd,
     });
+  }
+
+  function startVoiceInput() {
+    if (dictationBusy) return;
+    setAddMenuOpen(false);
+    setProfileMenuOpen(false);
+    setModelMenuOpen(false);
+    setDismissedSlashToken(slashTokenKey);
+    void dictation.start();
   }
 
   function insertSlashCommand(command: HermesSlashCommand) {
@@ -482,6 +551,12 @@ export function ChatView({
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
       sendWithAttachments();
+      return;
+    }
+
+    if (event.key === "Escape" && dictationBusy) {
+      event.preventDefault();
+      dictation.cancel();
     }
   }
 
@@ -575,7 +650,16 @@ export function ChatView({
         </div>
       ) : (
         <div className="chat-workspace">
-          <StickToBottom className="message-list-frame" initial="instant" resize="smooth" role="log">
+          <StickToBottom
+            key={transcriptScrollKey}
+            className={[
+              "message-list-frame",
+              transcriptScrollSettling ? "message-list-frame-settling" : "",
+            ].filter(Boolean).join(" ")}
+            initial="instant"
+            resize={transcriptResizeBehavior}
+            role="log"
+          >
             <StickToBottom.Content className="conversation-column" scrollClassName="message-list">
               {renderedMessages.length ? (
                 renderedMessages.map((message) => (
@@ -589,16 +673,18 @@ export function ChatView({
                     {message.attachments?.length && message.role !== "assistant" ? (
                       <MessageAttachments attachments={message.attachments} runtimeConfig={runtimeConfig} />
                     ) : null}
-                    <div className="message-body">
-                      <MessageContent message={message} />
-                      {eventCount(message.events) ? <MessageEvents events={message.events} /> : null}
-                    </div>
+                    {shouldRenderMessageBody(message) ? (
+                      <div className="message-body">
+                        <MessageContent message={message} />
+                        {eventCount(message.events) ? <MessageEvents events={message.events} /> : null}
+                      </div>
+                    ) : null}
                     {message.attachments?.length && message.role === "assistant" ? (
                       <MessageAttachments attachments={message.attachments} runtimeConfig={runtimeConfig} />
                     ) : null}
                   </article>
                 ))
-              ) : (
+              ) : showEmptyState ? (
                 <div className="empty-state">
                   <div className="view-icon">
                     <Sparkles size={18} />
@@ -620,7 +706,7 @@ export function ChatView({
                       : "Use Settings to pick a local or remote runtime API, then retry the connection."}
                   </span>
                 </div>
-              )}
+              ) : null}
             </StickToBottom.Content>
             <ScrollToBottomButton />
           </StickToBottom>
@@ -629,6 +715,7 @@ export function ChatView({
 
       <form
         className="composer"
+        data-dictation-state={dictationStatus}
         onSubmit={(event) => {
           event.preventDefault();
           sendWithAttachments();
@@ -679,64 +766,90 @@ export function ChatView({
           ) : null}
         </div>
         <AttachmentTray attachments={attachments} onRemove={removeAttachment} />
-        <div className="composer-toolbar">
-          <div className="composer-tools">
-            <div className="composer-add-menu-wrap" ref={addMenuRef}>
+        <div className={["composer-toolbar", dictationToolbarOpen ? "recording" : ""].filter(Boolean).join(" ")}>
+          {dictationToolbarOpen ? (
+            <DictationWaveform state={dictation.state} onDismissError={dictation.dismissError} />
+          ) : (
+            <div className="composer-tools composer-tools-left">
+              <div className="composer-add-menu-wrap" ref={addMenuRef}>
+                <button
+                  type="button"
+                  className="composer-icon-button"
+                  title="Add context"
+                  aria-haspopup="menu"
+                  aria-expanded={addMenuOpen}
+                  onClick={() => setAddMenuOpen((open) => !open)}
+                >
+                  <Plus size={18} />
+                </button>
+                {addMenuOpen ? (
+                  <div className="composer-context-menu" role="menu">
+                    <button type="button" role="menuitem" onClick={openFilePicker}>
+                      <span>Add files</span>
+                      <Paperclip size={15} />
+                    </button>
+                  </div>
+                ) : null}
+              </div>
+              <div className="composer-profile-menu-wrap" ref={profileMenuRef}>
+                <ProfileMenu
+                  profile={profile}
+                  profiles={profiles}
+                  connected={connected}
+                  open={profileMenuOpen}
+                  disabled={profileSelectionDisabled}
+                  title={profileSelectorTitle}
+                  locked={profileSelectionLocked}
+                  onToggle={() => setProfileMenuOpen((open) => !open)}
+                  onSelect={selectProfile}
+                />
+              </div>
+            </div>
+          )}
+          <div className="composer-tools composer-actions">
+            {!dictationToolbarOpen ? (
+              <>
+                <div className="composer-model-menu-wrap" ref={modelMenuRef}>
+                  <ModelMenu
+                    open={modelMenuOpen}
+                    disabled={modelSelectionDisabled}
+                    title={modelSelectorTitle}
+                    selection={displayedModelSelection}
+                    providers={filteredModelProviders}
+                    activeOptionKey={activeModelOptionKey}
+                    modelSearch={modelSearch}
+                    modelError={modelError}
+                    searchRef={modelSearchRef}
+                    optionRefs={modelOptionRefs}
+                    onToggle={() => setModelMenuOpen((open) => !open)}
+                    onSearch={setModelSearch}
+                    onSearchKeyDown={handleModelSearchKeyDown}
+                    onSelect={selectModel}
+                  />
+                </div>
+                <button
+                  type="button"
+                  className="composer-icon-button"
+                  title={requestActive ? "Wait for the current request to finish" : "Start voice input"}
+                  aria-label="Start voice input"
+                  disabled={dictationBusy || requestActive}
+                  onClick={startVoiceInput}
+                >
+                  <Mic size={16} />
+                </button>
+              </>
+            ) : (
               <button
                 type="button"
-                className="composer-icon-button"
-                title="Add context"
-                aria-haspopup="menu"
-                aria-expanded={addMenuOpen}
-                onClick={() => setAddMenuOpen((open) => !open)}
+                className="composer-icon-button composer-recording-stop"
+                aria-label="Stop recording"
+                title={dictationStatus === "recording" ? "Stop recording" : "Recording is not ready to stop"}
+                disabled={dictationStatus !== "recording"}
+                onClick={dictation.stop}
               >
-                <Plus size={18} />
+                <span className="composer-recording-stop-glyph" aria-hidden="true" />
               </button>
-              {addMenuOpen ? (
-                <div className="composer-context-menu" role="menu">
-                  <button type="button" role="menuitem" onClick={openFilePicker}>
-                    <span>Add files</span>
-                    <Paperclip size={15} />
-                  </button>
-                </div>
-              ) : null}
-            </div>
-            <div className="composer-profile-menu-wrap" ref={profileMenuRef}>
-              <ProfileMenu
-                profile={profile}
-                profiles={profiles}
-                connected={connected}
-                open={profileMenuOpen}
-                disabled={profileSelectionDisabled}
-                title={profileSelectorTitle}
-                locked={profileSelectionLocked}
-                onToggle={() => setProfileMenuOpen((open) => !open)}
-                onSelect={selectProfile}
-              />
-            </div>
-          </div>
-          <div className="composer-tools">
-            <div className="composer-model-menu-wrap" ref={modelMenuRef}>
-              <ModelMenu
-                open={modelMenuOpen}
-                disabled={modelSelectionDisabled}
-                title={modelSelectorTitle}
-                selection={displayedModelSelection}
-                providers={filteredModelProviders}
-                activeOptionKey={activeModelOptionKey}
-                modelSearch={modelSearch}
-                modelError={modelError}
-                searchRef={modelSearchRef}
-                optionRefs={modelOptionRefs}
-                onToggle={() => setModelMenuOpen((open) => !open)}
-                onSearch={setModelSearch}
-                onSearchKeyDown={handleModelSearchKeyDown}
-                onSelect={selectModel}
-              />
-            </div>
-            <button type="button" className="composer-icon-button" title="Voice input">
-              <Mic size={16} />
-            </button>
+            )}
             {requestActive ? (
               <button type="button" className="send-button cancel" onClick={onCancel} title="Cancel request">
                 <Square size={15} />
@@ -745,15 +858,23 @@ export function ChatView({
               <button
                 type="button"
                 className="send-button"
-                title={sendPending ? "Sending message" : "Send message"}
-                disabled={sendPending}
+                title={
+                  dictationBusy
+                    ? "Finish dictation before sending"
+                    : !composerCanSend
+                      ? "Enter a message or add a file to send"
+                      : sendPending
+                        ? "Sending message"
+                        : "Send message"
+                }
+                disabled={!composerCanSend || sendPending || dictationBusy}
                 aria-busy={sendPending}
                 onPointerDown={(event) => {
                   if (event.button !== 0) return;
                   event.preventDefault();
                   void sendWithAttachments();
                 }}
-                onClick={sendWithAttachments}
+                onClick={() => void sendWithAttachments()}
               >
                 <Send size={16} />
               </button>
@@ -761,6 +882,65 @@ export function ChatView({
           </div>
         </div>
       </form>
+    </div>
+  );
+}
+
+function DictationWaveform({
+  state,
+  onDismissError,
+}: {
+  state: DictationState;
+  onDismissError: () => void;
+}) {
+  const elapsedMs = "elapsedMs" in state ? state.elapsedMs : 0;
+  const audioLevel = state.status === "recording" ? state.audioLevel : 0;
+  const waveformStyle = { "--dictation-level": audioLevel } as CSSProperties;
+  const audioLevels = state.status === "recording" ? state.audioLevels : [];
+  const statusText =
+    state.status === "requesting-permission"
+      ? "Requesting microphone..."
+      : state.status === "stopping"
+        ? "Stopping..."
+        : state.status === "sending"
+          ? "Sending..."
+          : state.status === "error"
+            ? state.message
+            : "Recording";
+
+  const showStatus = state.status !== "recording";
+
+  return (
+    <div className="composer-recording-wave-wrap" role={state.status === "error" ? "alert" : "status"} aria-live="polite">
+      <button
+        type="button"
+        className="composer-icon-button composer-recording-add-placeholder"
+        title="Finish dictation before adding context"
+        aria-label="Add context unavailable while recording"
+        disabled
+      >
+        <Plus size={18} />
+      </button>
+      <div className="composer-recording-waveform" style={waveformStyle} aria-hidden="true">
+        {Array.from({ length: DICTATION_WAVEFORM_BAR_COUNT }, (_, index) => (
+          <span
+            key={index}
+            style={{
+              "--bar-index": index,
+              "--bar-level": audioLevels[index] ?? 0,
+            } as CSSProperties}
+          />
+        ))}
+      </div>
+      <span className="composer-recording-time" aria-hidden="true">
+        {formatDictationElapsed(elapsedMs)}
+      </span>
+      {showStatus ? <span className="composer-recording-status">{statusText}</span> : null}
+      {state.status === "error" ? (
+        <button type="button" className="composer-recording-cancel" onClick={onDismissError}>
+          Dismiss
+        </button>
+      ) : null}
     </div>
   );
 }
@@ -776,7 +956,7 @@ function ScrollToBottomButton() {
       type="button"
       title="Jump to latest message"
       onClick={() => {
-        void scrollToBottom();
+        void scrollToBottom("smooth");
       }}
     >
       <ArrowDown size={16} />
@@ -786,6 +966,39 @@ function ScrollToBottomButton() {
 
 function revokeAttachmentPreview(attachment: AttachmentDraft) {
   if (attachment.previewUrl && attachment.previewRevocable) URL.revokeObjectURL(attachment.previewUrl);
+}
+
+function voiceRecordingAttachment(recording: VoiceRecording): AttachmentDraft {
+  const mimeType = voiceRecordingMimeType(recording);
+  return {
+    id: crypto.randomUUID(),
+    name: voiceRecordingFilename(mimeType),
+    kind: "audio",
+    mimeType,
+    size: recording.file.size,
+    lastModified: recording.file.lastModified,
+    file: new File([recording.file], voiceRecordingFilename(mimeType), {
+      type: mimeType,
+      lastModified: recording.file.lastModified,
+    }),
+    uploadStatus: "local",
+  };
+}
+
+function voiceRecordingMimeType(recording: VoiceRecording) {
+  const mimeType = (recording.mimeType || recording.file.type || "audio/webm").toLowerCase();
+  if (mimeType.includes("webm")) return "audio/webm";
+  if (mimeType.includes("mp4")) return "audio/mp4";
+  if (mimeType.includes("aac")) return "audio/aac";
+  if (mimeType.includes("wav")) return "audio/wav";
+  return mimeType.startsWith("audio/") ? mimeType : "audio/webm";
+}
+
+function voiceRecordingFilename(mimeType: string) {
+  if (mimeType.includes("mp4")) return "dictation.mp4";
+  if (mimeType.includes("aac")) return "dictation.aac";
+  if (mimeType.includes("wav")) return "dictation.wav";
+  return "dictation.webm";
 }
 
 function pointInRect(x: number, y: number, rect: DOMRect) {
@@ -800,6 +1013,24 @@ function shouldRenderMessage(message: Message) {
       message.streamEvents?.length ||
       eventCount(message.events),
   );
+}
+
+export function shouldRenderMessageBody(message: Message) {
+  return Boolean(
+    message.content.trim() ||
+      message.streaming ||
+      message.streamEvents?.length ||
+      eventCount(message.events),
+  );
+}
+
+export function shouldShowChatEmptyState(selectedConversationId: string | null, renderedMessageCount: number) {
+  return !selectedConversationId && renderedMessageCount === 0;
+}
+
+export function chatTranscriptScrollKey(selectedConversationId: string | null, renderedMessageCount: number) {
+  if (!selectedConversationId) return "new-chat";
+  return `${selectedConversationId}:${renderedMessageCount > 0 ? "ready" : "pending"}`;
 }
 
 function filterModelProviders(providers: HermesModelProvider[], query: string) {

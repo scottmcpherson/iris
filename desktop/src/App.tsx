@@ -450,6 +450,7 @@ function App() {
         onInput={chat.setInput}
         onSend={(options) =>
           chat.sendMessage({
+            text: options?.text,
             attachments: options?.attachments,
             modelSelection: options?.modelSelection,
             currentModelSelection: modelCatalog.currentSelection,

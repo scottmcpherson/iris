@@ -12,6 +12,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
+import mimetypes
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -23,7 +24,16 @@ except ImportError:
     AIOHTTP_AVAILABLE = False
 
 from gateway.config import Platform
-from gateway.platforms.base import BasePlatformAdapter, MessageEvent, MessageType, SendResult
+from gateway.platforms.base import (
+    BasePlatformAdapter,
+    MessageEvent,
+    MessageType,
+    SendResult,
+    cache_audio_from_bytes,
+    cache_document_from_bytes,
+    cache_image_from_bytes,
+    cache_video_from_bytes,
+)
 from gateway.session import SessionSource
 
 logger = logging.getLogger(__name__)
@@ -31,10 +41,10 @@ logger = logging.getLogger(__name__)
 DEFAULT_INBOUND_HOST = "127.0.0.1"
 DEFAULT_INBOUND_PORT = 8766
 API_TO_AGENTUI_PORT_OFFSET = 124
-MAX_INBOUND_BYTES = 256_000
+MAX_INBOUND_BYTES = 250 * 1024 * 1024
 
 
-class AgentUIAdapter(BasePlatformAdapter):
+class IrisPlatformAdapter(BasePlatformAdapter):
     SUPPORTS_MESSAGE_EDITING = True
     REQUIRES_EDIT_FINALIZE = True
     # Compatibility for current Hermes GatewayStreamConsumer, which reads this
@@ -43,7 +53,7 @@ class AgentUIAdapter(BasePlatformAdapter):
     MAX_MESSAGE_LENGTH = 1_000_000
 
     def __init__(self, config, **_kwargs):
-        super().__init__(config=config, platform=Platform("agentui"))
+        super().__init__(config=config, platform=Platform("iris"))
         extra = getattr(config, "extra", {}) or {}
         self.profile = current_profile_name()
         self.base_url = normalize_base_url(env_value("IRIS_BASE_URL", "AGENTUI_BASE_URL") or extra.get("base_url"))
@@ -131,7 +141,7 @@ class AgentUIAdapter(BasePlatformAdapter):
         visible_content = strip_stream_cursor(content) if is_stream_preview else content
         message_id = str(merged_metadata.pop("streamMessageId", "") or "").strip()
         if is_stream_preview and not message_id:
-            message_id = f"agentui-stream-{uuid.uuid4()}"
+            message_id = f"iris-stream-{uuid.uuid4()}"
         if is_stream_preview:
             source = "hermes-gateway-stream"
             merged_metadata["streamMessageId"] = message_id
@@ -140,7 +150,7 @@ class AgentUIAdapter(BasePlatformAdapter):
             if reply_to:
                 merged_metadata["replyTo"] = reply_to
 
-        delivery_message_id = message_id or f"agentui-delivery-{uuid.uuid4()}"
+        delivery_message_id = message_id or f"iris-delivery-{uuid.uuid4()}"
         body = {
             "runtimeId": "runtime_local_hermes",
             "profile": safe_text(merged_metadata.pop("profile", self.profile), self.profile, 80),
@@ -212,7 +222,7 @@ class AgentUIAdapter(BasePlatformAdapter):
         )
 
     async def get_chat_info(self, chat_id: str) -> Dict[str, Any]:
-        return {"name": chat_id or self.default_chat_id, "type": "agentui"}
+        return {"name": chat_id or self.default_chat_id, "type": "iris"}
 
     async def send_typing(self, chat_id: str, metadata=None) -> None:
         return None
@@ -222,16 +232,16 @@ class AgentUIAdapter(BasePlatformAdapter):
             return
         app = web.Application(client_max_size=MAX_INBOUND_BYTES)  # type: ignore[union-attr]
         app.router.add_get("/health", self._inbound_health)
-        app.router.add_get("/agentui/models", self._inbound_models)
-        app.router.add_get("/agentui/slash-commands", self._inbound_slash_commands)
-        app.router.add_post("/agentui/slash-complete", self._inbound_slash_complete)
-        app.router.add_post("/agentui/messages", self._inbound_message)
+        app.router.add_get("/iris/models", self._inbound_models)
+        app.router.add_get("/iris/slash-commands", self._inbound_slash_commands)
+        app.router.add_post("/iris/slash-complete", self._inbound_slash_complete)
+        app.router.add_post("/iris/messages", self._inbound_message)
         self._runner = web.AppRunner(app)  # type: ignore[union-attr]
         await self._runner.setup()
         self._site = web.TCPSite(self._runner, self.inbound_host, self.inbound_port)  # type: ignore[union-attr]
         await self._site.start()
         logger.info(
-            "[Iris] inbound listener ready on http://%s:%s/agentui/messages",
+            "[Iris] inbound listener ready on http://%s:%s/iris/messages",
             self.inbound_host,
             self.inbound_port,
         )
@@ -248,7 +258,7 @@ class AgentUIAdapter(BasePlatformAdapter):
         return web.json_response(  # type: ignore[union-attr]
             {
                 "ok": True,
-                "platform": "agentui",
+                "platform": "iris",
                 "profile": self.profile,
                 "inbound": True,
                 "defaultChatId": self.default_chat_id,
@@ -260,15 +270,19 @@ class AgentUIAdapter(BasePlatformAdapter):
         if not self._authorized(request):
             return web.json_response({"ok": False, "error": "Unauthorized"}, status=401)  # type: ignore[union-attr]
         try:
-            payload = await request.json()
+            payload, uploaded_files = await inbound_payload_and_files(request)
         except Exception:
-            return web.json_response({"ok": False, "error": "Invalid JSON body"}, status=400)  # type: ignore[union-attr]
+            return web.json_response({"ok": False, "error": "Invalid message body"}, status=400)  # type: ignore[union-attr]
         if not isinstance(payload, dict):
             return web.json_response({"ok": False, "error": "Expected a JSON object"}, status=400)  # type: ignore[union-attr]
 
         text = str(payload.get("text") or payload.get("content") or "").strip()
-        if not text:
-            return web.json_response({"ok": False, "error": "Message text is required"}, status=400)  # type: ignore[union-attr]
+        try:
+            attachments = normalized_inbound_attachments(payload.get("attachments"), uploaded_files)
+        except ValueError as exc:
+            return web.json_response({"ok": False, "error": str(exc)}, status=400)  # type: ignore[union-attr]
+        if not text and not attachments:
+            return web.json_response({"ok": False, "error": "Message text or attachment is required"}, status=400)  # type: ignore[union-attr]
         chat_id = safe_text(payload.get("chatId") or payload.get("chat_id"), self.default_chat_id, 160)
         if not chat_id:
             return web.json_response({"ok": False, "error": "chatId is required"}, status=400)  # type: ignore[union-attr]
@@ -287,30 +301,44 @@ class AgentUIAdapter(BasePlatformAdapter):
             )
 
         message_id = safe_text(payload.get("messageId") or payload.get("message_id"), str(uuid.uuid4()), 160)
+        metadata = payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {}
         source = SessionSource(
-            platform=Platform("agentui"),
+            platform=Platform("iris"),
             chat_id=chat_id,
             chat_name=safe_text(payload.get("chatName") or payload.get("chat_name"), chat_id, 160),
             chat_type=safe_text(payload.get("chatType") or payload.get("chat_type"), "dm", 40) or "dm",
             user_id=safe_text(payload.get("userId") or payload.get("user_id"), "agentui-user", 160),
             user_name=safe_text(payload.get("userName") or payload.get("user_name"), "Iris User", 160),
         )
+        bound_session_id = safe_text(
+            payload.get("sessionId")
+            or payload.get("session_id")
+            or metadata.get("hermesSessionId")
+            or metadata.get("externalSessionId"),
+            "",
+            160,
+        )
+        bind_warning = bind_source_to_existing_session(self, source, bound_session_id)
         event = MessageEvent(
             text=text,
-            message_type=MessageType.TEXT,
+            message_type=message_type_for_attachments(attachments),
             source=source,
             raw_message=payload,
             message_id=message_id,
+            media_urls=[attachment["path"] for attachment in attachments],
+            media_types=[attachment["mimeType"] for attachment in attachments],
         )
         asyncio.create_task(self.handle_message(event))
         return web.json_response(  # type: ignore[union-attr]
             {
                 "ok": True,
                 "accepted": True,
-                "platform": "agentui",
+                "platform": "iris",
                 "profile": self.profile,
                 "chatId": chat_id,
                 "messageId": message_id,
+                **({"sessionId": bound_session_id} if bound_session_id else {}),
+                **({"warning": bind_warning} if bind_warning else {}),
             },
             status=202,
         )
@@ -472,20 +500,20 @@ def register(ctx) -> None:
     sync_env_alias("IRIS_ALLOWED_USERS", "AGENTUI_ALLOWED_USERS")
     sync_env_alias("IRIS_ALLOW_ALL_USERS", "AGENTUI_ALLOW_ALL_USERS")
     ctx.register_platform(
-        name="agentui",
+        name="iris",
         label="Iris",
-        adapter_factory=lambda cfg: AgentUIAdapter(cfg),
+        adapter_factory=lambda cfg: IrisPlatformAdapter(cfg),
         check_fn=check_requirements,
         validate_config=validate_config,
         is_connected=is_connected,
-        required_env=["AGENTUI_BASE_URL", "AGENTUI_TOKEN"],
+        required_env=["IRIS_BASE_URL", "IRIS_TOKEN"],
         install_hint="Set IRIS_BASE_URL and IRIS_TOKEN, then restart the Hermes gateway. AGENTUI_BASE_URL and AGENTUI_TOKEN remain compatible.",
         max_message_length=0,
         pii_safe=False,
         emoji="A",
         allow_update_command=False,
-        allowed_users_env="AGENTUI_ALLOWED_USERS",
-        allow_all_env="AGENTUI_ALLOW_ALL_USERS",
+        allowed_users_env="IRIS_ALLOWED_USERS",
+        allow_all_env="IRIS_ALLOW_ALL_USERS",
         platform_hint=(
             "You are delivering to Iris Desktop. Keep scheduled "
             "delivery output direct and readable."
@@ -849,6 +877,164 @@ def safe_text(value: object, default: str, limit: int) -> str:
     if not text:
         return default
     return text[:limit]
+
+
+async def inbound_payload_and_files(request) -> tuple[dict[str, object], dict[str, dict[str, object]]]:
+    content_type = str(getattr(request, "content_type", "") or "").lower()
+    if content_type.startswith("multipart/"):
+        reader = await request.multipart()
+        payload: dict[str, object] | None = None
+        uploaded_files: dict[str, dict[str, object]] = {}
+        async for part in reader:
+            if part.name == "payload":
+                payload_text = await part.text()
+                parsed = json.loads(payload_text)
+                if isinstance(parsed, dict):
+                    payload = parsed
+                continue
+            if not part.name:
+                continue
+            uploaded_files[part.name] = {
+                "filename": part.filename or "",
+                "mimeType": str(part.headers.get("Content-Type") or ""),
+                "bytes": await part.read(decode=False),
+            }
+        return payload or {}, uploaded_files
+    return await request.json(), {}
+
+
+def normalized_inbound_attachments(
+    value: object,
+    uploaded_files: dict[str, dict[str, object]] | None = None,
+) -> list[dict[str, str]]:
+    if not isinstance(value, list):
+        return []
+    attachments: list[dict[str, str]] = []
+    uploaded_files = uploaded_files or {}
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        field = str(item.get("field") or "").strip()
+        uploaded_file = uploaded_files.get(field) if field else None
+        path = ""
+        name = str(item.get("name") or "").strip()
+        kind = str(item.get("kind") or "").strip().lower()
+        mime_type = normalize_inbound_mime_type(
+            kind,
+            str(item.get("mimeType") or item.get("mediaType") or "").strip().lower(),
+            name,
+        )
+        if uploaded_file is not None:
+            file_bytes = uploaded_file.get("bytes")
+            if isinstance(file_bytes, bytearray):
+                file_bytes = bytes(file_bytes)
+            if not isinstance(file_bytes, bytes) or len(file_bytes) == 0:
+                raise ValueError(f"Attachment file part '{field}' is empty or missing")
+            name = name or str(uploaded_file.get("filename") or "attachment").strip()
+            mime_type = normalize_inbound_mime_type(
+                kind,
+                mime_type or str(uploaded_file.get("mimeType") or ""),
+                name,
+            )
+            path = cache_inbound_attachment(file_bytes, name, kind, mime_type)
+        else:
+            continue
+        attachments.append({
+            "path": path,
+            "name": name or Path(path).name or "attachment",
+            "kind": kind,
+            "mimeType": mime_type or "application/octet-stream",
+        })
+    return attachments
+
+
+def cache_inbound_attachment(file_bytes: bytes, name: str, kind: str, mime_type: str) -> str:
+    ext = attachment_extension(name, mime_type, kind)
+    if kind == "audio" or mime_type.startswith("audio/"):
+        return cache_audio_from_bytes(file_bytes, ext=ext or ".webm")
+    if kind == "image" or mime_type.startswith("image/"):
+        return cache_image_from_bytes(file_bytes, ext=ext or ".png")
+    if kind == "video" or mime_type.startswith("video/"):
+        return cache_video_from_bytes(file_bytes, ext=ext or ".mp4")
+    filename = name or f"attachment{ext or '.bin'}"
+    return cache_document_from_bytes(file_bytes, filename)
+
+
+def attachment_extension(name: str, mime_type: str, kind: str) -> str:
+    suffix = Path(name or "").suffix.lower()
+    if suffix:
+        return suffix
+    guessed = mimetypes.guess_extension(mime_type or "")
+    if guessed:
+        return guessed
+    if kind == "audio":
+        return ".webm"
+    if kind == "image":
+        return ".png"
+    if kind == "video":
+        return ".mp4"
+    return ".bin"
+
+
+def normalize_inbound_mime_type(kind: str, mime_type: str, name: str) -> str:
+    normalized = (mime_type or "").strip().lower()
+    if kind == "audio" and (not normalized or normalized == "video/webm"):
+        return "audio/webm"
+    if normalized:
+        return normalized
+    guessed = mimetypes.guess_type(name)[0]
+    if guessed:
+        return guessed
+    return mime_type_for_kind(kind)
+
+
+def mime_type_for_kind(kind: str) -> str:
+    if kind == "audio":
+        return "audio/webm"
+    if kind == "image":
+        return "image/png"
+    if kind == "video":
+        return "video/mp4"
+    if kind in {"document", "code"}:
+        return "text/plain"
+    return "application/octet-stream"
+
+
+def message_type_for_attachments(attachments: list[dict[str, str]]) -> MessageType:
+    if not attachments:
+        return MessageType.TEXT
+    if any(attachment["kind"] == "audio" or attachment["mimeType"].startswith("audio/") for attachment in attachments):
+        return MessageType.VOICE
+    if any(attachment["kind"] == "image" or attachment["mimeType"].startswith("image/") for attachment in attachments):
+        return MessageType.PHOTO
+    if any(attachment["kind"] == "video" or attachment["mimeType"].startswith("video/") for attachment in attachments):
+        return MessageType.VIDEO
+    return MessageType.DOCUMENT
+
+
+def bind_source_to_existing_session(adapter: IrisPlatformAdapter, source: SessionSource, session_id: str) -> str:
+    target_session_id = str(session_id or "").strip()
+    if not target_session_id:
+        return ""
+    store = getattr(adapter, "_session_store", None)
+    if store is None:
+        return "Hermes session store is unavailable; continuing with chat id routing only."
+    try:
+        current = store.get_or_create_session(source)
+        if getattr(current, "session_id", "") == target_session_id:
+            return ""
+        switched = store.switch_session(current.session_key, target_session_id)
+        if switched is None:
+            return "Hermes session binding was not applied."
+    except Exception as exc:
+        logger.debug(
+            "[Iris] failed to bind chat %s to Hermes session %s",
+            source.chat_id,
+            target_session_id,
+            exc_info=True,
+        )
+        return f"Hermes session binding failed: {exc}"
+    return ""
 
 
 def strip_stream_cursor(content: str) -> str:

@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
-import type { FormEvent, ReactNode } from "react";
+import type { CSSProperties, FormEvent, PointerEvent as ReactPointerEvent, ReactNode } from "react";
 import {
   AlertCircle,
   Copy,
@@ -7,22 +7,29 @@ import {
   Folder,
   FolderOpen,
   MessageSquare,
+  PanelLeftClose,
+  PanelLeftOpen,
   Pencil,
   PanelRightClose,
   PanelRightOpen,
   Plus,
   RefreshCcw,
   Search,
-  Sparkles,
   SquarePen,
   Trash2,
   X,
 } from "lucide-react";
+import irisSidebarIcon from "../assets/iris-sidebar-icon.png";
 import { navItems, viewTitle } from "../app/navigation";
 import { loadJsonValue, saveJsonValue, storageKeys } from "../app/storage";
 import type { ProfileActionHandler, View } from "../app/types";
 import { offlineProfile } from "../app/offlineProfile";
 import type { HermesConversation, HermesProfile, HermesStatus } from "../types/hermes";
+
+const SIDEBAR_AUTO_COLLAPSE_WIDTH = 1500;
+const SIDEBAR_STANDARD_WIDTH = 252;
+const SIDEBAR_COLLAPSED_WIDTH = 0;
+const SIDEBAR_MAX_WIDTH = 440;
 
 type ProfileDialog =
   | { action: "create"; name: string }
@@ -112,9 +119,61 @@ export function AppShell({
   const [conversationSearchQuery, setConversationSearchQuery] = useState("");
   const [conversationSearchIndex, setConversationSearchIndex] = useState(0);
   const conversationSearchInputRef = useRef<HTMLInputElement | null>(null);
+  const sidebarWidthBandRef = useRef(widthBandForWindow());
+  const sidebarCollapsedRef = useRef(sidebarWidthBandRef.current === "compact");
+  const expandedBeforeResponsiveCollapseRef = useRef(!sidebarCollapsedRef.current);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(sidebarCollapsedRef.current);
+  const [sidebarResizing, setSidebarResizing] = useState(false);
+  const [sidebarWidth, setSidebarWidth] = useState(SIDEBAR_STANDARD_WIDTH);
   const [collapsedSessionProfiles, setCollapsedSessionProfiles] = useState<Record<string, boolean>>(
     () => loadCollapsedSessionProfiles(),
   );
+
+  useEffect(() => {
+    sidebarCollapsedRef.current = sidebarCollapsed;
+  }, [sidebarCollapsed]);
+
+  useEffect(() => {
+    const handleSidebarShortcut = (event: KeyboardEvent) => {
+      const commandKey = event.metaKey || event.ctrlKey;
+      if (!commandKey || event.altKey || event.shiftKey || event.key.toLowerCase() !== "b") return;
+      event.preventDefault();
+      setSidebarCollapsedWithTransition((current) => !current);
+    };
+
+    window.addEventListener("keydown", handleSidebarShortcut, { capture: true });
+    return () => window.removeEventListener("keydown", handleSidebarShortcut, { capture: true });
+  }, []);
+
+  useEffect(() => {
+    const handleResize = () => {
+      const nextBand = widthBandForWindow();
+      const previousBand = sidebarWidthBandRef.current;
+
+      if (previousBand === "regular" && nextBand === "compact") {
+        expandedBeforeResponsiveCollapseRef.current = !sidebarCollapsedRef.current;
+      }
+
+      if (nextBand === "compact") {
+        setSidebarCollapsedWithTransition(true);
+        sidebarWidthBandRef.current = nextBand;
+        return;
+      }
+
+      if (
+        previousBand === "compact" &&
+        nextBand === "regular" &&
+        expandedBeforeResponsiveCollapseRef.current
+      ) {
+        setSidebarCollapsedWithTransition(false);
+      }
+
+      sidebarWidthBandRef.current = nextBand;
+    };
+
+    window.addEventListener("resize", handleResize);
+    return () => window.removeEventListener("resize", handleResize);
+  }, []);
 
   const conversationSearchItems = useMemo(() => {
     const seen = new Set<string>();
@@ -255,13 +314,35 @@ export function AppShell({
     selectedProfile,
   ]);
 
+  const shellStyle = {
+    "--sidebar-width": `${sidebarWidth}px`,
+    "--workspace-left": `${sidebarCollapsed ? 0 : sidebarWidth}px`,
+  } as CSSProperties;
+
+  const shellClassName = [
+    "app-shell",
+    sidebarCollapsed ? "sidebar-collapsed" : "",
+    sidebarResizing ? "sidebar-resizing" : "",
+  ].filter(Boolean).join(" ");
+
   return (
-    <div className="app-shell">
+    <div className={shellClassName} style={shellStyle}>
+      <button
+        type="button"
+        className="sidebar-toggle"
+        aria-label={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+        aria-expanded={!sidebarCollapsed}
+        aria-keyshortcuts="Meta+B"
+        title="Toggle sidebar (⌘B)"
+        onClick={() => setSidebarCollapsedWithTransition((current) => !current)}
+      >
+        {sidebarCollapsed ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}
+      </button>
       <aside className="sidebar">
         <div className="window-drag-zone" data-tauri-drag-region />
         <div className="brand-block">
           <div className="brand-mark">
-            <Sparkles size={18} />
+            <img src={irisSidebarIcon} alt="" draggable={false} />
           </div>
           <div>
             <p className="brand-name">Iris</p>
@@ -284,9 +365,9 @@ export function AppShell({
                     isNewChatAction ? "new-chat-nav-item" : "",
                     !isNewChatAction && activeView === item.id ? "active" : "",
                   ].filter(Boolean).join(" ")}
-                  aria-label={isNewChatAction ? "Start new chat" : undefined}
+                  aria-label={isNewChatAction ? "Start new chat" : item.label}
                   aria-keyshortcuts={isNewChatAction ? "Meta+N" : undefined}
-                  title={isNewChatAction ? "Start new chat" : undefined}
+                  title={isNewChatAction ? "Start new chat" : item.label}
                   onMouseDown={isNewChatAction ? (event) => event.preventDefault() : undefined}
                   onClick={() => {
                     if (isNewChatAction) {
@@ -304,7 +385,9 @@ export function AppShell({
                   <button
                     type="button"
                     className={conversationSearchOpen ? "nav-item conversation-search-nav active" : "nav-item conversation-search-nav"}
+                    aria-label="Search conversations"
                     aria-keyshortcuts="Meta+G"
+                    title="Search conversations"
                     onMouseDown={(event) => event.preventDefault()}
                     onClick={openConversationSearch}
                   >
@@ -458,10 +541,17 @@ export function AppShell({
           </div>
         </div>
 
-        <button className="sidebar-refresh" onClick={onRefresh} disabled={isRefreshing}>
+        <button className="sidebar-refresh" onClick={onRefresh} disabled={isRefreshing} title="Refresh connection">
           <RefreshCcw size={15} className={isRefreshing ? "spin" : ""} />
-          Refresh connection
+          <span>Refresh connection</span>
         </button>
+        <div
+          className="sidebar-resize-handle"
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Resize sidebar"
+          onPointerDown={startSidebarResize}
+        />
       </aside>
 
       <main className="workspace">
@@ -538,6 +628,44 @@ export function AppShell({
   function startSelectedProfileConversation() {
     closeConversationSearch();
     onNewConversation(selectedProfile);
+  }
+
+  function setSidebarCollapsedWithTransition(next: boolean | ((current: boolean) => boolean)) {
+    const current = sidebarCollapsedRef.current;
+    const resolved = typeof next === "function" ? next(current) : next;
+    if (resolved === current) return;
+
+    sidebarCollapsedRef.current = resolved;
+    setSidebarCollapsed(resolved);
+  }
+
+  function startSidebarResize(event: ReactPointerEvent<HTMLDivElement>) {
+    event.preventDefault();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    setSidebarResizing(true);
+    const startX = event.clientX;
+    const startWidth = sidebarCollapsedRef.current ? SIDEBAR_COLLAPSED_WIDTH : sidebarWidth;
+
+    const onPointerMove = (moveEvent: PointerEvent) => {
+      const nextWidth = clamp(startWidth + moveEvent.clientX - startX, SIDEBAR_COLLAPSED_WIDTH, SIDEBAR_MAX_WIDTH);
+      if (nextWidth < SIDEBAR_STANDARD_WIDTH) {
+        setSidebarCollapsedWithTransition(true);
+        return;
+      }
+
+      setSidebarWidth(nextWidth);
+      setSidebarCollapsedWithTransition(false);
+    };
+    const endResize = () => {
+      setSidebarResizing(false);
+      window.removeEventListener("pointermove", onPointerMove);
+      window.removeEventListener("pointerup", endResize);
+      window.removeEventListener("pointercancel", endResize);
+    };
+
+    window.addEventListener("pointermove", onPointerMove);
+    window.addEventListener("pointerup", endResize, { once: true });
+    window.addEventListener("pointercancel", endResize, { once: true });
   }
 
   function selectConversationSearchItem(item: ConversationSearchItem) {
@@ -855,6 +983,11 @@ function loadCollapsedSessionProfiles() {
 
 function saveCollapsedSessionProfiles(value: Record<string, boolean>) {
   saveJsonValue(storageKeys.collapsedSessionProfiles, value);
+}
+
+function widthBandForWindow() {
+  if (typeof window === "undefined") return "regular";
+  return window.innerWidth <= SIDEBAR_AUTO_COLLAPSE_WIDTH ? "compact" : "regular";
 }
 
 function timeLabel(value: number | null) {

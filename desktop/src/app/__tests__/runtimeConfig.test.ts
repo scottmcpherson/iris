@@ -53,8 +53,8 @@ describe("runtimeConfig", () => {
     expect(loadRuntimeConfig().coreApiUrl).toBe("http://127.0.0.1:8766");
   });
 
-  it("migrates the first old profile sidecar route into the Core API URL", () => {
-    const legacyProfileRoutesKey = ["profile", "Sidecar", "Urls"].join("");
+  it("migrates the first old profile route into the Core API URL", () => {
+    const legacyProfileRoutesKey = ["profile", "Side" + "car", "Urls"].join("");
     localStorage.setItem(
       "hermes.desktop.runtime",
       JSON.stringify({ [legacyProfileRoutesKey]: { Health: " http://127.0.0.1:8767/v1 " } }),

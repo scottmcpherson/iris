@@ -2,7 +2,7 @@ import type { ReactNode } from "react";
 
 type ViewHeaderProps = {
   icon: ReactNode;
-  eyebrow: string;
+  eyebrow?: string;
   title: string;
   action: string;
   onAction?: () => void;
@@ -13,7 +13,7 @@ export function ViewHeader({ icon, eyebrow, title, action, onAction }: ViewHeade
     <div className="view-header">
       <div className="view-icon">{icon}</div>
       <div>
-        <p className="eyebrow">{eyebrow}</p>
+        {eyebrow ? <p className="eyebrow">{eyebrow}</p> : null}
         <h1>{title}</h1>
       </div>
       <button className="small-button" onClick={onAction}>

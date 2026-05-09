@@ -27,6 +27,7 @@ import {
   toAppMessages,
 } from "../chatHistory";
 import { mergeUploadedAttachment } from "../chatAttachments";
+import { coreEventToInboxMessage } from "../../../lib/coreLegacyCompat";
 
 function inboxMessage(
   overrides: Partial<HermesInboxMessage> & { id: string; content: string },
@@ -152,6 +153,74 @@ describe("Iris chat inbox merging", () => {
       attachments: [generatedImageAttachment],
     });
     expect(messages[1].attachments?.[0].kind).toBe("audio");
+  });
+
+  it("renders attachment-only user history as an attachment card without manifest text", () => {
+    const audioAttachment = {
+      id: "att_audio_1",
+      kind: "audio" as const,
+      mimeType: "video/webm",
+      name: "dictation.webm",
+      downloadUrl: "/v1/attachments/att_audio_1/content",
+      size: 36_000,
+    };
+
+    const messages = toAppMessages([
+      {
+        id: "user-1",
+        sessionId: "session-1",
+        role: "user",
+        content: [
+          "Use the attached files as context.",
+          "",
+          "Attached files:",
+          "1. dictation.webm (video/webm, 36 KB)",
+          "   Runtime path: /Users/scott/.iris/attachments/blobs/hash",
+        ].join("\n"),
+        toolName: "",
+        timestamp: 1,
+        metadata: {
+          attachments: [audioAttachment],
+        },
+      },
+    ]);
+
+    expect(messages[0]).toMatchObject({
+      id: "user-1",
+      role: "user",
+      content: "",
+      attachments: [audioAttachment],
+    });
+  });
+
+  it("keeps user prompt text while hiding the rendered attachment summary", () => {
+    const attachment = {
+      id: "att_image_1",
+      kind: "image" as const,
+      mimeType: "image/png",
+      name: "image.png",
+      downloadUrl: "/v1/attachments/att_image_1/content",
+      size: 12_000,
+    };
+
+    const messages = toAppMessages([
+      {
+        id: "user-1",
+        sessionId: "session-1",
+        role: "user",
+        content: "Look at this\n\nAttached files:\n1. image.png (image/png, 12 KB)",
+        toolName: "",
+        timestamp: 1,
+        metadata: {
+          attachments: [attachment],
+        },
+      },
+    ]);
+
+    expect(messages[0]).toMatchObject({
+      content: "Look at this",
+      attachments: [attachment],
+    });
   });
 
   it("replaces local duplicate messages with persisted history rows when merging conversation aliases", () => {
@@ -294,6 +363,81 @@ describe("Iris chat inbox merging", () => {
     });
   });
 
+  it("maps Core delivery events by external message id so finalized edits replace the provisional bubble", () => {
+    const completedDelivery = coreEventToInboxMessage(
+      {
+        cursor: 1,
+        id: "evt_delivery_agentui-delivery-1",
+        conversationId: "conv-1",
+        agentId: "agent-1",
+        runtimeId: "runtime-1",
+        type: "message.assistant.completed",
+        role: "assistant",
+        content: "Hi!",
+        parentEventId: "",
+        externalMessageId: "agentui-delivery-1",
+        createdAt: 1,
+        metadata: {
+          chatId: "core-chat-1",
+          profile: "default",
+          source: "hermes-gateway",
+        },
+      },
+      "default",
+    );
+    const finalStreamEdit = coreEventToInboxMessage(
+      {
+        cursor: 2,
+        id: "evt_delivery_agentui-delivery-1:edit:2",
+        conversationId: "conv-1",
+        agentId: "agent-1",
+        runtimeId: "runtime-1",
+        type: "message.assistant.completed",
+        role: "assistant",
+        content: "Hi!",
+        parentEventId: "",
+        externalMessageId: "agentui-delivery-1:edit:2",
+        createdAt: 2,
+        metadata: {
+          chatId: "core-chat-1",
+          profile: "default",
+          source: "hermes-gateway-stream",
+          streamMessageId: "agentui-delivery-1",
+          streaming: false,
+          finalize: true,
+        },
+      },
+      "default",
+    );
+
+    const provisional = mergeCompletedDelivery(
+      [{ id: "user-1", role: "user", content: "Hi" }],
+      completedDelivery,
+      "",
+    );
+    const finalized = mergeStreamDelivery(
+      provisional,
+      finalStreamEdit,
+      "agentui-delivery-1",
+      true,
+    );
+
+    expect(provisional[1]).toMatchObject({
+      id: "agentui-delivery-1",
+      role: "assistant",
+      content: "Hi!",
+      streaming: false,
+    });
+    expect(finalized).toHaveLength(2);
+    expect(finalized[1]).toMatchObject({
+      id: "agentui-delivery-1",
+      role: "assistant",
+      content: "Hi!",
+      streaming: false,
+      streamMessageId: "agentui-delivery-1",
+    });
+  });
+
   it("adds attachment metadata from stream deliveries", () => {
     const existing: Message[] = [
       { id: "user-1", role: "user", content: "Create an image" },
@@ -355,11 +499,11 @@ describe("Iris chat inbox merging", () => {
     });
   });
 
-  it("matches later edits against the visible message id when an older sidecar generated the first id", () => {
+  it("matches later edits against the visible message id when an older Core build generated the first id", () => {
     const existing: Message[] = [
       { id: "user-1", role: "user", content: "Write a long answer" },
       {
-        id: "sidecar-row-1",
+        id: "core-row-1",
         role: "assistant",
         content: "Starting",
         streaming: true,
@@ -369,17 +513,17 @@ describe("Iris chat inbox merging", () => {
 
     const merged = mergeStreamDelivery(
       existing,
-      inboxMessage({ id: "sidecar-row-2", content: "Starting to answer." }),
-      "sidecar-row-1",
+      inboxMessage({ id: "core-row-2", content: "Starting to answer." }),
+      "core-row-1",
       false,
     );
 
     expect(merged).toHaveLength(2);
     expect(merged[1]).toMatchObject({
-      id: "sidecar-row-1",
+      id: "core-row-1",
       content: "Starting to answer.",
       streaming: true,
-      streamMessageId: "sidecar-row-1",
+      streamMessageId: "core-row-1",
     });
   });
 

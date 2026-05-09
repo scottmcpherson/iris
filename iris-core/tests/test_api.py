@@ -881,6 +881,50 @@ def test_core_merges_client_attachment_metadata_into_hermes_history(tmp_path):
     assert user_message["metadata"]["attachments"][0]["name"] == "image.png"
 
 
+def test_core_prefers_client_audio_attachment_over_hermes_voice_placeholder(tmp_path):
+    root = tmp_path / ".hermes"
+    create_core_history_db(
+        root / "state.db",
+        session_id="default-session",
+        title="[The user sent a voice message]",
+        user_text='[The user sent a voice message. Here is the transcription: "0 p"]',
+        assistant_text="Could you clarify?",
+        chat_id="default-chat",
+    )
+    client = make_client(root)
+    agent = client.get("/v1/agents").json()["agents"][0]
+    conversation = client.get(f"/v1/conversations?agentId={agent['id']}").json()["conversations"][0]
+
+    client.app.state.core_store.upsert_client_message_metadata(
+        runtime_id=agent["runtimeId"],
+        profile=agent["runtimeProfile"],
+        chat_id="default-chat",
+        message_id="client-voice-1",
+        content="",
+        metadata={
+            "clientContent": "",
+            "attachments": [
+                {
+                    "id": "att_voice_1",
+                    "name": "dictation.webm",
+                    "kind": "audio",
+                    "mimeType": "audio/webm",
+                    "size": 36_000,
+                    "downloadUrl": "/v1/attachments/att_voice_1/content",
+                }
+            ],
+        },
+    )
+
+    messages = client.get(f"/v1/conversations/{conversation['id']}/messages")
+
+    assert messages.status_code == 200
+    user_message = messages.json()["messages"][0]
+    assert user_message["content"] == ""
+    assert user_message["metadata"]["attachments"][0]["name"] == "dictation.webm"
+    assert user_message["metadata"]["attachments"][0]["mimeType"] == "audio/webm"
+
+
 def test_core_merges_assistant_attachment_metadata_into_hermes_history(tmp_path):
     generated = tmp_path / "history-image.png"
     generated.write_bytes(PNG_BYTES)
@@ -1092,7 +1136,7 @@ def test_core_automations_create_list_control_and_delete_hermes_jobs(tmp_path, m
             "prompt": "Reply exactly: existing",
             "schedule_display": "once in 5m",
             "state": "scheduled",
-            "deliver": "agentui:desktop",
+            "deliver": "iris:desktop",
         }
     ]
 
@@ -1173,7 +1217,7 @@ def test_core_automations_create_list_control_and_delete_hermes_jobs(tmp_path, m
     assert run.status_code == 200
     assert deleted.status_code == 200
     assert [request["token"] for request in seen] == ["hermes-job-token"] * len(seen)
-    assert seen[0]["body"]["deliver"] == f"agentui:{conversation['externalChatId']}"
+    assert seen[0]["body"]["deliver"] == f"iris:{conversation['externalChatId']}"
     assert any(request["url"].endswith("/api/jobs/external-job-created/pause") for request in seen)
     assert any(request["url"].endswith("/api/jobs/external-job-created/resume") for request in seen)
     assert any(request["url"].endswith("/api/jobs/external-job-created/run") for request in seen)
@@ -1282,20 +1326,20 @@ def test_core_send_persists_top_level_attachments_as_message_metadata(tmp_path, 
     (root / ".env").write_text("AGENTUI_TOKEN=agentui-local-test\n", encoding="utf-8")
     seen: list[dict] = []
 
-    def fake_http_json(url, *, method, token, body):
-        seen.append({"url": url, "method": method, "token": token, "body": body})
+    def fake_http_multipart(url, *, method, token, payload, files):
+        seen.append({"url": url, "method": method, "token": token, "payload": payload, "files": files})
         return {
             "ok": True,
             "json": {
                 "ok": True,
                 "accepted": True,
-                "profile": body["profile"],
-                "chatId": body["chatId"],
-                "messageId": body["messageId"],
+                "profile": payload["profile"],
+                "chatId": payload["chatId"],
+                "messageId": payload["messageId"],
             },
         }
 
-    monkeypatch.setattr(hermes_adapter, "http_json", fake_http_json)
+    monkeypatch.setattr(hermes_adapter, "http_multipart", fake_http_multipart)
     client = make_client(root)
     agent = client.get("/v1/agents").json()["agents"][0]
     conversation = client.post(
@@ -1323,27 +1367,123 @@ def test_core_send_persists_top_level_attachments_as_message_metadata(tmp_path, 
     rows = client.app.state.core_store.client_message_metadata_for_messages(
         runtime_id=agent["runtimeId"],
         profile=agent["runtimeProfile"],
-        chat_id=seen[0]["body"]["chatId"],
+        chat_id=seen[0]["payload"]["chatId"],
         messages=[{"id": "client-message-attachments", "content": "Look at this"}],
     )
     persisted_attachment = rows["byMessageId"]["client-message-attachments"]["attachments"][0]
-    runtime_attachment = seen[0]["body"]["metadata"]["attachments"][0]
+    payload_attachment = seen[0]["payload"]["attachments"][0]
+    file_part = seen[0]["files"][0]
     assert persisted_attachment["id"] == attachment["id"]
     assert persisted_attachment["kind"] == "document"
     assert persisted_attachment["mimeType"] == "application/pdf"
     assert persisted_attachment["previewUrl"] == ""
     assert persisted_attachment["downloadUrl"] == f"/v1/attachments/{attachment['id']}/content"
     assert "runtime" not in persisted_attachment
-    assert runtime_attachment["id"] == attachment["id"]
-    assert runtime_attachment["kind"] == "document"
-    assert runtime_attachment["mimeType"] == "application/pdf"
-    assert runtime_attachment["size"] == len(b"%PDF-1.7\npdf-bytes")
-    assert runtime_attachment["sha256"] == attachment["sha256"]
-    assert runtime_attachment["runtime"]["path"].endswith(runtime_attachment["sha256"])
-    assert "/tmp/image.png" not in seen[0]["body"]["text"]
-    assert "report.pdf (application/pdf" in seen[0]["body"]["text"]
-    assert "Runtime path:" in seen[0]["body"]["text"]
-    assert runtime_attachment["runtime"]["path"] in seen[0]["body"]["text"]
+    assert payload_attachment["id"] == attachment["id"]
+    assert payload_attachment["field"] == "file_0"
+    assert payload_attachment["kind"] == "document"
+    assert payload_attachment["mimeType"] == "application/pdf"
+    assert payload_attachment["size"] == len(b"%PDF-1.7\npdf-bytes")
+    assert payload_attachment["sha256"] == attachment["sha256"]
+    assert "path" not in payload_attachment
+    assert "runtime" not in payload_attachment
+    assert "attachments" not in seen[0]["payload"]["metadata"]
+    assert seen[0]["payload"]["text"] == "Look at this"
+    assert seen[0]["payload"]["attachments"] == [
+        {
+            "field": "file_0",
+            "id": attachment["id"],
+            "name": "report.pdf",
+            "kind": "document",
+            "mimeType": "application/pdf",
+            "size": len(b"%PDF-1.7\npdf-bytes"),
+            "sha256": attachment["sha256"],
+        }
+    ]
+    assert file_part["field"] == "file_0"
+    assert file_part["name"] == "report.pdf"
+    assert file_part["mimeType"] == "application/pdf"
+    assert file_part["path"].endswith(attachment["sha256"])
+
+
+def test_core_send_passes_existing_runtime_session_id_for_legacy_followup(tmp_path, monkeypatch):
+    root = tmp_path / ".hermes"
+    root.mkdir(parents=True)
+    (root / ".env").write_text("AGENTUI_TOKEN=agentui-local-test\n", encoding="utf-8")
+    connection = sqlite3.connect(root / "state.db")
+    connection.executescript(
+        """
+        create table sessions (
+            id text primary key,
+            source text not null,
+            model text,
+            started_at real not null,
+            message_count integer default 0,
+            title text
+        );
+
+        create table messages (
+            message_id text primary key,
+            session_id text not null,
+            role text not null,
+            content text,
+            timestamp real not null
+        );
+        """
+    )
+    connection.execute(
+        "insert into sessions (id, source, model, started_at, message_count, title) values (?, ?, ?, ?, ?, ?)",
+        ("legacy-session-1", "agentui", "gpt-5.5", 1000, 2, "Legacy session without chat id"),
+    )
+    connection.execute(
+        "insert into messages (message_id, session_id, role, content, timestamp) values (?, ?, ?, ?, ?)",
+        ("legacy-message-1", "legacy-session-1", "user", "Original prompt", 1001),
+    )
+    connection.commit()
+    connection.close()
+    seen: list[dict] = []
+
+    def fake_http_json(url, *, method, token, body):
+        seen.append({"url": url, "method": method, "token": token, "body": body})
+        return {
+            "ok": True,
+            "status": 202,
+            "url": url,
+            "json": {
+                "ok": True,
+                "accepted": True,
+                "profile": body["profile"],
+                "chatId": body["chatId"],
+                "messageId": body["messageId"],
+            },
+        }
+
+    monkeypatch.setattr(hermes_adapter, "http_json", fake_http_json)
+    client = make_client(root)
+    agent = client.get("/v1/agents").json()["agents"][0]
+    conversations = client.get(f"/v1/conversations?agentId={agent['id']}").json()["conversations"]
+    conversation = next(item for item in conversations if item["externalSessionId"] == "legacy-session-1")
+
+    sent = client.post(
+        f"/v1/conversations/{conversation['id']}/messages",
+        json={"text": "Continue this exact conversation", "clientMessageId": "followup-1"},
+    )
+
+    assert conversation["externalChatId"] == ""
+    assert sent.status_code == 200
+    assert seen[0]["body"]["chatId"].startswith("core-")
+    assert seen[0]["body"]["sessionId"] == "legacy-session-1"
+
+
+def test_runtime_attachment_resolve_endpoint_is_removed(tmp_path):
+    client = make_client(tmp_path / ".hermes")
+
+    response = client.post(
+        "/v1/runtime/attachments/resolve",
+        json={"runtimeId": "runtime_local_hermes", "profile": "default", "attachments": []},
+    )
+
+    assert response.status_code == 404
 
 
 def test_core_upload_accepts_universal_attachment_kinds_and_content(tmp_path):

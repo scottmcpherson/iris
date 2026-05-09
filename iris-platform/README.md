@@ -11,14 +11,14 @@ On the machine running Hermes:
 
 ```bash
 mkdir -p ~/.hermes/plugins
-cp -R agentui-platform ~/.hermes/plugins/agentui-platform
-hermes plugins enable agentui-platform
+cp -R iris-platform ~/.hermes/plugins/iris-platform
+hermes plugins enable iris-platform
 ```
 
 Or install from a Git repository:
 
 ```bash
-hermes plugins install https://github.com/<org>/agentui-platform.git --enable
+hermes plugins install https://github.com/<org>/iris-platform.git --enable
 ```
 
 ## Configure
@@ -36,8 +36,8 @@ export IRIS_ALLOWED_USERS="agentui-user"
 
 Then restart the Hermes gateway process or service.
 
-Legacy `AGENTUI_*` variables and the `agentui:` delivery platform name are still
-accepted for compatibility.
+Legacy `AGENTUI_*` variables are accepted for compatibility. New Hermes
+delivery targets should use the `iris:` platform prefix.
 
 Enable gateway streaming in each Hermes profile that should stream into Iris:
 
@@ -56,14 +56,14 @@ Use a private network address such as Tailscale for remote delivery. Keep Iris C
 Iris posts user messages to the Hermes machine:
 
 ```bash
-curl -X POST http://127.0.0.1:8766/agentui/messages \
+curl -X POST http://127.0.0.1:8766/iris/messages \
   -H "Authorization: Bearer $IRIS_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"chatId":"desktop","userId":"scott","userName":"Scott","messageId":"test-1","text":"hello"}'
 ```
 
 The adapter converts each POST into a Hermes `MessageEvent` with
-`platform=agentui`, so Hermes owns session routing, tool execution, and cron
+`platform=iris`, so Hermes owns session routing, tool execution, and cron
 origin capture.
 
 ## Cron Delivery
@@ -75,8 +75,8 @@ delivery path:
 deliver="origin"
 ```
 
-Explicit Iris targets still use the compatibility `agentui:` delivery prefix:
+Explicit Iris targets use the `iris:` delivery prefix:
 
 ```bash
-hermes cron create "10m" "Reply exactly: stretch before your next call" --deliver "agentui:desktop" --name "Iris reminder"
+hermes cron create "10m" "Reply exactly: stretch before your next call" --deliver "iris:desktop" --name "Iris reminder"
 ```

@@ -8,7 +8,7 @@ Iris Desktop is the Tauri 2, React 18, TypeScript, and Tailwind client for Iris.
 
 The Tauri Python bridge is Core-only: it supports Core request fallback, Core upload-by-path for local attachments, and Core credential storage. It does not inspect or mutate runtime-owned files.
 
-Hermes remains the first runtime backend through the Iris Hermes Adapter. Hermes-specific filesystem reads, conversation discovery, Jobs API calls, model and slash-command discovery, and inbound message delivery are contained in the Core Hermes runtime adapter plus the Hermes-side `agentui-platform` plugin.
+Hermes remains the first runtime backend through the Iris Hermes Adapter. Hermes-specific filesystem reads, conversation discovery, Jobs API calls, model and slash-command discovery, and inbound message delivery are contained in the Core Hermes runtime adapter plus the Hermes-side `iris-platform` plugin.
 
 ## Implemented
 
@@ -25,7 +25,7 @@ Hermes remains the first runtime backend through the Iris Hermes Adapter. Hermes
 ## Verification
 
 - `npm --workspace desktop run check`
-- `npm run sidecar:test`
+- `npm run core:test`
 - Fresh app-bundle verification should use root `npm run build:mac:app`, then launch the built bundle and test with Computer Use against `com.nousresearch.hermes-agent.desktop`.
 
 ## Known Constraints

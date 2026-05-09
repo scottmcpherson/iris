@@ -366,6 +366,7 @@ export async function uploadAgentUICoreAttachment(
     form.set("file", payload.file, payload.name || payload.file.name);
     form.set("profile", payload.profile);
     form.set("runtimeId", payload.runtimeId || "runtime_local_hermes");
+    if (payload.mimeType) form.set("mimeType", payload.mimeType);
     form.set("kind", payload.kind || attachmentKindFromMime(payload.mimeType || payload.file.type, payload.name));
     if (payload.conversationId) form.set("conversationId", payload.conversationId);
     if (payload.messageId) form.set("messageId", payload.messageId);

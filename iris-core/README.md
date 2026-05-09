@@ -2,7 +2,7 @@
 
 Iris Core is the local-first control plane for Iris. It owns devices, auth, runtime routing, and Core-only coordination, and connects to Hermes through the Iris Hermes Adapter. Hermes itself remains untouched and remains the source of truth for Hermes profiles, conversations, messages, jobs, memory, skills, models, and command catalogs. Normal Iris chat enters Hermes through the `agentui` compatibility platform adapter, while this service exposes normalized adapter-backed records and live delivery events over HTTP from the machine where Hermes is running.
 
-This service lives in the `sidecar/` workspace of the Iris monorepo.
+This service lives in the `iris-core/` workspace of the Iris monorepo.
 
 The default bind address is `127.0.0.1`. For remote use, prefer Tailscale and a bearer token over public port forwarding. Non-loopback binds require bearer auth from either `IRIS_CORE_TOKEN`, the legacy `HERMES_MGMT_TOKEN`, or an active paired device token.
 
@@ -11,10 +11,10 @@ The default bind address is `127.0.0.1`. For remote use, prefer Tailscale and a 
 From the monorepo root:
 
 ```bash
-npm run sidecar:setup
+npm run core:setup
 ```
 
-From this `sidecar/` directory:
+From this `iris-core/` directory:
 
 ```bash
 python3.11 -m venv .venv
@@ -25,7 +25,7 @@ pip install -e ".[dev]"
 Run tests from the monorepo root:
 
 ```bash
-npm run sidecar:test
+npm run core:test
 ```
 
 ## Run Locally
@@ -33,10 +33,10 @@ npm run sidecar:test
 From the monorepo root:
 
 ```bash
-npm run sidecar:dev
+npm run core:dev
 ```
 
-From this `sidecar/` directory:
+From this `iris-core/` directory:
 
 ```bash
 iris-core --host 127.0.0.1 --port 8765

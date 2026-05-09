@@ -46,8 +46,8 @@ export function SettingsView({
   const [draftConfig, setDraftConfig] = useState(runtimeConfig);
   const [profileName, setProfileName] = useState("");
   const [notice, setNotice] = useState("");
-  const [sidecarToken, setSidecarToken] = useState("");
-  const [sidecarCredentialStatus, setSidecarCredentialStatus] = useState<RemoteCredentialStatus | null>(null);
+  const [coreToken, setCoreToken] = useState("");
+  const [coreCredentialStatus, setCoreCredentialStatus] = useState<RemoteCredentialStatus | null>(null);
   const [coreApiInput, setCoreApiInput] = useState("");
   const appliedManagementApiUrl = status?.coreApiUrl || resolveCoreApiUrl(runtimeConfig);
   const draftCoreApiUrl = normalizeServerUrl(coreApiInput);
@@ -80,7 +80,7 @@ export function SettingsView({
     setNotice(message);
   }
 
-  function saveCoreConnection() {
+  async function saveCoreConnection() {
     const coreUrl = normalizeServerUrl(coreApiInput);
     if (!coreUrl) {
       setNotice("Enter a full Iris Core URL with protocol and port, like http://127.0.0.1:8765.");
@@ -89,7 +89,21 @@ export function SettingsView({
     const nextConfig = { ...draftConfig, coreApiUrl: coreUrl };
     setDraftConfig(nextConfig);
     onRuntimeChange(nextConfig);
-    setNotice("Iris Core connection saved.");
+
+    const token = coreToken.trim();
+    if (!token) {
+      setNotice("Iris Core connection saved.");
+      return;
+    }
+
+    const result = await saveRemoteCredential("core", token);
+    setCoreCredentialStatus(result);
+    if (result.ok) {
+      setCoreToken("");
+      setNotice("Iris Core connection and token saved.");
+      return;
+    }
+    setNotice(result.error || "Iris Core URL saved, but token save failed.");
   }
 
   async function runProfileAction(action: ProfileAction) {
@@ -101,25 +115,25 @@ export function SettingsView({
   async function refreshCredentialStatus() {
     const unavailable: RemoteCredentialStatus = { ok: false, kind: "core", exists: false, source: "unavailable" };
     try {
-      const sidecarResult = await getRemoteCredentialStatus("core");
-      setSidecarCredentialStatus(sidecarResult);
+      const coreResult = await getRemoteCredentialStatus("core");
+      setCoreCredentialStatus(coreResult);
     } catch {
-      setSidecarCredentialStatus(unavailable);
+      setCoreCredentialStatus(unavailable);
     }
   }
 
   async function saveToken(kind: "core") {
-    const token = sidecarToken;
+    const token = coreToken;
     const result = await saveRemoteCredential(kind, token);
-    setSidecarCredentialStatus(result);
-    if (result.ok) setSidecarToken("");
+    setCoreCredentialStatus(result);
+    if (result.ok) setCoreToken("");
     setNotice(result.ok ? `${credentialLabel(kind)} token saved to the OS credential store.` : result.error || "Token save failed.");
   }
 
   async function clearToken(kind: "core") {
     const result = await deleteRemoteCredential(kind);
-    setSidecarCredentialStatus(result);
-    setSidecarToken("");
+    setCoreCredentialStatus(result);
+    setCoreToken("");
     setNotice(result.ok ? `${credentialLabel(kind)} token cleared.` : result.error || "Token clear failed.");
   }
 
@@ -183,15 +197,15 @@ export function SettingsView({
               <TokenField
                 id="core-api-token"
                 label="Token"
-                value={sidecarToken}
-                status={sidecarCredentialStatus}
-                onChange={setSidecarToken}
+                value={coreToken}
+                status={coreCredentialStatus}
+                onChange={setCoreToken}
                 onSave={() => void saveToken("core")}
                 onClear={() => void clearToken("core")}
               />
             </ServiceCard>
             <div className="settings-actions">
-              <button className="small-button settings-button" onClick={saveCoreConnection}>
+              <button className="small-button settings-button" onClick={() => void saveCoreConnection()}>
                 Save Core connection
               </button>
             </div>
@@ -222,50 +236,59 @@ export function SettingsView({
       ) : (
         <>
           <SettingsSection
-            eyebrow="Connection"
             title="Routes and credentials"
-            detail="Iris Core route and bearer token."
+            variant="plain"
           >
-            <div className="service-card-grid">
-              <ServiceCard
-                name="Iris Core"
-                healthy={Boolean(status?.managementStatus?.ok)}
-                statusLabel={healthLabel(status?.managementStatus)}
-                statusTitle={endpointLabel(status?.managementStatus)}
-                lastChecked={checkedAt}
-                pendingUrl={pendingCoreApiUrl}
-              >
+            <div className="core-connection-form">
+              <div className="core-connection-heading">
+                <div>
+                  <span className={status?.managementStatus?.ok ? "service-health-dot online" : "service-health-dot offline"} />
+                  <strong>Iris Core</strong>
+                </div>
+                <small title={endpointLabel(status?.managementStatus)}>
+                  {healthLabel(status?.managementStatus)} · {checkedAt}
+                </small>
+              </div>
+              <div className="core-connection-fields">
                 <RuntimeTextField
-                  id="profile-sidecar-route"
+                  id="profile-core-route"
                   label="URL"
                   value={coreApiInput}
                   placeholder="http://127.0.0.1:8765"
                   onChange={setCoreApiInput}
                 />
                 <TokenField
-                  id="profile-sidecar-token"
+                  id="profile-core-token"
                   label="Token"
-                  value={sidecarToken}
-                  status={sidecarCredentialStatus}
-                  onChange={setSidecarToken}
+                  value={coreToken}
+                  status={coreCredentialStatus}
+                  onChange={setCoreToken}
                   onSave={() => void saveToken("core")}
                   onClear={() => void clearToken("core")}
+                  actions="none"
                 />
-              </ServiceCard>
-            </div>
-            <div className="settings-actions">
-              <button className="small-button settings-button" onClick={saveCoreConnection}>
-                Save Core connection
-              </button>
+              </div>
+              {pendingCoreApiUrl ? <em className="core-connection-pending">Unsaved URL: {pendingCoreApiUrl}</em> : null}
+              <div className="core-connection-actions">
+                <button
+                  type="button"
+                  className="small-link-button"
+                  disabled={!coreCredentialStatus?.exists}
+                  onClick={() => void clearToken("core")}
+                >
+                  Clear stored token
+                </button>
+                <button className="small-button settings-button" onClick={() => void saveCoreConnection()}>
+                  Save Core connection
+                </button>
+              </div>
             </div>
           </SettingsSection>
 
           <section className="settings-section model-section">
             <div className="settings-section-header">
               <div>
-                <p className="eyebrow">Model</p>
                 <h2>Runtime configuration</h2>
-                <span>Selected model and provider details.</span>
               </div>
             </div>
             <ModelCard summary={modelDisplay} rawModel={profile.model} provider={profile.provider} />
@@ -305,8 +328,7 @@ function ProfileWorkflows({
   return (
     <div className="profile-workflows">
       <div>
-        <p className="eyebrow">Agent management</p>
-        <h2>Create, clone, rename, switch, or delete agents.</h2>
+        <h2>Agent management</h2>
       </div>
       <input
         value={profileName}
@@ -404,6 +426,7 @@ function TokenField({
   onChange,
   onSave,
   onClear,
+  actions = "inline",
 }: {
   id: string;
   label: string;
@@ -412,6 +435,7 @@ function TokenField({
   onChange: (value: string) => void;
   onSave: () => void;
   onClear: () => void;
+  actions?: "inline" | "none";
 }) {
   const storedLabel = status?.exists ? `Stored via ${status.source}` : "Not stored";
   return (
@@ -426,14 +450,16 @@ function TokenField({
           onChange={(event) => onChange(event.target.value)}
         />
       </div>
-      <div className="token-actions-row">
-        <button className="small-button settings-button" disabled={!value.trim()} onClick={onSave}>
-          Save
-        </button>
-        <button className="small-button settings-button" disabled={!status?.exists} onClick={onClear}>
-          Clear
-        </button>
-      </div>
+      {actions === "inline" ? (
+        <div className="token-actions-row">
+          <button className="small-button settings-button" disabled={!value.trim()} onClick={onSave}>
+            Save
+          </button>
+          <button className="small-button settings-button" disabled={!status?.exists} onClick={onClear}>
+            Clear
+          </button>
+        </div>
+      ) : null}
       <span>{storedLabel}</span>
     </div>
   );
@@ -443,23 +469,25 @@ function SettingsSection({
   eyebrow,
   title,
   detail,
+  variant = "panel",
   children,
 }: {
-  eyebrow: string;
+  eyebrow?: string;
   title: string;
-  detail: string;
+  detail?: string;
+  variant?: "panel" | "plain";
   children: ReactNode;
 }) {
   return (
     <section className="settings-section">
       <div className="settings-section-header">
         <div>
-          <p className="eyebrow">{eyebrow}</p>
+          {eyebrow ? <p className="eyebrow">{eyebrow}</p> : null}
           <h2>{title}</h2>
-          <span>{detail}</span>
+          {detail ? <span>{detail}</span> : null}
         </div>
       </div>
-      <div className="runtime-panel">{children}</div>
+      {variant === "panel" ? <div className="runtime-panel">{children}</div> : children}
     </section>
   );
 }

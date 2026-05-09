@@ -46,7 +46,7 @@ export function coreEventToInboxMessage(event: AgentUICoreEvent, fallbackProfile
   const metadata = event.metadata || {};
   return {
     cursor: event.cursor,
-    id: event.id,
+    id: event.externalMessageId || event.id,
     source: String(metadata.source || "agentui-core-events"),
     platform: "agentui",
     profile: String(metadata.profile || fallbackProfile),

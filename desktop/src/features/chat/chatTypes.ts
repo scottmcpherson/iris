@@ -7,6 +7,7 @@ export type PendingProfileConversationSelection = {
 };
 
 export type SendMessageOptions = {
+  text?: string;
   attachments?: SendableAttachment[];
   modelSelection?: HermesModelSelection | null;
   currentModelSelection?: HermesModelSelection | null;

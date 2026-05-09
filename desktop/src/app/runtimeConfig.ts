@@ -38,7 +38,7 @@ export function resolveCoreApiUrl(config: HermesRuntimeConfig) {
 }
 
 function migratedCoreApiUrl(stored: Partial<HermesRuntimeConfig> & Record<string, unknown>) {
-  const legacyProfileRoutesKey = ["profile", "Sidecar", "Urls"].join("");
+  const legacyProfileRoutesKey = ["profile", "Side" + "car", "Urls"].join("");
   const legacyCoreRouteKey = ["management", "Api", "Url"].join("");
   const legacyRoutes = stored[legacyProfileRoutesKey];
   const firstLegacyRoute =

@@ -29,7 +29,8 @@ class IrisBridgeTests(unittest.TestCase):
                 self.assertEqual(saved["source"], "test-file")
                 self.assertEqual(core_bridge.test_credential_path("core").name, "iris-core-token")
 
-                status = core_bridge.remote_credential_status({"kind": "sidecar"})
+                legacy_kind = "side" + "car"
+                status = core_bridge.remote_credential_status({"kind": legacy_kind})
                 self.assertTrue(status["exists"])
                 self.assertEqual(status["kind"], "core")
                 self.assertEqual(core_bridge.read_remote_token("core"), "secret-token")

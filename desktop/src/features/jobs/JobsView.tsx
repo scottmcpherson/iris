@@ -94,7 +94,7 @@ export function JobsView({
                 <span>Delivery</span>
                 <input
                   value={deliveryTarget}
-                  placeholder="agentui:desktop"
+                  placeholder="iris:desktop"
                   onChange={(event) => onDeliveryTargetChange(event.target.value)}
                 />
               </label>

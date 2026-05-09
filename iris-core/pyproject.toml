@@ -29,8 +29,6 @@ yaml = [
 
 [project.scripts]
 iris-core = "hermes_management_server.main:cli"
-hermes-sidecar = "hermes_management_server.main:cli"
-hermes-management-server = "hermes_management_server.main:cli"
 
 [tool.setuptools.packages.find]
 where = ["src"]

@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import json
+import mimetypes
 import os
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import uuid
+from pathlib import Path
 from typing import Any
 
 from ..core_store import (
@@ -28,39 +31,60 @@ DEFAULT_AGENTUI_GATEWAY_URL = "http://127.0.0.1:8766"
 AGENTUI_GATEWAY_PORT_OFFSET = 124
 
 
-def text_with_runtime_attachments(text: str, attachments: Any) -> str:
+def agentui_multipart_attachments(attachments: Any) -> list[dict[str, Any]]:
     if not isinstance(attachments, list) or not attachments:
-        return text
-    rows: list[str] = []
-    for index, item in enumerate(attachments):
+        return []
+    rows: list[dict[str, Any]] = []
+    for item in attachments:
         if not isinstance(item, dict):
             continue
-        runtime = item.get("runtime") if isinstance(item.get("runtime"), dict) else {}
-        runtime_path = str(runtime.get("path") or item.get("localPath") or "").strip()
+        storage_path = str(item.get("storagePath") or "").strip()
+        if not storage_path:
+            continue
         name = str(item.get("name") or "attachment").strip()
         mime_type = str(item.get("mimeType") or item.get("kind") or "file").strip()
-        size = item.get("size")
-        size_label = f", {format_attachment_size(size)}" if isinstance(size, int) and size >= 0 else ""
-        rows.append(f"{index + 1}. {name} ({mime_type}{size_label})")
-        if runtime_path:
-            rows.append(f"   Runtime path: {runtime_path}")
-    if not rows:
-        return text
-    visible_text = text.strip() or "Use the attached files as context."
-    if "\n\nAttached files:\n" in visible_text:
-        return visible_text
-    return f"{visible_text}\n\nAttached files:\n" + "\n".join(rows)
+        rows.append({
+            "id": str(item.get("id") or ""),
+            "name": name,
+            "kind": str(item.get("kind") or ""),
+            "mimeType": mime_type,
+            "size": item.get("size") if isinstance(item.get("size"), int) else -1,
+            "sha256": str(item.get("sha256") or ""),
+            "path": storage_path,
+        })
+    return rows
 
 
-def format_attachment_size(bytes_value: int) -> str:
-    units = ["B", "KB", "MB", "GB"]
-    value = float(bytes_value)
-    unit_index = 0
-    while value >= 1024 and unit_index < len(units) - 1:
-        value /= 1024
-        unit_index += 1
-    precision = 0 if value >= 10 or unit_index == 0 else 1
-    return f"{value:.{precision}f} {units[unit_index]}"
+def agentui_payload_attachment(attachment: dict[str, Any], field: str) -> dict[str, Any]:
+    return {
+        "field": field,
+        "id": str(attachment.get("id") or ""),
+        "name": str(attachment.get("name") or "attachment"),
+        "kind": str(attachment.get("kind") or ""),
+        "mimeType": normalized_runtime_mime_type(attachment),
+        "size": attachment.get("size") if isinstance(attachment.get("size"), int) else -1,
+        **({"sha256": attachment["sha256"]} if attachment.get("sha256") else {}),
+    }
+
+
+def normalized_runtime_mime_type(attachment: dict[str, Any]) -> str:
+    mime_type = str(attachment.get("mimeType") or "").strip().lower()
+    kind = str(attachment.get("kind") or "").strip().lower()
+    name = str(attachment.get("name") or "")
+    if kind == "audio" and (not mime_type or mime_type == "video/webm"):
+        return "audio/webm"
+    if mime_type:
+        return mime_type
+    guessed = mimetypes.guess_type(name)[0]
+    if guessed:
+        return guessed
+    if kind == "audio":
+        return "audio/webm"
+    if kind == "image":
+        return "image/png"
+    if kind == "video":
+        return "video/mp4"
+    return "application/octet-stream"
 
 
 def local_runtime_config(*, management_url: str | None = None) -> dict[str, Any]:
@@ -275,6 +299,8 @@ class HermesRuntimeAdapter:
         )
         by_message_id = overlays["byMessageId"]
         by_content_hash = overlays["byContentHash"]
+        attachment_fallbacks = overlays.get("attachmentFallbacks", [])
+        used_attachment_fallbacks: set[str] = set()
         enriched: list[dict[str, Any]] = []
         for message in messages:
             if message.get("role") not in {"user", "assistant"}:
@@ -295,9 +321,34 @@ class HermesRuntimeAdapter:
                     None,
                 )
             if not overlay:
+                fallback = next(
+                    (
+                        item
+                        for item in attachment_fallbacks
+                        if str(item.get("messageId") or "") not in used_attachment_fallbacks
+                    ),
+                    None,
+                ) if (
+                    str(message.get("role") or "") == "user" and
+                    is_transformed_voice_message_content(str(message.get("content") or ""))
+                ) else None
+                if fallback and isinstance(fallback.get("metadata"), dict):
+                    used_attachment_fallbacks.add(str(fallback.get("messageId") or ""))
+                    overlay = fallback["metadata"]
+            if not overlay:
                 enriched.append(message)
                 continue
-            enriched.append({**message, "metadata": {**metadata, **overlay}})
+            content = str(message.get("content") or "")
+            client_content = overlay.get("clientContent")
+            if isinstance(client_content, str):
+                content = client_content
+            elif (
+                message.get("role") == "user" and
+                isinstance(overlay.get("attachments"), list) and
+                is_transformed_voice_message_content(content)
+            ):
+                content = ""
+            enriched.append({**message, "content": content, "metadata": {**metadata, **overlay}})
         return enriched
 
     def probe(self, profile: str = "default") -> dict[str, Any]:
@@ -321,15 +372,17 @@ class HermesRuntimeAdapter:
         chat_name: str,
         message_id: str,
         text: str,
+        session_id: str = "",
         user_id: str = "agentui-user",
         user_name: str = "Iris User",
         metadata: dict[str, Any] | None = None,
+        attachments: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         if not self.token:
             return {"ok": False, "error": "IRIS_TOKEN or AGENTUI_TOKEN is required for Iris gateway chat."}
-        url = f"{self.agentui_gateway_url(profile).rstrip('/')}/agentui/messages"
+        url = f"{self.agentui_gateway_url(profile).rstrip('/')}/iris/messages"
         metadata_payload = metadata if isinstance(metadata, dict) else {}
-        runtime_text = text_with_runtime_attachments(text, metadata_payload.get("attachments"))
+        multipart_attachments = agentui_multipart_attachments(attachments or [])
         body: dict[str, Any] = {
             "chatId": chat_id,
             "chatName": chat_name or chat_id,
@@ -337,11 +390,29 @@ class HermesRuntimeAdapter:
             "userId": user_id,
             "userName": user_name,
             "messageId": message_id,
-            "text": runtime_text,
+            "text": text,
         }
+        if session_id:
+            body["sessionId"] = session_id
+        if multipart_attachments:
+            files: list[dict[str, Any]] = []
+            payload_attachments: list[dict[str, Any]] = []
+            for index, attachment in enumerate(multipart_attachments):
+                field = f"file_{index}"
+                payload_attachments.append(agentui_payload_attachment(attachment, field))
+                files.append({
+                    "field": field,
+                    "path": attachment["path"],
+                    "name": str(attachment.get("name") or f"attachment-{index}"),
+                    "mimeType": normalized_runtime_mime_type(attachment),
+                })
+            body["attachments"] = payload_attachments
         if metadata_payload:
             body["metadata"] = metadata_payload
-        result = http_json(url, method="POST", token=self.token, body=body)
+        if multipart_attachments:
+            result = http_multipart(url, method="POST", token=self.token, payload=body, files=files)
+        else:
+            result = http_json(url, method="POST", token=self.token, body=body)
         if not result.get("ok"):
             return {
                 "ok": False,
@@ -371,7 +442,7 @@ class HermesRuntimeAdapter:
                 "error": "IRIS_TOKEN or AGENTUI_TOKEN is required for model catalog discovery.",
             }
         query = urllib.parse.urlencode({"maxModels": max(1, min(int(max_models), 200))})
-        url = f"{self.agentui_gateway_url(profile).rstrip('/')}/agentui/models?{query}"
+        url = f"{self.agentui_gateway_url(profile).rstrip('/')}/iris/models?{query}"
         return adapter_catalog_request(url, self.token, profile, fallback_key="providers")
 
     def slash_commands(self, profile: str) -> dict[str, Any]:
@@ -383,7 +454,7 @@ class HermesRuntimeAdapter:
                 "generatedAt": int(time.time()),
                 "error": "IRIS_TOKEN or AGENTUI_TOKEN is required for slash command discovery.",
             }
-        url = f"{self.agentui_gateway_url(profile).rstrip('/')}/agentui/slash-commands"
+        url = f"{self.agentui_gateway_url(profile).rstrip('/')}/iris/slash-commands"
         return adapter_catalog_request(url, self.token, profile, fallback_key="commands")
 
     def slash_complete(self, profile: str, text: str, limit: int = 30) -> dict[str, Any]:
@@ -394,7 +465,7 @@ class HermesRuntimeAdapter:
                 "replaceFrom": 0,
                 "error": "IRIS_TOKEN or AGENTUI_TOKEN is required for slash command completion.",
             }
-        url = f"{self.agentui_gateway_url(profile).rstrip('/')}/agentui/slash-complete"
+        url = f"{self.agentui_gateway_url(profile).rstrip('/')}/iris/slash-complete"
         result = http_json(url, method="POST", token=self.token, body={"text": text, "limit": limit})
         if not result.get("ok"):
             return {
@@ -559,6 +630,83 @@ def http_json(url: str, *, method: str, token: str, body: dict[str, Any] | None 
     return {"ok": True, "url": url, "status": status, "json": parsed}
 
 
+def http_multipart(
+    url: str,
+    *,
+    method: str,
+    token: str,
+    payload: dict[str, Any],
+    files: list[dict[str, Any]],
+) -> dict[str, Any]:
+    boundary = f"iris-{uuid.uuid4().hex}"
+    body = bytearray()
+
+    def add_part(headers: dict[str, str], content: bytes) -> None:
+        body.extend(f"--{boundary}\r\n".encode("utf-8"))
+        for key, value in headers.items():
+            body.extend(f"{key}: {value}\r\n".encode("utf-8"))
+        body.extend(b"\r\n")
+        body.extend(content)
+        body.extend(b"\r\n")
+
+    add_part(
+        {
+            "Content-Disposition": 'form-data; name="payload"',
+            "Content-Type": "application/json; charset=utf-8",
+        },
+        json.dumps(payload).encode("utf-8"),
+    )
+    for file_part in files:
+        path = Path(str(file_part.get("path") or ""))
+        try:
+            data = path.read_bytes()
+        except OSError as exc:
+            return {"ok": False, "url": url, "error": f"Attachment content is unavailable: {exc}"}
+        field = str(file_part.get("field") or "file")
+        filename = str(file_part.get("name") or path.name or "attachment")
+        mime_type = str(file_part.get("mimeType") or "application/octet-stream")
+        add_part(
+            {
+                "Content-Disposition": (
+                    f'form-data; name="{quote_header_value(field)}"; '
+                    f'filename="{quote_header_value(filename)}"'
+                ),
+                "Content-Type": mime_type,
+            },
+            data,
+        )
+    body.extend(f"--{boundary}--\r\n".encode("utf-8"))
+
+    headers = {
+        "Accept": "application/json",
+        "Content-Type": f"multipart/form-data; boundary={boundary}",
+    }
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    request = urllib.request.Request(url, data=bytes(body), headers=headers, method=method)
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            text = response.read().decode("utf-8", errors="replace")
+            status = response.status
+    except urllib.error.HTTPError as exc:
+        text = exc.read().decode("utf-8", errors="replace")
+        return {"ok": False, "url": url, "status": exc.code, "error": api_error_text(text) or f"HTTP {exc.code}"}
+    except Exception as exc:
+        return {"ok": False, "url": url, "error": str(exc)}
+
+    try:
+        parsed = json.loads(text) if text else {}
+    except json.JSONDecodeError as exc:
+        return {"ok": False, "url": url, "status": status, "error": f"Invalid JSON: {exc}"}
+    if not isinstance(parsed, dict):
+        return {"ok": False, "url": url, "status": status, "error": "Expected a JSON object."}
+    return {"ok": True, "url": url, "status": status, "json": parsed}
+
+
+def quote_header_value(value: str) -> str:
+    return value.replace("\\", "\\\\").replace('"', '\\"')
+
+
 def api_error_text(text: str) -> str:
     try:
         parsed = json.loads(text)
@@ -567,3 +715,11 @@ def api_error_text(text: str) -> str:
     if isinstance(parsed, dict):
         return str(parsed.get("error") or parsed.get("detail") or "").strip()[:240]
     return text.strip()[:240]
+
+
+def is_transformed_voice_message_content(content: str) -> bool:
+    normalized = str(content or "").strip().lower()
+    return (
+        normalized.startswith("[the user sent a voice message") or
+        normalized.startswith("transcription of voice message:")
+    )
