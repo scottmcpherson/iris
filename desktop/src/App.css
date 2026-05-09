@@ -1096,6 +1096,7 @@ button:disabled {
 }
 
 .profile-tree-header {
+  align-items: stretch;
   justify-content: space-between;
   gap: 10px;
   padding: 0 8px;
@@ -1122,14 +1123,19 @@ button:disabled {
 }
 
 .sidebar-section-toggle {
-  display: inline-flex;
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr);
   align-items: center;
+  flex: 1 1 auto;
   min-width: 0;
-  gap: 5px;
+  min-height: 28px;
+  gap: 6px;
   border: 0;
+  border-radius: 7px;
   padding: 0;
   color: #8e96a5;
   background: transparent;
+  text-align: left;
 }
 
 .sidebar-section-toggle:hover {
@@ -1138,6 +1144,21 @@ button:disabled {
 
 .sidebar-section-toggle .sidebar-label {
   color: currentColor;
+  font-size: 13px;
+  text-transform: none;
+}
+
+.sidebar-section-chevron {
+  flex: 0 0 auto;
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+
+.sidebar-section-toggle:hover .sidebar-section-chevron,
+.sidebar-section-toggle:focus-visible .sidebar-section-chevron,
+.profile-tree-header:hover .sidebar-section-chevron,
+.profile-tree-header:focus-within .sidebar-section-chevron {
+  opacity: 1;
 }
 
 .sidebar-icon-button {
@@ -1211,6 +1232,8 @@ button:disabled {
   min-height: 36px;
   padding: 0 6px 0 9px;
   color: #c9d0dc;
+  font-size: 13px;
+  font-weight: 400;
 }
 
 .profile-node-button:hover {
@@ -1228,8 +1251,8 @@ button:disabled {
 }
 
 .profile-node-button span {
-  font-size: 15px;
-  font-weight: 650;
+  font-size: inherit;
+  font-weight: inherit;
 }
 
 .profile-node-button em {
@@ -1521,14 +1544,29 @@ button:disabled {
   justify-content: center;
 }
 
-.sidebar-session-status.streaming i {
+.sidebar-session-status.streaming i,
+.sidebar-session-status.unread i {
   width: 11px;
   height: 11px;
+  border-radius: 50%;
+}
+
+.sidebar-session-status.streaming i {
   border: 2px solid rgba(245, 242, 234, 0.18);
   border-top-color: #f5f2ea;
-  border-radius: 50%;
   box-shadow: 0 0 9px rgba(240, 165, 111, 0.22);
   animation: spin 760ms linear infinite;
+}
+
+.sidebar-session-status.unread {
+  justify-content: center;
+}
+
+.sidebar-session-status.unread i {
+  width: 8px;
+  height: 8px;
+  background: #89c7ff;
+  box-shadow: 0 0 10px rgba(137, 199, 255, 0.35);
 }
 
 .history-notice {

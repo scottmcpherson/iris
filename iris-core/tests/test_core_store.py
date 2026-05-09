@@ -17,7 +17,7 @@ def test_core_store_creates_only_core_owned_schema(tmp_path):
         }
     )
 
-    assert store.health()["schemaVersion"] == 5
+    assert store.health()["schemaVersion"] == 6
     assert store.health()["sourceOfTruthMigration"] == "complete"
     assert runtime["id"] == "runtime_local_hermes"
     assert set(store.tables()) == {
@@ -30,6 +30,7 @@ def test_core_store_creates_only_core_owned_schema(tmp_path):
         "message_attachments",
         "projects",
         "project_conversations",
+        "conversation_read_state",
     }
 
 
@@ -87,6 +88,7 @@ def test_source_of_truth_migration_drops_duplicate_tables_and_preserves_core_dat
         "message_attachments",
         "projects",
         "project_conversations",
+        "conversation_read_state",
     }
     assert store.list_devices()[0]["id"] == "dev_1"
     assert store.list_runtimes()[0]["id"] == "runtime_local_hermes"
@@ -115,6 +117,12 @@ def test_core_store_project_crud_and_conversation_links(tmp_path):
         "externalChatId": "chat-1",
     }
     link = store.link_project_conversation(project["id"], conversation)
+    real_conversation = {
+        **conversation,
+        "id": "conv_2",
+        "externalSessionId": "session-2",
+    }
+    real_link = store.link_project_conversation(project["id"], real_conversation)
 
     assert renamed["name"] == "Iris"
     assert renamed["slug"] == "iris"
@@ -122,11 +130,30 @@ def test_core_store_project_crud_and_conversation_links(tmp_path):
     assert renamed["systemPrompt"] == "Use project notes."
     assert renamed["metadata"]["color"] == "green"
     assert link["projectId"] == project["id"]
-    assert store.project_for_conversation("conv_1")["id"] == project["id"]
-    assert store.list_project_conversation_links(project["id"])[0]["conversationId"] == "conv_1"
+    assert real_link["projectId"] == project["id"]
+    assert store.project_for_conversation("conv_1") is None
+    assert store.project_for_conversation("conv_2")["id"] == project["id"]
+    assert [item["conversationId"] for item in store.list_project_conversation_links(project["id"])] == ["conv_2"]
     archived = store.archive_project(project["id"])
     assert archived["archivedAt"] is not None
     assert store.list_projects() == []
+
+
+def test_core_store_conversation_read_state_is_shared_by_conversation(tmp_path):
+    store = CoreStore(tmp_path / "core.sqlite3")
+
+    unread = store.upsert_conversation_read_state(
+        "conv_1",
+        "unread",
+        metadata={"eventCursor": 12},
+    )
+    read = store.upsert_conversation_read_state("conv_1", "read")
+
+    assert unread["conversationId"] == "conv_1"
+    assert unread["state"] == "unread"
+    assert unread["metadata"]["eventCursor"] == 12
+    assert read["state"] == "read"
+    assert store.conversation_read_states(["conv_1"])["conv_1"]["state"] == "read"
 
 
 def test_core_store_accepts_general_attachment_mime_types(tmp_path):

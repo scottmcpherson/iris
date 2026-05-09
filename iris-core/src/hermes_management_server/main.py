@@ -51,6 +51,7 @@ from .models import (
     CoreConversationCreateRequest,
     CoreConversationUpdateRequest,
     CoreMessageCreateRequest,
+    ConversationReadStateUpdateRequest,
     DeviceCursorUpdateRequest,
     DevicePairRequest,
     ErrorResponse,
@@ -1269,7 +1270,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if not project:
             raise ManagementError("Project was not found.", status_code=404)
         limit = clamp_int(limit, default=80, minimum=1, maximum=200)
-        conversations = project_conversations(app, project)[:limit]
+        conversations = with_read_states(app, project_conversations(app, project)[:limit])
         return {"ok": True, "conversations": conversations}
 
     @app.post("/v1/projects/{project_id}/conversations")
@@ -1316,6 +1317,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             adapter = app.state.runtime_registry.adapter_for_runtime(item["runtimeId"])
             conversations.extend(await asyncio.to_thread(adapter.list_conversations, item, limit))
         conversations.sort(key=lambda row: int(row.get("updatedAt") or 0), reverse=True)
+        conversations = with_read_states(app, conversations)
         return {
             "ok": True,
             "conversations": conversations[:limit],
@@ -1349,6 +1351,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if project:
             app.state.core_store.link_project_conversation(project["id"], conversation)
             conversation = with_project_metadata(conversation, project)
+        conversation = with_read_state(app, conversation)
         return {"ok": True, "conversation": conversation}
 
     @app.get("/v1/conversations/{conversation_id}")
@@ -1366,7 +1369,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
         if not conversation:
             raise ManagementError("Conversation was not found.", status_code=404)
-        return {"ok": True, "conversation": conversation}
+        return {"ok": True, "conversation": with_read_state(app, conversation)}
 
     @app.patch("/v1/conversations/{conversation_id}")
     async def core_update_conversation(
@@ -1378,7 +1381,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if not conversation:
             raise ManagementError("Conversation was not found.", status_code=404)
         if request.title is None:
-            return {"ok": True, "conversation": conversation}
+            return {"ok": True, "conversation": with_read_state(app, conversation)}
         title = request.title.strip()
         if not title:
             raise ManagementError("Conversation title is required.", status_code=400)
@@ -1390,7 +1393,39 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             title,
         )
         remember_active_conversation(app, updated)
-        return {"ok": True, "conversation": updated}
+        return {"ok": True, "conversation": with_read_state(app, updated)}
+
+    @app.get("/v1/conversations/{conversation_id}/read-state")
+    async def core_conversation_read_state(
+        conversation_id: str,
+        _auth: None = Depends(require_auth),
+    ) -> dict[str, Any]:
+        conversation = resolve_core_conversation(app, conversation_id)
+        if not conversation:
+            raise ManagementError("Conversation was not found.", status_code=404)
+        return {
+            "ok": True,
+            "readState": read_state_or_default(app, conversation_id),
+        }
+
+    @app.patch("/v1/conversations/{conversation_id}/read-state")
+    async def core_update_conversation_read_state(
+        conversation_id: str,
+        request: ConversationReadStateUpdateRequest,
+        _auth: None = Depends(require_auth),
+    ) -> dict[str, Any]:
+        conversation = resolve_core_conversation(app, conversation_id)
+        if not conversation:
+            raise ManagementError("Conversation was not found.", status_code=404)
+        try:
+            read_state = app.state.core_store.upsert_conversation_read_state(
+                conversation_id,
+                request.state,
+                metadata=request.metadata,
+            )
+        except ValueError as exc:
+            raise ManagementError(str(exc), status_code=400) from exc
+        return {"ok": True, "readState": read_state}
 
     @app.get("/v1/conversations/{conversation_id}/messages")
     async def core_conversation_messages(
@@ -2098,6 +2133,56 @@ def with_project_metadata(conversation: dict[str, Any], project: dict[str, Any])
     }
 
 
+def read_state_or_default(app: FastAPI, conversation_id: str) -> dict[str, Any]:
+    return app.state.core_store.conversation_read_state(conversation_id) or default_read_state(conversation_id)
+
+
+def default_read_state(conversation_id: str) -> dict[str, Any]:
+    return {
+        "conversationId": conversation_id,
+        "state": "read",
+        "createdAt": None,
+        "updatedAt": None,
+        "metadata": {},
+    }
+
+
+def with_read_state(app: FastAPI, conversation: dict[str, Any]) -> dict[str, Any]:
+    conversation_id = str(conversation.get("id") or "")
+    if not conversation_id:
+        return conversation
+    return {
+        **conversation,
+        "readState": read_state_or_default(app, conversation_id),
+    }
+
+
+def with_read_states(app: FastAPI, conversations: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    states = app.state.core_store.conversation_read_states([
+        str(conversation.get("id") or "")
+        for conversation in conversations
+    ])
+    return [
+        {
+            **conversation,
+            "readState": states.get(str(conversation.get("id") or "")) or default_read_state(
+                str(conversation.get("id") or ""),
+            ),
+        }
+        for conversation in conversations
+    ]
+
+
+def should_mark_conversation_unread(event: dict[str, Any]) -> bool:
+    metadata = event.get("metadata") if isinstance(event.get("metadata"), dict) else {}
+    return (
+        bool(event.get("conversationId")) and
+        str(event.get("role") or "") == "assistant" and
+        str(event.get("type") or "") == "message.assistant.completed" and
+        not bool(metadata.get("hidden"))
+    )
+
+
 def linked_project_for_message(
     app: FastAPI,
     conversation: dict[str, Any],
@@ -2114,6 +2199,7 @@ def linked_project_for_message(
 
 def project_conversations(app: FastAPI, project: dict[str, Any]) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
+    seen: set[tuple[str, str, str, str]] = set()
     for link in app.state.core_store.list_project_conversation_links(project["id"]):
         conversation = resolve_core_conversation(
             app,
@@ -2125,6 +2211,15 @@ def project_conversations(app: FastAPI, project: dict[str, Any]) -> list[dict[st
         )
         if not conversation:
             continue
+        key = (
+            str(conversation.get("runtimeId") or link["runtimeId"]),
+            str(conversation.get("runtimeProfile") or link["runtimeProfile"]),
+            str(conversation.get("externalSessionId") or ""),
+            str(conversation.get("externalChatId") or link["externalChatId"]),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
         rows.append(with_project_metadata(conversation, project))
     rows.sort(key=lambda row: int(row.get("updatedAt") or 0), reverse=True)
     return rows
@@ -2200,7 +2295,7 @@ def publish_core_event(
     metadata: dict[str, Any] | None = None,
     event_id: str = "",
 ) -> dict[str, Any]:
-    return app.state.live_delivery_bus.publish(
+    event = app.state.live_delivery_bus.publish(
         {
             "id": event_id,
             "conversationId": conversation_id,
@@ -2215,6 +2310,13 @@ def publish_core_event(
             "metadata": metadata or {},
         }
     )
+    if should_mark_conversation_unread(event):
+        app.state.core_store.upsert_conversation_read_state(
+            conversation_id,
+            "unread",
+            metadata={"eventCursor": event["cursor"], "eventType": event["type"]},
+        )
+    return event
 
 
 def list_runtime_automations(app: FastAPI, agent_id: str | None = None) -> list[dict[str, Any]]:

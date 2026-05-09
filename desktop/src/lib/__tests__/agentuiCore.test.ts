@@ -15,6 +15,7 @@ import {
   saveAgentUICoreAgentSkill,
   sendAgentUICoreMessage,
   updateAgentUICoreConversation,
+  updateAgentUICoreConversationReadState,
   updateIrisProject,
   uploadAgentUICoreAttachment,
 } from "../agentuiCore";
@@ -288,6 +289,7 @@ describe("agentuiCore", () => {
     await renameAgentUICoreAgent("agent_default", { name: "renamed" }, defaultRuntimeConfig);
     await deleteAgentUICoreAgent("agent_default", defaultRuntimeConfig);
     await updateAgentUICoreConversation("conv_123", { title: "Pinned plan" }, defaultRuntimeConfig);
+    await updateAgentUICoreConversationReadState("conv_123", "read", defaultRuntimeConfig);
 
     expect(calls.map((call) => [call.init.method, new URL(call.url).pathname])).toEqual([
       ["GET", "/v1/agents/agent_default/memory"],
@@ -302,6 +304,7 @@ describe("agentuiCore", () => {
       ["PATCH", "/v1/agents/agent_default"],
       ["DELETE", "/v1/agents/agent_default"],
       ["PATCH", "/v1/conversations/conv_123"],
+      ["PATCH", "/v1/conversations/conv_123/read-state"],
     ]);
   });
 });

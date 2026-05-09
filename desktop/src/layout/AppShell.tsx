@@ -94,6 +94,7 @@ type AppShellProps = {
   status: HermesStatus | null;
   conversations: HermesConversation[];
   conversationsByProfile: Record<string, HermesConversation[]>;
+  conversationReadStates: Record<string, "read" | "unread">;
   projects: IrisProject[];
   projectAgents: AgentUICoreAgent[];
   conversationsByProject: Record<string, HermesConversation[]>;
@@ -145,6 +146,7 @@ export function AppShell({
   status,
   conversations,
   conversationsByProfile,
+  conversationReadStates,
   projects,
   projectAgents,
   conversationsByProject,
@@ -1011,6 +1013,7 @@ export function AppShell({
   ) {
     const running = activeConversationIds.includes(conversation.id);
     const selected = options.selected ?? (profileName === selectedProfile && conversation.id === selectedConversationId);
+    const unread = !selected && !running && conversationReadState(conversationReadStates, conversation) === "unread";
     const pinKey = options.pinKey || agentConversationPinKey(profileName, conversation.id);
     const pinned = isConversationPinned(pinKey);
     const rightLabel = options.rightLabel || timeLabel(conversation.lastActiveAt);
@@ -1050,10 +1053,14 @@ export function AppShell({
         >
           <span>{conversation.title}</span>
           <em
-            className={running ? "sidebar-session-status streaming" : "sidebar-session-status"}
-            aria-label={running ? "Streaming response" : undefined}
+            className={[
+              "sidebar-session-status",
+              running ? "streaming" : "",
+              unread ? "unread" : "",
+            ].filter(Boolean).join(" ")}
+            aria-label={running ? "Streaming response" : unread ? "Unread response" : undefined}
           >
-            {running ? <i aria-hidden="true" /> : rightLabel}
+            {running ? <i aria-hidden="true" /> : unread ? <i aria-hidden="true" /> : rightLabel}
           </em>
         </button>
       </div>
@@ -1250,8 +1257,8 @@ export function AppShell({
         title={`${collapsed ? "Expand" : "Collapse"} ${label.toLowerCase()}`}
         onClick={() => toggleSidebarSection(section)}
       >
-        <SectionIcon size={13} />
         <span className="sidebar-label">{label}</span>
+        <SectionIcon className="sidebar-section-chevron" size={13} />
       </button>
     );
   }
@@ -1880,6 +1887,13 @@ function runtimeProfileForConversation(conversation: HermesConversation, fallbac
   const origin = conversation.origin || {};
   const metadata = conversation.metadata || {};
   return String(origin.runtimeProfile || metadata.runtimeProfile || fallback || "default");
+}
+
+function conversationReadState(
+  states: Record<string, "read" | "unread">,
+  conversation: HermesConversation,
+) {
+  return states[conversation.id] || conversation.readState?.state || "read";
 }
 
 function saveCollapsedSessionProfiles(value: Record<string, boolean>) {

@@ -172,10 +172,19 @@ export type HermesConversation = {
   chatId?: string;
   origin?: Record<string, unknown>;
   metadata?: Record<string, unknown>;
+  readState?: HermesConversationReadState;
   startedAt: number | null;
   endedAt: number | null;
   lastActiveAt: number | null;
   messageCount: number;
+};
+
+export type HermesConversationReadState = {
+  conversationId: string;
+  state: "read" | "unread";
+  createdAt: number | null;
+  updatedAt: number | null;
+  metadata?: Record<string, unknown>;
 };
 
 export type HermesConversationMessage = {

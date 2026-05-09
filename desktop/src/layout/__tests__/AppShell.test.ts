@@ -49,6 +49,7 @@ describe("AppShell pinned conversations", () => {
         status: statusFixture(),
         conversations: [],
         conversationsByProfile: {},
+        conversationReadStates: {},
         projects: [project],
         projectAgents: [agentFixture()],
         conversationsByProject: { [project.id]: [projectChat] },
@@ -90,6 +91,68 @@ describe("AppShell pinned conversations", () => {
     expect(html).toContain("aria-label=\"Streaming response\"");
   });
 
+  it("shows the unread status for a background completed project chat", () => {
+    const project = projectFixture();
+    const projectChat = conversationFixture({
+      id: "conv_project",
+      title: "Project complete",
+      metadata: { projectId: project.id },
+    });
+
+    const html = renderToStaticMarkup(
+      createElement(AppShell, {
+        activeView: "chat",
+        connected: true,
+        isRefreshing: false,
+        previewOpen: false,
+        primaryPane: null,
+        previewPane: null,
+        selectedProfile: "default",
+        status: statusFixture(),
+        conversations: [],
+        conversationsByProfile: {},
+        conversationReadStates: { [projectChat.id]: "unread" },
+        projects: [project],
+        projectAgents: [agentFixture()],
+        conversationsByProject: { [project.id]: [projectChat] },
+        projectConversationsLoading: {},
+        projectConversationsLoaded: { [project.id]: true },
+        projectErrors: {},
+        collapsedProjects: { [project.id]: false },
+        unprojectedConversations: [],
+        conversationsLoadedByProfile: {},
+        conversationsLoading: false,
+        conversationsLoadingByProfile: {},
+        historyError: null,
+        historyErrorsByProfile: {},
+        selectedConversationId: "conv_other",
+        selectedProjectId: project.id,
+        activeConversationIds: [],
+        coreApiUrl: "http://127.0.0.1:8765",
+        onNewConversation: noop,
+        onCreateProject: async () => project,
+        onUpdateProject: async () => project,
+        onToggleProjectCollapsed: noop,
+        onRefreshProjects: noop,
+        onRefreshProjectConversations: noop,
+        onPreviewToggle: noop,
+        onEditProfile: noop,
+        onProfileAction: async () => "",
+        onRefresh: noop,
+        onRefreshConversations: noop,
+        onRenameConversation: async () => "",
+        onSelectConversation: noop,
+        onSelectProjectConversation: noop,
+        onSelectProfile: noop,
+        onSelectView: noop,
+      }),
+    );
+
+    expect(html).toContain("Project complete");
+    expect(html).toContain("sidebar-session-status unread");
+    expect(html).toContain("aria-label=\"Unread response\"");
+  });
+
   it("honors persisted top-level sidebar section collapse state", () => {
     const project = projectFixture();
     const projectChat = conversationFixture({
@@ -119,6 +182,7 @@ describe("AppShell pinned conversations", () => {
         status: statusFixture(),
         conversations: [looseChat],
         conversationsByProfile: {},
+        conversationReadStates: {},
         projects: [project],
         projectAgents: [agentFixture()],
         conversationsByProject: { [project.id]: [projectChat] },

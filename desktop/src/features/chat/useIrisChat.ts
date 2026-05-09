@@ -13,6 +13,7 @@ import {
   getAgentUICoreEvents,
   getAgentUICoreAgentForProfile,
   sendAgentUICoreMessage,
+  updateAgentUICoreConversationReadState,
   type AgentUICoreEvent,
 } from "../../lib/agentuiCore";
 import type {
@@ -52,6 +53,7 @@ export type { SendableAttachment } from "./chatTypes";
 type UseIrisChatOptions = {
   profile: string;
   runtimeConfig: HermesRuntimeConfig;
+  isChatViewActive?: boolean;
 };
 
 const coreDeliveryEventNames = [
@@ -60,10 +62,11 @@ const coreDeliveryEventNames = [
   "message.error",
 ];
 
-export function useAgentUIChat({ profile, runtimeConfig }: UseIrisChatOptions) {
+export function useAgentUIChat({ profile, runtimeConfig, isChatViewActive = true }: UseIrisChatOptions) {
   const [input, setInput] = useState("");
   const [messagesByConversation, setMessagesByConversation] = useState<Record<string, Message[]>>({});
   const [activeRequestIdsByConversation, setActiveRequestIdsByConversation] = useState<Record<string, string>>({});
+  const [conversationReadStates, setConversationReadStates] = useState<Record<string, "read" | "unread">>({});
   const [conversationsByProfile, setConversationsByProfile] = useState<Record<string, HermesConversation[]>>({});
   const [conversationsLoadedByProfile, setConversationsLoadedByProfile] = useState<Record<string, boolean>>({});
   const [selectedConversationId, setSelectedConversationId] = useState<string | null>(null);
@@ -85,6 +88,7 @@ export function useAgentUIChat({ profile, runtimeConfig }: UseIrisChatOptions) {
   const activeRequestIdsByConversationRef = useRef(activeRequestIdsByConversation);
   const activeConversationTitlesByConversationRef = useRef<Record<string, string>>({});
   const selectedConversationIdRef = useRef(selectedConversationId);
+  const isChatViewActiveRef = useRef(isChatViewActive);
   const conversationChatIdsByConversationRef = useRef(conversationChatIdsByConversation);
   const conversationsByProfileRef = useRef(conversationsByProfile);
   const conversations = conversationsByProfile[profile] || [];
@@ -111,8 +115,14 @@ export function useAgentUIChat({ profile, runtimeConfig }: UseIrisChatOptions) {
   messagesByConversationRef.current = messagesByConversation;
   activeRequestIdsByConversationRef.current = activeRequestIdsByConversation;
   selectedConversationIdRef.current = selectedConversationId;
+  isChatViewActiveRef.current = isChatViewActive;
   conversationChatIdsByConversationRef.current = conversationChatIdsByConversation;
   conversationsByProfileRef.current = conversationsByProfile;
+
+  useEffect(() => {
+    if (!isChatViewActive || !selectedConversationId) return;
+    markConversationRead(selectedConversationId, { reason: "active-selection" });
+  }, [isChatViewActive, selectedConversationId]);
 
   useEffect(() => {
     const pendingSelection = pendingProfileSelectionRef.current;
@@ -434,6 +444,9 @@ export function useAgentUIChat({ profile, runtimeConfig }: UseIrisChatOptions) {
           activeConversationTitlesByConversationRef.current,
           conversationChatIdsByConversationRef.current,
         );
+        setConversationReadStates((current) =>
+          mergeConversationReadStates(current, endpointConversations),
+        );
         setConversationChatIdsByConversation((current) =>
           mergeConversationChatIdMap(current, endpointConversations),
         );
@@ -577,6 +590,7 @@ export function useAgentUIChat({ profile, runtimeConfig }: UseIrisChatOptions) {
     pendingProfileSelectionRef.current =
       profileName !== profile ? { profile: profileName, conversationId } : null;
     setSelectedConversationId(conversationId);
+    markConversationRead(conversationId, { reason: "conversation-opened" });
     setInput("");
     if (shouldSkipConversationDetailLoad(conversationId, activeRequestIdsByConversation)) {
       setHistoryErrorsByProfile((current) => ({ ...current, [profileName]: null }));
@@ -944,6 +958,7 @@ export function useAgentUIChat({ profile, runtimeConfig }: UseIrisChatOptions) {
         );
       }
       if (!isStreamDelivery || isFinalStreamDelivery) {
+        markDeliveredConversationReadState(relatedConversationIds, delivery.cursor);
         refreshConversationDetailSoon(conversationId, profile, delivery.chatId);
       }
     }
@@ -1048,12 +1063,42 @@ export function useAgentUIChat({ profile, runtimeConfig }: UseIrisChatOptions) {
     }));
   }
 
+  function markDeliveredConversationReadState(conversationIds: string[], eventCursor: number) {
+    const selectedId = selectedConversationIdRef.current;
+    const visible = Boolean(isChatViewActiveRef.current && selectedId && conversationIds.includes(selectedId));
+    const state = visible ? "read" : "unread";
+    for (const conversationId of conversationIds) {
+      markConversationReadState(conversationId, state, {
+        reason: visible ? "active-delivery" : "background-delivery",
+        eventCursor,
+      });
+    }
+  }
+
+  function markConversationRead(conversationId: string, metadata: Record<string, unknown> = {}) {
+    markConversationReadState(conversationId, "read", metadata);
+  }
+
+  function markConversationReadState(
+    conversationId: string,
+    state: "read" | "unread",
+    metadata: Record<string, unknown> = {},
+  ) {
+    if (!isCoreConversationId(conversationId)) return;
+    setConversationReadStates((current) => ({ ...current, [conversationId]: state }));
+    setConversationsByProfile((current) =>
+      updateConversationReadStateForProfiles(current, conversationId, state),
+    );
+    void updateAgentUICoreConversationReadState(conversationId, state, runtimeConfig, metadata);
+  }
+
   return {
     activeRequestId,
     activeConversationIds: Object.keys(activeRequestIdsByConversation),
     cancelMessage,
     conversations,
     conversationsByProfile,
+    conversationReadStates,
     conversationsLoadedByProfile,
     conversationsLoading,
     conversationsLoadingByProfile,
@@ -1145,6 +1190,47 @@ function mergeOptimisticConversations(
       ),
   );
   return sortConversationsByActivity([...optimisticConversations, ...endpointConversations]);
+}
+
+export function mergeConversationReadStates(
+  current: Record<string, "read" | "unread">,
+  conversations: HermesConversation[],
+) {
+  const next = { ...current };
+  for (const conversation of conversations) {
+    const state = conversation.readState?.state;
+    if (state === "read" || state === "unread") next[conversation.id] = state;
+  }
+  return next;
+}
+
+function updateConversationReadStateForProfiles(
+  current: Record<string, HermesConversation[]>,
+  conversationId: string,
+  state: "read" | "unread",
+) {
+  let changed = false;
+  const next: Record<string, HermesConversation[]> = {};
+  for (const [profileName, conversations] of Object.entries(current)) {
+    next[profileName] = conversations.map((conversation) => {
+      if (conversation.id !== conversationId) return conversation;
+      changed = true;
+      return {
+        ...conversation,
+        readState: {
+          ...(conversation.readState || {
+            conversationId,
+            createdAt: null,
+            updatedAt: null,
+            metadata: {},
+          }),
+          conversationId,
+          state,
+        },
+      };
+    });
+  }
+  return changed ? next : current;
 }
 
 export function preserveActiveConversationTitles(

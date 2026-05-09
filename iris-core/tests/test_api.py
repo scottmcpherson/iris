@@ -512,6 +512,106 @@ def test_project_endpoints_create_link_and_archive_without_transcript_tables(tmp
     assert "conversation_messages" not in client.app.state.core_store.tables()
 
 
+def test_project_conversations_deduplicate_stale_draft_links_by_chat_id(tmp_path):
+    root = tmp_path / ".hermes"
+    create_core_history_db(
+        root / "state.db",
+        session_id="session-real",
+        title="The Lantern on Briar Lane",
+        user_text="write a short story",
+        assistant_text="The lantern at the end of Briar Lane only lit when someone was lost.",
+        chat_id="chat-1",
+    )
+    client = make_client(root)
+    agent = client.get("/v1/agents").json()["agents"][0]
+    project = client.post(
+        "/v1/projects",
+        json={"name": "Pirate", "defaultAgentId": agent["id"]},
+    ).json()["project"]
+    real_conversation = client.get(f"/v1/conversations?agentId={agent['id']}").json()["conversations"][0]
+
+    with client.app.state.core_store.connect() as connection:
+        connection.executemany(
+            """
+            insert into project_conversations(
+              project_id, conversation_id, agent_id, runtime_id, runtime_profile,
+              external_session_id, external_chat_id, created_at, updated_at, metadata_json
+            ) values(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            [
+                (
+                    project["id"],
+                    "conv_stale_draft",
+                    agent["id"],
+                    "runtime_local_hermes",
+                    "default",
+                    "",
+                    "chat-1",
+                    1,
+                    1,
+                    "{}",
+                ),
+                (
+                    project["id"],
+                    real_conversation["id"],
+                    agent["id"],
+                    real_conversation["runtimeId"],
+                    real_conversation["runtimeProfile"],
+                    real_conversation["externalSessionId"],
+                    real_conversation["externalChatId"],
+                    2,
+                    2,
+                    "{}",
+                ),
+            ],
+        )
+
+    listed = client.get(f"/v1/projects/{project['id']}/conversations")
+    matches = [
+        conversation
+        for conversation in listed.json()["conversations"]
+        if conversation["externalChatId"] == "chat-1"
+    ]
+
+    assert listed.status_code == 200
+    assert [conversation["id"] for conversation in matches] == [real_conversation["id"]]
+
+
+def test_conversation_read_state_is_shared_core_state(tmp_path):
+    client = make_client(tmp_path / ".hermes")
+    agent = client.get("/v1/agents").json()["agents"][0]
+    project = client.post(
+        "/v1/projects",
+        json={"name": "Read State Project", "defaultAgentId": agent["id"]},
+    ).json()["project"]
+    created = client.post(
+        "/v1/conversations",
+        json={"agentId": agent["id"], "projectId": project["id"], "title": "Read state"},
+    )
+    conversation = created.json()["conversation"]
+
+    default_state = client.get(f"/v1/conversations/{conversation['id']}/read-state")
+    unread = client.patch(
+        f"/v1/conversations/{conversation['id']}/read-state",
+        json={"state": "unread", "metadata": {"eventCursor": 7}},
+    )
+    listed = client.get(f"/v1/projects/{project['id']}/conversations")
+    projectless_detail = client.get(f"/v1/conversations/{conversation['id']}")
+    read = client.patch(
+        f"/v1/conversations/{conversation['id']}/read-state",
+        json={"state": "read"},
+    )
+
+    assert default_state.status_code == 200
+    assert default_state.json()["readState"]["state"] == "read"
+    assert unread.status_code == 200
+    assert unread.json()["readState"]["state"] == "unread"
+    assert unread.json()["readState"]["metadata"]["eventCursor"] == 7
+    assert listed.json()["conversations"][0]["readState"]["state"] == "unread"
+    assert projectless_detail.json()["conversation"]["readState"]["state"] == "unread"
+    assert read.json()["readState"]["state"] == "read"
+
+
 def test_legacy_inbox_stream_and_completed_replays_remain_live_only(tmp_path):
     root = tmp_path / ".hermes"
     app = create_app(
@@ -1126,10 +1226,12 @@ def test_core_events_cursor_replay_and_sse_stream(tmp_path):
     replay = client.get(f"/v1/events?after={first_cursor}")
     conversation_replay = client.get(f"/v1/conversations/{conversation['id']}/events?after={first_cursor}")
     stream = client.get(f"/v1/events/stream?after={first_cursor}&agentId={agent['id']}&live=false")
+    read_state = client.get(f"/v1/conversations/{conversation['id']}/read-state")
     stream_text = stream.text
 
     assert [event["content"] for event in replay.json()["events"]] == ["SSE answer"]
     assert [event["content"] for event in conversation_replay.json()["events"]] == ["SSE answer"]
+    assert read_state.json()["readState"]["state"] == "unread"
     assert stream.status_code == 200
     assert stream.headers["content-type"].startswith("text/event-stream")
     assert "event: message.assistant.completed" in stream_text

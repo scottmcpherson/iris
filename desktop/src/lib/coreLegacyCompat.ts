@@ -21,6 +21,7 @@ export function coreConversationToLegacy(conversation: AgentUICoreConversation) 
     chatId: conversation.externalChatId || "",
     origin,
     metadata: conversation.metadata || {},
+    readState: conversation.readState,
     startedAt: conversation.createdAt || null,
     endedAt: null,
     lastActiveAt: conversation.updatedAt || conversation.createdAt || null,

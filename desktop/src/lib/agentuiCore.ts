@@ -35,6 +35,15 @@ export type AgentUICoreConversation = {
   externalSessionId: string;
   externalChatId: string;
   origin?: Record<string, unknown>;
+  readState?: AgentUICoreConversationReadState;
+};
+
+export type AgentUICoreConversationReadState = {
+  conversationId: string;
+  state: "read" | "unread";
+  createdAt: number | null;
+  updatedAt: number | null;
+  metadata?: Record<string, unknown>;
 };
 
 export type IrisProject = {
@@ -390,6 +399,20 @@ export async function updateAgentUICoreConversation(
     "PATCH",
     `/conversations/${encodeURIComponent(conversationId)}`,
     payload,
+  );
+}
+
+export async function updateAgentUICoreConversationReadState(
+  conversationId: string,
+  state: "read" | "unread",
+  runtime?: HermesRuntimeConfig,
+  metadata: Record<string, unknown> = {},
+) {
+  return coreRequest<{ readState: AgentUICoreConversationReadState }>(
+    runtime,
+    "PATCH",
+    `/conversations/${encodeURIComponent(conversationId)}/read-state`,
+    { state, metadata },
   );
 }
 

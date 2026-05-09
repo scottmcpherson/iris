@@ -59,6 +59,7 @@ function App() {
   const chat = useAgentUIChat({
     profile: iris.selectedProfile,
     runtimeConfig: iris.runtimeConfig,
+    isChatViewActive: activeView === "chat",
   });
   const jobs = useAgentUIAutomations(iris.runtimeConfig, iris.selectedProfile);
   const projects = useIrisProjects(iris.runtimeConfig);
@@ -249,6 +250,7 @@ function App() {
         coreApiUrl={iris.runtimeConfig.coreApiUrl}
         conversations={chat.conversations}
         conversationsByProfile={chat.conversationsByProfile}
+        conversationReadStates={chat.conversationReadStates}
         projects={projects.projects}
         projectAgents={projects.agents}
         conversationsByProject={sidebarConversationsByProject}

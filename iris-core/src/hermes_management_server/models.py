@@ -146,6 +146,11 @@ class CoreConversationUpdateRequest(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
+class ConversationReadStateUpdateRequest(BaseModel):
+    state: str = "read"
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
 class CoreMessageAttachmentRef(BaseModel):
     id: str
 

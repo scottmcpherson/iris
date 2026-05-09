@@ -17,7 +17,7 @@ from typing import Any
 from .models import ConversationMessage, ConversationSummary, ProfileSummary
 
 
-CORE_SCHEMA_VERSION = 5
+CORE_SCHEMA_VERSION = 6
 DEFAULT_RUNTIME_ID = "runtime_local_hermes"
 PROFILE_SLUG_RE = re.compile(r"[^A-Za-z0-9_.-]+")
 DEFAULT_MAX_ATTACHMENT_SIZE_MB = 250
@@ -77,7 +77,9 @@ CORE_OWNED_TABLES = (
     "message_attachments",
     "projects",
     "project_conversations",
+    "conversation_read_state",
 )
+CONVERSATION_READ_STATES = {"read", "unread"}
 
 
 def default_core_store_path() -> Path:
@@ -316,6 +318,17 @@ class CoreStore:
 
                 create index if not exists idx_project_conversations_conversation
                   on project_conversations(conversation_id);
+
+                create table if not exists conversation_read_state (
+                  conversation_id text primary key,
+                  state text not null,
+                  created_at integer not null,
+                  updated_at integer not null,
+                  metadata_json text not null
+                );
+
+                create index if not exists idx_conversation_read_state_state
+                  on conversation_read_state(state, updated_at desc);
                 """
             )
         if auto_migrate:
@@ -502,6 +515,10 @@ class CoreStore:
         if not conversation_id:
             raise ValueError("Conversation id is required.")
         timestamp = now()
+        runtime_id = str(conversation.get("runtimeId") or DEFAULT_RUNTIME_ID)
+        runtime_profile = str(conversation.get("runtimeProfile") or "default")
+        external_session_id = str(conversation.get("externalSessionId") or "")
+        external_chat_id = str(conversation.get("externalChatId") or "")
         with self.connect() as connection:
             existing = connection.execute(
                 """
@@ -510,6 +527,18 @@ class CoreStore:
                 """,
                 (project_id, conversation_id),
             ).fetchone()
+            if external_chat_id:
+                connection.execute(
+                    """
+                    delete from project_conversations
+                    where project_id = ?
+                      and runtime_id = ?
+                      and runtime_profile = ?
+                      and external_chat_id = ?
+                      and conversation_id <> ?
+                    """,
+                    (project_id, runtime_id, runtime_profile, external_chat_id, conversation_id),
+                )
             connection.execute(
                 """
                 insert into project_conversations(
@@ -529,10 +558,10 @@ class CoreStore:
                     project_id,
                     conversation_id,
                     str(conversation.get("agentId") or ""),
-                    str(conversation.get("runtimeId") or DEFAULT_RUNTIME_ID),
-                    str(conversation.get("runtimeProfile") or "default"),
-                    str(conversation.get("externalSessionId") or ""),
-                    str(conversation.get("externalChatId") or ""),
+                    runtime_id,
+                    runtime_profile,
+                    external_session_id,
+                    external_chat_id,
                     int(existing["created_at"]) if existing else timestamp,
                     timestamp,
                     dumps(metadata or {}),
@@ -586,6 +615,76 @@ class CoreStore:
                 (conversation_id,),
             ).fetchone()
         return project_from_row(row) if row else None
+
+    def upsert_conversation_read_state(
+        self,
+        conversation_id: str,
+        state: str,
+        *,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        clean_id = conversation_id.strip()
+        clean_state = state.strip().lower()
+        if not clean_id:
+            raise ValueError("Conversation id is required.")
+        if clean_state not in CONVERSATION_READ_STATES:
+            raise ValueError("Conversation read state must be read or unread.")
+        timestamp = now()
+        with self.connect() as connection:
+            existing = connection.execute(
+                """
+                select created_at from conversation_read_state
+                where conversation_id = ?
+                """,
+                (clean_id,),
+            ).fetchone()
+            connection.execute(
+                """
+                insert into conversation_read_state(
+                  conversation_id, state, created_at, updated_at, metadata_json
+                ) values(?, ?, ?, ?, ?)
+                on conflict(conversation_id) do update set
+                  state = excluded.state,
+                  updated_at = excluded.updated_at,
+                  metadata_json = excluded.metadata_json
+                """,
+                (
+                    clean_id,
+                    clean_state,
+                    int(existing["created_at"]) if existing else timestamp,
+                    timestamp,
+                    dumps(metadata or {}),
+                ),
+            )
+        read_state = self.conversation_read_state(clean_id)
+        if not read_state:
+            raise ValueError("Conversation read state could not be stored.")
+        return read_state
+
+    def conversation_read_state(self, conversation_id: str) -> dict[str, Any] | None:
+        with self.connect() as connection:
+            row = connection.execute(
+                "select * from conversation_read_state where conversation_id = ?",
+                (conversation_id,),
+            ).fetchone()
+        return conversation_read_state_from_row(row) if row else None
+
+    def conversation_read_states(self, conversation_ids: list[str]) -> dict[str, dict[str, Any]]:
+        clean_ids = sorted({conversation_id for conversation_id in conversation_ids if conversation_id})
+        if not clean_ids:
+            return {}
+        with self.connect() as connection:
+            rows = connection.execute(
+                f"""
+                select * from conversation_read_state
+                where conversation_id in ({', '.join('?' for _ in clean_ids)})
+                """,
+                clean_ids,
+            ).fetchall()
+        return {
+            state["conversationId"]: state
+            for state in (conversation_read_state_from_row(row) for row in rows)
+        }
 
     def upsert_runtime(self, runtime: dict[str, Any]) -> dict[str, Any]:
         runtime_id = str(runtime["id"])
@@ -1112,6 +1211,16 @@ def device_from_row(row: sqlite3.Row) -> dict[str, Any]:
         "createdAt": int(row["created_at"]),
         "lastSeenAt": int(row["last_seen_at"]) if row["last_seen_at"] is not None else None,
         "revokedAt": int(row["revoked_at"]) if row["revoked_at"] is not None else None,
+        "metadata": loads(row["metadata_json"]),
+    }
+
+
+def conversation_read_state_from_row(row: sqlite3.Row) -> dict[str, Any]:
+    return {
+        "conversationId": str(row["conversation_id"]),
+        "state": str(row["state"]),
+        "createdAt": int(row["created_at"]),
+        "updatedAt": int(row["updated_at"]),
         "metadata": loads(row["metadata_json"]),
     }
 
