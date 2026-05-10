@@ -126,6 +126,7 @@ type AppShellProps = {
   onProfileAction: ProfileActionHandler;
   onRefresh: () => void;
   onRefreshConversations: (profileName?: string) => void;
+  onDeleteConversation: (profileName: string, conversationId: string) => Promise<string>;
   onRenameConversation: (profileName: string, conversationId: string, title: string) => Promise<string>;
   onSelectConversation: (profileName: string, conversationId: string) => void;
   onSelectProjectConversation: (projectId: string, profileName: string, conversationId: string) => void;
@@ -175,6 +176,7 @@ export function AppShell({
   onProfileAction,
   onRefresh,
   onRefreshConversations,
+  onDeleteConversation,
   onRenameConversation,
   onSelectConversation,
   onSelectProjectConversation,
@@ -188,6 +190,7 @@ export function AppShell({
   const [profileDialog, setProfileDialog] = useState<ProfileDialog | null>(null);
   const [projectDialog, setProjectDialog] = useState<ProjectDialog | null>(null);
   const [conversationDialog, setConversationDialog] = useState<ConversationDialog | null>(null);
+  const [confirmDeleteConversationKey, setConfirmDeleteConversationKey] = useState("");
   const [profileActionBusy, setProfileActionBusy] = useState(false);
   const [profileActionError, setProfileActionError] = useState("");
   const [projectActionBusy, setProjectActionBusy] = useState(false);
@@ -291,7 +294,7 @@ export function AppShell({
       items.push({
         conversation,
         profileName,
-        sourceLabel: `Chats / ${profileName}`,
+        sourceLabel: `Sessions / ${profileName}`,
         pinKey: unprojectedConversationPinKey(profileName, conversation.id),
         select: () => onSelectConversation(profileName, conversation.id),
       });
@@ -429,6 +432,7 @@ export function AppShell({
 
   useEffect(() => {
     if (!conversationMenu) return undefined;
+    setConfirmDeleteConversationKey("");
 
     const closeMenu = (event: PointerEvent) => {
       const target = event.target instanceof Element ? event.target : null;
@@ -553,7 +557,7 @@ export function AppShell({
             <p className="brand-name">Iris</p>
             <p className="brand-status">
               <span className={connected ? "status-dot connected" : "status-dot"} />
-              {connected ? "Chat route online" : "Route offline"}
+              {connected ? "Session route online" : "Route offline"}
             </p>
           </div>
         </div>
@@ -570,9 +574,9 @@ export function AppShell({
                     isNewChatAction ? "new-chat-nav-item" : "",
                     !isNewChatAction && activeView === item.id ? "active" : "",
                   ].filter(Boolean).join(" ")}
-                  aria-label={isNewChatAction ? "Start new chat" : item.label}
+                  aria-label={isNewChatAction ? "Start new session" : item.label}
                   aria-keyshortcuts={isNewChatAction ? "Meta+N" : undefined}
-                  title={isNewChatAction ? "Start new chat" : item.label}
+                  title={isNewChatAction ? "Start new session" : item.label}
                   onMouseDown={isNewChatAction ? (event) => event.preventDefault() : undefined}
                   onClick={() => {
                     if (isNewChatAction) {
@@ -590,9 +594,9 @@ export function AppShell({
                   <button
                     type="button"
                     className={conversationSearchOpen ? "nav-item conversation-search-nav active" : "nav-item conversation-search-nav"}
-                    aria-label="Search conversations"
+                    aria-label="Search sessions"
                     aria-keyshortcuts="Meta+G"
-                    title="Search conversations"
+                    title="Search sessions"
                     onMouseDown={(event) => event.preventDefault()}
                     onClick={openConversationSearch}
                   >
@@ -663,7 +667,7 @@ export function AppShell({
 
           <div className="sidebar-section profile-tree chats-tree">
             <div className="profile-tree-header">
-              {renderSidebarSectionToggle("chats", "Chats", chatsSectionCollapsed)}
+              {renderSidebarSectionToggle("chats", "Sessions", chatsSectionCollapsed)}
             </div>
             {!chatsSectionCollapsed ? (
               <div className="profile-list flat-chat-list" id="sidebar-chats-section">
@@ -687,7 +691,7 @@ export function AppShell({
                     });
                   })
                 ) : (
-                  <div className="history-empty compact">No unprojected chats yet.</div>
+                  <div className="history-empty compact">No unprojected sessions yet.</div>
                 )}
               </div>
             ) : null}
@@ -702,7 +706,7 @@ export function AppShell({
                   className="sidebar-icon-button"
                   onClick={() => onRefreshConversations(selectedProfile)}
                   disabled={conversationsLoading}
-                  title="Refresh conversations"
+                  title="Refresh sessions"
                 >
                   <RefreshCcw size={13} className={conversationsLoading ? "spin" : ""} />
                 </button>
@@ -786,8 +790,8 @@ export function AppShell({
                           <button
                             type="button"
                             className="profile-row-action profile-new-chat-action"
-                            title={`Start new chat in ${profile.name}`}
-                            aria-label={`Start new chat in ${profile.name}`}
+                            title={`Start new session in ${profile.name}`}
+                            aria-label={`Start new session in ${profile.name}`}
                             onClick={(event) => {
                               event.stopPropagation();
                               if (!selected) onSelectProfile(profile.name);
@@ -812,7 +816,7 @@ export function AppShell({
                             )
                           ) : (
                             <div className="history-empty compact">
-                              {profileLoading ? "Loading conversations..." : "No conversations yet."}
+                              {profileLoading ? "Loading sessions..." : "No sessions yet."}
                             </div>
                           )}
                         </div>
@@ -963,8 +967,8 @@ export function AppShell({
             <button
               type="button"
               className="profile-row-action profile-new-chat-action"
-              title={`Start new chat in ${project.name}`}
-              aria-label={`Start new chat in ${project.name}`}
+              title={`Start new session in ${project.name}`}
+              aria-label={`Start new session in ${project.name}`}
               onClick={(event) => {
                 event.stopPropagation();
                 if (collapsed) onToggleProjectCollapsed(project.id);
@@ -990,7 +994,7 @@ export function AppShell({
               })
             ) : (
               <div className="history-empty compact">
-                {projectLoading ? "Loading conversations..." : "No conversations yet."}
+                {projectLoading ? "Loading sessions..." : "No sessions yet."}
               </div>
             )}
           </div>
@@ -1038,7 +1042,7 @@ export function AppShell({
           type="button"
           className="sidebar-session-pin"
           aria-label={pinned ? `Unpin ${conversation.title}` : `Pin ${conversation.title}`}
-          title={pinned ? "Unpin conversation" : "Pin conversation"}
+          title={pinned ? "Unpin session" : "Pin session"}
           onClick={(event) => {
             event.stopPropagation();
             toggleConversationPinned(pinKey);
@@ -1140,7 +1144,7 @@ export function AppShell({
   }
 
   function renderConversationSearch() {
-    const heading = conversationSearchQuery.trim() ? "Matching chats" : "Recent chats";
+    const heading = conversationSearchQuery.trim() ? "Matching sessions" : "Recent sessions";
     const loadingAnyConversation = Object.values(conversationsLoadingByProfile).some(Boolean);
 
     return (
@@ -1149,7 +1153,7 @@ export function AppShell({
           className="conversation-search-dialog"
           role="dialog"
           aria-modal="true"
-          aria-label="Search chats"
+          aria-label="Search sessions"
           onMouseDown={(event) => event.stopPropagation()}
         >
           <div className="conversation-search-input-wrap">
@@ -1157,7 +1161,7 @@ export function AppShell({
             <input
               ref={conversationSearchInputRef}
               value={conversationSearchQuery}
-              placeholder="Search chats"
+              placeholder="Search sessions"
               onChange={(event) => setConversationSearchQuery(event.target.value)}
               onKeyDown={(event) => {
                 if (event.key === "Escape") {
@@ -1201,7 +1205,7 @@ export function AppShell({
           </div>
           <div className="conversation-search-results">
             <p className="conversation-search-heading">
-              {loadingAnyConversation && !conversationSearchItems.length ? "Loading chats" : heading}
+              {loadingAnyConversation && !conversationSearchItems.length ? "Loading sessions" : heading}
             </p>
             {filteredConversationSearchItems.length ? (
               filteredConversationSearchItems.map((item, index) => (
@@ -1220,7 +1224,7 @@ export function AppShell({
               ))
             ) : (
               <p className="conversation-search-empty">
-                {loadingAnyConversation ? "Loading conversations..." : "No matching chats."}
+                {loadingAnyConversation ? "Loading sessions..." : "No matching sessions."}
               </p>
             )}
           </div>
@@ -1348,7 +1352,7 @@ export function AppShell({
     clientY: number,
   ) {
     const menuWidth = 174;
-    const menuHeight = 76;
+    const menuHeight = 112;
     setConversationMenu({
       profileName,
       conversation,
@@ -1369,6 +1373,19 @@ export function AppShell({
         delete next[pinKey];
       } else {
         next[pinKey] = true;
+      }
+      savePinnedConversations(next);
+      return next;
+    });
+  }
+
+  function removePinnedConversation(conversationId: string, pinKey: string) {
+    setPinnedConversations((current) => {
+      const next = { ...current };
+      for (const key of Object.keys(next)) {
+        if (key === pinKey || key.endsWith(`:${conversationId}`)) {
+          delete next[key];
+        }
       }
       savePinnedConversations(next);
       return next;
@@ -1467,16 +1484,23 @@ export function AppShell({
   function renderConversationMenu() {
     if (!conversationMenu) return null;
     const pinned = isConversationPinned(conversationMenu.pinKey);
+    const deleteArmed = confirmDeleteConversationKey === conversationMenu.pinKey;
+    const deleteDisabled =
+      conversationActionBusy || activeConversationIds.includes(conversationMenu.conversation.id);
 
     return (
       <div
         className="profile-context-menu conversation-context-menu"
         role="menu"
         style={{ top: conversationMenu.top, left: conversationMenu.left }}
+        onMouseLeave={resetConfirmDeleteConversation}
+        onPointerLeave={resetConfirmDeleteConversation}
       >
         <button
           type="button"
           role="menuitem"
+          onMouseEnter={resetConfirmDeleteConversation}
+          onPointerEnter={resetConfirmDeleteConversation}
           onClick={() => {
             toggleConversationPinned(conversationMenu.pinKey);
             setConversationMenu(null);
@@ -1488,6 +1512,8 @@ export function AppShell({
         <button
           type="button"
           role="menuitem"
+          onMouseEnter={resetConfirmDeleteConversation}
+          onPointerEnter={resetConfirmDeleteConversation}
           onClick={() => {
             const { profileName, conversation } = conversationMenu;
             setConversationMenu(null);
@@ -1496,6 +1522,27 @@ export function AppShell({
         >
           <Pencil size={14} />
           Rename
+        </button>
+        <button
+          type="button"
+          role="menuitem"
+          className={deleteArmed ? "danger-menu-item confirm-menu-item" : "danger-menu-item"}
+          disabled={deleteDisabled}
+          title={activeConversationIds.includes(conversationMenu.conversation.id) ? "Wait for the active response to finish before deleting" : undefined}
+          onMouseLeave={resetConfirmDeleteConversation}
+          onPointerLeave={resetConfirmDeleteConversation}
+          onClick={() => {
+            if (deleteDisabled) return;
+            if (!deleteArmed) {
+              setConfirmDeleteConversationKey(conversationMenu.pinKey);
+              return;
+            }
+            const { profileName, conversation, pinKey } = conversationMenu;
+            void runConversationDelete(profileName, conversation.id, pinKey);
+          }}
+        >
+          <Trash2 size={14} />
+          {conversationActionBusy ? "Deleting..." : deleteArmed ? "Confirm delete" : "Delete"}
         </button>
       </div>
     );
@@ -1519,13 +1566,17 @@ export function AppShell({
     setConversationActionError("");
   }
 
+  function resetConfirmDeleteConversation() {
+    setConfirmDeleteConversationKey("");
+  }
+
   async function submitConversationDialog(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!conversationDialog || conversationActionBusy) return;
 
     const name = conversationDialog.name.trim();
     if (!name) {
-      setConversationActionError("Enter a conversation name.");
+      setConversationActionError("Enter a session name.");
       return;
     }
 
@@ -1543,6 +1594,21 @@ export function AppShell({
       return;
     }
     setConversationDialog(null);
+  }
+
+  async function runConversationDelete(profileName: string, conversationId: string, pinKey: string) {
+    setConversationActionBusy(true);
+    setConversationActionError("");
+    const message = await onDeleteConversation(profileName, conversationId);
+    setConversationActionBusy(false);
+    if (isConversationActionFailure(message)) {
+      setConversationActionError(message);
+      setConfirmDeleteConversationKey("");
+      return;
+    }
+    removePinnedConversation(conversationId, pinKey);
+    setConfirmDeleteConversationKey("");
+    setConversationMenu(null);
   }
 
   async function submitProjectDialog(event: FormEvent<HTMLFormElement>) {
@@ -1657,15 +1723,15 @@ export function AppShell({
       <div className="profile-action-modal" role="dialog" aria-modal="true" aria-labelledby="conversation-action-title">
         <form onSubmit={submitConversationDialog}>
           <div>
-            <p className="eyebrow">Conversation</p>
-            <h2 id="conversation-action-title">Rename conversation</h2>
+            <p className="eyebrow">Session</p>
+            <h2 id="conversation-action-title">Rename session</h2>
           </div>
           <label>
-            <span>Conversation name</span>
+            <span>Session name</span>
             <input
               autoFocus
               value={inputValue}
-              placeholder="Conversation name"
+              placeholder="Session name"
               onChange={(event) => setConversationDialog({ ...dialog, name: event.target.value })}
             />
           </label>

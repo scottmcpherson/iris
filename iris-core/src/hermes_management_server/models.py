@@ -134,7 +134,7 @@ class SkillSummary(BaseModel):
 
 class CoreConversationCreateRequest(BaseModel):
     agentId: str | None = None
-    title: str = "New conversation"
+    title: str = "New session"
     externalChatId: str | None = None
     externalSessionId: str | None = None
     projectId: str | None = None

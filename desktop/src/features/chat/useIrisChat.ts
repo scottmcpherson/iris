@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import type { Message, MessageAttachment } from "../../app/types";
 import {
   coreEventToInboxMessage,
+  deleteIrisConversation,
   getIrisConversationDetail,
   getIrisConversations,
   renameIrisConversation,
@@ -302,7 +303,7 @@ export function useAgentUIChat({ profile, runtimeConfig, isChatViewActive = true
                 }
               : undefined,
           );
-        if (!coreConversation) throw new Error("Iris Core chat is unavailable. Message was not sent.");
+        if (!coreConversation) throw new Error("Iris Core session is unavailable. Message was not sent.");
         coreCreatedConversation = coreConversation;
         linkedFromConversationId = previousId && previousId !== coreConversation.id ? previousId : "";
         conversationId = coreConversation.id;
@@ -391,7 +392,7 @@ export function useAgentUIChat({ profile, runtimeConfig, isChatViewActive = true
       const message =
         error instanceof Error
           ? error.message
-          : "Iris Core chat is not available yet.";
+          : "Iris Core session is not available yet.";
       activeRequestIdsByConversationRef.current = removeActiveRequestIds(
         activeRequestIdsByConversationRef.current,
         activeConversationId,
@@ -558,12 +559,12 @@ export function useAgentUIChat({ profile, runtimeConfig, isChatViewActive = true
         setConversationsByProfile((current) => ({ ...current, [targetProfile]: [] }));
         setHistoryErrorsByProfile((current) => ({
           ...current,
-          [targetProfile]: result.error || "Could not load Hermes conversations.",
+          [targetProfile]: result.error || "Could not load Hermes sessions.",
         }));
         setConversationsLoadedByProfile((current) => ({ ...current, [targetProfile]: true }));
       }
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Could not load Hermes conversations.";
+      const message = error instanceof Error ? error.message : "Could not load Hermes sessions.";
       if (isTransientConversationLoadError(message) && (options.transientRetries ?? 3) > 0) {
         scheduleConversationRetry(targetProfile, options.selectConversationId, options.transientRetries ?? 3);
         return;
@@ -601,16 +602,57 @@ export function useAgentUIChat({ profile, runtimeConfig, isChatViewActive = true
 
   async function renameConversation(profileName: string, conversationId: string, title: string) {
     const cleanTitle = title.trim();
-    if (!cleanTitle) return "Enter a conversation name.";
+    if (!cleanTitle) return "Enter a session name.";
     const result = await renameIrisConversation(profileName, conversationId, cleanTitle, runtimeConfig);
     if (!result.ok || !result.conversation) {
-      return result.error || "Could not rename this conversation.";
+      return result.error || "Could not rename this session.";
     }
     setConversationsByProfile((current) =>
       upsertConversationForProfile(current, profileName, result.conversation),
     );
     setHistoryErrorsByProfile((current) => ({ ...current, [profileName]: null }));
-    return "Conversation renamed.";
+    return "Session renamed.";
+  }
+
+  async function deleteConversation(profileName: string, conversationId: string) {
+    if (!conversationId) return "Session was not found.";
+    if (activeRequestIdsByConversationRef.current[conversationId]) {
+      return "Wait for the active response to finish before deleting this session.";
+    }
+    const result = await deleteIrisConversation(profileName, conversationId, runtimeConfig);
+    if (!result.ok) {
+      return result.error || "Could not delete this session.";
+    }
+    const chatId = latestChatIdForConversation(conversationId, profileName);
+    const relatedConversationIds = conversationIdsForChatId(
+      chatId,
+      conversationId,
+      conversationChatIdsByConversationRef.current,
+    );
+    const idsToRemove = [conversationId, ...relatedConversationIds];
+    setConversationsByProfile((current) =>
+      removeConversationsForProfile(current, profileName, idsToRemove),
+    );
+    setMessagesByConversation((current) => removeConversationValues(current, ...idsToRemove));
+    setConversationChatIdsByConversation((current) => removeConversationValues(current, ...idsToRemove));
+    setModelSelectionByConversation((current) => removeModelSelections(current, ...idsToRemove));
+    setConversationReadStates((current) => removeReadStates(current, ...idsToRemove));
+    activeRequestIdsByConversationRef.current = removeActiveRequestIds(
+      activeRequestIdsByConversationRef.current,
+      ...idsToRemove,
+    );
+    activeConversationTitlesByConversationRef.current = removeConversationValues(
+      activeConversationTitlesByConversationRef.current,
+      ...idsToRemove,
+    );
+    setActiveRequestIdsByConversation((current) =>
+      removeActiveRequestIds(current, ...idsToRemove),
+    );
+    if (selectedConversationIdRef.current && idsToRemove.includes(selectedConversationIdRef.current)) {
+      startNewConversation(profileName);
+    }
+    setHistoryErrorsByProfile((current) => ({ ...current, [profileName]: null }));
+    return "Session deleted.";
   }
 
   async function refreshConversationDetail(
@@ -638,7 +680,7 @@ export function useAgentUIChat({ profile, runtimeConfig, isChatViewActive = true
       if (!result.ok || !result.conversation) {
         setHistoryErrorsByProfile((current) => ({
           ...current,
-          [profileName]: result.error || "Could not load this conversation.",
+          [profileName]: result.error || "Could not load this session.",
         }));
         return false;
       }
@@ -714,7 +756,7 @@ export function useAgentUIChat({ profile, runtimeConfig, isChatViewActive = true
     } catch (error) {
       setHistoryErrorsByProfile((current) => ({
         ...current,
-        [profileName]: error instanceof Error ? error.message : "Could not load this conversation.",
+        [profileName]: error instanceof Error ? error.message : "Could not load this session.",
       }));
       return false;
     } finally {
@@ -1107,6 +1149,7 @@ export function useAgentUIChat({ profile, runtimeConfig, isChatViewActive = true
     historySchemaVersion,
     historySource,
     input,
+    deleteConversation,
     loadConversation,
     messages,
     renameConversation,
@@ -1170,6 +1213,19 @@ function removeConversationForProfile(
   if (!conversationId) return current;
   const conversations = current[profile] || [];
   const filtered = conversations.filter((item) => item.id !== conversationId);
+  if (filtered.length === conversations.length) return current;
+  return { ...current, [profile]: filtered };
+}
+
+function removeConversationsForProfile(
+  current: Record<string, HermesConversation[]>,
+  profile: string,
+  conversationIds: string[],
+) {
+  const ids = new Set(conversationIds.filter(Boolean));
+  if (!ids.size) return current;
+  const conversations = current[profile] || [];
+  const filtered = conversations.filter((item) => !ids.has(item.id));
   if (filtered.length === conversations.length) return current;
   return { ...current, [profile]: filtered };
 }
@@ -1656,13 +1712,27 @@ function removeActiveRequestIds(
   return removeConversationValues(current, ...conversationIds);
 }
 
-function removeConversationValues(
-  current: Record<string, string>,
+function removeConversationValues<T>(
+  current: Record<string, T>,
   ...conversationIds: Array<string | null | undefined>
 ) {
   const ids = new Set(conversationIds.filter(Boolean));
   if (!ids.size) return current;
   return Object.fromEntries(Object.entries(current).filter(([conversationId]) => !ids.has(conversationId)));
+}
+
+function removeModelSelections(
+  current: Record<string, HermesModelSelection>,
+  ...conversationIds: Array<string | null | undefined>
+) {
+  return removeConversationValues(current, ...conversationIds);
+}
+
+function removeReadStates(
+  current: Record<string, "read" | "unread">,
+  ...conversationIds: Array<string | null | undefined>
+) {
+  return removeConversationValues(current, ...conversationIds);
 }
 
 function sortConversationsByActivity(conversations: HermesConversation[]) {
@@ -1707,7 +1777,7 @@ function conversationTitleFromPrompt(prompt: string) {
     .find(Boolean);
   const attachmentTitle = titleFromAttachmentSummary(firstLine || "");
   if (attachmentTitle) return attachmentTitle;
-  return compactText(firstLine || "New conversation", 90);
+  return compactText(firstLine || "New session", 90);
 }
 
 function titleFromAttachmentSummary(firstLine: string) {

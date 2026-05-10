@@ -4,10 +4,13 @@
 from __future__ import annotations
 
 import json
+import base64
 import mimetypes
 import os
+import shutil
 import subprocess
 import sys
+import tempfile
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -36,6 +39,7 @@ def main() -> None:
 
     handlers = {
         "core_request": core_request,
+        "core_attachment_data": core_attachment_data,
         "core_upload_path": core_upload_path,
         "remote_credential_status": remote_credential_status,
         "remote_credential_save": remote_credential_save,
@@ -70,6 +74,34 @@ def core_request(payload: dict[str, Any]) -> dict[str, Any]:
         return {"ok": False, "error": "Core request path is required."}
     body = payload.get("body") if isinstance(payload.get("body"), dict) else None
     return core_json_request(payload, path, method=method, body=body, timeout=12)
+
+
+def core_attachment_data(payload: dict[str, Any]) -> dict[str, Any]:
+    path = str(payload.get("path") or payload.get("url") or "").strip()
+    if not path:
+        return {"ok": False, "error": "Attachment path is required."}
+    url = core_attachment_url(payload, path)
+    result = core_bytes_request(url, payload, timeout=30)
+    if not result["ok"]:
+        return result
+    mime_type = str(result.get("mimeType") or "application/octet-stream").split(";", 1)[0]
+    requested_mime_type = str(payload.get("mimeType") or "").split(";", 1)[0]
+    filename = str(payload.get("filename") or payload.get("name") or "")
+    content = result.get("_content") if isinstance(result.get("_content"), bytes) else b""
+    local_path = ""
+    if should_transcode_audio_for_webview(mime_type, filename) or should_transcode_audio_for_webview(requested_mime_type, filename):
+        transcoded = transcode_audio_to_wav(content)
+        if transcoded:
+            content = transcoded
+            mime_type = "audio/wav"
+            local_path = write_temp_audio_file(content, ".wav")
+    data = base64.b64encode(content).decode("ascii")
+    return {
+        "ok": True,
+        "mimeType": mime_type,
+        "dataUrl": f"data:{mime_type};base64,{data}",
+        "localPath": local_path,
+    }
 
 
 def core_upload_path(payload: dict[str, Any]) -> dict[str, Any]:
@@ -184,6 +216,96 @@ def core_raw_request(
     return {**parsed, "ok": bool(parsed.get("ok", True)), "url": url, "status": status}
 
 
+def core_bytes_request(url: str, payload: dict[str, Any], *, timeout: int) -> dict[str, Any]:
+    token = str(payload.get("coreToken") or "").strip() or read_remote_token("core")
+    request_headers = {"Accept": "*/*"}
+    if token:
+        request_headers["Authorization"] = f"Bearer {token}"
+    request = urllib.request.Request(url, headers=request_headers, method="GET")
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            content = response.read()
+            status = response.status
+            mime_type = response.headers.get("Content-Type", "application/octet-stream")
+    except urllib.error.HTTPError as exc:
+        text = exc.read().decode("utf-8", errors="replace")
+        return {"ok": False, "url": url, "status": exc.code, "error": api_error_text(text) or f"HTTP {exc.code}"}
+    except Exception as exc:
+        return {"ok": False, "url": url, "error": str(exc)}
+    return {
+        "ok": True,
+        "url": url,
+        "status": status,
+        "mimeType": mime_type,
+        "_content": content,
+        "base64": base64.b64encode(content).decode("ascii"),
+    }
+
+
+def should_transcode_audio_for_webview(mime_type: str, filename: str = "") -> bool:
+    normalized = str(mime_type or "").split(";", 1)[0].strip().lower()
+    lower_filename = str(filename or "").lower()
+    return normalized in {"audio/webm", "video/webm", "audio/ogg", "application/ogg"} or lower_filename.endswith((".webm", ".ogg"))
+
+
+def transcode_audio_to_wav(content: bytes) -> bytes:
+    if not content:
+        return b""
+    ffmpeg = first_existing_executable(["/opt/homebrew/bin/ffmpeg", "/usr/local/bin/ffmpeg", "ffmpeg"])
+    if not ffmpeg:
+        return b""
+    with tempfile.TemporaryDirectory(prefix="iris-audio-") as directory:
+        source = Path(directory) / "source.webm"
+        target = Path(directory) / "voice.wav"
+        source.write_bytes(content)
+        result = subprocess.run(
+            [
+                ffmpeg,
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-y",
+                "-i",
+                str(source),
+                "-vn",
+                "-acodec",
+                "pcm_s16le",
+                "-ac",
+                "1",
+                "-ar",
+                "48000",
+                str(target),
+            ],
+            capture_output=True,
+        )
+        if result.returncode != 0 or not target.is_file():
+            return b""
+        return target.read_bytes()
+
+
+def write_temp_audio_file(content: bytes, suffix: str) -> str:
+    if not content:
+        return ""
+    try:
+        with tempfile.NamedTemporaryFile(prefix="iris-audio-", suffix=suffix, delete=False) as handle:
+            handle.write(content)
+            return handle.name
+    except OSError:
+        return ""
+
+
+def first_existing_executable(candidates: list[str]) -> str:
+    for candidate in candidates:
+        if "/" in candidate:
+            if Path(candidate).is_file() and os.access(candidate, os.X_OK):
+                return candidate
+            continue
+        path = shutil.which(candidate)
+        if path:
+            return path
+    return ""
+
+
 def core_base_url(payload: dict[str, Any]) -> str:
     runtime = payload.get("runtime") if isinstance(payload.get("runtime"), dict) else {}
     value = str(runtime.get("coreApiUrl") or payload.get("coreApiUrl") or DEFAULT_CORE_URL).strip()
@@ -195,6 +317,14 @@ def core_endpoint(base_url: str, path: str) -> str:
     if not base.endswith("/v1"):
         base = f"{base}/v1"
     return f"{base}{path if path.startswith('/') else f'/{path}'}"
+
+
+def core_attachment_url(payload: dict[str, Any], value: str) -> str:
+    if value.startswith("http://") or value.startswith("https://"):
+        return value
+    if value.startswith("/v1/"):
+        return f"{core_base_url(payload).rstrip('/')}{value[3:] if core_base_url(payload).rstrip('/').endswith('/v1') else value}"
+    return core_endpoint(core_base_url(payload), value)
 
 
 def multipart_body(

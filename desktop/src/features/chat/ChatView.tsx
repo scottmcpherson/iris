@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type {
   CSSProperties,
   DragEvent,
@@ -145,6 +145,7 @@ export function ChatView({
   const projectMenuRef = useRef<HTMLDivElement>(null);
   const modelMenuRef = useRef<HTMLDivElement>(null);
   const modelSearchRef = useRef<HTMLInputElement>(null);
+  const seenRenderedMessageIdsRef = useRef<Set<string>>(new Set());
   const modelOptionRefs = useRef<Record<string, HTMLButtonElement | null>>({});
   const slashCommandRefs = useRef<Record<string, HTMLButtonElement | null>>({});
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -164,7 +165,12 @@ export function ChatView({
   const [dragActive, setDragActive] = useState(false);
   const [sendPending, setSendPending] = useState(false);
   const [transcriptScrollSettling, setTranscriptScrollSettling] = useState(false);
-  const renderedMessages = messages.filter(shouldRenderMessage);
+  const renderedMessages = useMemo(() => messages.filter(shouldRenderMessage), [messages]);
+  const enteringMessageIds = useMemo(() => {
+    if (!requestActive) return new Set<string>();
+    const unseenMessages = renderedMessages.filter((message) => !seenRenderedMessageIdsRef.current.has(message.id));
+    return new Set(unseenMessages.slice(-2).map((message) => message.id));
+  }, [renderedMessages, requestActive]);
   const showEmptyState = shouldShowChatEmptyState(selectedConversationId, renderedMessages.length);
   const transcriptScrollKey = chatTranscriptScrollKey(selectedConversationId, renderedMessages.length);
   const transcriptResizeBehavior = requestActive ? "smooth" : "instant";
@@ -187,7 +193,7 @@ export function ChatView({
   const modelOptionsAvailable = Boolean(modelCatalog?.providers?.some((provider) => provider.models.length));
   const modelSelectionDisabled = modelSelectionLocked || dictationBusy || !connected || modelLoading || !modelOptionsAvailable;
   const modelSelectorTitle = modelSelectionLocked
-    ? "Model is locked for this conversation"
+    ? "Model is locked for this session"
     : modelLoading
       ? "Models are loading"
       : !connected
@@ -235,14 +241,14 @@ export function ChatView({
   }, [newChat, renderedMessages.length, requestActive, selectedConversationId, transcriptScrollKey]);
 
   const profileSelectorTitle = profileSelectionLocked
-    ? "Agent is locked for this conversation"
+    ? "Agent is locked for this session"
     : !connected
       ? "Connect Iris to select an agent"
       : profiles.length < 2
         ? "Only one agent is available"
         : "Change agent";
   const projectSelectorTitle = projectSelectionLocked
-    ? "Project is locked for this conversation"
+    ? "Project is locked for this session"
     : !connected
       ? "Connect Iris to select a project"
       : "Change project";
@@ -373,6 +379,17 @@ export function ChatView({
   useEffect(() => {
     attachmentsRef.current = attachments;
   }, [attachments]);
+
+  useEffect(() => {
+    for (const message of renderedMessages) {
+      seenRenderedMessageIdsRef.current.add(message.id);
+    }
+    if (seenRenderedMessageIdsRef.current.size > 600) {
+      seenRenderedMessageIdsRef.current = new Set(
+        Array.from(seenRenderedMessageIdsRef.current).slice(-400),
+      );
+    }
+  }, [renderedMessages]);
 
   useEffect(() => {
     return () => {
@@ -714,26 +731,12 @@ export function ChatView({
             <StickToBottom.Content className="conversation-column" scrollClassName="message-list">
               {renderedMessages.length ? (
                 renderedMessages.map((message) => (
-                  <article key={message.id} className={`message ${message.role}`}>
-                    {message.role === "system" ? (
-                      <div className="message-kicker">
-                        <Sparkles size={14} />
-                        <span>System</span>
-                      </div>
-                    ) : null}
-                    {message.attachments?.length && message.role !== "assistant" ? (
-                      <MessageAttachments attachments={message.attachments} runtimeConfig={runtimeConfig} />
-                    ) : null}
-                    {shouldRenderMessageBody(message) ? (
-                      <div className="message-body">
-                        <MessageContent message={message} />
-                        {eventCount(message.events) ? <MessageEvents events={message.events} /> : null}
-                      </div>
-                    ) : null}
-                    {message.attachments?.length && message.role === "assistant" ? (
-                      <MessageAttachments attachments={message.attachments} runtimeConfig={runtimeConfig} />
-                    ) : null}
-                  </article>
+                  <MessageRow
+                    key={message.id}
+                    message={message}
+                    runtimeConfig={runtimeConfig}
+                    entering={enteringMessageIds.has(message.id)}
+                  />
                 ))
               ) : showEmptyState ? (
                 <div className="empty-state">
@@ -746,7 +749,7 @@ export function ChatView({
                     ) : connected ? (
                       "Ready for the first request."
                     ) : (
-                      "Connect Iris to start a live chat."
+                      "Connect Iris to start a live session."
                     )}
                   </strong>
                   <span>
@@ -940,6 +943,39 @@ export function ChatView({
     </div>
   );
 }
+
+const MessageRow = memo(function MessageRow({
+  message,
+  runtimeConfig,
+  entering,
+}: {
+  message: Message;
+  runtimeConfig: HermesRuntimeConfig;
+  entering: boolean;
+}) {
+  return (
+    <article className={["message", message.role, entering ? "message-entering" : ""].filter(Boolean).join(" ")}>
+      {message.role === "system" ? (
+        <div className="message-kicker">
+          <Sparkles size={14} />
+          <span>System</span>
+        </div>
+      ) : null}
+      {message.attachments?.length && message.role !== "assistant" ? (
+        <MessageAttachments attachments={message.attachments} runtimeConfig={runtimeConfig} />
+      ) : null}
+      {shouldRenderMessageBody(message) ? (
+        <div className="message-body">
+          <MessageContent message={message} />
+          {eventCount(message.events) ? <MessageEvents events={message.events} /> : null}
+        </div>
+      ) : null}
+      {message.attachments?.length && message.role === "assistant" ? (
+        <MessageAttachments attachments={message.attachments} runtimeConfig={runtimeConfig} />
+      ) : null}
+    </article>
+  );
+});
 
 function DictationWaveform({
   state,

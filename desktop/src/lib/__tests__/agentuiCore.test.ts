@@ -9,6 +9,7 @@ import {
   getAgentUICoreAgentSkill,
   getAgentUICoreAgentSkills,
   getAgentUICoreEvents,
+  getAgentUICoreAttachmentDataUrl,
   renameAgentUICoreAgent,
   resetAgentUICoreAgentMemory,
   saveAgentUICoreAgentMemory,
@@ -91,6 +92,114 @@ describe("agentuiCore", () => {
         }),
       }),
     );
+  });
+
+  it("loads protected attachment media through the native bridge", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({
+        ok: false,
+        status: 401,
+        blob: async () => new Blob(),
+      })),
+    );
+    invoke.mockResolvedValue({ ok: true, dataUrl: "data:audio/mp4;base64,YQ==", mimeType: "audio/mp4" });
+
+    const result = await getAgentUICoreAttachmentDataUrl(
+      defaultRuntimeConfig,
+      "http://127.0.0.1:8765/v1/attachments/att_1/content",
+      "audio/mp4",
+    );
+
+    expect(result).toEqual({ ok: true, dataUrl: "data:audio/mp4;base64,YQ==", mimeType: "audio/mp4" });
+    expect(invoke).toHaveBeenCalledWith("core_bridge", {
+      action: "core_attachment_data",
+      payload: {
+        path: "http://127.0.0.1:8765/v1/attachments/att_1/content",
+        mimeType: "audio/mp4",
+        filename: "",
+        runtime: defaultRuntimeConfig,
+      },
+    });
+  });
+
+  it("routes webm audio through the bridge so the desktop app can transcode it", async () => {
+    const fetch = vi.fn();
+    vi.stubGlobal("fetch", fetch);
+    invoke.mockResolvedValue({ ok: true, dataUrl: "data:audio/mp4;base64,YQ==", mimeType: "audio/mp4" });
+
+    const result = await getAgentUICoreAttachmentDataUrl(
+      defaultRuntimeConfig,
+      "http://127.0.0.1:8765/v1/attachments/att_1/content",
+      "audio/webm",
+    );
+
+    expect(result.mimeType).toBe("audio/mp4");
+    expect(fetch).not.toHaveBeenCalled();
+    expect(invoke).toHaveBeenCalledWith("core_bridge", {
+      action: "core_attachment_data",
+      payload: {
+        path: "http://127.0.0.1:8765/v1/attachments/att_1/content",
+        mimeType: "audio/webm",
+        filename: "",
+        runtime: defaultRuntimeConfig,
+      },
+    });
+  });
+
+  it("routes webm filenames through the bridge even when the stored mime type is generic", async () => {
+    const fetch = vi.fn();
+    vi.stubGlobal("fetch", fetch);
+    invoke.mockResolvedValue({ ok: true, dataUrl: "data:audio/mp4;base64,YQ==", mimeType: "audio/mp4" });
+
+    const result = await getAgentUICoreAttachmentDataUrl(
+      defaultRuntimeConfig,
+      "http://127.0.0.1:8765/v1/attachments/att_1/content",
+      "application/octet-stream",
+      "dictation.webm",
+    );
+
+    expect(result.mimeType).toBe("audio/mp4");
+    expect(fetch).not.toHaveBeenCalled();
+    expect(invoke).toHaveBeenCalledWith("core_bridge", {
+      action: "core_attachment_data",
+      payload: {
+        path: "http://127.0.0.1:8765/v1/attachments/att_1/content",
+        mimeType: "application/octet-stream",
+        filename: "dictation.webm",
+        runtime: defaultRuntimeConfig,
+      },
+    });
+  });
+
+  it("routes directly fetched webm blobs through the bridge", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({
+        ok: true,
+        status: 200,
+        headers: new Headers({ "Content-Type": "audio/webm" }),
+        blob: async () => new Blob(["audio"], { type: "audio/webm" }),
+      })),
+    );
+    invoke.mockResolvedValue({ ok: true, dataUrl: "data:audio/mp4;base64,YQ==", mimeType: "audio/mp4" });
+
+    const result = await getAgentUICoreAttachmentDataUrl(
+      defaultRuntimeConfig,
+      "http://127.0.0.1:8765/v1/attachments/att_1/content",
+      "application/octet-stream",
+    );
+
+    expect(result.mimeType).toBe("audio/mp4");
+    expect(invoke).toHaveBeenCalledWith("core_bridge", {
+      action: "core_attachment_data",
+      payload: {
+        path: "http://127.0.0.1:8765/v1/attachments/att_1/content",
+        mimeType: "audio/webm",
+        filename: "",
+        runtime: defaultRuntimeConfig,
+      },
+    });
   });
 
   it("does not replay timed-out message POSTs through the native bridge", async () => {

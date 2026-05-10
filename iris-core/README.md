@@ -1,6 +1,8 @@
 # Iris Core
 
-Iris Core is the local-first control plane for Iris. It owns devices, auth, runtime routing, and Core-only coordination, and connects to Hermes through the Iris Hermes Adapter. Hermes itself remains untouched and remains the source of truth for Hermes profiles, conversations, messages, jobs, memory, skills, models, and command catalogs. Normal Iris chat enters Hermes through the `agentui` compatibility platform adapter, while this service exposes normalized adapter-backed records and live delivery events over HTTP from the machine where Hermes is running.
+Iris Core is the local-first control plane for Iris. It owns devices, auth, runtime routing, and Core-only coordination, and connects to Hermes through the Iris Hermes Adapter. Hermes itself remains untouched and remains the source of truth for Hermes profiles, sessions, messages, jobs, memory, skills, models, and command catalogs. Normal Iris sessions enter Hermes through the `agentui` compatibility platform adapter, while this service exposes normalized adapter-backed records and live delivery events over HTTP from the machine where Hermes is running.
+
+Product terminology uses "sessions" for user-facing work threads. Compatibility API paths, schemas, and adapter fields may still use `conversation` or `chat`.
 
 This service lives in the `iris-core/` workspace of the Iris monorepo.
 
@@ -216,7 +218,7 @@ List recent live deliveries:
 curl http://127.0.0.1:8765/v1/inbox/messages
 ```
 
-When `IRIS_INBOX_TOKEN` is set, include the bearer token on these requests. Delivery listing is process-local and best effort; durable conversation history is read from Hermes.
+When `IRIS_INBOX_TOKEN` is set, include the bearer token on these requests. Delivery listing is process-local and best effort; durable session history is read from Hermes.
 
 ### Status
 
@@ -246,13 +248,13 @@ curl -X PUT http://127.0.0.1:8765/v1/agents/<agent_id>/memory/memory \
 
 Returns metadata and content for `MEMORY.md` and `USER.md`.
 
-### Conversations
+### Sessions
 
 ```bash
 curl 'http://127.0.0.1:8765/v1/conversations?agentId=<agent_id>&limit=80'
 ```
 
-Returns existing runtime conversations for the selected agent without requiring the client to read runtime files or SQLite directly. `limit` defaults to `80` and is clamped to `1..200`.
+Returns existing runtime sessions for the selected agent without requiring the client to read runtime files or SQLite directly. `limit` defaults to `80` and is clamped to `1..200`.
 
 Response shape:
 
@@ -271,7 +273,7 @@ Response shape:
 }
 ```
 
-Conversation discovery is schema-tolerant and read-only inside the Hermes runtime adapter. The adapter inspects Hermes-local stores and falls back to session JSON when no supported SQLite conversation table exists. Unsupported stores fail soft with an empty list and a warning.
+Session discovery is schema-tolerant and read-only inside the Hermes runtime adapter. The adapter inspects Hermes-local stores and falls back to session JSON when no supported SQLite session table exists. Unsupported stores fail soft with an empty list and a warning.
 
 ### Skills
 
@@ -287,6 +289,6 @@ Skill ids are URL-safe base64 encodings of the relative `SKILL.md` path under th
 - The service is read-only.
 - It never accepts arbitrary file paths from clients.
 - Profile names are limited to letters, numbers, dots, dashes, and underscores.
-- Memory, skill, and conversation reads are resolved and checked so they stay inside the selected profile directory.
-- Conversation discovery opens SQLite stores in read-only mode and never writes to Hermes databases or session files.
+- Memory, skill, and session reads are resolved and checked so they stay inside the selected profile directory.
+- Session discovery opens SQLite stores in read-only mode and never writes to Hermes databases or session files.
 - CORS is disabled by default. Set `HERMES_MGMT_CORS_ORIGINS` to a comma-separated allowlist when browser clients need direct access.

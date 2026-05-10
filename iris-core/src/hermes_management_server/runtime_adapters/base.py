@@ -43,6 +43,11 @@ class RuntimeAdapter(Protocol):
         conversation: dict[str, Any],
         title: str,
     ) -> dict[str, Any]: ...
+    def delete_conversation(
+        self,
+        agent: dict[str, Any],
+        conversation: dict[str, Any],
+    ) -> dict[str, Any]: ...
     def get_conversation_messages(
         self,
         agent: dict[str, Any],

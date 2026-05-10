@@ -37,7 +37,7 @@ export function ProjectMenu({
         aria-expanded={open}
         aria-label={
           locked
-            ? `Conversation project ${label}`
+            ? `Session project ${label}`
             : `Project ${connected ? label : "Offline"}`
         }
         disabled={disabled}

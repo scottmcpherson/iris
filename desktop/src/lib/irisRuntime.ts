@@ -6,6 +6,7 @@ import {
   createAgentUICoreAgent,
   createAgentUICoreAgentSkill,
   deleteAgentUICoreAgent,
+  deleteAgentUICoreConversation,
   getAgentUICoreAgentForProfile,
   getAgentUICoreAgentMemory,
   getAgentUICoreAgentSkill,
@@ -279,7 +280,7 @@ export async function getIrisConversationDetail(
       return emptyConversationDetail(
         profile || "default",
         conversationId,
-        conversationResult.error || messagesResult.error || "Could not load this conversation from Iris Core.",
+        conversationResult.error || messagesResult.error || "Could not load this session from Iris Core.",
         runtime,
       );
     }
@@ -298,7 +299,7 @@ export async function getIrisConversationDetail(
     return emptyConversationDetail(
       profile || "default",
       conversationId,
-      error instanceof Error ? error.message : "Could not load this conversation from Iris Core.",
+      error instanceof Error ? error.message : "Could not load this session from Iris Core.",
       runtime,
     );
   }
@@ -312,7 +313,7 @@ export async function renameIrisConversation(
 ) {
   const cleanTitle = title.trim();
   if (!cleanTitle) {
-    return { ok: false, conversation: null, error: "Conversation title is required." };
+    return { ok: false, conversation: null, error: "Session title is required." };
   }
   if (!conversationId.startsWith("conv_")) {
     return {
@@ -327,7 +328,7 @@ export async function renameIrisConversation(
       return {
         ok: false,
         conversation: null,
-        error: result.error || "Could not rename this conversation through Iris Core.",
+        error: result.error || "Could not rename this session through Iris Core.",
       };
     }
     return {
@@ -339,9 +340,47 @@ export async function renameIrisConversation(
     return {
       ok: false,
       conversation: null,
-      error: error instanceof Error ? error.message : "Could not rename this conversation through Iris Core.",
+      error: error instanceof Error ? error.message : "Could not rename this session through Iris Core.",
     };
   }
+}
+
+export async function deleteIrisConversation(
+  _profile: string | undefined,
+  conversationId: string,
+  runtime?: HermesRuntimeConfig,
+) {
+  if (!conversationId.startsWith("conv_")) {
+    return {
+      ok: false,
+      conversationId,
+      error: "Legacy conversations cannot be deleted until they are linked through Iris Core.",
+    };
+  }
+  try {
+    const result = await deleteAgentUICoreConversation(conversationId, runtime);
+    if (!result.ok) {
+      return {
+        ok: false,
+        conversationId,
+        error: conversationDeleteErrorMessage(result.error),
+      };
+    }
+    return { ok: true, conversationId: result.conversationId || conversationId, error: undefined };
+  } catch (error) {
+    return {
+      ok: false,
+      conversationId,
+      error: error instanceof Error ? error.message : "Could not delete this session.",
+    };
+  }
+}
+
+function conversationDeleteErrorMessage(error: string | undefined) {
+  if ((error || "").toLowerCase().includes("method not allowed")) {
+    return "Iris Core needs to be restarted before sessions can be deleted.";
+  }
+  return error || "Could not delete this session through Iris Core.";
 }
 
 export async function getIrisInboxMessages(

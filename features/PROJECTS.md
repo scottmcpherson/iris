@@ -2,12 +2,14 @@
 
 ## Goal
 
-Add Projects as the first-class organizational layer for Iris chats without turning Hermes profiles into projects. A project is an Iris-owned workspace/context container. Hermes remains the runtime source of truth for agent profiles, conversations, messages, skills, memory, models, commands, and jobs.
+Add Projects as the first-class organizational layer for Iris sessions without turning Hermes profiles into projects. A project is an Iris-owned workspace/context container. Hermes remains the runtime source of truth for agent profiles, sessions, messages, skills, memory, models, commands, and jobs.
+
+Product terminology uses "sessions" for visible work threads. Existing code, endpoint paths, and persistence fields may still use `conversation` or `chat` for compatibility.
 
 Projects should make the sidebar feel more natural:
 
 - Projects appear above Agents.
-- Projects and their conversations look and behave exactly like Agents and their conversations.
+- Projects and their sessions look and behave exactly like Agents and their sessions.
 - A project can be renamed from the sidebar context menu.
 - Creating a project uses the same modal style as creating an agent.
 - Creating a project captures a name, default agent, and project system prompt.
@@ -27,7 +29,7 @@ Iris Project
   updatedAt
   archivedAt
 
-Iris Project Conversation Link
+Iris Project Session Link
   projectId
   conversationId
   agentId
@@ -41,11 +43,11 @@ Iris Project Conversation Link
 Hermes Profile
   runtime agent/personality/tools/memory
 
-Hermes Conversation
+Hermes Session
   runtime thread and messages
 ```
 
-Do not create a Hermes profile for each project. For Hermes execution, Iris should choose the selected or default agent, create/link an Iris Core conversation, include project metadata and prompt in the send metadata, and let the Hermes adapter run the turn through the agent's runtime profile.
+Do not create a Hermes profile for each project. For Hermes execution, Iris should choose the selected or default agent, create/link an Iris Core session, include project metadata and prompt in the send metadata, and let the Hermes adapter run the turn through the agent's runtime profile.
 
 ## Current Code Shape
 
@@ -57,12 +59,12 @@ Important existing behavior to mirror:
 
 - Agent section header is `.profile-tree-header` with a `Plus` create button and refresh action.
 - Agent rows are `.profile-node`, `.profile-node-row`, and `.profile-node-button`.
-- Clicking an agent row expands/collapses its conversation branch.
-- Agent conversations render through `renderConversationRow(...)`.
-- Conversation rows support active state, running state, pin/unpin, right-click rename, and time labels.
+- Clicking an agent row expands/collapses its session branch.
+- Agent sessions render through `renderConversationRow(...)`.
+- Session rows support active state, running state, pin/unpin, right-click rename, and time labels.
 - Collapsed agent state is persisted through `storageKeys.collapsedSessionProfiles`.
-- Pinned conversations are persisted through `storageKeys.pinnedConversations`.
-- Sidebar conversation search indexes conversations from all profiles.
+- Pinned sessions are persisted through `storageKeys.pinnedConversations`.
+- Sidebar session search indexes sessions from all profiles.
 
 Projects should reuse the same visual classes or extract a shared tree component so project rows and agent rows stay identical over time.
 
@@ -315,29 +317,29 @@ In `desktop/src/layout/AppShell.tsx`, render Projects before Agents:
 Pinned
 Projects
   Project A
-    conversations...
+    sessions...
   Project B
-    conversations...
-Chats
-  Unprojected conversation A
-  Unprojected conversation B
+    sessions...
+Sessions
+  Unprojected session A
+  Unprojected session B
 Agents
   Agent A
-    conversations...
+    sessions...
 ```
 
 Project tree behavior must match agent tree behavior:
 
-- Same row height, icon treatment, hover, active states, disclosure behavior, conversation row layout, empty/loading/error states, and right-side timestamps.
+- Same row height, icon treatment, hover, active states, disclosure behavior, session row layout, empty/loading/error states, and right-side timestamps.
 - Clicking a project expands/collapses it.
-- The project row itself should not become the active chat highlight; active highlight remains on selected conversations.
-- A project row has a plus/new-chat action that starts a new chat in that project using the project's default agent.
+- The project row itself should not become the active session highlight; active highlight remains on selected sessions.
+- A project row has a plus/new-session action that starts a new session in that project using the project's default agent.
 - Right-clicking the project row opens a context menu with Rename in v1.
 - Ellipsis can also expose Rename to match agents.
 
-Chats created with `No project` should appear below the Projects section and above Agents. This section should use the same conversation row styling, but it should not be nested in a folder. Use a simple section label such as `Chats` or `No Project`; prefer `Chats` in the visible UI unless user testing shows the ambiguity is worse than the extra wording.
+Sessions created with `No project` should appear below the Projects section and above Agents. This section should use the same session row styling, but it should not be nested in a folder. Use `Sessions` in the visible UI.
 
-Do not fork conversation row visuals. Either keep using `renderConversationRow(...)` or extract it into a shared sidebar tree helper.
+Do not fork session row visuals. Either keep using `renderConversationRow(...)` or extract it into a shared sidebar tree helper.
 
 Suggested local storage keys:
 
@@ -372,9 +374,9 @@ Right-click project row -> Rename.
 
 Use the same modal shell as project create, but for v1 only show the project name field. Do not expose default agent/system prompt in a rename-only context menu action. Later, a project detail/settings screen can edit all project settings.
 
-### Chat Flow
+### Session Flow
 
-Modify chat state so a conversation can be scoped by project as well as profile:
+Modify session state so a session can be scoped by project as well as profile:
 
 Current dominant key:
 
@@ -390,25 +392,25 @@ selectedProjectId
 unprojectedConversations
 ```
 
-New chat creation must allow both project and agent selection. The UI should support choosing a project in the same way the composer already supports choosing an agent/profile, with an explicit `No project` option.
+New session creation must allow both project and agent selection. The UI should support choosing a project in the same way the composer already supports choosing an agent/profile, with an explicit `No project` option.
 
 Suggested model:
 
 ```text
-New chat target
+New session target
   projectId: string | null
   profileName: string
 ```
 
-When `projectId` is `null`, the chat is an unprojected agent chat:
+When `projectId` is `null`, the session is an unprojected agent session:
 
 1. Use the selected agent/profile.
 2. Do not pass `projectId` to `createAgentUICoreConversation(...)`.
 3. Do not send project metadata with `sendAgentUICoreMessage(...)`.
-4. Render the conversation in the flat `Chats` section below Projects, not inside a project folder.
-5. Continue to allow the same conversation to appear under the selected Agent branch if the agent conversation tree is expanded.
+4. Render the session in the flat `Sessions` section below Projects, not inside a project folder.
+5. Continue to allow the same session to appear under the selected Agent branch if the agent session tree is expanded.
 
-When starting a new project conversation:
+When starting a new project session:
 
 1. Select active view `chat`.
 2. Select the project.
@@ -417,20 +419,20 @@ When starting a new project conversation:
 5. When first sending, `createAgentUICoreConversation(...)` includes `projectId`.
 6. `sendAgentUICoreMessage(...)` includes `metadata.projectId` for existing linked conversations.
 
-Do not break existing agent-only chats. Agent tree remains a valid way to start and browse conversations outside a project, but the top-level flat `Chats` section is the primary home for unprojected chats in the sidebar.
+Do not break existing agent-only sessions. Agent tree remains a valid way to start and browse sessions outside a project, but the top-level flat `Sessions` section is the primary home for unprojected sessions in the sidebar.
 
-### Conversation Search And Pinned Conversations
+### Session Search And Pinned Sessions
 
-Update sidebar search to include project conversations.
+Update sidebar search to include project sessions.
 
 Search result labels should distinguish source:
 
 ```text
-Conversation title
+Session title
 Project name / Agent name
 ```
 
-Pinned conversations need a stable key that can distinguish project and agent contexts:
+Pinned sessions need a stable key that can distinguish project and agent contexts:
 
 ```ts
 projectConversationPinKey(projectId, conversationId)
@@ -517,12 +519,12 @@ Verification:
 2. Add `useIrisProjects`.
 3. Load projects at app startup.
 4. Add notifications for project create/update failures.
-5. Keep agent-only chat behavior unchanged.
+5. Keep agent-only session behavior unchanged.
 
 Verification:
 
 - `npm --workspace desktop run test`
-- Existing chat tests pass unchanged.
+- Existing session tests pass unchanged.
 
 ### Phase 4: Sidebar Projects Tree
 
@@ -530,33 +532,33 @@ Verification:
 2. Mirror the agent tree behavior and styling.
 3. Add create project button.
 4. Add project right-click menu with Rename.
-5. Add a flat unprojected `Chats` section below Projects and above Agents.
-6. Add project conversation loading, empty, loading, and error states.
-7. Update search and pinned behavior for project and unprojected conversations.
+5. Add a flat unprojected `Sessions` section below Projects and above Agents.
+6. Add project session loading, empty, loading, and error states.
+7. Update search and pinned behavior for project and unprojected sessions.
 
 Verification:
 
 - Sidebar project rows visually match agent rows.
-- Project conversations visually match agent conversations.
-- Unprojected chats render as flat conversation rows below Projects and above Agents.
+- Project sessions visually match agent sessions.
+- Unprojected sessions render as flat session rows below Projects and above Agents.
 - Agent rows still expand/collapse exactly as before.
-- Conversation active state remains on conversations, not project/agent parent rows.
+- Session active state remains on sessions, not project/agent parent rows.
 
-### Phase 5: Project Chat Routing
+### Phase 5: Project Session Routing
 
-1. Add nullable `projectId` to chat start/send flow.
-2. Add a project selector to new chat creation with an explicit `No project` option.
-3. On project chat creation, use project default agent unless the user selected another agent.
-4. Link created Core conversation to project only when `projectId` is present.
+1. Add nullable `projectId` to session start/send flow.
+2. Add a project selector to new session creation with an explicit `No project` option.
+3. On project session creation, use project default agent unless the user selected another agent.
+4. Link created Core session to project only when `projectId` is present.
 5. Include project metadata on sends only when `projectId` is present.
 6. Preserve existing non-project agent chat flows.
 
 Verification:
 
-- New chat under a project appears under that project.
-- New chat with `No project` appears in the flat `Chats` section.
-- Same chat can still resolve messages through the existing Core/Hermes detail endpoint.
-- Non-project agent chats still appear under Agents.
+- New session under a project appears under that project.
+- New session with `No project` appears in the flat `Sessions` section.
+- Same session can still resolve messages through the existing Core/Hermes detail endpoint.
+- Non-project agent sessions still appear under Agents.
 
 ### Phase 6: Project Prompt Runtime Injection
 
@@ -567,9 +569,9 @@ Verification:
 
 Verification:
 
-- A project-specific instruction affects project chats only.
+- A project-specific instruction affects project sessions only.
 - The selected Hermes profile's `SOUL.md` is not modified.
-- Agent-only chats do not receive project prompt metadata.
+- Agent-only sessions do not receive project prompt metadata.
 
 ## Tests To Add
 
@@ -577,26 +579,26 @@ Backend:
 
 - Project CRUD in `iris-core/tests/test_core_store.py`.
 - Project endpoints in `iris-core/tests/test_api.py`.
-- Conversation creation with `projectId` links the conversation.
-- Project conversation listing resolves linked runtime conversations.
+- Session creation with `projectId` links the session.
+- Project session listing resolves linked runtime sessions.
 - Project rename does not alter linked Hermes conversation records.
 
 Desktop:
 
 - `AppShell` renders Projects above Agents.
-- `AppShell` renders flat unprojected Chats below Projects and above Agents.
+- `AppShell` renders flat unprojected Sessions below Projects and above Agents.
 - Project row click toggles collapse.
 - Right-click project opens Rename.
 - Create project modal includes name, default agent, and system prompt editor.
-- Starting a project chat uses the default agent.
-- Existing agent conversation tree behavior is unchanged.
+- Starting a project session uses the default agent.
+- Existing agent session tree behavior is unchanged.
 
-Chat:
+Session:
 
-- `createAgentUICoreConversation` receives `projectId` for project chats.
+- `createAgentUICoreConversation` receives `projectId` for project sessions.
 - `createAgentUICoreConversation` omits `projectId` when `No project` is selected.
 - `sendAgentUICoreMessage` sends `metadata.projectId` on linked project conversations.
-- `sendAgentUICoreMessage` omits project metadata for unprojected chats.
+- `sendAgentUICoreMessage` omits project metadata for unprojected sessions.
 - Switching between project and agent views does not leak stale selected conversation ids.
 
 ## Final Verification
@@ -617,18 +619,18 @@ npm run build:mac:app
 Manual checklist:
 
 - Projects section is above Agents.
-- Flat unprojected Chats section is below Projects and above Agents.
+- Flat unprojected Sessions section is below Projects and above Agents.
 - Project and Agent rows are visually identical.
-- Project conversations and Agent conversations are visually identical.
-- Unprojected chat rows match conversation styling but are not nested in a folder.
+- Project sessions and Agent sessions are visually identical.
+- Unprojected session rows match session styling but are not nested in a folder.
 - Project right-click Rename works.
 - Project create modal matches agent modal style.
-- New chat creation can choose a project, an agent, and `No project`.
+- New session creation can choose a project, an agent, and `No project`.
 - Default agent selection works.
 - System prompt editor matches skill editor behavior.
-- Project chat sends through the default agent.
-- Project system prompt applies only in project chats.
-- Refresh preserves project mappings and does not duplicate conversations.
+- Project session sends through the default agent.
+- Project system prompt applies only in project sessions.
+- Refresh preserves project mappings and does not duplicate sessions.
 
 ## Non-Goals For V1
 

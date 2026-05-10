@@ -129,7 +129,7 @@ export function MemoryView({
         <div className="provider-card">
           <div>
             <Server size={17} />
-            <span>Chat API</span>
+            <span>Session API</span>
           </div>
           <strong>{status?.activeApiStatus?.ok ? "Online" : "Offline"}</strong>
           <small>{endpointLabel(status?.activeApiStatus)}</small>

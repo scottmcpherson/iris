@@ -5,7 +5,7 @@ Iris is a monorepo for local-first agent control surfaces, including Iris Deskto
 ## Workspace Layout
 
 - `desktop/`: Iris Desktop, a Tauri 2, React 18, TypeScript, and Tailwind desktop app.
-- `iris-core/`: Iris Core, a FastAPI control plane used by Iris clients for agents, conversations, automations, devices, runtime routing, and Hermes compatibility metadata.
+- `iris-core/`: Iris Core, a FastAPI control plane used by Iris clients for agents, sessions, automations, devices, runtime routing, and Hermes compatibility metadata.
 - `scripts/`: root developer helpers for setup and coordinated startup.
 
 ## First-Time Setup
@@ -50,7 +50,9 @@ The desktop Vite server runs on `http://127.0.0.1:1420/`. Iris Core defaults to 
 
 Iris Core is the local-first control plane for Iris at `http://127.0.0.1:8765/v1`. It owns devices, auth, runtime routing, and Core-only coordination, and connects to Hermes through the Iris Hermes Adapter.
 
-Core stores Core-owned state at `~/.iris/core.sqlite3` by default. Hermes remains the source of truth for Hermes profiles, conversations, messages, models, commands, and jobs; Core normalizes those records through runtime adapters instead of copying them into SQLite. Existing default installs are migrated from `~/.agent-ui/core.sqlite3` with backups before duplicate runtime-owned tables are dropped. Iris Desktop chat creates short-lived Core draft targets and sends messages through Core, while Hermes platform deliveries land in `/v1/runtime-deliveries/hermes` and replay through the in-memory `/v1/events` live buffer.
+Core stores Core-owned state at `~/.iris/core.sqlite3` by default. Hermes remains the source of truth for Hermes profiles, sessions, messages, models, commands, and jobs; Core normalizes those records through runtime adapters instead of copying them into SQLite. Existing default installs are migrated from `~/.agent-ui/core.sqlite3` with backups before duplicate runtime-owned tables are dropped. Iris Desktop sessions create short-lived Core draft targets and send messages through Core, while Hermes platform deliveries land in `/v1/runtime-deliveries/hermes` and replay through the in-memory `/v1/events` live buffer.
+
+Product terminology uses "sessions" for user-facing work threads. Some compatibility APIs, schemas, and legacy adapter fields still use `conversation` or `chat` names.
 
 ## Iris Hermes Adapter
 
@@ -60,7 +62,7 @@ Install or update the bidirectional Iris platform plugin into the local Hermes h
 npm run iris:hermes:install
 ```
 
-`npm run iris:platform:install` is the same installer under a platform-focused name. Configure Hermes to receive Iris chat messages and deliver responses into Iris Core. Add these to the environment used by the Hermes gateway, commonly `$HERMES_HOME/.env`:
+`npm run iris:platform:install` is the same installer under a platform-focused name. Configure Hermes to receive Iris session messages and deliver responses into Iris Core. Add these to the environment used by the Hermes gateway, commonly `$HERMES_HOME/.env`:
 
 ```bash
 IRIS_BASE_URL=http://127.0.0.1:8765
@@ -100,7 +102,7 @@ hermes cron create "1m" "Reply exactly: Iris cron smoke test" --deliver "iris:de
 
 The job should appear under Automations, then move to Recent deliveries after it runs.
 
-Smoke test inbound chat:
+Smoke test inbound session delivery:
 
 ```bash
 curl -X POST http://127.0.0.1:8766/iris/messages \

@@ -320,12 +320,27 @@ function App() {
         onProfileAction={runProfileActionWithNotice}
         onRefresh={() => void refreshWithNotice()}
         onRefreshConversations={(profileName) => void chat.refreshConversations({ profileName })}
+        onDeleteConversation={async (profileName, conversationId) => {
+          const message = await chat.deleteConversation(profileName, conversationId);
+          const failed = isConversationActionFailure(message);
+          pushNotification({
+            tone: failed ? "error" : "success",
+            title: failed ? "Session delete failed" : "Session deleted",
+            message,
+          });
+          if (!failed) {
+            for (const project of projects.projects) {
+              void projects.refreshProjectConversations(project.id);
+            }
+          }
+          return message;
+        }}
         onRenameConversation={async (profileName, conversationId, title) => {
           const message = await chat.renameConversation(profileName, conversationId, title);
           const failed = isConversationActionFailure(message);
           pushNotification({
             tone: failed ? "error" : "success",
-            title: failed ? "Conversation rename failed" : "Conversation renamed",
+            title: failed ? "Session rename failed" : "Session renamed",
             message,
           });
           return message;

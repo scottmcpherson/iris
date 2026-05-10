@@ -34,7 +34,7 @@ export function ProfileMenu({
         aria-expanded={open}
         aria-label={
           locked
-            ? `Conversation agent ${profile}`
+            ? `Session agent ${profile}`
             : `Agent ${connected ? profile : "Offline"}`
         }
         disabled={disabled}

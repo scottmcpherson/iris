@@ -1,4 +1,4 @@
-"""Conversation discovery for Hermes profile stores."""
+"""Session discovery for Hermes profile stores."""
 
 from __future__ import annotations
 
@@ -119,7 +119,7 @@ def discover_conversations(profile_root: Path, limit: int | None = 80) -> Conver
 def discover_conversation_detail(profile_root: Path, conversation_id: str) -> ConversationDetail:
     normalized_id = conversation_id.strip()
     if not normalized_id:
-        raise ManagementError("Conversation id is required.", status_code=400)
+        raise ManagementError("Session id is required.", status_code=400)
 
     for db_path in sqlite_candidates(profile_root):
         result = read_sqlite_conversation_detail(db_path, profile_root, normalized_id)
@@ -130,7 +130,7 @@ def discover_conversation_detail(profile_root: Path, conversation_id: str) -> Co
     if file_result is not None:
         return file_result
 
-    raise ManagementError("Conversation was not found.", status_code=404)
+    raise ManagementError("Session was not found.", status_code=404)
 
 
 def sqlite_candidates(profile_root: Path) -> list[Path]:
@@ -452,7 +452,7 @@ def normalize_conversation_row(
     first_any = first_message_text(messages)
     latest_any = last_message_text(messages)
     preview = compact_text(latest_any or first_user or first_any or explicit_title, 220)
-    title = compact_text(explicit_title or first_user or first_any or "Untitled conversation", 120)
+    title = compact_text(explicit_title or first_user or first_any or "Untitled session", 120)
     started_at = first_timestamp(row, START_COLUMNS)
     ended_at = first_timestamp(row, END_COLUMNS)
     row_active_at = first_timestamp(row, ACTIVE_COLUMNS)
@@ -655,7 +655,7 @@ def assert_within_profile(path: Path, profile_root: Path) -> Path:
         resolved_path.relative_to(resolved_root)
     except ValueError as exc:
         raise ManagementError(
-            "Conversation store paths must stay inside the selected Hermes profile directory.",
+            "Session store paths must stay inside the selected Hermes profile directory.",
             status_code=400,
         ) from exc
     return resolved_path

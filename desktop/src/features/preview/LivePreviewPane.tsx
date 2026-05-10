@@ -91,7 +91,7 @@ export function LivePreviewPane({
       <div className="preview-header">
         <div>
           <p>Live Preview</p>
-          <span>{artifacts.length} artifacts in this chat workspace</span>
+          <span>{artifacts.length} artifacts in this session workspace</span>
         </div>
         <button className="small-button" onClick={onSaveAsSkill}>
           <Play size={14} />

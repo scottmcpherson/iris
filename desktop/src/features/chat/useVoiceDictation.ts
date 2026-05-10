@@ -343,10 +343,10 @@ function createRecorder(stream: MediaStream) {
 
 function pickSupportedMimeType() {
   const candidates = [
-    "audio/webm;codecs=opus",
-    "audio/webm",
     "audio/mp4",
     "audio/aac",
+    "audio/webm;codecs=opus",
+    "audio/webm",
   ];
   return candidates.find((value) => MediaRecorder.isTypeSupported(value));
 }

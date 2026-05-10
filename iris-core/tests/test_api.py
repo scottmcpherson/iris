@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import sqlite3
 
@@ -575,6 +576,83 @@ def test_project_conversations_deduplicate_stale_draft_links_by_chat_id(tmp_path
 
     assert listed.status_code == 200
     assert [conversation["id"] for conversation in matches] == [real_conversation["id"]]
+
+
+def test_core_conversation_delete_removes_sqlite_session_and_core_overlays(tmp_path):
+    root = tmp_path / ".hermes"
+    create_core_history_db(
+        root / "state.db",
+        session_id="delete-session",
+        title="Delete me",
+        user_text="remove this",
+        assistant_text="gone",
+        chat_id="delete-chat",
+    )
+    client = make_client(root)
+    agent = client.get("/v1/agents").json()["agents"][0]
+    conversation = next(
+        item
+        for item in client.get(f"/v1/conversations?agentId={agent['id']}").json()["conversations"]
+        if item["externalSessionId"] == "delete-session"
+    )
+    project = client.post(
+        "/v1/projects",
+        json={"name": "Cleanup", "defaultAgentId": agent["id"]},
+    ).json()["project"]
+    client.post(f"/v1/projects/{project['id']}/conversations", json={"conversationId": conversation["id"]})
+    client.patch(f"/v1/conversations/{conversation['id']}/read-state", json={"state": "unread"})
+
+    deleted = client.delete(f"/v1/conversations/{conversation['id']}")
+    listed = client.get(f"/v1/conversations?agentId={agent['id']}")
+    detail = client.get(f"/v1/conversations/{conversation['id']}")
+
+    assert deleted.status_code == 200
+    assert listed.json()["conversations"] == []
+    assert detail.status_code == 404
+    with sqlite3.connect(root / "state.db") as connection:
+        assert connection.execute("select count(*) from sessions").fetchone()[0] == 0
+        assert connection.execute("select count(*) from messages").fetchone()[0] == 0
+    assert client.app.state.core_store.project_conversation_link(project["id"], conversation["id"]) is None
+    assert client.app.state.core_store.conversation_read_state(conversation["id"]) is None
+
+
+def test_core_conversation_delete_removes_session_json_file_and_origin(tmp_path):
+    root = tmp_path / ".hermes"
+    sessions = root / "sessions"
+    sessions.mkdir(parents=True)
+    (sessions / "session_1.json").write_text(
+        json.dumps(
+            {
+                "session_id": "file-delete-session",
+                "source": "agentui",
+                "title": "File delete",
+                "session_start": "2026-05-03T10:00:00",
+                "messages": [{"role": "user", "content": "delete file"}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (sessions / "sessions.json").write_text(
+        json.dumps(
+            {
+                "file-delete-session": {
+                    "session_id": "file-delete-session",
+                    "origin": {"platform": "agentui", "chat_id": "file-delete-chat"},
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    client = make_client(root)
+    agent = client.get("/v1/agents").json()["agents"][0]
+    conversation = client.get(f"/v1/conversations?agentId={agent['id']}").json()["conversations"][0]
+
+    deleted = client.delete(f"/v1/conversations/{conversation['id']}")
+
+    assert deleted.status_code == 200
+    assert not (sessions / "session_1.json").exists()
+    assert json.loads((sessions / "sessions.json").read_text(encoding="utf-8")) == {}
+    assert client.get(f"/v1/conversations?agentId={agent['id']}").json()["conversations"] == []
 
 
 def test_conversation_read_state_is_shared_core_state(tmp_path):

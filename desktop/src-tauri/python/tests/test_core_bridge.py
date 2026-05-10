@@ -93,6 +93,55 @@ class IrisBridgeTests(unittest.TestCase):
         self.assertFalse(result["ok"])
         self.assertEqual(result["error"], "Core request path is required.")
 
+    def test_webview_audio_transcode_detection_uses_filename(self) -> None:
+        self.assertTrue(core_bridge.should_transcode_audio_for_webview("application/octet-stream", "dictation.webm"))
+        self.assertTrue(core_bridge.should_transcode_audio_for_webview("audio/ogg", "voice.ogg"))
+        self.assertFalse(core_bridge.should_transcode_audio_for_webview("audio/mp4", "voice.m4a"))
+
+    def test_core_attachment_data_returns_authenticated_data_url(self) -> None:
+        seen: dict[str, str] = {}
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_GET(self) -> None:  # noqa: N802
+                seen["path"] = self.path
+                seen["authorization"] = self.headers.get("Authorization", "")
+                self.send_response(200)
+                self.send_header("Content-Type", "audio/mp4")
+                self.end_headers()
+                self.wfile.write(b"audio-bytes")
+
+            def log_message(self, _format: str, *args: object) -> None:
+                return
+
+        server = HTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+
+        with tempfile.TemporaryDirectory() as directory:
+            old_value = os.environ.get("IRIS_DESKTOP_SECRET_TEST_DIR")
+            os.environ["IRIS_DESKTOP_SECRET_TEST_DIR"] = directory
+            try:
+                core_bridge.remote_credential_save({"kind": "core", "token": "core-token"})
+                result = core_bridge.core_attachment_data(
+                    {
+                        "path": "/v1/attachments/att_1/content",
+                        "runtime": {"coreApiUrl": f"http://127.0.0.1:{server.server_port}"},
+                    }
+                )
+            finally:
+                server.shutdown()
+                server.server_close()
+                if old_value is None:
+                    os.environ.pop("IRIS_DESKTOP_SECRET_TEST_DIR", None)
+                else:
+                    os.environ["IRIS_DESKTOP_SECRET_TEST_DIR"] = old_value
+
+        self.assertTrue(result["ok"], result)
+        self.assertEqual(result["mimeType"], "audio/mp4")
+        self.assertEqual(result["dataUrl"], "data:audio/mp4;base64,YXVkaW8tYnl0ZXM=")
+        self.assertEqual(seen["path"], "/v1/attachments/att_1/content")
+        self.assertEqual(seen["authorization"], "Bearer core-token")
+
     def test_core_upload_path_uses_configured_size_limit(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "large.bin"

@@ -1350,6 +1350,15 @@ button:disabled {
   color: #f0b6aa;
 }
 
+.profile-context-menu button.confirm-menu-item:not(:disabled) {
+  color: #ffd2c7;
+  background: rgba(220, 78, 52, 0.18);
+}
+
+.profile-context-menu button.confirm-menu-item:not(:disabled):hover {
+  background: rgba(220, 78, 52, 0.26);
+}
+
 .profile-action-modal {
   position: fixed;
   inset: 0;
@@ -1620,6 +1629,9 @@ button:disabled {
   width: 100%;
   min-width: 0;
   margin-bottom: 22px;
+}
+
+.message-entering {
   animation: rise-in 220ms ease both;
 }
 
@@ -1732,6 +1744,113 @@ button:disabled {
   font-size: 10px;
   font-weight: 700;
   line-height: 1;
+}
+
+.message-audio-player {
+  display: inline-flex;
+  align-items: center;
+  gap: 13px;
+  width: min(340px, 74vw);
+  min-width: min(260px, 74vw);
+  padding: 11px 14px 11px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.065);
+  border-radius: 20px;
+  color: #e8edf5;
+  background: #25272c;
+  box-shadow: 0 16px 38px rgba(0, 0, 0, 0.16);
+}
+
+.message.user .message-audio-player {
+  color: #f4f4f5;
+  background: #25272c;
+  border-color: rgba(255, 255, 255, 0.065);
+}
+
+.message-audio-player audio {
+  display: none;
+}
+
+.message-audio-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 42px;
+  height: 42px;
+  border: 0;
+  border-radius: 50%;
+  color: #25272c;
+  background: #f6f8fb;
+  cursor: pointer;
+}
+
+.message-audio-toggle:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.message-audio-toggle svg {
+  margin-left: 2px;
+}
+
+.message-audio-toggle .lucide-pause {
+  margin-left: 0;
+}
+
+.message-audio-toggle:focus-visible,
+.message-audio-waveform:focus-visible {
+  outline: 2px solid rgba(255, 255, 255, 0.7);
+  outline-offset: 2px;
+}
+
+.message-audio-main {
+  display: grid;
+  grid-template-rows: 24px 18px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.message-audio-waveform {
+  --audio-progress: 0%;
+  display: grid;
+  grid-template-columns: repeat(20, 1fr);
+  align-items: center;
+  gap: 3px;
+  width: 100%;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  background:
+    linear-gradient(currentColor 0 0) 0 50% / var(--audio-progress) 2px no-repeat,
+    linear-gradient(rgba(232, 237, 245, 0.42) 0 0) 0 50% / 100% 2px no-repeat;
+  color: #ffffff;
+  cursor: pointer;
+}
+
+.message-audio-waveform:disabled {
+  cursor: default;
+}
+
+.message-audio-waveform span {
+  display: block;
+  height: calc(18px * var(--bar-scale));
+  min-height: 3px;
+  border-radius: 999px;
+  background: currentColor;
+  opacity: 0.92;
+}
+
+.message-audio-time {
+  align-self: end;
+  color: rgba(255, 255, 255, 0.84);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.message.assistant .message-audio-time {
+  color: #aeb7c7;
 }
 
 .message.tool {
@@ -2777,24 +2896,28 @@ button:disabled {
 
 .composer-model-menu-wrap {
   position: relative;
+  display: inline-flex;
 }
 
 .composer-model-button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 164px;
-  height: 34px;
-  gap: 6px;
-  padding: 0 9px;
+  max-width: min(170px, 34vw);
+  height: 32px;
+  gap: 7px;
+  padding: 0 10px;
   border: 0;
-  border-radius: 10px;
+  border-radius: 999px;
   color: #aab2c0;
   background: transparent;
   font: inherit;
-  font-size: 12px;
-  font-weight: 760;
+  font-size: 13px;
+  font-weight: 750;
   cursor: pointer;
+  transition:
+    color 150ms ease,
+    background 150ms ease;
 }
 
 .composer-model-button:hover,

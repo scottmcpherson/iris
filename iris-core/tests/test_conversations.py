@@ -271,7 +271,7 @@ def test_conversation_detail_endpoint_returns_404_for_missing_session(tmp_path):
     response = make_client(root).get("/v1/conversations/conv_missing?externalSessionId=missing")
 
     assert response.status_code == 404
-    assert response.json()["error"] == "Conversation was not found."
+    assert response.json()["error"] == "Session was not found."
 
 
 def test_conversations_falls_back_to_session_json_files(tmp_path):

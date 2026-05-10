@@ -402,6 +402,17 @@ export async function updateAgentUICoreConversation(
   );
 }
 
+export async function deleteAgentUICoreConversation(
+  conversationId: string,
+  runtime?: HermesRuntimeConfig,
+) {
+  return coreRequest<{ conversationId: string }>(
+    runtime,
+    "DELETE",
+    `/conversations/${encodeURIComponent(conversationId)}`,
+  );
+}
+
 export async function updateAgentUICoreConversationReadState(
   conversationId: string,
   state: "read" | "unread",
@@ -520,6 +531,61 @@ export async function uploadAgentUICoreAttachment(
 
 export function agentUICoreAttachmentUrl(runtime: HermesRuntimeConfig | undefined, path: string | undefined) {
   return coreAttachmentUrl(runtime, path);
+}
+
+export async function getAgentUICoreAttachmentDataUrl(
+  runtime: HermesRuntimeConfig | undefined,
+  path: string,
+  mimeType = "application/octet-stream",
+  filename = "",
+): Promise<CoreResponse<{ dataUrl: string; mimeType: string; localPath?: string }>> {
+  if (/^(blob|data|asset):/i.test(path)) return { ok: true, dataUrl: path, mimeType };
+  let bridgeMimeType = mimeType;
+  if (!needsNativeAttachmentData(mimeType, filename)) {
+    try {
+      const response = await fetch(path, { headers: { Accept: mimeType || "*/*" } });
+      if (response.ok) {
+        const blob = await response.blob();
+        const responseMimeType = response.headers?.get("Content-Type") || blob.type || "";
+        if (needsNativeAttachmentData(responseMimeType, filename)) {
+          bridgeMimeType = responseMimeType || mimeType;
+        } else {
+          return { ok: true, dataUrl: await blobToDataUrl(blob), mimeType: responseMimeType || mimeType };
+        }
+      } else if (response.status !== 401 && response.status !== 403) {
+        return { ok: false, dataUrl: "", mimeType, error: `HTTP ${response.status}` };
+      }
+    } catch {
+      // Fall through to the native bridge; it can attach stored Core credentials.
+    }
+  }
+
+  return invoke<CoreResponse<{ dataUrl: string; mimeType: string; localPath?: string }>>("core_bridge", {
+    action: "core_attachment_data",
+    payload: { path, mimeType: bridgeMimeType, filename, runtime },
+  });
+}
+
+function needsNativeAttachmentData(mimeType: string, filename = "") {
+  const normalized = (mimeType || "").split(";", 1)[0].trim().toLowerCase();
+  const lowerFilename = filename.toLowerCase();
+  return (
+    normalized === "audio/webm" ||
+    normalized === "video/webm" ||
+    normalized === "audio/ogg" ||
+    normalized === "application/ogg" ||
+    lowerFilename.endsWith(".webm") ||
+    lowerFilename.endsWith(".ogg")
+  );
+}
+
+function blobToDataUrl(blob: Blob) {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onerror = () => reject(reader.error || new Error("Could not read attachment data."));
+    reader.readAsDataURL(blob);
+  });
 }
 
 function normalizeAttachmentUploadResponse(

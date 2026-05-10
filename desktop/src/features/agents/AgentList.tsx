@@ -92,7 +92,7 @@ export function AgentList({ profiles, onOpenAgent, onProfileAction }: AgentListP
               <span className="agent-list-stat">
                 <FolderOpen size={15} />
                 <strong>{profile.sessionCount}</strong>
-                <small>Chats</small>
+                <small>Sessions</small>
               </span>
               <span className="agent-list-stat">
                 <Database size={15} />

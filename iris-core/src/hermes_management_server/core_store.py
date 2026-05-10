@@ -513,7 +513,7 @@ class CoreStore:
             raise ValueError("Project was not found.")
         conversation_id = str(conversation.get("id") or "").strip()
         if not conversation_id:
-            raise ValueError("Conversation id is required.")
+            raise ValueError("Session id is required.")
         timestamp = now()
         runtime_id = str(conversation.get("runtimeId") or DEFAULT_RUNTIME_ID)
         runtime_profile = str(conversation.get("runtimeProfile") or "default")
@@ -626,9 +626,9 @@ class CoreStore:
         clean_id = conversation_id.strip()
         clean_state = state.strip().lower()
         if not clean_id:
-            raise ValueError("Conversation id is required.")
+            raise ValueError("Session id is required.")
         if clean_state not in CONVERSATION_READ_STATES:
-            raise ValueError("Conversation read state must be read or unread.")
+            raise ValueError("Session read state must be read or unread.")
         timestamp = now()
         with self.connect() as connection:
             existing = connection.execute(
@@ -658,7 +658,7 @@ class CoreStore:
             )
         read_state = self.conversation_read_state(clean_id)
         if not read_state:
-            raise ValueError("Conversation read state could not be stored.")
+            raise ValueError("Session read state could not be stored.")
         return read_state
 
     def conversation_read_state(self, conversation_id: str) -> dict[str, Any] | None:
@@ -685,6 +685,44 @@ class CoreStore:
             state["conversationId"]: state
             for state in (conversation_read_state_from_row(row) for row in rows)
         }
+
+    def delete_conversation_overlays(
+        self,
+        *,
+        conversation_id: str,
+        runtime_id: str,
+        profile: str,
+        chat_id: str = "",
+    ) -> None:
+        clean_id = conversation_id.strip()
+        clean_chat_id = chat_id.strip()
+        timestamp = now()
+        with self.connect() as connection:
+            connection.execute("delete from project_conversations where conversation_id = ?", (clean_id,))
+            connection.execute("delete from conversation_read_state where conversation_id = ?", (clean_id,))
+            connection.execute(
+                """
+                update attachments
+                set deleted_at = coalesce(deleted_at, ?), updated_at = ?
+                where runtime_id = ? and profile = ? and conversation_id = ? and deleted_at is null
+                """,
+                (timestamp, timestamp, runtime_id, profile, clean_id),
+            )
+            if clean_chat_id:
+                connection.execute(
+                    """
+                    delete from message_attachments
+                    where runtime_id = ? and profile = ? and chat_id = ?
+                    """,
+                    (runtime_id, profile, clean_chat_id),
+                )
+                connection.execute(
+                    """
+                    delete from client_message_metadata
+                    where runtime_id = ? and profile = ? and chat_id = ?
+                    """,
+                    (runtime_id, profile, clean_chat_id),
+                )
 
     def upsert_runtime(self, runtime: dict[str, Any]) -> dict[str, Any]:
         runtime_id = str(runtime["id"])
@@ -1492,7 +1530,7 @@ def draft_conversation(
     return {
         "id": conversation_id_for_runtime(runtime_id, profile, external_id),
         "agentId": str(agent["id"]),
-        "title": title or "New conversation",
+        "title": title or "New session",
         "summary": "",
         "createdAt": timestamp,
         "updatedAt": timestamp,

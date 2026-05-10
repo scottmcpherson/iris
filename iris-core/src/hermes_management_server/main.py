@@ -1284,7 +1284,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise ManagementError("Project was not found.", status_code=404)
         conversation = resolve_core_conversation(app, request.conversationId)
         if not conversation:
-            raise ManagementError("Conversation was not found.", status_code=404)
+            raise ManagementError("Session was not found.", status_code=404)
         link = app.state.core_store.link_project_conversation(project_id, conversation)
         return {"ok": True, "link": link, "conversation": with_project_metadata(conversation, project)}
 
@@ -1368,7 +1368,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             external_chat_id=externalChatId or "",
         )
         if not conversation:
-            raise ManagementError("Conversation was not found.", status_code=404)
+            raise ManagementError("Session was not found.", status_code=404)
         return {"ok": True, "conversation": with_read_state(app, conversation)}
 
     @app.patch("/v1/conversations/{conversation_id}")
@@ -1379,12 +1379,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     ) -> dict[str, Any]:
         conversation = resolve_core_conversation(app, conversation_id)
         if not conversation:
-            raise ManagementError("Conversation was not found.", status_code=404)
+            raise ManagementError("Session was not found.", status_code=404)
         if request.title is None:
             return {"ok": True, "conversation": with_read_state(app, conversation)}
         title = request.title.strip()
         if not title:
-            raise ManagementError("Conversation title is required.", status_code=400)
+            raise ManagementError("Session title is required.", status_code=400)
         adapter = app.state.runtime_registry.adapter_for_runtime(conversation["runtimeId"])
         updated = await asyncio.to_thread(
             adapter.rename_conversation,
@@ -1395,6 +1395,26 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         remember_active_conversation(app, updated)
         return {"ok": True, "conversation": with_read_state(app, updated)}
 
+    @app.delete("/v1/conversations/{conversation_id}")
+    async def core_delete_conversation(
+        conversation_id: str,
+        _auth: None = Depends(require_auth),
+    ) -> dict[str, Any]:
+        conversation = resolve_core_conversation(app, conversation_id)
+        if not conversation:
+            raise ManagementError("Session was not found.", status_code=404)
+        agent = conversation_agent(app, conversation)
+        adapter = app.state.runtime_registry.adapter_for_runtime(conversation["runtimeId"])
+        deleted = await asyncio.to_thread(adapter.delete_conversation, agent, conversation)
+        app.state.core_store.delete_conversation_overlays(
+            conversation_id=conversation_id,
+            runtime_id=str(conversation.get("runtimeId") or agent["runtimeId"]),
+            profile=str(conversation.get("runtimeProfile") or agent["runtimeProfile"]),
+            chat_id=str(conversation.get("externalChatId") or ""),
+        )
+        forget_active_conversation(app, conversation_id, deleted)
+        return {"ok": True, "conversationId": conversation_id}
+
     @app.get("/v1/conversations/{conversation_id}/read-state")
     async def core_conversation_read_state(
         conversation_id: str,
@@ -1402,7 +1422,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     ) -> dict[str, Any]:
         conversation = resolve_core_conversation(app, conversation_id)
         if not conversation:
-            raise ManagementError("Conversation was not found.", status_code=404)
+            raise ManagementError("Session was not found.", status_code=404)
         return {
             "ok": True,
             "readState": read_state_or_default(app, conversation_id),
@@ -1416,7 +1436,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     ) -> dict[str, Any]:
         conversation = resolve_core_conversation(app, conversation_id)
         if not conversation:
-            raise ManagementError("Conversation was not found.", status_code=404)
+            raise ManagementError("Session was not found.", status_code=404)
         try:
             read_state = app.state.core_store.upsert_conversation_read_state(
                 conversation_id,
@@ -1441,7 +1461,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             external_chat_id=externalChatId or "",
         )
         if not conversation:
-            raise ManagementError("Conversation was not found.", status_code=404)
+            raise ManagementError("Session was not found.", status_code=404)
         adapter = app.state.runtime_registry.adapter_for_runtime(conversation["runtimeId"])
         try:
             messages, warning = await asyncio.to_thread(
@@ -1469,7 +1489,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     ) -> dict[str, Any]:
         conversation = resolve_core_conversation(app, conversation_id)
         if not conversation:
-            raise ManagementError("Conversation was not found.", status_code=404)
+            raise ManagementError("Session was not found.", status_code=404)
         agent = app.state.runtime_registry.agent(conversation["agentId"])
         if not agent:
             raise ManagementError("Agent was not found.", status_code=404)
@@ -1634,7 +1654,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def core_cancel_message(conversation_id: str, _auth: None = Depends(require_auth)) -> dict[str, Any]:
         conversation = resolve_core_conversation(app, conversation_id)
         if not conversation:
-            raise ManagementError("Conversation was not found.", status_code=404)
+            raise ManagementError("Session was not found.", status_code=404)
         agent = app.state.runtime_registry.agent(conversation["agentId"])
         if not agent:
             raise ManagementError("Agent was not found.", status_code=404)
@@ -1677,7 +1697,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         _auth: None = Depends(require_auth),
     ) -> dict[str, Any]:
         if not resolve_core_conversation(app, conversation_id):
-            raise ManagementError("Conversation was not found.", status_code=404)
+            raise ManagementError("Session was not found.", status_code=404)
         after = clamp_int(after, default=0, minimum=0, maximum=9_223_372_036_854_775_807)
         limit = clamp_int(limit, default=200, minimum=1, maximum=500)
         events = app.state.live_delivery_bus.list_events(after=after, limit=limit, conversation_id=conversation_id)
@@ -2109,6 +2129,17 @@ def remember_active_conversation(app: FastAPI, conversation: dict[str, Any]) -> 
         ] = conversation["id"]
 
 
+def forget_active_conversation(app: FastAPI, conversation_id: str, conversation: dict[str, Any] | None = None) -> None:
+    cached = app.state.active_conversations.pop(conversation_id, None)
+    row = conversation or cached or {}
+    chat_id = str(row.get("externalChatId") or "")
+    if chat_id:
+        app.state.active_conversations_by_chat.pop(
+            (row.get("runtimeId") or DEFAULT_RUNTIME_ID, row.get("runtimeProfile") or "default", chat_id),
+            None,
+        )
+
+
 def project_runtime_metadata(project: dict[str, Any]) -> dict[str, Any]:
     return {
         "projectId": project["id"],
@@ -2239,7 +2270,7 @@ def agent_for_runtime_profile(app: FastAPI, runtime_id: str, profile: str) -> di
 def conversation_agent(app: FastAPI, conversation: dict[str, Any]) -> dict[str, Any]:
     agent = app.state.runtime_registry.agent(str(conversation.get("agentId") or ""))
     if not agent:
-        raise ManagementError("Conversation agent was not found.", status_code=404)
+        raise ManagementError("Session agent was not found.", status_code=404)
     return agent
 
 
