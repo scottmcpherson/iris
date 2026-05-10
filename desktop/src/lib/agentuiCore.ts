@@ -717,7 +717,7 @@ export async function createAgentUICoreAutomation(
     name: string;
     schedule: string;
     prompt: string;
-    repeat?: number;
+    repeat?: number | null;
     deliver?: string;
     deliverToConversationId?: string;
     metadata?: Record<string, unknown>;
@@ -738,7 +738,7 @@ export async function updateAgentUICoreAutomation(
     name?: string;
     schedule?: string;
     prompt?: string;
-    repeat?: number;
+    repeat?: number | null;
     deliver?: string;
     deliverToConversationId?: string;
     status?: string;

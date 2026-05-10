@@ -78,7 +78,6 @@ export function AgentsView({
         runtimeConfig={runtimeConfig}
         memory={memory}
         skills={skills}
-        onSectionChange={onSectionChange}
         onRuntimeChange={onRuntimeChange}
         onRefresh={onRefresh}
         onProfileAction={onProfileAction}

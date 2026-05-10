@@ -1880,7 +1880,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         agent = app.state.runtime_registry.agent(automation["agentId"])
         if not agent:
             raise ManagementError("Automation agent was not found.", status_code=404)
-        updates = {key: value for key, value in dump_model(request).items() if value not in (None, "", {})}
+        fields_set = getattr(request, "model_fields_set", None)
+        if fields_set is None:
+            fields_set = getattr(request, "__fields_set__", set())
+        updates = {
+            key: value
+            for key, value in dump_model(request).items()
+            if key in fields_set and value not in ("", {})
+        }
         result: dict[str, Any] = {"ok": True}
         if automation["externalJobId"]:
             adapter = app.state.runtime_registry.adapter_for_runtime(automation["runtimeId"])
@@ -2448,6 +2455,10 @@ def automation_update_payload(updates: dict[str, Any]) -> dict[str, Any]:
         ("deliver", "deliver"),
         ("repeat", "repeat"),
     ):
+        if request_key == "repeat" and request_key in updates:
+            value = updates.get(request_key)
+            payload[runtime_key] = None if value is None else max(1, int(value))
+            continue
         value = updates.get(request_key)
         if value not in (None, ""):
             payload[runtime_key] = value

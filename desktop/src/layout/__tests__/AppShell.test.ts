@@ -155,6 +155,66 @@ describe("AppShell pinned conversations", () => {
     expect(html).toContain("aria-label=\"Unread response\"");
   });
 
+  it("only shows a selected conversation as active while the chat view is active", () => {
+    const looseChat = conversationFixture({ id: "conv_loose", title: "Loose chat" });
+
+    const html = renderToStaticMarkup(
+      createElement(AppShell, {
+        activeView: "jobs",
+        connected: true,
+        isRefreshing: false,
+        previewOpen: false,
+        primaryPane: null,
+        previewPane: null,
+        selectedProfile: "default",
+        status: statusFixture(),
+        conversations: [looseChat],
+        conversationsByProfile: {},
+        conversationReadStates: {},
+        projects: [],
+        projectAgents: [],
+        conversationsByProject: {},
+        projectConversationsLoading: {},
+        projectConversationsLoaded: {},
+        projectErrors: {},
+        collapsedProjects: {},
+        unprojectedConversations: [looseChat],
+        conversationsLoadedByProfile: {},
+        conversationsLoading: false,
+        conversationsLoadingByProfile: {},
+        historyError: null,
+        historyErrorsByProfile: {},
+        selectedConversationId: looseChat.id,
+        selectedProjectId: "",
+        activeConversationIds: [],
+        coreApiUrl: "http://127.0.0.1:8765",
+        onNewConversation: noop,
+        onCreateProject: async () => projectFixture(),
+        onUpdateProject: async () => projectFixture(),
+        onToggleProjectCollapsed: noop,
+        onRefreshProjects: noop,
+        onRefreshProjectConversations: noop,
+        onPreviewToggle: noop,
+        onEditProfile: noop,
+        onProfileAction: async () => "",
+        onRefresh: noop,
+        onRefreshConversations: noop,
+        onDeleteConversation: async () => "",
+        onRenameConversation: async () => "",
+        onSelectConversation: noop,
+        onSelectProjectConversation: noop,
+        onSelectProfile: noop,
+        onSelectView: noop,
+      }),
+    );
+
+    expect(html).toContain("Loose chat");
+    expect(html).toContain("nav-item active");
+    expect(html).not.toContain("sidebar-session-row active");
+    expect(html).not.toContain("<p>Automations</p>");
+    expect(html).not.toContain("http://127.0.0.1:8765");
+  });
+
   it("honors persisted top-level sidebar section collapse state", () => {
     const project = projectFixture();
     const projectChat = conversationFixture({
@@ -224,11 +284,84 @@ describe("AppShell pinned conversations", () => {
 
     expect(html).toContain('aria-expanded="false" aria-controls="sidebar-projects-section"');
     expect(html).toContain('aria-expanded="false" aria-controls="sidebar-chats-section"');
-    expect(html).toContain('aria-expanded="false" aria-controls="sidebar-agents-section"');
     expect(html).not.toContain("Pirate");
     expect(html).not.toContain("Project stream");
     expect(html).not.toContain("Loose chat");
     expect(html).not.toContain("<span>default</span>");
+  });
+
+  it("uses the persisted agents organization without rendering project buckets", () => {
+    const project = projectFixture();
+    const projectChat = conversationFixture({
+      id: "conv_project",
+      title: "Project stream",
+      metadata: { projectId: project.id },
+    });
+    const looseChat = conversationFixture({ id: "conv_loose", title: "Loose chat" });
+
+    vi.stubGlobal("localStorage", {
+      getItem: (key: string) =>
+        key === storageKeys.sidebarOrganization ? JSON.stringify("agents") : null,
+      setItem: vi.fn(),
+    });
+
+    const html = renderToStaticMarkup(
+      createElement(AppShell, {
+        activeView: "chat",
+        connected: true,
+        isRefreshing: false,
+        previewOpen: false,
+        primaryPane: null,
+        previewPane: null,
+        selectedProfile: "default",
+        status: statusFixture(),
+        conversations: [projectChat, looseChat],
+        conversationsByProfile: {},
+        conversationReadStates: {},
+        projects: [project],
+        projectAgents: [agentFixture()],
+        conversationsByProject: { [project.id]: [projectChat] },
+        projectConversationsLoading: {},
+        projectConversationsLoaded: { [project.id]: true },
+        projectErrors: {},
+        collapsedProjects: { [project.id]: false },
+        unprojectedConversations: [looseChat],
+        conversationsLoadedByProfile: { default: true },
+        conversationsLoading: false,
+        conversationsLoadingByProfile: {},
+        historyError: null,
+        historyErrorsByProfile: {},
+        selectedConversationId: null,
+        selectedProjectId: "",
+        activeConversationIds: [],
+        coreApiUrl: "http://127.0.0.1:8765",
+        onNewConversation: noop,
+        onCreateProject: async () => project,
+        onUpdateProject: async () => project,
+        onToggleProjectCollapsed: noop,
+        onRefreshProjects: noop,
+        onRefreshProjectConversations: noop,
+        onPreviewToggle: noop,
+        onEditProfile: noop,
+        onProfileAction: async () => "",
+        onRefresh: noop,
+        onRefreshConversations: noop,
+        onDeleteConversation: async () => "",
+        onRenameConversation: async () => "",
+        onSelectConversation: noop,
+        onSelectProjectConversation: noop,
+        onSelectProfile: noop,
+        onSelectView: noop,
+      }),
+    );
+
+    expect(html).toContain('aria-controls="sidebar-agents-section"');
+    expect(html).toContain("<span>default</span>");
+    expect(html).toContain("Project stream");
+    expect(html).toContain("Loose chat");
+    expect(html).not.toContain('aria-controls="sidebar-projects-section"');
+    expect(html).not.toContain('aria-controls="sidebar-chats-section"');
+    expect(html).not.toContain("Pirate");
   });
 });
 

@@ -9,7 +9,6 @@ import type {
 import { MemoryView } from "../memory/MemoryView";
 import { SettingsView } from "../settings/SettingsView";
 import { SkillsView } from "../skills/SkillsView";
-import { AgentMemoryPanel, AgentSkillsPanel } from "./AgentSidePanels";
 import type { AgentDetailSection } from "./types";
 
 type AgentDetailViewProps = {
@@ -20,7 +19,6 @@ type AgentDetailViewProps = {
   runtimeConfig: HermesRuntimeConfig;
   memory: HermesMemory | null;
   skills: HermesSkill[];
-  onSectionChange: (section: AgentDetailSection) => void;
   onRuntimeChange: (config: HermesRuntimeConfig) => void;
   onRefresh: () => void;
   onProfileAction: ProfileActionHandler;
@@ -36,7 +34,6 @@ export function AgentDetailView({
   runtimeConfig,
   memory,
   skills,
-  onSectionChange,
   onRuntimeChange,
   onRefresh,
   onProfileAction,
@@ -72,7 +69,7 @@ export function AgentDetailView({
 
   return (
     <div className="agent-detail-workspace">
-      <div className="agent-detail-grid">
+      <div className="agent-detail-grid agent-detail-grid-single">
         <div className="agent-detail-main">
           <SettingsView
             status={status}
@@ -85,10 +82,6 @@ export function AgentDetailView({
             onProfileAction={onProfileAction}
           />
         </div>
-        <aside className="agent-detail-aside">
-          <AgentMemoryPanel memory={memory} onOpen={() => onSectionChange("memory")} />
-          <AgentSkillsPanel skills={skills} onOpen={() => onSectionChange("skills")} />
-        </aside>
       </div>
     </div>
   );

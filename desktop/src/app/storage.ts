@@ -7,6 +7,7 @@ export const storageKeys = {
   memoryProviders: "hermes-memory-provider-controls",
   modelSelectionByProfile: "hermes.desktop.modelSelectionByProfile",
   collapsedSidebarSections: "iris.desktop.sidebar.collapsedSections",
+  sidebarOrganization: "iris.desktop.sidebar.organization",
   collapsedSessionProfiles: "hermes.desktop.sidebar.collapsedSessions",
   collapsedProjects: "iris.desktop.sidebar.collapsedProjects",
   selectedProjectId: "iris.desktop.selectedProjectId",

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { isTauri } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import "./App.css";
 import type {
@@ -20,6 +21,7 @@ import { useIrisSlashCommands } from "./features/chat/useIrisSlashCommands";
 import { useIrisRuntime } from "./features/iris/useIrisRuntime";
 import { JobsView } from "./features/jobs/JobsView";
 import { useAgentUIAutomations } from "./features/jobs/useIrisAutomations";
+import type { HermesInboxMessage } from "./types/hermes";
 import { LivePreviewPane } from "./features/preview/LivePreviewPane";
 import { useIrisProjects } from "./features/projects/useIrisProjects";
 import {
@@ -61,7 +63,7 @@ function App() {
     runtimeConfig: iris.runtimeConfig,
     isChatViewActive: activeView === "chat",
   });
-  const jobs = useAgentUIAutomations(iris.runtimeConfig, iris.selectedProfile);
+  const jobs = useAgentUIAutomations(iris.runtimeConfig, iris.selectedProfile, activeView === "jobs");
   const projects = useIrisProjects(iris.runtimeConfig);
 
   useEffect(() => {
@@ -98,6 +100,7 @@ function App() {
   }, [activeView]);
 
   useEffect(() => {
+    if (!isTauri()) return;
     const unlisten = listen<string>("iris://app-command", (event) => {
       if (event.payload === "refresh") void refreshWithNotice();
       if (event.payload === "show" || event.payload === "command-menu") setCommandMenuOpen(true);
@@ -167,6 +170,35 @@ function App() {
     [chat.conversations, projectedConversationIds],
   );
 
+  function openDeliveryChat(delivery: HermesInboxMessage) {
+    const targetProfile = delivery.profile || iris.selectedProfile;
+    const allConversationEntries = [
+      ...chat.conversations.map((conversation) => ({ profile: iris.selectedProfile, conversation })),
+      ...Object.entries(chat.conversationsByProfile).flatMap(([profileName, conversations]) =>
+        conversations.map((conversation) => ({ profile: profileName, conversation })),
+      ),
+    ];
+    const match = allConversationEntries.find(
+      ({ conversation }) => conversation.chatId === delivery.chatId || conversation.id === delivery.chatId,
+    );
+    const conversationId = match?.conversation.id || (delivery.chatId.startsWith("conv_") ? delivery.chatId : "");
+    if (!conversationId) {
+      pushNotification({
+        tone: "info",
+        title: "Chat not found",
+        message: "Refresh conversations, then try opening this delivery again.",
+      });
+      return;
+    }
+    const profileName = match?.profile || targetProfile;
+    setActiveView("chat");
+    projects.selectProject(null);
+    if (profileName !== iris.selectedProfile) {
+      iris.selectProfile(profileName);
+    }
+    void chat.loadConversation(conversationId, profileName);
+  }
+
   const commands = useMemo<CommandItem[]>(
     () => [
       ...(["chat", "agents", "jobs"] as View[]).map((view, index) => ({
@@ -235,7 +267,6 @@ function App() {
             <AgentTopbar
               detailProfile={agentDetailProfile}
               profile={agentTopbarProfile}
-              rootPath={iris.runtimeConfig.coreApiUrl}
               section={agentSection}
               onBack={() => {
                 setAgentDetailProfile(null);
@@ -538,13 +569,13 @@ function App() {
           deliveries={jobs.deliveries}
           deliveryTarget={jobs.deliveryTarget}
           error={jobs.error}
-          loading={jobs.loading}
           pausedJobs={jobs.pausedJobs}
           onAcknowledgeDelivery={(messageId) => void jobs.acknowledgeDelivery(messageId)}
           onCreateScheduledMessage={jobs.createScheduledMessage}
           onDeliveryTargetChange={jobs.updateDeliveryTarget}
-          onRefresh={() => void jobs.refresh()}
+          onOpenDeliveryChat={openDeliveryChat}
           onRunJobAction={jobs.runJobAction}
+          onUpdateScheduledMessage={jobs.updateScheduledMessage}
         />
       );
     }

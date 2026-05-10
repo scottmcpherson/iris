@@ -510,7 +510,7 @@ class HermesRuntimeAdapter:
 
     def list_automations(self, profile: str) -> dict[str, Any]:
         del profile
-        return self.jobs_request("/api/jobs", method="GET")
+        return self.jobs_request("/api/jobs?include_disabled=true", method="GET")
 
     def require_store(self) -> HermesStore:
         if self.hermes_store is None:
@@ -531,6 +531,9 @@ class HermesRuntimeAdapter:
     def update_automation(self, external_job_id: str, updates: dict[str, Any]) -> dict[str, Any]:
         body: dict[str, Any] = {}
         for key in ("name", "schedule", "prompt", "deliver", "repeat"):
+            if key == "repeat" and key in updates:
+                body[key] = updates.get(key)
+                continue
             value = updates.get(key)
             if value not in (None, ""):
                 body[key] = value

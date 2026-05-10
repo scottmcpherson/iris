@@ -9,19 +9,55 @@ import {
   pauseAgentUICoreAutomation,
   resumeAgentUICoreAutomation,
   runAgentUICoreAutomation,
+  updateAgentUICoreAutomation,
 } from "../../lib/agentuiCore";
 import { coreEventToInboxMessage } from "../../lib/irisRuntime";
 import { rawStringValue } from "../../shared/strings";
 import type { HermesInboxMessage, HermesJob, HermesJobStatus, HermesRuntimeConfig } from "../../types/hermes";
 
+const defaultDeliveryTarget = "iris:desktop";
+const legacyDeliveryPrefix = "agentui:";
+
 export type CreateScheduledMessageInput = {
-  message: string;
-  minutes: number;
   name?: string;
+  prompt: string;
+  schedule: string;
+  repeat?: number | null;
   deliver?: string;
 };
 
-export function useAgentUIAutomations(runtimeConfig: HermesRuntimeConfig, profile = "default") {
+export type UpdateScheduledMessageInput = {
+  name?: string;
+  prompt: string;
+  schedule: string;
+  repeat?: number | null;
+  deliver?: string;
+};
+
+type AutomationPayloadResult =
+  | { ok: true; payload: ReturnType<typeof automationRequestPayload> }
+  | { ok: false; error: string };
+
+type AutomationRequestPayload = {
+  name: string;
+  schedule: string;
+  prompt: string;
+  repeat?: number | null;
+  deliver: string;
+  metadata: {
+    kind: string;
+    profile: string;
+  };
+};
+
+export type LegacyCreateScheduledMessageInput = {
+  message: string;
+  name?: string;
+  minutes?: number;
+  deliver?: string;
+};
+
+export function useAgentUIAutomations(runtimeConfig: HermesRuntimeConfig, profile = "default", active = true) {
   const [jobs, setJobs] = useState<HermesJob[]>([]);
   const [deliveries, setDeliveries] = useState<HermesInboxMessage[]>([]);
   const [loading, setLoading] = useState(false);
@@ -35,16 +71,17 @@ export function useAgentUIAutomations(runtimeConfig: HermesRuntimeConfig, profil
   const completedJobs = useMemo(() => jobs.filter((job) => !["active", "paused"].includes(job.status)), [jobs]);
 
   useEffect(() => {
+    if (!active) return;
     void refresh();
     const timer = window.setInterval(() => {
       void pollDeliveries();
       void loadJobs({ silent: true });
     }, 6000);
     return () => window.clearInterval(timer);
-  }, [profile, runtimeConfig.coreApiUrl]);
+  }, [active, profile, runtimeConfig.coreApiUrl]);
 
   function updateDeliveryTarget(value: string) {
-    const normalized = value.trim() || "iris:desktop";
+    const normalized = normalizeDeliveryTarget(value);
     setDeliveryTarget(normalized);
     saveStringValue(storageKeys.jobsDeliveryTarget, normalized);
   }
@@ -94,32 +131,34 @@ export function useAgentUIAutomations(runtimeConfig: HermesRuntimeConfig, profil
     });
   }
 
-  async function createScheduledMessage(input: CreateScheduledMessageInput) {
-    const message = input.message.trim();
-    if (!message) return "Enter a message to schedule.";
-    const minutes = Math.max(1, Math.floor(input.minutes || 1));
-    const deliver = (input.deliver || deliveryTarget).trim() || "iris:desktop";
-    updateDeliveryTarget(deliver);
+  async function createScheduledMessage(input: CreateScheduledMessageInput | LegacyCreateScheduledMessageInput) {
+    const normalized = automationPayloadFromInput(input, deliveryTarget, profile);
+    if (!normalized.ok) return normalized.error;
+    updateDeliveryTarget(normalized.payload.deliver);
     const agentResult = await getAgentUICoreAgentForProfile(profile, runtimeConfig);
     if (!agentResult.ok || !agentResult.agent) return agentError(agentResult) || "Could not resolve Iris agent.";
     const result = await createAgentUICoreAutomation(
       {
         agentId: agentResult.agent.id,
-        name: input.name?.trim() || "Iris reminder",
-        schedule: `${minutes}m`,
-        prompt: `Reply exactly with this message: ${message}`,
-        repeat: 1,
-        deliver,
-        metadata: {
-          kind: "scheduled-message",
-          profile,
-        },
+        ...normalized.payload,
       },
       runtimeConfig,
     );
     if (!result.ok) return result.error || "Could not create scheduled message.";
     await loadJobs();
-    return `Scheduled for ${minutes} minute${minutes === 1 ? "" : "s"}.`;
+    return "Automation scheduled.";
+  }
+
+  async function updateScheduledMessage(jobId: string, input: UpdateScheduledMessageInput) {
+    const normalized = automationPayloadFromInput(input, deliveryTarget, profile);
+    if (!normalized.ok) return normalized.error;
+    updateDeliveryTarget(normalized.payload.deliver);
+    const { metadata, ...payload } = normalized.payload;
+    void metadata;
+    const result = await updateAgentUICoreAutomation(jobId, payload, runtimeConfig);
+    if (!result.ok) return result.error || "Could not update scheduled message.";
+    await loadJobs();
+    return "Automation updated.";
   }
 
   async function runJobAction(jobId: string, action: "pause" | "resume" | "run" | "delete") {
@@ -169,6 +208,7 @@ export function useAgentUIAutomations(runtimeConfig: HermesRuntimeConfig, profil
     pausedJobs,
     refresh,
     runJobAction,
+    updateScheduledMessage,
     updateDeliveryTarget,
   };
 }
@@ -247,11 +287,69 @@ function timestampValue(value: unknown): number | null {
 }
 
 function loadDeliveryTarget() {
-  return loadStringValue(storageKeys.jobsDeliveryTarget, "iris:desktop");
+  const stored = loadStringValue(storageKeys.jobsDeliveryTarget, defaultDeliveryTarget);
+  const normalized = normalizeDeliveryTarget(stored);
+  if (stored !== normalized) saveStringValue(storageKeys.jobsDeliveryTarget, normalized);
+  return normalized;
 }
 
 function agentError(value: unknown) {
   return value && typeof value === "object" && "error" in value
     ? String((value as { error?: unknown }).error || "")
     : "";
+}
+
+function automationPayloadFromInput(
+  input: CreateScheduledMessageInput | UpdateScheduledMessageInput | LegacyCreateScheduledMessageInput,
+  fallbackDeliver: string,
+  profile: string,
+): AutomationPayloadResult {
+  const payload = automationRequestPayload(input, fallbackDeliver, profile);
+  if (!payload.prompt) return { ok: false, error: "Enter a prompt to schedule." };
+  if (!payload.schedule) return { ok: false, error: "Enter a schedule." };
+  return { ok: true, payload };
+}
+
+export function automationRequestPayload(
+  input: CreateScheduledMessageInput | UpdateScheduledMessageInput | LegacyCreateScheduledMessageInput,
+  fallbackDeliver: string,
+  profile: string,
+): AutomationRequestPayload {
+  const legacyMinutes =
+    "minutes" in input && input.minutes != null
+      ? Math.max(1, Math.floor(input.minutes || 1))
+      : null;
+  const prompt = "prompt" in input
+    ? input.prompt.trim()
+    : `Reply exactly with this message: ${input.message.trim()}`;
+  const schedule = "schedule" in input
+    ? input.schedule.trim()
+    : `${legacyMinutes || 1}m`;
+  const repeat = "repeat" in input
+    ? normalizeRepeat(input.repeat)
+    : 1;
+  const deliver = normalizeDeliveryTarget(input.deliver || fallbackDeliver);
+  return {
+    name: input.name?.trim() || "Iris reminder",
+    schedule,
+    prompt,
+    ...(repeat !== undefined ? { repeat } : {}),
+    deliver,
+    metadata: {
+      kind: "scheduled-message",
+      profile,
+    },
+  };
+}
+
+export function normalizeDeliveryTarget(value: string) {
+  const target = value.trim() || defaultDeliveryTarget;
+  return target.startsWith(legacyDeliveryPrefix)
+    ? `iris:${target.slice(legacyDeliveryPrefix.length)}`
+    : target;
+}
+
+function normalizeRepeat(value: number | null | undefined) {
+  if (value === null || value === undefined) return undefined;
+  return Math.max(1, Math.floor(value || 1));
 }

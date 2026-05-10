@@ -1,8 +1,12 @@
 import { useState } from "react";
-import type { FormEvent } from "react";
-import { Check, Clock3, Pause, Play, RefreshCcw, Send, Trash2 } from "lucide-react";
-import type { CreateScheduledMessageInput } from "./useIrisAutomations";
+import type { FormEvent, KeyboardEvent } from "react";
+import { Check, Info, Pause, Pencil, Play, Plus, Send, Trash2, X } from "lucide-react";
+import type { CreateScheduledMessageInput, UpdateScheduledMessageInput } from "./useIrisAutomations";
 import type { HermesInboxMessage, HermesJob } from "../../types/hermes";
+
+type TabKey = "active" | "paused" | "completed";
+type ScheduleMode = "delay" | "datetime" | "daily" | "custom";
+type RepeatMode = "once" | "forever" | "count";
 
 type JobsViewProps = {
   activeJobs: HermesJob[];
@@ -11,14 +15,16 @@ type JobsViewProps = {
   deliveries: HermesInboxMessage[];
   deliveryTarget: string;
   error: string | null;
-  loading: boolean;
   pausedJobs: HermesJob[];
   onAcknowledgeDelivery: (messageId: string) => void;
   onCreateScheduledMessage: (input: CreateScheduledMessageInput) => Promise<string>;
   onDeliveryTargetChange: (value: string) => void;
-  onRefresh: () => void;
+  onOpenDeliveryChat: (delivery: HermesInboxMessage) => void;
   onRunJobAction: (jobId: string, action: "pause" | "resume" | "run" | "delete") => Promise<string>;
+  onUpdateScheduledMessage: (jobId: string, input: UpdateScheduledMessageInput) => Promise<string>;
 };
+
+const tabOrder: TabKey[] = ["active", "paused", "completed"];
 
 export function JobsView({
   activeJobs,
@@ -27,159 +33,395 @@ export function JobsView({
   deliveries,
   deliveryTarget,
   error,
-  loading,
   pausedJobs,
   onAcknowledgeDelivery,
   onCreateScheduledMessage,
   onDeliveryTargetChange,
-  onRefresh,
+  onOpenDeliveryChat,
   onRunJobAction,
+  onUpdateScheduledMessage,
 }: JobsViewProps) {
-  const [message, setMessage] = useState("");
+  const allJobs = [...activeJobs, ...pausedJobs, ...completedJobs];
+  const [name, setName] = useState("");
+  const [prompt, setPrompt] = useState("");
+  const [scheduleMode, setScheduleMode] = useState<ScheduleMode>("delay");
   const [minutes, setMinutes] = useState(10);
+  const [runAt, setRunAt] = useState(() => dateTimeLocalValue(Date.now() + 10 * 60 * 1000));
+  const [dailyTime, setDailyTime] = useState("09:00");
+  const [customSchedule, setCustomSchedule] = useState("tomorrow at 9am");
+  const [repeatMode, setRepeatMode] = useState<RepeatMode>("once");
+  const [repeatCount, setRepeatCount] = useState(5);
   const [formNotice, setFormNotice] = useState("");
   const [formBusy, setFormBusy] = useState(false);
+  const [formOpen, setFormOpen] = useState(false);
+  const [tab, setTab] = useState<TabKey>("active");
+  const [editingJobId, setEditingJobId] = useState<string | null>(null);
+  const [selectedJobId, setSelectedJobId] = useState<string | null>(null);
+  const [confirmDeleteJobId, setConfirmDeleteJobId] = useState<string | null>(null);
+
+  const visibleJobs =
+    tab === "active" ? activeJobs : tab === "paused" ? pausedJobs : completedJobs;
+  const selectedJob = allJobs.find((job) => job.id === selectedJobId) || null;
+  const schedule = scheduleValue({ scheduleMode, minutes, runAt, dailyTime, customSchedule });
+  const repeat = repeatValue(repeatMode, repeatCount);
+  const preview = schedulePreview({ scheduleMode, minutes, runAt, dailyTime, customSchedule, repeatMode, repeatCount });
+  const emptyText =
+    tab === "active"
+      ? "No active automations."
+      : tab === "paused"
+        ? "No paused automations."
+        : "No completed automations yet.";
 
   async function submitSchedule(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setFormBusy(true);
-    const result = await onCreateScheduledMessage({ message, minutes, deliver: deliveryTarget });
+    const input = { name, prompt, schedule, repeat, deliver: deliveryTarget };
+    const result = editingJobId
+      ? await onUpdateScheduledMessage(editingJobId, input)
+      : await onCreateScheduledMessage(input);
     setFormBusy(false);
     setFormNotice(result);
-    if (!isFailure(result)) setMessage("");
+    if (!isFailure(result)) {
+      setEditingJobId(null);
+      setFormOpen(false);
+      setPrompt("");
+      setName("");
+    }
+  }
+
+  function startCreating() {
+    resetForm();
+    setFormOpen(true);
+  }
+
+  function startEditing(job: HermesJob) {
+    const form = formStateFromJob(job);
+    setEditingJobId(job.id);
+    setSelectedJobId(job.id);
+    setFormOpen(true);
+    setName(form.name);
+    setPrompt(form.prompt);
+    setScheduleMode(form.scheduleMode);
+    setMinutes(form.minutes);
+    setRunAt(form.runAt);
+    setDailyTime(form.dailyTime);
+    setCustomSchedule(form.customSchedule);
+    setRepeatMode(form.repeatMode);
+    setRepeatCount(form.repeatCount);
+    onDeliveryTargetChange(job.deliver || deliveryTarget);
+    setFormNotice("");
+  }
+
+  function cancelEditing() {
+    resetForm();
+    setFormOpen(false);
+  }
+
+  function resetForm() {
+    setEditingJobId(null);
+    setName("");
+    setPrompt("");
+    setScheduleMode("delay");
+    setMinutes(10);
+    setRunAt(dateTimeLocalValue(Date.now() + 10 * 60 * 1000));
+    setDailyTime("09:00");
+    setCustomSchedule("tomorrow at 9am");
+    setRepeatMode("once");
+    setRepeatCount(5);
+    setFormNotice("");
+  }
+
+  function handleTabsKeyDown(event: KeyboardEvent<HTMLDivElement>) {
+    if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+    event.preventDefault();
+    const currentIndex = tabOrder.indexOf(tab);
+    const nextIndex =
+      event.key === "Home"
+        ? 0
+        : event.key === "End"
+          ? tabOrder.length - 1
+          : event.key === "ArrowRight"
+            ? (currentIndex + 1) % tabOrder.length
+            : (currentIndex - 1 + tabOrder.length) % tabOrder.length;
+    const nextTab = tabOrder[nextIndex];
+    setTab(nextTab);
+    window.requestAnimationFrame(() => {
+      document.querySelector<HTMLButtonElement>(`[data-jobs-tab="${nextTab}"]`)?.focus();
+    });
+  }
+
+  async function deleteJob(jobId: string) {
+    if (confirmDeleteJobId !== jobId) {
+      setConfirmDeleteJobId(jobId);
+      return;
+    }
+    setConfirmDeleteJobId(null);
+    const result = await onRunJobAction(jobId, "delete");
+    if (result) setFormNotice(result);
+    if (!result && selectedJobId === jobId) setSelectedJobId(null);
   }
 
   return (
     <div className="jobs-view">
-      <section className="jobs-hero">
+      <header className="jobs-header agent-list-header">
         <div>
-          <p className="eyebrow">Iris Core</p>
           <h1>Scheduled automations</h1>
         </div>
-        <button type="button" className="ghost-button" onClick={onRefresh} disabled={loading}>
-          <RefreshCcw size={15} className={loading ? "spin" : ""} />
-          Refresh
-        </button>
-      </section>
+        <div className="jobs-header-actions">
+          <button
+            type="button"
+            className="icon-button jobs-header-add-button"
+            aria-label="Create automation"
+            title="Create automation"
+            onClick={startCreating}
+          >
+            <Plus size={17} />
+          </button>
+        </div>
+      </header>
 
-      {error ? <div className="jobs-alert">{error}</div> : null}
+      <div className="jobs-body">
+        {error ? <div className="jobs-alert">{error}</div> : null}
 
-      <div className="jobs-layout">
-        <section className="jobs-create-panel">
-          <div className="jobs-section-title">
-            <Clock3 size={17} />
-            <h2>Create scheduled message</h2>
+        {formOpen ? (
+          <div
+            className="jobs-modal-backdrop"
+            role="presentation"
+            onMouseDown={(event) => {
+              if (event.target === event.currentTarget && !formBusy) cancelEditing();
+            }}
+          >
+            <section
+              className="jobs-create-card jobs-modal-card"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="jobs-form-title"
+            >
+              <div className="jobs-create-heading">
+                <div>
+                  <p className="eyebrow">Automation</p>
+                  <h2 id="jobs-form-title">{editingJobId ? "Edit automation" : "New automation"}</h2>
+                </div>
+                <button type="button" className="icon-button" title="Close" onClick={cancelEditing} disabled={formBusy}>
+                  <X size={15} />
+                </button>
+              </div>
+              <form className="jobs-form" onSubmit={submitSchedule}>
+                <div className="jobs-form-grid">
+                  <label className="jobs-form-field jobs-form-prompt">
+                    <span>Name</span>
+                    <input
+                      value={name}
+                      placeholder="Morning standup"
+                      onChange={(event) => setName(event.target.value)}
+                    />
+                  </label>
+                  <label className="jobs-form-field jobs-form-prompt">
+                    <span>Prompt</span>
+                    <textarea
+                      value={prompt}
+                      placeholder="Send a concise morning standup reminder."
+                      onChange={(event) => setPrompt(event.target.value)}
+                    />
+                  </label>
+                  <label className="jobs-form-field jobs-form-prompt">
+                    <span>Schedule</span>
+                    <select value={scheduleMode} onChange={(event) => setScheduleMode(event.target.value as ScheduleMode)}>
+                      <option value="delay">In minutes</option>
+                      <option value="datetime">Date and time</option>
+                      <option value="daily">Daily time</option>
+                      <option value="custom">Custom</option>
+                    </select>
+                  </label>
+                  {scheduleMode === "delay" ? (
+                    <label className="jobs-form-field jobs-form-wide-control">
+                      <span>Minutes</span>
+                      <input
+                        type="number"
+                        min={1}
+                        max={10080}
+                        value={minutes}
+                        onChange={(event) => setMinutes(Number(event.target.value) || 1)}
+                      />
+                    </label>
+                  ) : null}
+                  {scheduleMode === "datetime" ? (
+                    <label className="jobs-form-field jobs-form-wide-control">
+                      <span>Run at</span>
+                      <input type="datetime-local" value={runAt} onChange={(event) => setRunAt(event.target.value)} />
+                    </label>
+                  ) : null}
+                  {scheduleMode === "daily" ? (
+                    <label className="jobs-form-field jobs-form-wide-control">
+                      <span>Time</span>
+                      <input type="time" value={dailyTime} onChange={(event) => setDailyTime(event.target.value)} />
+                    </label>
+                  ) : null}
+                  {scheduleMode === "custom" ? (
+                    <label className="jobs-form-field jobs-form-wide-control">
+                      <span>Custom schedule</span>
+                      <input
+                        value={customSchedule}
+                        placeholder="tomorrow at 9am or cron: 0 9 * * 1-5"
+                        onChange={(event) => setCustomSchedule(event.target.value)}
+                      />
+                    </label>
+                  ) : null}
+                  <label className="jobs-form-field">
+                    <span>Repeat</span>
+                    <select value={repeatMode} onChange={(event) => setRepeatMode(event.target.value as RepeatMode)}>
+                      <option value="once">Once</option>
+                      <option value="forever">Until paused</option>
+                      <option value="count">Fixed count</option>
+                    </select>
+                  </label>
+                  {repeatMode === "count" ? (
+                    <label className="jobs-form-field">
+                      <span>Runs</span>
+                      <input
+                        type="number"
+                        min={1}
+                        max={999}
+                        value={repeatCount}
+                        onChange={(event) => setRepeatCount(Number(event.target.value) || 1)}
+                      />
+                    </label>
+                  ) : null}
+                  <details className="jobs-advanced jobs-form-prompt">
+                    <summary>Advanced</summary>
+                    <label className="jobs-form-field">
+                      <span>Delivery target</span>
+                      <input
+                        value={deliveryTarget}
+                        placeholder="iris:desktop"
+                        onChange={(event) => onDeliveryTargetChange(event.target.value)}
+                      />
+                    </label>
+                  </details>
+                </div>
+                <div className="jobs-form-footer">
+                  <div className="jobs-form-status">
+                    <p className="jobs-schedule-preview">{preview}</p>
+                    {formNotice ? (
+                      <p className={isFailure(formNotice) ? "jobs-form-notice error" : "jobs-form-notice"}>
+                        {formNotice}
+                      </p>
+                    ) : null}
+                  </div>
+                  <div className="jobs-form-action">
+                    <button type="button" className="small-button settings-button" onClick={cancelEditing} disabled={formBusy}>
+                      Cancel
+                    </button>
+                    <button type="submit" className="small-button" disabled={formBusy}>
+                      <Send size={14} />
+                      {formBusy ? "Saving..." : editingJobId ? "Save changes" : "Schedule"}
+                    </button>
+                  </div>
+                </div>
+              </form>
+            </section>
           </div>
-          <form className="jobs-form" onSubmit={submitSchedule}>
-            <label>
-              <span>Message</span>
-              <textarea
-                value={message}
-                placeholder="Stretch your legs before the next call."
-                onChange={(event) => setMessage(event.target.value)}
-              />
-            </label>
-            <div className="jobs-form-row">
-              <label>
-                <span>Minutes</span>
-                <input
-                  type="number"
-                  min={1}
-                  max={10080}
-                  value={minutes}
-                  onChange={(event) => setMinutes(Number(event.target.value) || 1)}
-                />
-              </label>
-              <label>
-                <span>Delivery</span>
-                <input
-                  value={deliveryTarget}
-                  placeholder="iris:desktop"
-                  onChange={(event) => onDeliveryTargetChange(event.target.value)}
-                />
-              </label>
-            </div>
-            {formNotice ? (
-              <p className={isFailure(formNotice) ? "jobs-form-notice error" : "jobs-form-notice"}>
-                {formNotice}
-              </p>
-            ) : null}
-            <button type="submit" className="small-button jobs-submit" disabled={formBusy}>
-              <Send size={14} />
-              {formBusy ? "Scheduling..." : "Schedule"}
-            </button>
-          </form>
+        ) : null}
+
+        <section className="jobs-list-section">
+          <div className="jobs-tabs" role="tablist" aria-label="Automation status" onKeyDown={handleTabsKeyDown}>
+            <TabButton
+              tabKey="active"
+              label="Active"
+              count={activeJobs.length}
+              selected={tab === "active"}
+              onSelect={() => setTab("active")}
+            />
+            <TabButton
+              tabKey="paused"
+              label="Paused"
+              count={pausedJobs.length}
+              selected={tab === "paused"}
+              onSelect={() => setTab("paused")}
+            />
+            <TabButton
+              tabKey="completed"
+              label="Completed"
+              count={completedJobs.length}
+              selected={tab === "completed"}
+              onSelect={() => setTab("completed")}
+            />
+          </div>
+          <div id={`jobs-tabpanel-${tab}`} role="tabpanel" aria-label={`${tab} automations`}>
+            <JobList
+              jobs={visibleJobs}
+              emptyText={emptyText}
+              busyJobId={busyJobId}
+              confirmDeleteJobId={confirmDeleteJobId}
+              selectedJobId={selectedJobId}
+              onDeleteJob={deleteJob}
+              onEditJob={startEditing}
+              onRunJobAction={onRunJobAction}
+              onToggleDetails={(jobId) =>
+                setSelectedJobId((current) => current === jobId ? null : jobId)
+              }
+            />
+          </div>
         </section>
 
-        <section className="jobs-list-panel">
-          <div className="jobs-section-title">
-            <Play size={17} />
-            <h2>Active</h2>
-          </div>
-          <JobList
-            jobs={activeJobs}
-            emptyText="No active scheduled jobs."
-            busyJobId={busyJobId}
-            onRunJobAction={onRunJobAction}
+        {selectedJob ? (
+          <JobDetail
+            job={selectedJob}
+            deliveries={matchingDeliveries(selectedJob, deliveries)}
+            onOpenDeliveryChat={onOpenDeliveryChat}
           />
+        ) : null}
 
-          <div className="jobs-section-title spaced">
-            <Pause size={17} />
-            <h2>Paused</h2>
-          </div>
-          <JobList
-            jobs={pausedJobs}
-            emptyText="No paused jobs."
-            busyJobId={busyJobId}
-            onRunJobAction={onRunJobAction}
-          />
-        </section>
-
-        <section className="jobs-deliveries-panel">
-          <div className="jobs-section-title">
-            <Check size={17} />
-            <h2>Recent deliveries</h2>
-          </div>
+        <section className="jobs-activity-section">
+          <p className="eyebrow">Recent activity</p>
           {deliveries.length ? (
             <div className="delivery-list">
               {deliveries.map((delivery) => (
-                <article key={delivery.id} className="delivery-row">
-                  <div>
-                    <p>{delivery.content}</p>
-                    <span>{delivery.chatId} - {timeLabel(delivery.createdAt)}</span>
-                  </div>
-                  {!delivery.acknowledgedAt ? (
-                    <button
-                      type="button"
-                      className="icon-button"
-                      title="Mark as read"
-                      onClick={() => onAcknowledgeDelivery(delivery.id)}
-                    >
-                      <Check size={15} />
-                    </button>
-                  ) : null}
-                </article>
+                <DeliveryRow
+                  key={delivery.id}
+                  delivery={delivery}
+                  onAcknowledgeDelivery={onAcknowledgeDelivery}
+                  onOpenDeliveryChat={onOpenDeliveryChat}
+                />
               ))}
             </div>
           ) : (
-            <div className="jobs-empty">No automation deliveries yet.</div>
+            <p className="jobs-empty">Automation deliveries will appear here after jobs run.</p>
           )}
-        </section>
-
-        <section className="jobs-completed-panel">
-          <div className="jobs-section-title">
-            <Clock3 size={17} />
-            <h2>Completed</h2>
-          </div>
-          <JobList
-            jobs={completedJobs}
-            emptyText="No completed jobs yet."
-            busyJobId={busyJobId}
-            onRunJobAction={onRunJobAction}
-          />
         </section>
       </div>
     </div>
+  );
+}
+
+function TabButton({
+  tabKey,
+  label,
+  count,
+  selected,
+  onSelect,
+}: {
+  tabKey: TabKey;
+  label: string;
+  count: number;
+  selected: boolean;
+  onSelect: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      role="tab"
+      id={`jobs-tab-${tabKey}`}
+      aria-controls={`jobs-tabpanel-${tabKey}`}
+      aria-selected={selected}
+      tabIndex={selected ? 0 : -1}
+      data-jobs-tab={tabKey}
+      className={selected ? "jobs-tab selected" : "jobs-tab"}
+      onClick={onSelect}
+    >
+      <span>{label}</span>
+      {count > 0 ? <span className="jobs-tab-count">{count}</span> : null}
+    </button>
   );
 }
 
@@ -187,36 +429,77 @@ function JobList({
   jobs,
   emptyText,
   busyJobId,
+  confirmDeleteJobId,
+  selectedJobId,
+  onDeleteJob,
+  onEditJob,
   onRunJobAction,
+  onToggleDetails,
 }: {
   jobs: HermesJob[];
   emptyText: string;
   busyJobId: string | null;
+  confirmDeleteJobId: string | null;
+  selectedJobId: string | null;
+  onDeleteJob: (jobId: string) => void;
+  onEditJob: (job: HermesJob) => void;
   onRunJobAction: (jobId: string, action: "pause" | "resume" | "run" | "delete") => Promise<string>;
+  onToggleDetails: (jobId: string) => void;
 }) {
-  if (!jobs.length) return <div className="jobs-empty">{emptyText}</div>;
+  if (!jobs.length) return <p className="jobs-empty">{emptyText}</p>;
 
   return (
     <div className="job-list">
       {jobs.map((job) => {
         const busy = busyJobId === job.id;
+        const meta = jobMetaLine(job);
+        const selected = selectedJobId === job.id;
         return (
-          <article key={job.id} className="job-row">
-            <div className="job-row-main">
-              <strong>{job.name}</strong>
-              <span>{job.schedule || "Manual"} - {job.deliver || "local"}</span>
-              <p>{job.prompt}</p>
-            </div>
-            <div className="job-row-meta">
-              <span>{jobTimelineLabel(job)}</span>
-              <small>{jobRunLabel(job)}</small>
-              <div>
+          <article
+            key={job.id}
+            className={selected ? "job-row selected" : "job-row"}
+          >
+            <div className="job-row-head">
+              <div className="job-row-title">
+                <span className={`job-status-dot status-${job.status}`} aria-hidden />
+                <strong>{job.name}</strong>
+              </div>
+              <div className="job-row-actions">
+                <button
+                  type="button"
+                  className="icon-button"
+                  title="Job details"
+                  aria-expanded={selected}
+                  aria-controls={`job-detail-${job.id}`}
+                  disabled={busy}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onToggleDetails(job.id);
+                  }}
+                >
+                  <Info size={14} />
+                </button>
+                <button
+                  type="button"
+                  className="icon-button"
+                  title="Edit"
+                  disabled={busy}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onEditJob(job);
+                  }}
+                >
+                  <Pencil size={14} />
+                </button>
                 <button
                   type="button"
                   className="icon-button"
                   title="Run now"
                   disabled={busy}
-                  onClick={() => void onRunJobAction(job.id, "run")}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    void onRunJobAction(job.id, "run");
+                  }}
                 >
                   <Play size={14} />
                 </button>
@@ -225,25 +508,132 @@ function JobList({
                   className="icon-button"
                   title={job.status === "paused" ? "Resume" : "Pause"}
                   disabled={busy}
-                  onClick={() => void onRunJobAction(job.id, job.status === "paused" ? "resume" : "pause")}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    void onRunJobAction(job.id, job.status === "paused" ? "resume" : "pause");
+                  }}
                 >
                   {job.status === "paused" ? <Play size={14} /> : <Pause size={14} />}
                 </button>
                 <button
                   type="button"
-                  className="icon-button"
-                  title="Delete"
+                  className={confirmDeleteJobId === job.id ? "icon-button danger pending" : "icon-button danger"}
+                  title={confirmDeleteJobId === job.id ? "Confirm delete" : "Delete"}
                   disabled={busy}
-                  onClick={() => void onRunJobAction(job.id, "delete")}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    void onDeleteJob(job.id);
+                  }}
                 >
-                  <Trash2 size={14} />
+                  {confirmDeleteJobId === job.id ? <Check size={14} /> : <Trash2 size={14} />}
                 </button>
               </div>
             </div>
+            {meta ? <p className="job-row-meta">{meta}</p> : null}
+            {job.prompt ? <p className="job-row-prompt">{job.prompt}</p> : null}
           </article>
         );
       })}
     </div>
+  );
+}
+
+function JobDetail({
+  job,
+  deliveries,
+  onOpenDeliveryChat,
+}: {
+  job: HermesJob;
+  deliveries: HermesInboxMessage[];
+  onOpenDeliveryChat: (delivery: HermesInboxMessage) => void;
+}) {
+  return (
+    <section className="jobs-detail-section" id={`job-detail-${job.id}`}>
+      <div className="jobs-detail-heading">
+        <div>
+          <p className="eyebrow">Job detail</p>
+          <h2>{job.name}</h2>
+        </div>
+        <span className={`jobs-detail-status status-${job.status}`}>{job.status}</span>
+      </div>
+      <dl className="jobs-detail-grid">
+        <div>
+          <dt>Schedule</dt>
+          <dd>{job.schedule || "Manual"}</dd>
+        </div>
+        <div>
+          <dt>Delivery</dt>
+          <dd>{job.deliver || "local"}</dd>
+        </div>
+        <div>
+          <dt>Runs</dt>
+          <dd>{jobRunLabel(job)}</dd>
+        </div>
+        <div>
+          <dt>Next</dt>
+          <dd>{job.nextRunAt ? timeLabel(job.nextRunAt) : "Not scheduled"}</dd>
+        </div>
+      </dl>
+      {job.prompt ? <p className="jobs-detail-prompt">{job.prompt}</p> : null}
+      {job.lastError || job.lastDeliveryError ? (
+        <p className="jobs-detail-error">{job.lastError || job.lastDeliveryError}</p>
+      ) : null}
+      <div className="jobs-detail-history">
+        <p className="eyebrow">Run history</p>
+        {deliveries.length ? (
+          <div className="delivery-list compact">
+            {deliveries.map((delivery) => (
+              <DeliveryRow
+                key={delivery.id}
+                delivery={delivery}
+                onAcknowledgeDelivery={() => undefined}
+                onOpenDeliveryChat={onOpenDeliveryChat}
+                compact
+              />
+            ))}
+          </div>
+        ) : (
+          <p className="jobs-empty compact">No deliveries matched this job yet.</p>
+        )}
+      </div>
+    </section>
+  );
+}
+
+function DeliveryRow({
+  delivery,
+  compact = false,
+  onAcknowledgeDelivery,
+  onOpenDeliveryChat,
+}: {
+  delivery: HermesInboxMessage;
+  compact?: boolean;
+  onAcknowledgeDelivery: (messageId: string) => void;
+  onOpenDeliveryChat: (delivery: HermesInboxMessage) => void;
+}) {
+  return (
+    <article className={compact ? "delivery-row compact" : "delivery-row"}>
+      <div className="delivery-row-main">
+        <p>{delivery.content}</p>
+        <span>
+          <button type="button" className="inline-link" onClick={() => onOpenDeliveryChat(delivery)}>
+            {delivery.chatId || "Open chat"}
+          </button>
+          {" · "}
+          {timeLabel(delivery.createdAt)}
+        </span>
+      </div>
+      {!compact && !delivery.acknowledgedAt ? (
+        <button
+          type="button"
+          className="icon-button"
+          title="Mark as read"
+          onClick={() => onAcknowledgeDelivery(delivery.id)}
+        >
+          <Check size={15} />
+        </button>
+      ) : null}
+    </article>
   );
 }
 
@@ -258,6 +648,12 @@ function timeLabel(value: number | null) {
   }).format(new Date(milliseconds));
 }
 
+function jobMetaLine(job: HermesJob) {
+  return [job.schedule || "Manual", job.deliver || "local", jobTimelineLabel(job), jobRunLabel(job)]
+    .filter(Boolean)
+    .join(" · ");
+}
+
 function jobTimelineLabel(job: HermesJob) {
   if (job.status === "active" && job.nextRunAt) return `Next ${timeLabel(job.nextRunAt)}`;
   if (job.lastRunAt) return `Last ${timeLabel(job.lastRunAt)}`;
@@ -268,9 +664,129 @@ function jobTimelineLabel(job: HermesJob) {
 }
 
 function jobRunLabel(job: HermesJob) {
-  const runPart = job.repeat ? `${job.runCount}/${job.repeat}` : `${job.runCount} run${job.runCount === 1 ? "" : "s"}`;
+  const runPart = job.repeat
+    ? `${job.runCount}/${job.repeat}`
+    : `${job.runCount} run${job.runCount === 1 ? "" : "s"}`;
   const statusPart = job.lastError || job.lastDeliveryError || job.lastStatus;
-  return statusPart ? `${runPart} - ${statusPart}` : runPart;
+  return statusPart ? `${runPart} · ${statusPart}` : runPart;
+}
+
+function scheduleValue({
+  scheduleMode,
+  minutes,
+  runAt,
+  dailyTime,
+  customSchedule,
+}: {
+  scheduleMode: ScheduleMode;
+  minutes: number;
+  runAt: string;
+  dailyTime: string;
+  customSchedule: string;
+}) {
+  if (scheduleMode === "delay") return `${Math.max(1, Math.floor(minutes || 1))}m`;
+  if (scheduleMode === "datetime") return localInputToIso(runAt);
+  if (scheduleMode === "daily") return `daily at ${dailyTime || "09:00"}`;
+  return customSchedule.trim();
+}
+
+function repeatValue(repeatMode: RepeatMode, repeatCount: number) {
+  if (repeatMode === "forever") return null;
+  if (repeatMode === "count") return Math.max(1, Math.floor(repeatCount || 1));
+  return 1;
+}
+
+function schedulePreview(input: {
+  scheduleMode: ScheduleMode;
+  minutes: number;
+  runAt: string;
+  dailyTime: string;
+  customSchedule: string;
+  repeatMode: RepeatMode;
+  repeatCount: number;
+}) {
+  const repeatLabel =
+    input.repeatMode === "forever"
+      ? "and keep repeating until paused"
+      : input.repeatMode === "count"
+        ? `for ${Math.max(1, Math.floor(input.repeatCount || 1))} runs`
+        : "once";
+  if (input.scheduleMode === "delay") {
+    const date = new Date(Date.now() + Math.max(1, Math.floor(input.minutes || 1)) * 60 * 1000);
+    return `Will deliver ${timeLabel(Math.floor(date.getTime() / 1000))}, ${repeatLabel}.`;
+  }
+  if (input.scheduleMode === "datetime") {
+    const date = new Date(input.runAt);
+    return Number.isNaN(date.getTime())
+      ? "Choose a date and time."
+      : `Will deliver ${timeLabel(Math.floor(date.getTime() / 1000))}, ${repeatLabel}.`;
+  }
+  if (input.scheduleMode === "daily") {
+    return `Will deliver next at ${nextDailyLabel(input.dailyTime)}, ${repeatLabel}.`;
+  }
+  return input.customSchedule.trim()
+    ? `Runtime schedule: ${input.customSchedule.trim()}, ${repeatLabel}.`
+    : "Enter a custom schedule.";
+}
+
+function nextDailyLabel(time: string) {
+  const [hours = "9", minutes = "0"] = time.split(":");
+  const next = new Date();
+  next.setHours(Number(hours) || 9, Number(minutes) || 0, 0, 0);
+  if (next.getTime() <= Date.now()) next.setDate(next.getDate() + 1);
+  return timeLabel(Math.floor(next.getTime() / 1000));
+}
+
+function formStateFromJob(job: HermesJob) {
+  const schedule = job.schedule || "";
+  const delayMatch = schedule.match(/^(\d+)m$/i);
+  const dailyMatch = schedule.match(/^daily at (\d{2}:\d{2})$/i);
+  const date = Date.parse(schedule);
+  return {
+    name: job.name || "",
+    prompt: job.prompt || "",
+    scheduleMode: delayMatch ? "delay" as ScheduleMode : dailyMatch ? "daily" as ScheduleMode : Number.isFinite(date) ? "datetime" as ScheduleMode : "custom" as ScheduleMode,
+    minutes: delayMatch ? Number(delayMatch[1]) : 10,
+    runAt: Number.isFinite(date) ? dateTimeLocalValue(date) : dateTimeLocalValue(Date.now() + 10 * 60 * 1000),
+    dailyTime: dailyMatch?.[1] || "09:00",
+    customSchedule: delayMatch || dailyMatch || Number.isFinite(date) ? schedule || "tomorrow at 9am" : schedule,
+    repeatMode: job.repeat == null ? "forever" as RepeatMode : job.repeat === 1 ? "once" as RepeatMode : "count" as RepeatMode,
+    repeatCount: job.repeat && job.repeat > 1 ? job.repeat : 5,
+  };
+}
+
+function dateTimeLocalValue(value: number) {
+  const date = new Date(value);
+  const offset = date.getTimezoneOffset() * 60_000;
+  return new Date(date.getTime() - offset).toISOString().slice(0, 16);
+}
+
+function localInputToIso(value: string) {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? "" : date.toISOString();
+}
+
+function matchingDeliveries(job: HermesJob, deliveries: HermesInboxMessage[]) {
+  const jobIds = new Set([
+    job.id,
+    stringValue(job.raw.externalJobId),
+    stringValue(job.raw.jobId),
+    stringValue(job.raw.job_id),
+  ].filter(Boolean));
+  const deliverChatId = job.deliver.replace(/^iris:/, "");
+  return deliveries.filter((delivery) => {
+    const metadata = delivery.metadata || {};
+    return (
+      jobIds.has(stringValue(metadata.automationId)) ||
+      jobIds.has(stringValue(metadata.jobId)) ||
+      jobIds.has(stringValue(metadata.job_id)) ||
+      Boolean(deliverChatId && delivery.chatId === deliverChatId)
+    );
+  });
+}
+
+function stringValue(value: unknown) {
+  return typeof value === "string" ? value : value == null ? "" : String(value);
 }
 
 function isFailure(message: string) {

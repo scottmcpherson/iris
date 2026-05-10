@@ -1397,6 +1397,7 @@ def test_core_automations_create_list_control_and_delete_hermes_jobs(tmp_path, m
     def fake_http_json(url, *, method, token, body=None):
         seen.append({"url": url, "method": method, "token": token, "body": body})
         if method == "GET":
+            assert "include_disabled=true" in url
             return {
                 "ok": True,
                 "status": 200,
@@ -1418,6 +1419,23 @@ def test_core_automations_create_list_control_and_delete_hermes_jobs(tmp_path, m
                     "repeat": {"times": body.get("repeat"), "completed": 0},
                 }
             )
+            return {
+                "ok": True,
+                "status": 200,
+                "url": url,
+                "json": {
+                    "ok": True,
+                    "job": jobs[-1],
+                },
+            }
+        if method == "PATCH" and url.endswith("/api/jobs/external-job-created"):
+            jobs[-1] = {
+                **jobs[-1],
+                "name": body.get("name", jobs[-1]["name"]),
+                "prompt": body.get("prompt", jobs[-1]["prompt"]),
+                "schedule_display": body.get("schedule", jobs[-1]["schedule_display"]),
+                "repeat": {"times": body.get("repeat"), "completed": 0},
+            }
             return {
                 "ok": True,
                 "status": 200,
@@ -1450,6 +1468,15 @@ def test_core_automations_create_list_control_and_delete_hermes_jobs(tmp_path, m
     )
     automation = created.json()["automation"]
     listed = client.get(f"/v1/automations?agentId={agent['id']}")
+    updated = client.patch(
+        f"/v1/automations/{automation['id']}",
+        json={
+            "name": "Morning standup",
+            "schedule": "daily at 09:00",
+            "prompt": "Send the morning standup note.",
+            "repeat": None,
+        },
+    )
     paused = client.post(f"/v1/automations/{automation['id']}/pause")
     resumed = client.post(f"/v1/automations/{automation['id']}/resume")
     run = client.post(f"/v1/automations/{automation['id']}/run")
@@ -1464,6 +1491,8 @@ def test_core_automations_create_list_control_and_delete_hermes_jobs(tmp_path, m
         "external-job-created",
         "external-job-existing",
     }
+    assert updated.status_code == 200
+    assert updated.json()["automation"]["name"] == "Morning standup"
     assert paused.status_code == 200
     assert paused.json()["automation"]["status"] == "paused"
     assert resumed.status_code == 200
@@ -1472,6 +1501,12 @@ def test_core_automations_create_list_control_and_delete_hermes_jobs(tmp_path, m
     assert deleted.status_code == 200
     assert [request["token"] for request in seen] == ["hermes-job-token"] * len(seen)
     assert seen[0]["body"]["deliver"] == f"iris:{conversation['externalChatId']}"
+    assert any(
+        request["method"] == "PATCH"
+        and request["body"]["repeat"] is None
+        and request["body"]["schedule"] == "daily at 09:00"
+        for request in seen
+    )
     assert any(request["url"].endswith("/api/jobs/external-job-created/pause") for request in seen)
     assert any(request["url"].endswith("/api/jobs/external-job-created/resume") for request in seen)
     assert any(request["url"].endswith("/api/jobs/external-job-created/run") for request in seen)

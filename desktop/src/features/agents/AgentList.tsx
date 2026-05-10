@@ -57,8 +57,7 @@ export function AgentList({ profiles, onOpenAgent, onProfileAction }: AgentListP
     <div className="agent-list-workspace">
       <div className="agent-list-header">
         <div>
-          <p className="eyebrow">Agents</p>
-          <h1>{profiles.length} {profiles.length === 1 ? "agent" : "agents"}</h1>
+          <h1>Agent Profiles</h1>
         </div>
         <button
           type="button"

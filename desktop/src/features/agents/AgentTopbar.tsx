@@ -5,7 +5,6 @@ import type { AgentDetailSection } from "./types";
 type AgentTopbarProps = {
   detailProfile: string | null;
   profile: HermesProfile;
-  rootPath: string;
   section: AgentDetailSection;
   onBack: () => void;
   onSectionChange: (section: AgentDetailSection) => void;
@@ -14,20 +13,12 @@ type AgentTopbarProps = {
 export function AgentTopbar({
   detailProfile,
   profile,
-  rootPath,
   section,
   onBack,
   onSectionChange,
 }: AgentTopbarProps) {
   if (!detailProfile) {
-    return (
-      <div className="agent-topbar agent-topbar-list">
-        <div className="topbar-title">
-          <p>Agents</p>
-          <span>{rootPath}</span>
-        </div>
-      </div>
-    );
+    return <div className="agent-topbar agent-topbar-list" aria-hidden="true" />;
   }
 
   return (

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { normalizeJobsResult } from "../useIrisAutomations";
+import { automationRequestPayload, normalizeDeliveryTarget, normalizeJobsResult } from "../useIrisAutomations";
 
 describe("runtime jobs helpers", () => {
   it("treats scheduled runtime jobs as active", () => {
@@ -68,6 +68,29 @@ describe("runtime jobs helpers", () => {
     expect(jobs[0].lastRunAt).toBeGreaterThan(0);
   });
 
+  it("keeps disabled Hermes jobs visible as paused", () => {
+    const jobs = normalizeJobsResult({
+      jobs: [
+        {
+          id: "paused-1",
+          name: "Paused reminder",
+          schedule_display: "daily at 09:00",
+          enabled: false,
+          state: "paused",
+          next_run_at: "2026-05-10T09:00:00-04:00",
+          deliver: "iris:desktop",
+        },
+      ],
+    });
+
+    expect(jobs[0]).toMatchObject({
+      id: "paused-1",
+      name: "Paused reminder",
+      status: "paused",
+      deliver: "iris:desktop",
+    });
+  });
+
   it("normalizes Core automations into job cards", () => {
     const jobs = normalizeJobsResult({
       automations: [
@@ -96,5 +119,53 @@ describe("runtime jobs helpers", () => {
       repeat: 1,
       nextRunAt: 1_777_777_777,
     });
+  });
+
+  it("builds named recurring automation payloads without a finite repeat", () => {
+    expect(
+      automationRequestPayload(
+        {
+          name: "Morning standup",
+          prompt: "Send the morning standup note.",
+          schedule: "daily at 09:00",
+          repeat: null,
+          deliver: "iris:desktop",
+        },
+        "iris:fallback",
+        "default",
+      ),
+    ).toMatchObject({
+      name: "Morning standup",
+      prompt: "Send the morning standup note.",
+      schedule: "daily at 09:00",
+      deliver: "iris:desktop",
+      metadata: {
+        kind: "scheduled-message",
+        profile: "default",
+      },
+    });
+  });
+
+  it("keeps legacy minute-based scheduled messages compatible", () => {
+    expect(
+      automationRequestPayload(
+        { message: "Hydrate", minutes: 10 },
+        "iris:desktop",
+        "default",
+      ),
+    ).toMatchObject({
+      name: "Iris reminder",
+      schedule: "10m",
+      prompt: "Reply exactly with this message: Hydrate",
+      repeat: 1,
+      deliver: "iris:desktop",
+    });
+  });
+
+  it("normalizes legacy AgentUI delivery targets to Iris targets", () => {
+    expect(normalizeDeliveryTarget("agentui:desktop")).toBe("iris:desktop");
+    expect(normalizeDeliveryTarget(" agentui:core-chat-1 ")).toBe("iris:core-chat-1");
+    expect(normalizeDeliveryTarget("iris:desktop")).toBe("iris:desktop");
+    expect(normalizeDeliveryTarget("")).toBe("iris:desktop");
   });
 });

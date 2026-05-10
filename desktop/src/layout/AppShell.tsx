@@ -2,6 +2,7 @@ import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, FormEvent, PointerEvent as ReactPointerEvent, ReactNode } from "react";
 import {
   AlertCircle,
+  Check,
   ChevronDown,
   ChevronRight,
   Copy,
@@ -18,6 +19,7 @@ import {
   Plus,
   RefreshCcw,
   Search,
+  SlidersHorizontal,
   SquarePen,
   Trash2,
   X,
@@ -77,6 +79,13 @@ type ConversationSearchItem = {
   sourceLabel: string;
   pinKey: string;
   select: () => void;
+};
+
+type SidebarOrganization = "projects" | "agents";
+
+type SidebarOrganizationMenu = {
+  top: number;
+  left: number;
 };
 
 type SidebarSectionId = "projects" | "chats" | "agents";
@@ -184,6 +193,7 @@ export function AppShell({
   onSelectView,
 }: AppShellProps) {
   const profiles = status?.profiles ?? [offlineProfile];
+  const showSelectedConversation = activeView === "chat";
   const [profileMenu, setProfileMenu] = useState<ProfileMenu | null>(null);
   const [projectMenu, setProjectMenu] = useState<ProjectMenu | null>(null);
   const [conversationMenu, setConversationMenu] = useState<ConversationMenu | null>(null);
@@ -203,6 +213,10 @@ export function AppShell({
   const [conversationSearchOpen, setConversationSearchOpen] = useState(false);
   const [conversationSearchQuery, setConversationSearchQuery] = useState("");
   const [conversationSearchIndex, setConversationSearchIndex] = useState(0);
+  const [sidebarOrganization, setSidebarOrganization] = useState<SidebarOrganization>(
+    () => loadSidebarOrganization(),
+  );
+  const [sidebarOrganizationMenu, setSidebarOrganizationMenu] = useState<SidebarOrganizationMenu | null>(null);
   const conversationSearchInputRef = useRef<HTMLInputElement | null>(null);
   const sidebarWidthBandRef = useRef(widthBandForWindow());
   const sidebarCollapsedRef = useRef(sidebarWidthBandRef.current === "compact");
@@ -360,7 +374,7 @@ export function AppShell({
   }, [conversationSearchItems, pinnedConversations]);
 
   useEffect(() => {
-    if (agentsSectionCollapsed) return;
+    if (sidebarOrganization !== "agents" || agentsSectionCollapsed) return;
     for (const profile of profiles) {
       if (collapsedSessionProfiles[profile.name]) continue;
       if (conversationsLoadedByProfile[profile.name]) continue;
@@ -374,7 +388,35 @@ export function AppShell({
     conversationsLoadingByProfile,
     onRefreshConversations,
     profiles,
+    sidebarOrganization,
   ]);
+
+  useEffect(() => {
+    if (!sidebarOrganizationMenu) return undefined;
+
+    const closeMenu = (event: PointerEvent) => {
+      const target = event.target instanceof Element ? event.target : null;
+      if (target?.closest(".sidebar-organization-trigger, .sidebar-organization-menu")) return;
+      setSidebarOrganizationMenu(null);
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setSidebarOrganizationMenu(null);
+    };
+    const closeOnLayoutChange = () => {
+      setSidebarOrganizationMenu(null);
+    };
+
+    window.addEventListener("pointerdown", closeMenu);
+    window.addEventListener("keydown", closeOnEscape);
+    window.addEventListener("resize", closeOnLayoutChange);
+    window.addEventListener("scroll", closeOnLayoutChange, true);
+    return () => {
+      window.removeEventListener("pointerdown", closeMenu);
+      window.removeEventListener("keydown", closeOnEscape);
+      window.removeEventListener("resize", closeOnLayoutChange);
+      window.removeEventListener("scroll", closeOnLayoutChange, true);
+    };
+  }, [sidebarOrganizationMenu]);
 
   useEffect(() => {
     if (!profileMenu) return undefined;
@@ -629,204 +671,218 @@ export function AppShell({
             </div>
           ) : null}
 
-          <div className="sidebar-section profile-tree projects-tree">
-            <div className="profile-tree-header">
-              {renderSidebarSectionToggle("projects", "Projects", projectsSectionCollapsed)}
-              <div className="profile-tree-actions sidebar-section-actions">
-                <button
-                  type="button"
-                  className="sidebar-icon-button"
-                  onClick={onRefreshProjects}
-                  title="Refresh projects"
-                >
-                  <RefreshCcw size={13} />
-                </button>
-                <button
-                  type="button"
-                  className="sidebar-icon-button"
-                  onClick={openProjectCreateDialog}
-                  aria-label="Create project"
-                  title="Create project"
-                >
-                  <Plus size={14} />
-                </button>
-              </div>
-            </div>
-            {!projectsSectionCollapsed ? (
-              <div className="profile-list" id="sidebar-projects-section">
-                {projects.length ? (
-                  projects.map((project) => renderProjectNode(project))
-                ) : (
-                  <div className="history-empty compact">
-                    {projectErrors.list ? projectErrors.list : "No projects yet."}
+          {sidebarOrganization === "projects" ? (
+            <>
+              <div className="sidebar-section profile-tree projects-tree">
+                <div className="profile-tree-header">
+                  {renderSidebarSectionToggle("projects", "Projects", projectsSectionCollapsed)}
+                  <div className="profile-tree-actions sidebar-section-actions">
+                    <button
+                      type="button"
+                      className="sidebar-icon-button"
+                      onClick={onRefreshProjects}
+                      title="Refresh projects"
+                    >
+                      <RefreshCcw size={13} />
+                    </button>
+                    {renderSidebarOrganizationButton()}
+                    <button
+                      type="button"
+                      className="sidebar-icon-button"
+                      onClick={openProjectCreateDialog}
+                      aria-label="Create project"
+                      title="Create project"
+                    >
+                      <Plus size={14} />
+                    </button>
                   </div>
-                )}
+                </div>
+                {!projectsSectionCollapsed ? (
+                  <div className="profile-list" id="sidebar-projects-section">
+                    {projects.length ? (
+                      projects.map((project) => renderProjectNode(project))
+                    ) : (
+                      <div className="history-empty compact">
+                        {projectErrors.list ? projectErrors.list : "No projects yet."}
+                      </div>
+                    )}
+                  </div>
+                ) : null}
               </div>
-            ) : null}
-          </div>
 
-          <div className="sidebar-section profile-tree chats-tree">
-            <div className="profile-tree-header">
-              {renderSidebarSectionToggle("chats", "Sessions", chatsSectionCollapsed)}
-            </div>
-            {!chatsSectionCollapsed ? (
-              <div className="profile-list flat-chat-list" id="sidebar-chats-section">
-                {unpinnedScopedConversations(
-                  unprojectedConversations,
-                  (conversation) =>
-                    unprojectedConversationPinKey(runtimeProfileForConversation(conversation, selectedProfile), conversation.id),
-                  pinnedConversations,
-                ).length ? (
-                  unpinnedScopedConversations(
-                    unprojectedConversations,
-                    (conversation) =>
-                      unprojectedConversationPinKey(runtimeProfileForConversation(conversation, selectedProfile), conversation.id),
-                    pinnedConversations,
-                  ).map((conversation) => {
-                    const profileName = runtimeProfileForConversation(conversation, selectedProfile);
-                    return renderConversationRow(profileName, conversation, {
-                      pinKey: unprojectedConversationPinKey(profileName, conversation.id),
-                      selected: !selectedProjectId && profileName === selectedProfile && conversation.id === selectedConversationId,
-                      keySuffix: "unprojected",
-                    });
-                  })
-                ) : (
-                  <div className="history-empty compact">No unprojected sessions yet.</div>
-                )}
+              <div className="sidebar-section profile-tree chats-tree">
+                <div className="profile-tree-header">
+                  {renderSidebarSectionToggle("chats", "Sessions", chatsSectionCollapsed)}
+                </div>
+                {!chatsSectionCollapsed ? (
+                  <div className="profile-list flat-chat-list" id="sidebar-chats-section">
+                    {unpinnedScopedConversations(
+                      unprojectedConversations,
+                      (conversation) =>
+                        unprojectedConversationPinKey(runtimeProfileForConversation(conversation, selectedProfile), conversation.id),
+                      pinnedConversations,
+                    ).length ? (
+                      unpinnedScopedConversations(
+                        unprojectedConversations,
+                        (conversation) =>
+                          unprojectedConversationPinKey(runtimeProfileForConversation(conversation, selectedProfile), conversation.id),
+                        pinnedConversations,
+                      ).map((conversation) => {
+                        const profileName = runtimeProfileForConversation(conversation, selectedProfile);
+                        return renderConversationRow(profileName, conversation, {
+                          pinKey: unprojectedConversationPinKey(profileName, conversation.id),
+                          selected:
+                            showSelectedConversation &&
+                            !selectedProjectId &&
+                            profileName === selectedProfile &&
+                            conversation.id === selectedConversationId,
+                          keySuffix: "unprojected",
+                        });
+                      })
+                    ) : (
+                      <div className="history-empty compact">No unprojected sessions yet.</div>
+                    )}
+                  </div>
+                ) : null}
               </div>
-            ) : null}
-          </div>
-
-          <div className="sidebar-section profile-tree">
-            <div className="profile-tree-header">
-              {renderSidebarSectionToggle("agents", "Agents", agentsSectionCollapsed)}
-              <div className="profile-tree-actions sidebar-section-actions">
-                <button
-                  type="button"
-                  className="sidebar-icon-button"
-                  onClick={() => onRefreshConversations(selectedProfile)}
-                  disabled={conversationsLoading}
-                  title="Refresh sessions"
-                >
-                  <RefreshCcw size={13} className={conversationsLoading ? "spin" : ""} />
-                </button>
-                <button
-                  type="button"
-                  className="sidebar-icon-button"
-                  onClick={() => openProfileCreateDialog()}
-                  aria-label="Create agent"
-                  title="Create agent"
-                >
-                  <Plus size={14} />
-                </button>
+            </>
+          ) : (
+            <div className="sidebar-section profile-tree">
+              <div className="profile-tree-header">
+                {renderSidebarSectionToggle("agents", "Agents", agentsSectionCollapsed)}
+                <div className="profile-tree-actions sidebar-section-actions">
+                  <button
+                    type="button"
+                    className="sidebar-icon-button"
+                    onClick={() => onRefreshConversations(selectedProfile)}
+                    disabled={conversationsLoading}
+                    title="Refresh sessions"
+                  >
+                    <RefreshCcw size={13} className={conversationsLoading ? "spin" : ""} />
+                  </button>
+                  {renderSidebarOrganizationButton()}
+                  <button
+                    type="button"
+                    className="sidebar-icon-button"
+                    onClick={() => openProfileCreateDialog()}
+                    aria-label="Create agent"
+                    title="Create agent"
+                  >
+                    <Plus size={14} />
+                  </button>
+                </div>
               </div>
-            </div>
-            {!agentsSectionCollapsed ? (
-              <div className="profile-list" id="sidebar-agents-section">
-                {profiles.map((profile) => {
-                  const selected = profile.name === selectedProfile;
-                  const collapsed = Boolean(collapsedSessionProfiles[profile.name]);
-                  const profileConversations = selected
-                    ? conversations
-                    : conversationsByProfile[profile.name] || [];
-                  const visibleProfileConversations = unpinnedProfileConversations(
-                    profile.name,
-                    profileConversations,
-                    pinnedConversations,
-                  );
-                  const profileLoading = selected
-                    ? conversationsLoading
-                    : Boolean(conversationsLoadingByProfile[profile.name]);
-                  const profileError = selected
-                    ? historyError
-                    : historyErrorsByProfile[profile.name] || null;
-                  const showSessionBranch =
-                    !collapsed &&
-                    (selected ||
-                      Boolean(profileError) ||
-                      profileLoading ||
-                      !conversationsLoadedByProfile[profile.name] ||
-                      visibleProfileConversations.length > 0);
-                  const ProfileFolderIcon = collapsed ? Folder : FolderOpen;
-                  return (
-                    <div key={profile.name} className="profile-node">
-                      <div className="profile-node-row">
-                        <button
-                          type="button"
-                          className="profile-node-button"
-                          aria-expanded={!collapsed}
-                          onClick={() => {
-                            const willExpand = collapsed;
-                            toggleSessionsCollapsed(profile.name);
-                            if (
-                              willExpand &&
-                              !conversationsLoadedByProfile[profile.name] &&
-                              !conversationsLoadingByProfile[profile.name]
-                            ) {
-                              onRefreshConversations(profile.name);
-                            }
-                          }}
-                        >
-                          <ProfileFolderIcon size={16} />
-                          <span>{profile.name}</span>
-                        </button>
-                        <div className="profile-row-actions">
-                          <div className="profile-menu-wrap">
-                            <button
-                              type="button"
-                              className="profile-row-action profile-menu-trigger"
-                              title={`More actions for ${profile.name}`}
-                              aria-label={`More actions for ${profile.name}`}
-                              aria-haspopup="menu"
-                              aria-expanded={profileMenu?.profile === profile.name}
-                              onClick={(event) => {
-                                event.stopPropagation();
-                                toggleProfileMenu(profile.name, event.currentTarget);
-                              }}
-                            >
-                              <Ellipsis size={17} />
-                            </button>
-                          </div>
+              {!agentsSectionCollapsed ? (
+                <div className="profile-list" id="sidebar-agents-section">
+                  {profiles.map((profile) => {
+                    const selected = profile.name === selectedProfile;
+                    const collapsed = Boolean(collapsedSessionProfiles[profile.name]);
+                    const profileConversations = selected
+                      ? conversations
+                      : conversationsByProfile[profile.name] || [];
+                    const visibleProfileConversations = unpinnedProfileConversations(
+                      profile.name,
+                      profileConversations,
+                      pinnedConversations,
+                    );
+                    const profileLoading = selected
+                      ? conversationsLoading
+                      : Boolean(conversationsLoadingByProfile[profile.name]);
+                    const profileError = selected
+                      ? historyError
+                      : historyErrorsByProfile[profile.name] || null;
+                    const showSessionBranch =
+                      !collapsed &&
+                      (selected ||
+                        Boolean(profileError) ||
+                        profileLoading ||
+                        !conversationsLoadedByProfile[profile.name] ||
+                        visibleProfileConversations.length > 0);
+                    const ProfileFolderIcon = collapsed ? Folder : FolderOpen;
+                    return (
+                      <div key={profile.name} className="profile-node">
+                        <div className="profile-node-row">
                           <button
                             type="button"
-                            className="profile-row-action profile-new-chat-action"
-                            title={`Start new session in ${profile.name}`}
-                            aria-label={`Start new session in ${profile.name}`}
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              if (!selected) onSelectProfile(profile.name);
-                              expandSessions(profile.name);
-                              onNewConversation(profile.name);
+                            className="profile-node-button"
+                            aria-expanded={!collapsed}
+                            onClick={() => {
+                              const willExpand = collapsed;
+                              toggleSessionsCollapsed(profile.name);
+                              if (
+                                willExpand &&
+                                !conversationsLoadedByProfile[profile.name] &&
+                                !conversationsLoadingByProfile[profile.name]
+                              ) {
+                                onRefreshConversations(profile.name);
+                              }
                             }}
                           >
-                            <SquarePen size={16} />
+                            <ProfileFolderIcon size={16} />
+                            <span>{profile.name}</span>
                           </button>
-                        </div>
-                      </div>
-                      {showSessionBranch ? (
-                        <div className="session-branch">
-                          {profileError ? <div className="history-notice">{profileError}</div> : null}
-                          {visibleProfileConversations.length ? (
-                            visibleProfileConversations.map((conversation) =>
-                              renderConversationRow(profile.name, conversation, {
-                                pinKey: agentConversationPinKey(profile.name, conversation.id),
-                                selected: profile.name === selectedProfile && !selectedProjectId && conversation.id === selectedConversationId,
-                                keySuffix: "profile",
-                              }),
-                            )
-                          ) : (
-                            <div className="history-empty compact">
-                              {profileLoading ? "Loading sessions..." : "No sessions yet."}
+                          <div className="profile-row-actions">
+                            <div className="profile-menu-wrap">
+                              <button
+                                type="button"
+                                className="profile-row-action profile-menu-trigger"
+                                title={`More actions for ${profile.name}`}
+                                aria-label={`More actions for ${profile.name}`}
+                                aria-haspopup="menu"
+                                aria-expanded={profileMenu?.profile === profile.name}
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  toggleProfileMenu(profile.name, event.currentTarget);
+                                }}
+                              >
+                                <Ellipsis size={17} />
+                              </button>
                             </div>
-                          )}
+                            <button
+                              type="button"
+                              className="profile-row-action profile-new-chat-action"
+                              title={`Start new session in ${profile.name}`}
+                              aria-label={`Start new session in ${profile.name}`}
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                if (!selected) onSelectProfile(profile.name);
+                                expandSessions(profile.name);
+                                onNewConversation(profile.name);
+                              }}
+                            >
+                              <SquarePen size={16} />
+                            </button>
+                          </div>
                         </div>
-                      ) : null}
-                    </div>
-                  );
-                })}
-              </div>
-            ) : null}
-          </div>
+                        {showSessionBranch ? (
+                          <div className="session-branch">
+                            {profileError ? <div className="history-notice">{profileError}</div> : null}
+                            {visibleProfileConversations.length ? (
+                              visibleProfileConversations.map((conversation) =>
+                                renderConversationRow(profile.name, conversation, {
+                                  pinKey: agentConversationPinKey(profile.name, conversation.id),
+                                  selected:
+                                    showSelectedConversation &&
+                                    profile.name === selectedProfile &&
+                                    !selectedProjectId &&
+                                    conversation.id === selectedConversationId,
+                                  keySuffix: "profile",
+                                }),
+                              )
+                            ) : (
+                              <div className="history-empty compact">
+                                {profileLoading ? "Loading sessions..." : "No sessions yet."}
+                              </div>
+                            )}
+                          </div>
+                        ) : null}
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : null}
+            </div>
+          )}
         </div>
 
         <button className="sidebar-refresh" onClick={onRefresh} disabled={isRefreshing} title="Refresh connection">
@@ -847,10 +903,12 @@ export function AppShell({
           <div className="topbar-drag-zone" data-tauri-drag-region />
           {topbarPane ?? (
             <>
-              <div className="topbar-title">
-                <p>{viewTitle(activeView)}</p>
-                <span>{coreApiUrl}</span>
-              </div>
+              {activeView === "chat" ? (
+                <div className="topbar-title">
+                  <p>{viewTitle(activeView)}</p>
+                  <span>{coreApiUrl}</span>
+                </div>
+              ) : null}
               <div className="topbar-actions">
                 {activeView === "chat" ? (
                   <button
@@ -892,6 +950,7 @@ export function AppShell({
       {conversationSearchOpen ? renderConversationSearch() : null}
       {profileMenu ? renderProfileMenu() : null}
       {projectMenu ? renderProjectMenu() : null}
+      {sidebarOrganizationMenu ? renderSidebarOrganizationMenu() : null}
       {conversationMenu ? renderConversationMenu() : null}
       {profileDialog ? renderProfileDialog() : null}
       {projectDialog ? renderProjectDialog() : null}
@@ -987,7 +1046,10 @@ export function AppShell({
                 const conversationProfileName = runtimeProfileForConversation(conversation, profileName);
                 return renderConversationRow(conversationProfileName, conversation, {
                   pinKey: projectConversationPinKey(project.id, conversation.id),
-                  selected: selectedProjectId === project.id && conversation.id === selectedConversationId,
+                  selected:
+                    showSelectedConversation &&
+                    selectedProjectId === project.id &&
+                    conversation.id === selectedConversationId,
                   onSelect: () => onSelectProjectConversation(project.id, conversationProfileName, conversation.id),
                   keySuffix: `project-${project.id}`,
                 });
@@ -1016,7 +1078,9 @@ export function AppShell({
     } = {},
   ) {
     const running = activeConversationIds.includes(conversation.id);
-    const selected = options.selected ?? (profileName === selectedProfile && conversation.id === selectedConversationId);
+    const selected =
+      options.selected ??
+      (showSelectedConversation && profileName === selectedProfile && conversation.id === selectedConversationId);
     const unread = !selected && !running && conversationReadState(conversationReadStates, conversation) === "unread";
     const pinKey = options.pinKey || agentConversationPinKey(profileName, conversation.id);
     const pinned = isConversationPinned(pinKey);
@@ -1267,6 +1331,25 @@ export function AppShell({
     );
   }
 
+  function renderSidebarOrganizationButton() {
+    return (
+      <button
+        type="button"
+        className="sidebar-icon-button sidebar-organization-trigger"
+        aria-label="Organize sidebar"
+        aria-haspopup="menu"
+        aria-expanded={Boolean(sidebarOrganizationMenu)}
+        title={`Organize by ${sidebarOrganization === "projects" ? "project" : "agent"}`}
+        onClick={(event) => {
+          event.stopPropagation();
+          toggleSidebarOrganizationMenu(event.currentTarget);
+        }}
+      >
+        <SlidersHorizontal size={14} />
+      </button>
+    );
+  }
+
   function expandSessions(profileName: string) {
     setCollapsedSessionProfiles((current) => {
       if (!current[profileName]) return current;
@@ -1332,6 +1415,27 @@ export function AppShell({
         : below;
       return { projectId, top, left };
     });
+  }
+
+  function toggleSidebarOrganizationMenu(trigger: HTMLElement) {
+    setSidebarOrganizationMenu((current) => {
+      if (current) return null;
+      const rect = trigger.getBoundingClientRect();
+      const menuWidth = 166;
+      const menuHeight = 98;
+      const left = clamp(rect.right - menuWidth, 8, window.innerWidth - menuWidth - 8);
+      const below = rect.bottom + 6;
+      const top = below + menuHeight > window.innerHeight - 8
+        ? Math.max(8, rect.top - menuHeight - 6)
+        : below;
+      return { top, left };
+    });
+  }
+
+  function selectSidebarOrganization(value: SidebarOrganization) {
+    setSidebarOrganization(value);
+    saveSidebarOrganization(value);
+    setSidebarOrganizationMenu(null);
   }
 
   function openProjectMenu(projectId: string, clientX: number, clientY: number) {
@@ -1477,6 +1581,35 @@ export function AppShell({
           <Pencil size={14} />
           Edit
         </button>
+      </div>
+    );
+  }
+
+  function renderSidebarOrganizationMenu() {
+    const options: Array<{ value: SidebarOrganization; label: string }> = [
+      { value: "projects", label: "By project" },
+      { value: "agents", label: "By agent" },
+    ];
+
+    return (
+      <div
+        className="profile-context-menu sidebar-organization-menu"
+        role="menu"
+        style={{ top: sidebarOrganizationMenu?.top ?? 0, left: sidebarOrganizationMenu?.left ?? 0 }}
+      >
+        <div className="profile-context-menu-header" role="presentation">Organize</div>
+        {options.map((option) => (
+          <button
+            type="button"
+            key={option.value}
+            role="menuitemradio"
+            aria-checked={sidebarOrganization === option.value}
+            onClick={() => selectSidebarOrganization(option.value)}
+          >
+            <Check size={14} style={{ opacity: sidebarOrganization === option.value ? 1 : 0 }} />
+            {option.label}
+          </button>
+        ))}
       </div>
     );
   }
@@ -1899,6 +2032,11 @@ function loadCollapsedSidebarSections(): Record<SidebarSectionId, boolean> {
   };
 }
 
+function loadSidebarOrganization(): SidebarOrganization {
+  const value = loadJsonValue<string>(storageKeys.sidebarOrganization, "projects");
+  return value === "agents" ? "agents" : "projects";
+}
+
 function loadPinnedConversations() {
   const parsed = loadJsonValue<Record<string, unknown>>(storageKeys.pinnedConversations, {});
   return parsed && typeof parsed === "object" && !Array.isArray(parsed)
@@ -1968,6 +2106,10 @@ function saveCollapsedSessionProfiles(value: Record<string, boolean>) {
 
 function saveCollapsedSidebarSections(value: Record<SidebarSectionId, boolean>) {
   saveJsonValue(storageKeys.collapsedSidebarSections, value);
+}
+
+function saveSidebarOrganization(value: SidebarOrganization) {
+  saveJsonValue(storageKeys.sidebarOrganization, value);
 }
 
 function widthBandForWindow() {
