@@ -13,6 +13,9 @@ dist-ssr
 *.local
 .vite
 
+# Internal docs
+docs/internal/
+
 # Python sidecar
 .venv/
 __pycache__/
