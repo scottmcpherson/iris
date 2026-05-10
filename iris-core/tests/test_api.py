@@ -86,7 +86,7 @@ def test_live_delivery_bus_assigns_unique_cursors_under_concurrent_publish():
 
     def publish(index):
         return bus.publish({
-            "conversationId": "conv_1",
+            "sessionId": "session_1",
             "agentId": "agent_1",
             "content": f"message {index}",
         })
@@ -137,7 +137,7 @@ def test_core_cors_preflight_allows_idempotency_key(tmp_path):
     client = TestClient(app)
 
     response = client.options(
-        "/v1/conversations/conv_test/messages",
+        "/v1/sessions/session_test/messages",
         headers={
             "Origin": "tauri://localhost",
             "Access-Control-Request-Method": "POST",
@@ -445,10 +445,10 @@ def test_legacy_inbox_delivery_publishes_live_event_without_core_transcript(tmp_
     )
     client = TestClient(app)
     agent = client.get("/v1/agents").json()["agents"][0]
-    conversation = client.post(
-        "/v1/conversations",
+    session = client.post(
+        "/v1/sessions",
         json={"agentId": agent["id"], "title": "Legacy inbox delivery"},
-    ).json()["conversation"]
+    ).json()["session"]
 
     delivered = client.post(
         "/v1/inbox/messages",
@@ -457,26 +457,26 @@ def test_legacy_inbox_delivery_publishes_live_event_without_core_transcript(tmp_
             "source": "hermes-cron",
             "platform": "agentui",
             "profile": "default",
-            "chatId": conversation["externalChatId"],
+            "chatId": session["externalChatId"],
             "content": "Legacy inbox delivery through Core",
             "metadata": {"jobId": "job-legacy"},
         },
     )
-    events = client.get(f"/v1/conversations/{conversation['id']}/events?after=0")
+    events = client.get(f"/v1/sessions/{session['id']}/events?after=0")
 
     assert delivered.status_code == 200
     assert [event["type"] for event in events.json()["events"]] == ["message.assistant.completed"]
     assert events.json()["events"][0]["content"] == "Legacy inbox delivery through Core"
     assert events.json()["events"][0]["metadata"]["jobId"] == "job-legacy"
-    assert "conversation_messages" not in client.app.state.core_store.tables()
+    assert "session_messages" not in client.app.state.core_store.tables()
 
 
-def test_core_conversation_create_can_link_existing_runtime_chat(tmp_path):
+def test_core_session_create_can_link_existing_runtime_chat(tmp_path):
     client = make_client(tmp_path / ".hermes")
     agent = client.get("/v1/agents").json()["agents"][0]
 
     created = client.post(
-        "/v1/conversations",
+        "/v1/sessions",
         json={
             "agentId": agent["id"],
             "title": "Linked legacy chat",
@@ -486,11 +486,11 @@ def test_core_conversation_create_can_link_existing_runtime_chat(tmp_path):
         },
     )
 
-    conversation = created.json()["conversation"]
+    session = created.json()["session"]
     assert created.status_code == 200
-    assert conversation["externalChatId"] == "legacy-chat-1"
-    assert conversation["externalSessionId"] == "legacy-session-1"
-    assert conversation["metadata"]["createdBy"] == "desktop-legacy-link"
+    assert session["externalChatId"] == "legacy-chat-1"
+    assert session["externalSessionId"] == "legacy-session-1"
+    assert session["metadata"]["createdBy"] == "desktop-legacy-link"
 
 
 def test_project_endpoints_create_link_and_archive_without_transcript_tables(tmp_path):
@@ -506,16 +506,16 @@ def test_project_endpoints_create_link_and_archive_without_transcript_tables(tmp
         },
     )
     project = created_project.json()["project"]
-    created_conversation = client.post(
-        "/v1/conversations",
+    created_session = client.post(
+        "/v1/sessions",
         json={
             "title": "Project chat",
             "projectId": project["id"],
             "metadata": {"model": "gpt-test"},
         },
     )
-    conversation = created_conversation.json()["conversation"]
-    listed = client.get(f"/v1/projects/{project['id']}/conversations")
+    session = created_session.json()["session"]
+    listed = client.get(f"/v1/projects/{project['id']}/sessions")
     updated = client.patch(
         f"/v1/projects/{project['id']}",
         json={
@@ -528,21 +528,21 @@ def test_project_endpoints_create_link_and_archive_without_transcript_tables(tmp
 
     assert created_project.status_code == 200
     assert project["slug"] == "agentui"
-    assert created_conversation.status_code == 200
-    assert conversation["agentId"] == agent["id"]
-    assert conversation["metadata"]["project"]["id"] == project["id"]
+    assert created_session.status_code == 200
+    assert session["agentId"] == agent["id"]
+    assert session["metadata"]["project"]["id"] == project["id"]
     assert listed.status_code == 200
-    assert listed.json()["conversations"][0]["id"] == conversation["id"]
-    assert listed.json()["conversations"][0]["metadata"]["project"]["name"] == "AgentUI"
+    assert listed.json()["sessions"][0]["id"] == session["id"]
+    assert listed.json()["sessions"][0]["metadata"]["project"]["name"] == "AgentUI"
     assert updated.status_code == 200
     assert updated.json()["project"]["name"] == "Iris"
     assert updated.json()["project"]["defaultAgentId"] == agent["id"]
     assert updated.json()["project"]["systemPrompt"] == "Use the updated project brief."
     assert archived.status_code == 200
-    assert "conversation_messages" not in client.app.state.core_store.tables()
+    assert "session_messages" not in client.app.state.core_store.tables()
 
 
-def test_project_conversations_deduplicate_stale_draft_links_by_chat_id(tmp_path):
+def test_project_sessions_deduplicate_stale_draft_links_by_chat_id(tmp_path):
     root = tmp_path / ".hermes"
     create_core_history_db(
         root / "state.db",
@@ -558,20 +558,20 @@ def test_project_conversations_deduplicate_stale_draft_links_by_chat_id(tmp_path
         "/v1/projects",
         json={"name": "Pirate", "defaultAgentId": agent["id"]},
     ).json()["project"]
-    real_conversation = client.get(f"/v1/conversations?agentId={agent['id']}").json()["conversations"][0]
+    real_session = client.get(f"/v1/sessions?agentId={agent['id']}").json()["sessions"][0]
 
     with client.app.state.core_store.connect() as connection:
         connection.executemany(
             """
-            insert into project_conversations(
-              project_id, conversation_id, agent_id, runtime_id, runtime_profile,
+            insert into project_sessions(
+              project_id, session_id, agent_id, runtime_id, runtime_profile,
               external_session_id, external_chat_id, created_at, updated_at, metadata_json
             ) values(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             [
                 (
                     project["id"],
-                    "conv_stale_draft",
+                    "session_stale_draft",
                     agent["id"],
                     "runtime_local_hermes",
                     "default",
@@ -583,12 +583,12 @@ def test_project_conversations_deduplicate_stale_draft_links_by_chat_id(tmp_path
                 ),
                 (
                     project["id"],
-                    real_conversation["id"],
+                    real_session["id"],
                     agent["id"],
-                    real_conversation["runtimeId"],
-                    real_conversation["runtimeProfile"],
-                    real_conversation["externalSessionId"],
-                    real_conversation["externalChatId"],
+                    real_session["runtimeId"],
+                    real_session["runtimeProfile"],
+                    real_session["externalSessionId"],
+                    real_session["externalChatId"],
                     2,
                     2,
                     "{}",
@@ -596,18 +596,18 @@ def test_project_conversations_deduplicate_stale_draft_links_by_chat_id(tmp_path
             ],
         )
 
-    listed = client.get(f"/v1/projects/{project['id']}/conversations")
+    listed = client.get(f"/v1/projects/{project['id']}/sessions")
     matches = [
-        conversation
-        for conversation in listed.json()["conversations"]
-        if conversation["externalChatId"] == "chat-1"
+        session
+        for session in listed.json()["sessions"]
+        if session["externalChatId"] == "chat-1"
     ]
 
     assert listed.status_code == 200
-    assert [conversation["id"] for conversation in matches] == [real_conversation["id"]]
+    assert [session["id"] for session in matches] == [real_session["id"]]
 
 
-def test_core_conversation_delete_removes_sqlite_session_and_core_overlays(tmp_path):
+def test_core_session_delete_removes_sqlite_session_and_core_overlays(tmp_path):
     root = tmp_path / ".hermes"
     create_core_history_db(
         root / "state.db",
@@ -619,33 +619,33 @@ def test_core_conversation_delete_removes_sqlite_session_and_core_overlays(tmp_p
     )
     client = make_client(root)
     agent = client.get("/v1/agents").json()["agents"][0]
-    conversation = next(
+    session = next(
         item
-        for item in client.get(f"/v1/conversations?agentId={agent['id']}").json()["conversations"]
+        for item in client.get(f"/v1/sessions?agentId={agent['id']}").json()["sessions"]
         if item["externalSessionId"] == "delete-session"
     )
     project = client.post(
         "/v1/projects",
         json={"name": "Cleanup", "defaultAgentId": agent["id"]},
     ).json()["project"]
-    client.post(f"/v1/projects/{project['id']}/conversations", json={"conversationId": conversation["id"]})
-    client.patch(f"/v1/conversations/{conversation['id']}/read-state", json={"state": "unread"})
+    client.post(f"/v1/projects/{project['id']}/sessions", json={"sessionId": session["id"]})
+    client.patch(f"/v1/sessions/{session['id']}/read-state", json={"state": "unread"})
 
-    deleted = client.delete(f"/v1/conversations/{conversation['id']}")
-    listed = client.get(f"/v1/conversations?agentId={agent['id']}")
-    detail = client.get(f"/v1/conversations/{conversation['id']}")
+    deleted = client.delete(f"/v1/sessions/{session['id']}")
+    listed = client.get(f"/v1/sessions?agentId={agent['id']}")
+    detail = client.get(f"/v1/sessions/{session['id']}")
 
     assert deleted.status_code == 200
-    assert listed.json()["conversations"] == []
+    assert listed.json()["sessions"] == []
     assert detail.status_code == 404
     with sqlite3.connect(root / "state.db") as connection:
         assert connection.execute("select count(*) from sessions").fetchone()[0] == 0
         assert connection.execute("select count(*) from messages").fetchone()[0] == 0
-    assert client.app.state.core_store.project_conversation_link(project["id"], conversation["id"]) is None
-    assert client.app.state.core_store.conversation_read_state(conversation["id"]) is None
+    assert client.app.state.core_store.project_session_link(project["id"], session["id"]) is None
+    assert client.app.state.core_store.session_read_state(session["id"]) is None
 
 
-def test_core_conversation_delete_removes_session_json_file_and_origin(tmp_path):
+def test_core_session_delete_removes_session_json_file_and_origin(tmp_path):
     root = tmp_path / ".hermes"
     sessions = root / "sessions"
     sessions.mkdir(parents=True)
@@ -674,17 +674,17 @@ def test_core_conversation_delete_removes_session_json_file_and_origin(tmp_path)
     )
     client = make_client(root)
     agent = client.get("/v1/agents").json()["agents"][0]
-    conversation = client.get(f"/v1/conversations?agentId={agent['id']}").json()["conversations"][0]
+    session = client.get(f"/v1/sessions?agentId={agent['id']}").json()["sessions"][0]
 
-    deleted = client.delete(f"/v1/conversations/{conversation['id']}")
+    deleted = client.delete(f"/v1/sessions/{session['id']}")
 
     assert deleted.status_code == 200
     assert not (sessions / "session_1.json").exists()
     assert json.loads((sessions / "sessions.json").read_text(encoding="utf-8")) == {}
-    assert client.get(f"/v1/conversations?agentId={agent['id']}").json()["conversations"] == []
+    assert client.get(f"/v1/sessions?agentId={agent['id']}").json()["sessions"] == []
 
 
-def test_conversation_read_state_is_shared_core_state(tmp_path):
+def test_session_read_state_is_shared_core_state(tmp_path):
     client = make_client(tmp_path / ".hermes")
     agent = client.get("/v1/agents").json()["agents"][0]
     project = client.post(
@@ -692,20 +692,20 @@ def test_conversation_read_state_is_shared_core_state(tmp_path):
         json={"name": "Read State Project", "defaultAgentId": agent["id"]},
     ).json()["project"]
     created = client.post(
-        "/v1/conversations",
+        "/v1/sessions",
         json={"agentId": agent["id"], "projectId": project["id"], "title": "Read state"},
     )
-    conversation = created.json()["conversation"]
+    session = created.json()["session"]
 
-    default_state = client.get(f"/v1/conversations/{conversation['id']}/read-state")
+    default_state = client.get(f"/v1/sessions/{session['id']}/read-state")
     unread = client.patch(
-        f"/v1/conversations/{conversation['id']}/read-state",
+        f"/v1/sessions/{session['id']}/read-state",
         json={"state": "unread", "metadata": {"eventCursor": 7}},
     )
-    listed = client.get(f"/v1/projects/{project['id']}/conversations")
-    projectless_detail = client.get(f"/v1/conversations/{conversation['id']}")
+    listed = client.get(f"/v1/projects/{project['id']}/sessions")
+    projectless_detail = client.get(f"/v1/sessions/{session['id']}")
     read = client.patch(
-        f"/v1/conversations/{conversation['id']}/read-state",
+        f"/v1/sessions/{session['id']}/read-state",
         json={"state": "read"},
     )
 
@@ -714,8 +714,8 @@ def test_conversation_read_state_is_shared_core_state(tmp_path):
     assert unread.status_code == 200
     assert unread.json()["readState"]["state"] == "unread"
     assert unread.json()["readState"]["metadata"]["eventCursor"] == 7
-    assert listed.json()["conversations"][0]["readState"]["state"] == "unread"
-    assert projectless_detail.json()["conversation"]["readState"]["state"] == "unread"
+    assert listed.json()["sessions"][0]["readState"]["state"] == "unread"
+    assert projectless_detail.json()["session"]["readState"]["state"] == "unread"
     assert read.json()["readState"]["state"] == "read"
 
 
@@ -731,10 +731,10 @@ def test_legacy_inbox_stream_and_completed_replays_remain_live_only(tmp_path):
     client = TestClient(app)
     headers = {"Authorization": "Bearer inbox-token"}
     agent = client.get("/v1/agents").json()["agents"][0]
-    conversation = client.post(
-        "/v1/conversations",
+    session = client.post(
+        "/v1/sessions",
         json={"agentId": agent["id"], "title": "Gateway replay"},
-    ).json()["conversation"]
+    ).json()["session"]
 
     client.post(
         "/v1/inbox/messages",
@@ -744,7 +744,7 @@ def test_legacy_inbox_stream_and_completed_replays_remain_live_only(tmp_path):
             "source": "hermes-gateway",
             "platform": "agentui",
             "profile": "default",
-            "chatId": conversation["externalChatId"],
+            "chatId": session["externalChatId"],
             "content": "Hi! What can I help you with today?",
             "metadata": {},
         },
@@ -757,7 +757,7 @@ def test_legacy_inbox_stream_and_completed_replays_remain_live_only(tmp_path):
             "source": "hermes-gateway-stream",
             "platform": "agentui",
             "profile": "default",
-            "chatId": conversation["externalChatId"],
+            "chatId": session["externalChatId"],
             "content": "Hi! What can I help you with today?",
             "metadata": {"streamMessageId": "assistant-stream-1", "streaming": False, "finalize": True},
         },
@@ -770,7 +770,7 @@ def test_legacy_inbox_stream_and_completed_replays_remain_live_only(tmp_path):
             "source": "hermes-gateway-stream",
             "platform": "agentui",
             "profile": "default",
-            "chatId": conversation["externalChatId"],
+            "chatId": session["externalChatId"],
             "content": "Hi! What can I help you with today?",
             "metadata": {"streamMessageId": "assistant-stream-1", "streaming": True, "finalize": False},
         },
@@ -783,7 +783,7 @@ def test_legacy_inbox_stream_and_completed_replays_remain_live_only(tmp_path):
             "source": "hermes-gateway",
             "platform": "agentui",
             "profile": "default",
-            "chatId": conversation["externalChatId"],
+            "chatId": session["externalChatId"],
             "content": "Hi! What can I help you with today?",
             "metadata": {"replyTo": "user-message-1"},
         },
@@ -796,17 +796,17 @@ def test_legacy_inbox_stream_and_completed_replays_remain_live_only(tmp_path):
             "source": "hermes-gateway",
             "platform": "agentui",
             "profile": "default",
-            "chatId": conversation["externalChatId"],
+            "chatId": session["externalChatId"],
             "content": "Hi! What can I help you with today?",
             "metadata": {"replyTo": "user-message-1"},
         },
     )
 
-    events = client.get(f"/v1/conversations/{conversation['id']}/events?after=0").json()["events"]
+    events = client.get(f"/v1/sessions/{session['id']}/events?after=0").json()["events"]
 
     assert len([event for event in events if event["type"].startswith("message.assistant")]) == 5
-    assert all(event["conversationId"] == conversation["id"] for event in events)
-    assert client.get(f"/v1/conversations/{conversation['id']}/messages").json()["messages"] == []
+    assert all(event["sessionId"] == session["id"] for event in events)
+    assert client.get(f"/v1/sessions/{session['id']}/messages").json()["messages"] == []
 
 
 def test_core_message_read_coalesces_existing_gateway_replay_rows():
@@ -885,7 +885,7 @@ def test_core_message_coalescing_merges_attachment_metadata():
     assert coalesced[0]["metadata"]["attachments"][0]["id"] == "att_1"
 
 
-def test_core_lists_runtimes_agents_and_backfilled_conversations(tmp_path):
+def test_core_lists_runtimes_agents_and_backfilled_sessions(tmp_path):
     root = tmp_path / ".hermes"
     profile = root / "profiles" / "research"
     profile.mkdir(parents=True)
@@ -894,29 +894,29 @@ def test_core_lists_runtimes_agents_and_backfilled_conversations(tmp_path):
     runtimes = client.get("/v1/runtimes")
     agents = client.get("/v1/agents")
     agent = next(row for row in agents.json()["agents"] if row["runtimeProfile"] == "research")
-    conversations = client.get(f"/v1/conversations?agentId={agent['id']}")
+    sessions = client.get(f"/v1/sessions?agentId={agent['id']}")
 
     assert runtimes.status_code == 200
     assert runtimes.json()["runtimes"][0]["id"] == "runtime_local_hermes"
     assert agents.status_code == 200
     assert agent["displayName"] == "research"
-    assert conversations.status_code == 200
-    assert conversations.json()["conversations"] == []
+    assert sessions.status_code == 200
+    assert sessions.json()["sessions"] == []
 
 
 def test_core_runtime_delivery_is_live_replay_not_transcript_storage(tmp_path):
     root = tmp_path / ".hermes"
     client = make_client(root)
     agent = client.get("/v1/agents").json()["agents"][0]
-    created = client.post("/v1/conversations", json={"agentId": agent["id"], "title": "Core chat"})
-    conversation_id = created.json()["conversation"]["id"]
+    created = client.post("/v1/sessions", json={"agentId": agent["id"], "title": "Core chat"})
+    session_id = created.json()["session"]["id"]
 
     delivery = client.post(
         "/v1/runtime-deliveries/hermes",
         json={
             "runtimeId": "runtime_local_hermes",
             "profile": "default",
-            "chatId": created.json()["conversation"]["externalChatId"],
+            "chatId": created.json()["session"]["externalChatId"],
             "messageId": "assistant-stream-1",
             "replyTo": "client-message-1",
             "content": "Hello from Hermes",
@@ -927,10 +927,10 @@ def test_core_runtime_delivery_is_live_replay_not_transcript_storage(tmp_path):
 
     assert created.status_code == 200
     assert delivery.status_code == 200
-    assert delivery.json()["conversationId"] == conversation_id
+    assert delivery.json()["sessionId"] == session_id
     assert [event["type"] for event in events.json()["events"]] == ["message.assistant.completed"]
     assert events.json()["events"][0]["content"] == "Hello from Hermes"
-    assert client.get(f"/v1/conversations/{conversation_id}/messages").json()["messages"] == []
+    assert client.get(f"/v1/sessions/{session_id}/messages").json()["messages"] == []
 
 
 def test_runtime_delivery_imports_generated_image_attachment(tmp_path):
@@ -939,17 +939,17 @@ def test_runtime_delivery_imports_generated_image_attachment(tmp_path):
     root = tmp_path / ".hermes"
     client = make_client(root)
     agent = client.get("/v1/agents").json()["agents"][0]
-    conversation = client.post(
-        "/v1/conversations",
+    session = client.post(
+        "/v1/sessions",
         json={"agentId": agent["id"], "title": "Generated image"},
-    ).json()["conversation"]
+    ).json()["session"]
 
     delivery = client.post(
         "/v1/runtime-deliveries/hermes",
         json={
             "runtimeId": "runtime_local_hermes",
             "profile": "default",
-            "chatId": conversation["externalChatId"],
+            "chatId": session["externalChatId"],
             "messageId": "assistant-image-1",
             "replyTo": "user-message-1",
             "content": f"Done\n\nMEDIA:{generated}",
@@ -979,17 +979,17 @@ def test_runtime_delivery_missing_generated_file_preserves_marker_with_warning(t
     root = tmp_path / ".hermes"
     client = make_client(root)
     agent = client.get("/v1/agents").json()["agents"][0]
-    conversation = client.post(
-        "/v1/conversations",
+    session = client.post(
+        "/v1/sessions",
         json={"agentId": agent["id"], "title": "Missing generated image"},
-    ).json()["conversation"]
+    ).json()["session"]
 
     delivery = client.post(
         "/v1/runtime-deliveries/hermes",
         json={
             "runtimeId": "runtime_local_hermes",
             "profile": "default",
-            "chatId": conversation["externalChatId"],
+            "chatId": session["externalChatId"],
             "messageId": "assistant-image-1",
             "replyTo": "user-message-1",
             "content": f"Done\n\nMEDIA:{missing}",
@@ -1010,17 +1010,17 @@ def test_runtime_delivery_imports_non_image_without_preview_url(tmp_path):
     root = tmp_path / ".hermes"
     client = make_client(root)
     agent = client.get("/v1/agents").json()["agents"][0]
-    conversation = client.post(
-        "/v1/conversations",
+    session = client.post(
+        "/v1/sessions",
         json={"agentId": agent["id"], "title": "Generated doc"},
-    ).json()["conversation"]
+    ).json()["session"]
 
     client.post(
         "/v1/runtime-deliveries/hermes",
         json={
             "runtimeId": "runtime_local_hermes",
             "profile": "default",
-            "chatId": conversation["externalChatId"],
+            "chatId": session["externalChatId"],
             "messageId": "assistant-file-1",
             "content": f"File: {generated}",
             "metadata": {},
@@ -1043,15 +1043,15 @@ def test_core_marks_late_model_switch_replies_hidden(tmp_path):
     root = tmp_path / ".hermes"
     client = make_client(root)
     agent = client.get("/v1/agents").json()["agents"][0]
-    created = client.post("/v1/conversations", json={"agentId": agent["id"], "title": "Core chat"})
-    conversation_id = created.json()["conversation"]["id"]
+    created = client.post("/v1/sessions", json={"agentId": agent["id"], "title": "Core chat"})
+    session_id = created.json()["session"]["id"]
 
     delivery = client.post(
         "/v1/runtime-deliveries/hermes",
         json={
             "runtimeId": "runtime_local_hermes",
             "profile": "default",
-            "chatId": created.json()["conversation"]["externalChatId"],
+            "chatId": created.json()["session"]["externalChatId"],
             "messageId": "model-switch-reply-1",
             "replyTo": "client-message-1-model",
             "content": "Model switched to `gpt-5.4-mini`",
@@ -1063,10 +1063,10 @@ def test_core_marks_late_model_switch_replies_hidden(tmp_path):
     assert delivery.status_code == 200
     assert event["metadata"]["hidden"] is True
     assert event["metadata"]["kind"] == "model-switch"
-    assert client.get(f"/v1/conversations/{conversation_id}/messages").json()["messages"] == []
+    assert client.get(f"/v1/sessions/{session_id}/messages").json()["messages"] == []
 
 
-def test_core_backfills_hermes_conversations_and_fetches_messages(tmp_path):
+def test_core_backfills_hermes_sessions_and_fetches_messages(tmp_path):
     root = tmp_path / ".hermes"
     create_core_history_db(
         root / "state.db",
@@ -1079,14 +1079,14 @@ def test_core_backfills_hermes_conversations_and_fetches_messages(tmp_path):
     client = make_client(root)
     agent = client.get("/v1/agents").json()["agents"][0]
 
-    listed = client.get(f"/v1/conversations?agentId={agent['id']}")
-    conversation = listed.json()["conversations"][0]
-    messages = client.get(f"/v1/conversations/{conversation['id']}/messages")
+    listed = client.get(f"/v1/sessions?agentId={agent['id']}")
+    session = listed.json()["sessions"][0]
+    messages = client.get(f"/v1/sessions/{session['id']}/messages")
 
     assert listed.status_code == 200
-    assert conversation["title"] == "Default history"
-    assert conversation["externalSessionId"] == "default-session"
-    assert conversation["externalChatId"] == "default-chat"
+    assert session["title"] == "Default history"
+    assert session["externalSessionId"] == "default-session"
+    assert session["externalChatId"] == "default-chat"
     assert messages.status_code == 200
     assert [message["content"] for message in messages.json()["messages"]] == [
         "Default question",
@@ -1094,7 +1094,7 @@ def test_core_backfills_hermes_conversations_and_fetches_messages(tmp_path):
     ]
 
 
-def test_core_renames_hermes_conversation_title(tmp_path):
+def test_core_renames_hermes_session_title(tmp_path):
     root = tmp_path / ".hermes"
     create_core_history_db(
         root / "state.db",
@@ -1106,17 +1106,17 @@ def test_core_renames_hermes_conversation_title(tmp_path):
     )
     client = make_client(root)
     agent = client.get("/v1/agents").json()["agents"][0]
-    conversation = client.get(f"/v1/conversations?agentId={agent['id']}").json()["conversations"][0]
+    session = client.get(f"/v1/sessions?agentId={agent['id']}").json()["sessions"][0]
 
     rename = client.patch(
-        f"/v1/conversations/{conversation['id']}",
+        f"/v1/sessions/{session['id']}",
         json={"title": "Pinned planning"},
     )
-    listed = client.get(f"/v1/conversations?agentId={agent['id']}")
+    listed = client.get(f"/v1/sessions?agentId={agent['id']}")
 
     assert rename.status_code == 200
-    assert rename.json()["conversation"]["title"] == "Pinned planning"
-    assert listed.json()["conversations"][0]["title"] == "Pinned planning"
+    assert rename.json()["session"]["title"] == "Pinned planning"
+    assert listed.json()["sessions"][0]["title"] == "Pinned planning"
 
 
 def test_core_merges_client_attachment_metadata_into_hermes_history(tmp_path):
@@ -1131,7 +1131,7 @@ def test_core_merges_client_attachment_metadata_into_hermes_history(tmp_path):
     )
     client = make_client(root)
     agent = client.get("/v1/agents").json()["agents"][0]
-    conversation = client.get(f"/v1/conversations?agentId={agent['id']}").json()["conversations"][0]
+    session = client.get(f"/v1/sessions?agentId={agent['id']}").json()["sessions"][0]
 
     client.app.state.core_store.upsert_client_message_metadata(
         runtime_id=agent["runtimeId"],
@@ -1154,7 +1154,7 @@ def test_core_merges_client_attachment_metadata_into_hermes_history(tmp_path):
         },
     )
 
-    messages = client.get(f"/v1/conversations/{conversation['id']}/messages")
+    messages = client.get(f"/v1/sessions/{session['id']}/messages")
 
     assert messages.status_code == 200
     user_message = messages.json()["messages"][0]
@@ -1174,7 +1174,7 @@ def test_core_prefers_client_audio_attachment_over_hermes_voice_placeholder(tmp_
     )
     client = make_client(root)
     agent = client.get("/v1/agents").json()["agents"][0]
-    conversation = client.get(f"/v1/conversations?agentId={agent['id']}").json()["conversations"][0]
+    session = client.get(f"/v1/sessions?agentId={agent['id']}").json()["sessions"][0]
 
     client.app.state.core_store.upsert_client_message_metadata(
         runtime_id=agent["runtimeId"],
@@ -1197,7 +1197,7 @@ def test_core_prefers_client_audio_attachment_over_hermes_voice_placeholder(tmp_
         },
     )
 
-    messages = client.get(f"/v1/conversations/{conversation['id']}/messages")
+    messages = client.get(f"/v1/sessions/{session['id']}/messages")
 
     assert messages.status_code == 200
     user_message = messages.json()["messages"][0]
@@ -1220,7 +1220,7 @@ def test_core_merges_assistant_attachment_metadata_into_hermes_history(tmp_path)
     )
     client = make_client(root)
     agent = client.get("/v1/agents").json()["agents"][0]
-    conversation = client.get(f"/v1/conversations?agentId={agent['id']}").json()["conversations"][0]
+    session = client.get(f"/v1/sessions?agentId={agent['id']}").json()["sessions"][0]
 
     delivered = client.post(
         "/v1/runtime-deliveries/hermes",
@@ -1233,7 +1233,7 @@ def test_core_merges_assistant_attachment_metadata_into_hermes_history(tmp_path)
             "metadata": {},
         },
     )
-    messages = client.get(f"/v1/conversations/{conversation['id']}/messages")
+    messages = client.get(f"/v1/sessions/{session['id']}/messages")
 
     assert delivered.status_code == 200
     assistant_message = messages.json()["messages"][1]
@@ -1256,9 +1256,9 @@ def test_core_imports_generated_pdf_marker_from_hermes_history(tmp_path):
     )
     client = make_client(root)
     agent = client.get("/v1/agents").json()["agents"][0]
-    conversation = client.get(f"/v1/conversations?agentId={agent['id']}").json()["conversations"][0]
+    session = client.get(f"/v1/sessions?agentId={agent['id']}").json()["sessions"][0]
 
-    messages = client.get(f"/v1/conversations/{conversation['id']}/messages")
+    messages = client.get(f"/v1/sessions/{session['id']}/messages")
     assistant_message = messages.json()["messages"][1]
     attachment = assistant_message["metadata"]["attachments"][0]
     preview = client.get(attachment["previewUrl"] or f"/v1/attachments/{attachment['id']}/preview")
@@ -1275,24 +1275,24 @@ def test_core_imports_generated_pdf_marker_from_hermes_history(tmp_path):
     assert content.content.startswith(b"%PDF-1.4")
 
 
-def test_core_conversations_and_events_are_profile_isolated(tmp_path):
+def test_core_sessions_and_events_are_profile_isolated(tmp_path):
     root = tmp_path / ".hermes"
     (root / "profiles" / "health").mkdir(parents=True)
     client = make_client(root)
     agents = client.get("/v1/agents").json()["agents"]
     default_agent = next(agent for agent in agents if agent["runtimeProfile"] == "default")
     health_agent = next(agent for agent in agents if agent["runtimeProfile"] == "health")
-    default_conversation = client.post(
-        "/v1/conversations",
+    default_session = client.post(
+        "/v1/sessions",
         json={"agentId": default_agent["id"], "title": "Default core"},
-    ).json()["conversation"]
+    ).json()["session"]
 
     health_delivery = client.post(
         "/v1/runtime-deliveries/hermes",
         json={
             "runtimeId": "runtime_local_hermes",
             "profile": "health",
-            "chatId": default_conversation["externalChatId"],
+            "chatId": default_session["externalChatId"],
             "messageId": "health-delivery-1",
             "content": "Health-only answer",
             "metadata": {"streamMessageId": "health-delivery-1", "finalize": True},
@@ -1300,10 +1300,10 @@ def test_core_conversations_and_events_are_profile_isolated(tmp_path):
     )
     default_events = client.get(f"/v1/events?after=0&agentId={default_agent['id']}").json()["events"]
     health_events = client.get(f"/v1/events?after=0&agentId={health_agent['id']}").json()["events"]
-    default_messages = client.get(f"/v1/conversations/{default_conversation['id']}/messages").json()["messages"]
+    default_messages = client.get(f"/v1/sessions/{default_session['id']}/messages").json()["messages"]
 
     assert health_delivery.status_code == 200
-    assert health_delivery.json()["conversationId"] != default_conversation["id"]
+    assert health_delivery.json()["sessionId"] != default_session["id"]
     assert default_events == []
     assert {event["agentId"] for event in health_events} == {health_agent["id"]}
     assert default_messages == []
@@ -1313,17 +1313,17 @@ def test_core_events_cursor_replay_and_sse_stream(tmp_path):
     root = tmp_path / ".hermes"
     client = make_client(root)
     agent = client.get("/v1/agents").json()["agents"][0]
-    conversation = client.post(
-        "/v1/conversations",
+    session = client.post(
+        "/v1/sessions",
         json={"agentId": agent["id"], "title": "SSE core"},
-    ).json()["conversation"]
+    ).json()["session"]
     first_cursor = client.get("/v1/events?after=0").json()["cursor"]
     client.post(
         "/v1/runtime-deliveries/hermes",
         json={
             "runtimeId": "runtime_local_hermes",
             "profile": "default",
-            "chatId": conversation["externalChatId"],
+            "chatId": session["externalChatId"],
             "messageId": "sse-delivery-1",
             "content": "SSE answer",
             "metadata": {"streamMessageId": "sse-delivery-1", "finalize": True},
@@ -1331,13 +1331,13 @@ def test_core_events_cursor_replay_and_sse_stream(tmp_path):
     )
 
     replay = client.get(f"/v1/events?after={first_cursor}")
-    conversation_replay = client.get(f"/v1/conversations/{conversation['id']}/events?after={first_cursor}")
+    session_replay = client.get(f"/v1/sessions/{session['id']}/events?after={first_cursor}")
     stream = client.get(f"/v1/events/stream?after={first_cursor}&agentId={agent['id']}&live=false")
-    read_state = client.get(f"/v1/conversations/{conversation['id']}/read-state")
+    read_state = client.get(f"/v1/sessions/{session['id']}/read-state")
     stream_text = stream.text
 
     assert [event["content"] for event in replay.json()["events"]] == ["SSE answer"]
-    assert [event["content"] for event in conversation_replay.json()["events"]] == ["SSE answer"]
+    assert [event["content"] for event in session_replay.json()["events"]] == ["SSE answer"]
     assert read_state.json()["readState"]["state"] == "unread"
     assert stream.status_code == 200
     assert stream.headers["content-type"].startswith("text/event-stream")
@@ -1350,10 +1350,10 @@ def test_core_runtime_deliveries_publish_stream_events_without_materializing(tmp
     root = tmp_path / ".hermes"
     client = make_client(root)
     agent = client.get("/v1/agents").json()["agents"][0]
-    conversation = client.post(
-        "/v1/conversations",
+    session = client.post(
+        "/v1/sessions",
         json={"agentId": agent["id"], "title": "Materialized stream"},
-    ).json()["conversation"]
+    ).json()["session"]
     cursor = client.get("/v1/events?after=0").json()["cursor"]
 
     first = client.post(
@@ -1361,7 +1361,7 @@ def test_core_runtime_deliveries_publish_stream_events_without_materializing(tmp
         json={
             "runtimeId": "runtime_local_hermes",
             "profile": "default",
-            "chatId": conversation["externalChatId"],
+            "chatId": session["externalChatId"],
             "messageId": "stream-message-1",
             "replyTo": "user-message-1",
             "content": "Hel",
@@ -1373,7 +1373,7 @@ def test_core_runtime_deliveries_publish_stream_events_without_materializing(tmp
         json={
             "runtimeId": "runtime_local_hermes",
             "profile": "default",
-            "chatId": conversation["externalChatId"],
+            "chatId": session["externalChatId"],
             "messageId": "stream-message-1:edit:1",
             "replyTo": "user-message-1",
             "content": "Hello",
@@ -1385,7 +1385,7 @@ def test_core_runtime_deliveries_publish_stream_events_without_materializing(tmp
         json={
             "runtimeId": "runtime_local_hermes",
             "profile": "default",
-            "chatId": conversation["externalChatId"],
+            "chatId": session["externalChatId"],
             "messageId": "media-message-1",
             "replyTo": "user-message-1",
             "source": "hermes-gateway",
@@ -1394,7 +1394,7 @@ def test_core_runtime_deliveries_publish_stream_events_without_materializing(tmp
         },
     )
     replay = client.get(f"/v1/events?after={cursor}")
-    messages = client.get(f"/v1/conversations/{conversation['id']}/messages").json()["messages"]
+    messages = client.get(f"/v1/sessions/{session['id']}/messages").json()["messages"]
 
     assert first.status_code == 200
     assert final.status_code == 200
@@ -1479,10 +1479,10 @@ def test_core_automations_create_list_control_and_delete_hermes_jobs(tmp_path, m
     monkeypatch.setattr(hermes_adapter, "http_json", fake_http_json)
     client = make_client(root)
     agent = client.get("/v1/agents").json()["agents"][0]
-    conversation = client.post(
-        "/v1/conversations",
+    session = client.post(
+        "/v1/sessions",
         json={"agentId": agent["id"], "title": "Automation delivery"},
-    ).json()["conversation"]
+    ).json()["session"]
 
     created = client.post(
         "/v1/automations",
@@ -1492,7 +1492,7 @@ def test_core_automations_create_list_control_and_delete_hermes_jobs(tmp_path, m
             "schedule": "10m",
             "prompt": "Reply exactly with this message: check the oven",
             "repeat": 1,
-            "deliverToConversationId": conversation["id"],
+            "deliverToSessionId": session["id"],
         },
     )
     automation = created.json()["automation"]
@@ -1514,7 +1514,7 @@ def test_core_automations_create_list_control_and_delete_hermes_jobs(tmp_path, m
     assert created.status_code == 200
     assert automation["id"].startswith("auto_")
     assert automation["externalJobId"] == "external-job-created"
-    assert automation["deliverToConversationId"] == conversation["id"]
+    assert automation["deliverToSessionId"] == session["id"]
     assert listed.status_code == 200
     assert {row["externalJobId"] for row in listed.json()["automations"]} >= {
         "external-job-created",
@@ -1529,7 +1529,7 @@ def test_core_automations_create_list_control_and_delete_hermes_jobs(tmp_path, m
     assert run.status_code == 200
     assert deleted.status_code == 200
     assert [request["token"] for request in seen] == ["hermes-job-token"] * len(seen)
-    assert seen[0]["body"]["deliver"] == f"iris:{conversation['externalChatId']}"
+    assert seen[0]["body"]["deliver"] == f"iris:{session['externalChatId']}"
     assert any(
         request["method"] == "PATCH"
         and request["body"]["repeat"] is None
@@ -1565,13 +1565,13 @@ def test_core_send_owns_chat_id_and_uses_env_file_token(tmp_path, monkeypatch):
     monkeypatch.setattr(hermes_adapter, "http_json", fake_http_json)
     client = make_client(root)
     agent = client.get("/v1/agents").json()["agents"][0]
-    conversation = client.post(
-        "/v1/conversations",
+    session = client.post(
+        "/v1/sessions",
         json={"agentId": agent["id"], "title": "Core send"},
-    ).json()["conversation"]
+    ).json()["session"]
 
     sent = client.post(
-        f"/v1/conversations/{conversation['id']}/messages",
+        f"/v1/sessions/{session['id']}/messages",
         json={
             "text": "Reply exactly: core phase 3",
             "clientMessageId": "client-message-1",
@@ -1581,7 +1581,7 @@ def test_core_send_owns_chat_id_and_uses_env_file_token(tmp_path, monkeypatch):
             },
         },
     )
-    refreshed = client.get(f"/v1/conversations/{conversation['id']}").json()["conversation"]
+    refreshed = client.get(f"/v1/sessions/{session['id']}").json()["session"]
 
     assert sent.status_code == 200
     assert sent.json()["accepted"] is True
@@ -1591,8 +1591,8 @@ def test_core_send_owns_chat_id_and_uses_env_file_token(tmp_path, monkeypatch):
     assert seen[0]["body"]["text"] == "/model gpt-5.5 --provider openai-codex"
     assert seen[0]["body"]["metadata"]["hidden"] is True
     assert seen[1]["body"]["text"] == "Reply exactly: core phase 3"
-    assert seen[1]["body"]["metadata"]["agentuiConversationId"] == conversation["id"]
-    assert client.get(f"/v1/conversations/{conversation['id']}/messages").json()["messages"] == []
+    assert seen[1]["body"]["metadata"]["agentuiSessionId"] == session["id"]
+    assert client.get(f"/v1/sessions/{session['id']}/messages").json()["messages"] == []
 
 
 def test_core_send_dedupes_replayed_client_message_ids(tmp_path, monkeypatch):
@@ -1619,18 +1619,18 @@ def test_core_send_dedupes_replayed_client_message_ids(tmp_path, monkeypatch):
     monkeypatch.setattr(hermes_adapter, "http_json", fake_http_json)
     client = make_client(root)
     agent = client.get("/v1/agents").json()["agents"][0]
-    conversation = client.post(
-        "/v1/conversations",
+    session = client.post(
+        "/v1/sessions",
         json={"agentId": agent["id"], "title": "Core send"},
-    ).json()["conversation"]
+    ).json()["session"]
     payload = {
         "text": "Reply exactly once",
         "clientMessageId": "client-message-1",
         "model": {"provider": "openai-codex", "model": "gpt-5.5"},
     }
 
-    first = client.post(f"/v1/conversations/{conversation['id']}/messages", json=payload)
-    replay = client.post(f"/v1/conversations/{conversation['id']}/messages", json=payload)
+    first = client.post(f"/v1/sessions/{session['id']}/messages", json=payload)
+    replay = client.post(f"/v1/sessions/{session['id']}/messages", json=payload)
 
     assert first.status_code == 200
     assert replay.status_code == 200
@@ -1662,18 +1662,18 @@ def test_core_send_dedupes_replayed_idempotency_header_without_client_message_id
     monkeypatch.setattr(hermes_adapter, "http_json", fake_http_json)
     client = make_client(root)
     agent = client.get("/v1/agents").json()["agents"][0]
-    conversation = client.post(
-        "/v1/conversations",
+    session = client.post(
+        "/v1/sessions",
         json={"agentId": agent["id"], "title": "Core send"},
-    ).json()["conversation"]
+    ).json()["session"]
 
     first = client.post(
-        f"/v1/conversations/{conversation['id']}/messages",
+        f"/v1/sessions/{session['id']}/messages",
         headers={"Idempotency-Key": "send-once-1"},
         json={"text": "Reply once from header key"},
     )
     replay = client.post(
-        f"/v1/conversations/{conversation['id']}/messages",
+        f"/v1/sessions/{session['id']}/messages",
         headers={"Idempotency-Key": "send-once-1"},
         json={"text": "Reply once from header key"},
     )
@@ -1717,15 +1717,15 @@ def test_core_send_retries_after_failed_runtime_send_with_same_idempotency_key(t
     monkeypatch.setattr(hermes_adapter, "http_json", fake_http_json)
     client = make_client(root)
     agent = client.get("/v1/agents").json()["agents"][0]
-    conversation = client.post(
-        "/v1/conversations",
+    session = client.post(
+        "/v1/sessions",
         json={"agentId": agent["id"], "title": "Core send"},
-    ).json()["conversation"]
+    ).json()["session"]
     payload = {"text": "Try until accepted", "clientMessageId": "client-message-retry"}
 
-    failed = client.post(f"/v1/conversations/{conversation['id']}/messages", json=payload)
-    retry = client.post(f"/v1/conversations/{conversation['id']}/messages", json=payload)
-    duplicate = client.post(f"/v1/conversations/{conversation['id']}/messages", json=payload)
+    failed = client.post(f"/v1/sessions/{session['id']}/messages", json=payload)
+    retry = client.post(f"/v1/sessions/{session['id']}/messages", json=payload)
+    duplicate = client.post(f"/v1/sessions/{session['id']}/messages", json=payload)
 
     assert failed.status_code == 200
     assert failed.json()["accepted"] is False
@@ -1758,10 +1758,10 @@ def test_core_send_persists_top_level_attachments_as_message_metadata(tmp_path, 
     monkeypatch.setattr(hermes_adapter, "http_multipart", fake_http_multipart)
     client = make_client(root)
     agent = client.get("/v1/agents").json()["agents"][0]
-    conversation = client.post(
-        "/v1/conversations",
+    session = client.post(
+        "/v1/sessions",
         json={"agentId": agent["id"], "title": "Attachment send"},
-    ).json()["conversation"]
+    ).json()["session"]
     upload = client.post(
         "/v1/attachments",
         data={"profile": agent["runtimeProfile"], "runtimeId": agent["runtimeId"]},
@@ -1770,7 +1770,7 @@ def test_core_send_persists_top_level_attachments_as_message_metadata(tmp_path, 
     attachment = upload.json()["attachment"]
 
     sent = client.post(
-        f"/v1/conversations/{conversation['id']}/messages",
+        f"/v1/sessions/{session['id']}/messages",
         json={
             "text": "Look at this",
             "attachments": [{"id": attachment["id"]}],
@@ -1877,15 +1877,15 @@ def test_core_send_passes_existing_runtime_session_id_for_legacy_followup(tmp_pa
     monkeypatch.setattr(hermes_adapter, "http_json", fake_http_json)
     client = make_client(root)
     agent = client.get("/v1/agents").json()["agents"][0]
-    conversations = client.get(f"/v1/conversations?agentId={agent['id']}").json()["conversations"]
-    conversation = next(item for item in conversations if item["externalSessionId"] == "legacy-session-1")
+    sessions = client.get(f"/v1/sessions?agentId={agent['id']}").json()["sessions"]
+    session = next(item for item in sessions if item["externalSessionId"] == "legacy-session-1")
 
     sent = client.post(
-        f"/v1/conversations/{conversation['id']}/messages",
-        json={"text": "Continue this exact conversation", "clientMessageId": "followup-1"},
+        f"/v1/sessions/{session['id']}/messages",
+        json={"text": "Continue this exact session", "clientMessageId": "followup-1"},
     )
 
-    assert conversation["externalChatId"] == ""
+    assert session["externalChatId"] == ""
     assert sent.status_code == 200
     assert seen[0]["body"]["chatId"].startswith("core-")
     assert seen[0]["body"]["sessionId"] == "legacy-session-1"
@@ -1960,10 +1960,10 @@ def test_core_upload_rejects_empty_and_oversized_files_with_limit(tmp_path, monk
 def test_core_send_rejects_invalid_attachment_references_before_runtime_send(tmp_path, monkeypatch):
     client = make_client(tmp_path / ".hermes")
     agent = client.get("/v1/agents").json()["agents"][0]
-    conversation = client.post(
-        "/v1/conversations",
+    session = client.post(
+        "/v1/sessions",
         json={"agentId": agent["id"], "title": "Attachment validation"},
-    ).json()["conversation"]
+    ).json()["session"]
     seen = []
 
     def fake_http_json(url, *, method, token, body):
@@ -1973,11 +1973,11 @@ def test_core_send_rejects_invalid_attachment_references_before_runtime_send(tmp
     monkeypatch.setattr(hermes_adapter, "http_json", fake_http_json)
 
     missing_id = client.post(
-        f"/v1/conversations/{conversation['id']}/messages",
+        f"/v1/sessions/{session['id']}/messages",
         json={"text": "Bad attachment", "attachments": [{"id": ""}]},
     )
     too_many = client.post(
-        f"/v1/conversations/{conversation['id']}/messages",
+        f"/v1/sessions/{session['id']}/messages",
         json={
             "text": "Too many attachments",
             "attachments": [{"id": f"att_missing_{index}"} for index in range(9)],
@@ -1991,23 +1991,23 @@ def test_core_send_rejects_invalid_attachment_references_before_runtime_send(tmp
     assert seen == []
 
 
-def test_core_send_rejects_attachment_bound_to_different_conversation(tmp_path, monkeypatch):
+def test_core_send_rejects_attachment_bound_to_different_session(tmp_path, monkeypatch):
     client = make_client(tmp_path / ".hermes")
     agent = client.get("/v1/agents").json()["agents"][0]
-    first_conversation = client.post(
-        "/v1/conversations",
+    first_session = client.post(
+        "/v1/sessions",
         json={"agentId": agent["id"], "title": "First attachment owner"},
-    ).json()["conversation"]
-    second_conversation = client.post(
-        "/v1/conversations",
+    ).json()["session"]
+    second_session = client.post(
+        "/v1/sessions",
         json={"agentId": agent["id"], "title": "Second attachment owner"},
-    ).json()["conversation"]
+    ).json()["session"]
     upload = client.post(
         "/v1/attachments",
         data={
             "profile": agent["runtimeProfile"],
             "runtimeId": agent["runtimeId"],
-            "conversationId": first_conversation["id"],
+            "sessionId": first_session["id"],
         },
         files={"file": ("report.pdf", b"%PDF-1.7\npdf-bytes", "application/pdf")},
     )
@@ -2020,27 +2020,27 @@ def test_core_send_rejects_attachment_bound_to_different_conversation(tmp_path, 
     monkeypatch.setattr(hermes_adapter, "http_json", fake_http_json)
 
     sent = client.post(
-        f"/v1/conversations/{second_conversation['id']}/messages",
+        f"/v1/sessions/{second_session['id']}/messages",
         json={
-            "text": "Use an attachment from another conversation",
+            "text": "Use an attachment from another session",
             "attachments": [{"id": upload.json()["attachment"]["id"]}],
         },
     )
 
     assert upload.status_code == 200
     assert sent.status_code == 400
-    assert sent.json()["error"] == "Attachment belongs to a different conversation."
+    assert sent.json()["error"] == "Attachment belongs to a different session."
     assert seen == []
 
 
 def test_core_rejects_unknown_agent_filters(tmp_path):
     client = make_client(tmp_path / ".hermes")
 
-    conversations = client.get("/v1/conversations?agentId=agent_missing")
+    sessions = client.get("/v1/sessions?agentId=agent_missing")
     events = client.get("/v1/events?agentId=agent_missing")
     stream = client.get("/v1/events/stream?agentId=agent_missing")
 
-    assert conversations.status_code == 404
-    assert conversations.json()["error"] == "Agent was not found."
+    assert sessions.status_code == 404
+    assert sessions.json()["error"] == "Agent was not found."
     assert events.status_code == 404
     assert stream.status_code == 404

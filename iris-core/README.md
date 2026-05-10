@@ -2,7 +2,7 @@
 
 Iris Core is the local-first control plane for Iris. It owns devices, auth, runtime routing, and Core-only coordination, and connects to Hermes through the Iris Hermes Adapter. Hermes itself remains untouched and remains the source of truth for Hermes profiles, sessions, messages, jobs, memory, skills, models, and command catalogs. Normal Iris sessions enter Hermes through the `agentui` compatibility platform adapter, while this service exposes normalized adapter-backed records and live delivery events over HTTP from the machine where Hermes is running.
 
-Product terminology uses "sessions" for user-facing work threads. Compatibility API paths, schemas, and adapter fields may still use `conversation` or `chat`.
+Product terminology uses "sessions" for user-facing work threads. Compatibility API paths, schemas, and adapter fields may still use `session` or `chat`.
 
 This service lives in the `iris-core/` workspace of the Iris monorepo.
 
@@ -154,7 +154,7 @@ Verify a second client without Hermes filesystem access:
 
 ```bash
 curl -H "Authorization: Bearer <paired-device-token>" \
-  'http://<tailscale-hostname>:8765/v1/conversations?agentId=<agent-id>'
+  'http://<tailscale-hostname>:8765/v1/sessions?agentId=<agent-id>'
 
 curl -H "Authorization: Bearer <paired-device-token>" \
   'http://<tailscale-hostname>:8765/v1/events?after=0&limit=50&agentId=<agent-id>'
@@ -251,7 +251,7 @@ Returns metadata and content for `MEMORY.md` and `USER.md`.
 ### Sessions
 
 ```bash
-curl 'http://127.0.0.1:8765/v1/conversations?agentId=<agent_id>&limit=80'
+curl 'http://127.0.0.1:8765/v1/sessions?agentId=<agent_id>&limit=80'
 ```
 
 Returns existing runtime sessions for the selected agent without requiring the client to read runtime files or SQLite directly. `limit` defaults to `80` and is clamped to `1..200`.
@@ -261,9 +261,9 @@ Response shape:
 ```json
 {
   "ok": true,
-  "conversations": [
+  "sessions": [
     {
-      "id": "conv_abc",
+      "id": "session_abc",
       "agentId": "agent_abc_default",
       "title": "How do I list profiles?",
       "preview": "Use the profiles endpoint.",

@@ -10,19 +10,19 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from ..models import ConversationMessage, ConversationSummary
+from ..models import SessionMessage, SessionSummary
 from ..security import ManagementError
 
 
 SQLITE_SUFFIXES = {".db", ".sqlite", ".sqlite3"}
 SQLITE_CANDIDATE_NAMES = (
     "state.db",
-    "conversations.db",
+    "sessions.db",
     "sessions.db",
     "responses.db",
     "history.db",
 )
-ID_COLUMNS = ("id", "session_id", "conversation_id", "thread_id")
+ID_COLUMNS = ("id", "session_id", "session_id", "thread_id")
 SOURCE_COLUMNS = ("source", "platform", "client")
 MODEL_COLUMNS = ("model", "model_name", "model_id")
 TITLE_COLUMNS = ("title", "name", "summary")
@@ -40,10 +40,10 @@ TOOL_CALLS_COLUMNS = ("tool_calls", "toolCalls")
 
 
 @dataclass(frozen=True)
-class ConversationDiscovery:
+class SessionDiscovery:
     path: str
     schema_version: int | None
-    conversations: list[ConversationSummary]
+    sessions: list[SessionSummary]
     warning: str | None = None
 
 
@@ -65,11 +65,11 @@ class MessageRow:
 
 
 @dataclass(frozen=True)
-class ConversationDetail:
+class SessionDetail:
     path: str
     schema_version: int | None
-    conversation: ConversationSummary
-    messages: list[ConversationMessage]
+    session: SessionSummary
+    messages: list[SessionMessage]
     warning: str | None = None
 
 
@@ -81,52 +81,52 @@ def clamp_limit(limit: int | None) -> int:
     return min(max(value, 1), 200)
 
 
-def discover_conversations(profile_root: Path, limit: int | None = 80) -> ConversationDiscovery:
+def discover_sessions(profile_root: Path, limit: int | None = 80) -> SessionDiscovery:
     clamped_limit = clamp_limit(limit)
     warnings: list[str] = []
 
     for db_path in sqlite_candidates(profile_root):
-        result = read_sqlite_conversations(db_path, profile_root, clamped_limit)
-        if result.conversations:
+        result = read_sqlite_sessions(db_path, profile_root, clamped_limit)
+        if result.sessions:
             return result
         if result.warning:
             warnings.append(result.warning)
 
-    file_result = read_session_file_conversations(profile_root, clamped_limit)
-    if file_result.conversations:
+    file_result = read_session_file_sessions(profile_root, clamped_limit)
+    if file_result.sessions:
         if warnings and not file_result.warning:
-            return ConversationDiscovery(
+            return SessionDiscovery(
                 path=file_result.path,
                 schema_version=None,
-                conversations=file_result.conversations,
-                warning="No supported SQLite conversation schema found; using session JSON files.",
+                sessions=file_result.sessions,
+                warning="No supported SQLite session schema found; using session JSON files.",
             )
         return file_result
     if file_result.warning:
         warnings.append(file_result.warning)
 
-    warning = "No supported Hermes conversation store was found for this profile."
+    warning = "No supported Hermes session store was found for this profile."
     if warnings:
         warning = f"{warning} {' '.join(warnings[:2])}"
-    return ConversationDiscovery(
+    return SessionDiscovery(
         path=str(profile_root),
         schema_version=None,
-        conversations=[],
+        sessions=[],
         warning=warning,
     )
 
 
-def discover_conversation_detail(profile_root: Path, conversation_id: str) -> ConversationDetail:
-    normalized_id = conversation_id.strip()
+def discover_session_detail(profile_root: Path, session_id: str) -> SessionDetail:
+    normalized_id = session_id.strip()
     if not normalized_id:
         raise ManagementError("Session id is required.", status_code=400)
 
     for db_path in sqlite_candidates(profile_root):
-        result = read_sqlite_conversation_detail(db_path, profile_root, normalized_id)
+        result = read_sqlite_session_detail(db_path, profile_root, normalized_id)
         if result is not None:
             return result
 
-    file_result = read_session_file_conversation_detail(profile_root, normalized_id)
+    file_result = read_session_file_session_detail(profile_root, normalized_id)
     if file_result is not None:
         return file_result
 
@@ -161,16 +161,16 @@ def safe_add_candidate(candidate: Path, profile_root: Path, candidates: list[Pat
         seen.add(safe_path)
 
 
-def read_sqlite_conversations(db_path: Path, profile_root: Path, limit: int) -> ConversationDiscovery:
+def read_sqlite_sessions(db_path: Path, profile_root: Path, limit: int) -> SessionDiscovery:
     try:
         safe_path = assert_within_profile(db_path, profile_root)
         connection = sqlite3.connect(f"file:{safe_path.as_posix()}?mode=ro", uri=True)
     except Exception as exc:
-        return ConversationDiscovery(
+        return SessionDiscovery(
             path=str(db_path),
             schema_version=None,
-            conversations=[],
-            warning=f"Could not open SQLite conversation store {db_path.name}: {exc}",
+            sessions=[],
+            warning=f"Could not open SQLite session store {db_path.name}: {exc}",
         )
 
     try:
@@ -178,37 +178,37 @@ def read_sqlite_conversations(db_path: Path, profile_root: Path, limit: int) -> 
         schema = inspect_sqlite_schema(connection)
         session_table = choose_session_table(schema.tables)
         if session_table is None:
-            return ConversationDiscovery(
+            return SessionDiscovery(
                 path=str(safe_path),
                 schema_version=schema.schema_version,
-                conversations=[],
+                sessions=[],
                 warning=f"{safe_path.name} does not contain a supported sessions table.",
             )
         message_table = choose_message_table(schema.tables, session_table)
-        conversations = normalize_sqlite_conversations(connection, schema, session_table, message_table)
-        enrich_conversation_origins(conversations, profile_root)
-        conversations.sort(key=lambda item: item.lastActiveAt or item.startedAt or 0, reverse=True)
-        return ConversationDiscovery(
+        sessions = normalize_sqlite_sessions(connection, schema, session_table, message_table)
+        enrich_session_origins(sessions, profile_root)
+        sessions.sort(key=lambda item: item.lastActiveAt or item.startedAt or 0, reverse=True)
+        return SessionDiscovery(
             path=str(safe_path),
             schema_version=schema.schema_version,
-            conversations=conversations[:limit],
+            sessions=sessions[:limit],
         )
     except sqlite3.Error as exc:
-        return ConversationDiscovery(
+        return SessionDiscovery(
             path=str(db_path),
             schema_version=None,
-            conversations=[],
-            warning=f"Could not inspect SQLite conversation store {db_path.name}: {exc}",
+            sessions=[],
+            warning=f"Could not inspect SQLite session store {db_path.name}: {exc}",
         )
     finally:
         connection.close()
 
 
-def read_sqlite_conversation_detail(
+def read_sqlite_session_detail(
     db_path: Path,
     profile_root: Path,
-    conversation_id: str,
-) -> ConversationDetail | None:
+    session_id: str,
+) -> SessionDetail | None:
     try:
         safe_path = assert_within_profile(db_path, profile_root)
         connection = sqlite3.connect(f"file:{safe_path.as_posix()}?mode=ro", uri=True)
@@ -227,21 +227,21 @@ def read_sqlite_conversation_detail(
             return None
         session = connection.execute(
             f"select * from {quote_identifier(session_table)} where {quote_identifier(id_column)} = ? limit 1",
-            (conversation_id,),
+            (session_id,),
         ).fetchone()
         if session is None:
             return None
         message_table = choose_message_table(schema.tables, session_table)
-        messages = read_sqlite_messages(connection, schema, message_table, conversation_id)
-        summary = normalize_conversation_row(dict(session), session_columns, messages, default_source="sqlite")
-        if summary is None or not is_visible_chat_conversation(summary):
+        messages = read_sqlite_messages(connection, schema, message_table, session_id)
+        summary = normalize_session_row(dict(session), session_columns, messages, default_source="sqlite")
+        if summary is None or not is_visible_chat_session(summary):
             return None
-        enrich_conversation_origins([summary], profile_root)
-        return ConversationDetail(
+        enrich_session_origins([summary], profile_root)
+        return SessionDetail(
             path=str(safe_path),
             schema_version=schema.schema_version,
-            conversation=summary,
-            messages=conversation_messages(conversation_id, messages),
+            session=summary,
+            messages=session_messages(session_id, messages),
         )
     except sqlite3.Error:
         return None
@@ -301,7 +301,7 @@ def choose_session_table(tables: dict[str, list[str]]) -> str | None:
         score = 0
         if lowered == "sessions":
             score += 10
-        if any(word in lowered for word in ("session", "conversation", "chat", "thread", "response")):
+        if any(word in lowered for word in ("session", "session", "chat", "thread", "response")):
             score += 5
         if first_column(normalized, START_COLUMNS):
             score += 3
@@ -346,33 +346,33 @@ def choose_message_table(tables: dict[str, list[str]], session_table: str) -> st
     return best[1] if best else None
 
 
-def normalize_sqlite_conversations(
+def normalize_sqlite_sessions(
     connection: sqlite3.Connection,
     schema: SqliteSchema,
     session_table: str,
     message_table: str | None,
-) -> list[ConversationSummary]:
+) -> list[SessionSummary]:
     session_columns = normalize_columns(schema.tables[session_table])
     query = f"select * from {quote_identifier(session_table)}"
     rows = connection.execute(query).fetchall()
-    conversations: list[ConversationSummary] = []
+    sessions: list[SessionSummary] = []
     for row in rows:
         session = dict(row)
-        conversation_id = value_as_text(first_value(session, ID_COLUMNS))
-        if not conversation_id:
+        session_id = value_as_text(first_value(session, ID_COLUMNS))
+        if not session_id:
             continue
-        messages = read_sqlite_messages(connection, schema, message_table, conversation_id)
-        summary = normalize_conversation_row(session, session_columns, messages, default_source="sqlite")
-        if summary is not None and is_visible_chat_conversation(summary):
-            conversations.append(summary)
-    return conversations
+        messages = read_sqlite_messages(connection, schema, message_table, session_id)
+        summary = normalize_session_row(session, session_columns, messages, default_source="sqlite")
+        if summary is not None and is_visible_chat_session(summary):
+            sessions.append(summary)
+    return sessions
 
 
 def read_sqlite_messages(
     connection: sqlite3.Connection,
     schema: SqliteSchema,
     message_table: str | None,
-    conversation_id: str,
+    session_id: str,
 ) -> list[MessageRow]:
     if message_table is None:
         return []
@@ -416,7 +416,7 @@ def read_sqlite_messages(
         f"{order_by}"
     )
     try:
-        rows = connection.execute(query, (conversation_id,)).fetchall()
+        rows = connection.execute(query, (session_id,)).fetchall()
     except sqlite3.Error:
         return []
     messages: list[MessageRow] = []
@@ -436,15 +436,15 @@ def read_sqlite_messages(
     return messages
 
 
-def normalize_conversation_row(
+def normalize_session_row(
     row: dict[str, Any],
     columns: dict[str, str],
     messages: list[MessageRow],
     *,
     default_source: str,
-) -> ConversationSummary | None:
-    conversation_id = value_as_text(first_value(row, ID_COLUMNS))
-    if not conversation_id:
+) -> SessionSummary | None:
+    session_id = value_as_text(first_value(row, ID_COLUMNS))
+    if not session_id:
         return None
 
     explicit_title = compact_text(value_as_text(first_value(row, TITLE_COLUMNS)), 120)
@@ -464,8 +464,8 @@ def normalize_conversation_row(
     origin = origin_payload(first_value(row, ("origin",)))
     chat_id = value_as_text(origin.get("chat_id") or first_value(row, ("chat_id",)))
 
-    return ConversationSummary(
-        id=conversation_id,
+    return SessionSummary(
+        id=session_id,
         source=value_as_text(first_value(row, SOURCE_COLUMNS)) or default_source,
         model=value_as_text(first_value(row, MODEL_COLUMNS)),
         title=title,
@@ -479,21 +479,21 @@ def normalize_conversation_row(
     )
 
 
-def read_session_file_conversations(profile_root: Path, limit: int) -> ConversationDiscovery:
+def read_session_file_sessions(profile_root: Path, limit: int) -> SessionDiscovery:
     sessions_dir = profile_root / "sessions"
     try:
         safe_sessions_dir = assert_within_profile(sessions_dir, profile_root)
     except ManagementError as exc:
-        return ConversationDiscovery(path=str(sessions_dir), schema_version=None, conversations=[], warning=exc.error)
+        return SessionDiscovery(path=str(sessions_dir), schema_version=None, sessions=[], warning=exc.error)
     if not safe_sessions_dir.is_dir():
-        return ConversationDiscovery(
+        return SessionDiscovery(
             path=str(safe_sessions_dir),
             schema_version=None,
-            conversations=[],
+            sessions=[],
             warning="No session JSON directory was found for this profile.",
         )
 
-    conversations: list[ConversationSummary] = []
+    sessions: list[SessionSummary] = []
     for path in sorted(safe_sessions_dir.glob("*.json"), key=lambda item: item.name.lower()):
         try:
             safe_path = assert_within_profile(path, profile_root)
@@ -502,29 +502,29 @@ def read_session_file_conversations(profile_root: Path, limit: int) -> Conversat
             continue
         if isinstance(payload, dict):
             summary = normalize_session_file(payload)
-            if summary is not None and is_visible_chat_conversation(summary):
-                conversations.append(summary)
+            if summary is not None and is_visible_chat_session(summary):
+                sessions.append(summary)
 
-    conversations.sort(key=lambda item: item.lastActiveAt or item.startedAt or 0, reverse=True)
-    return ConversationDiscovery(
+    sessions.sort(key=lambda item: item.lastActiveAt or item.startedAt or 0, reverse=True)
+    return SessionDiscovery(
         path=str(safe_sessions_dir),
         schema_version=None,
-        conversations=conversations[:limit],
+        sessions=sessions[:limit],
     )
 
 
-def enrich_conversation_origins(conversations: list[ConversationSummary], profile_root: Path) -> None:
+def enrich_session_origins(sessions: list[SessionSummary], profile_root: Path) -> None:
     origins = session_origins_by_id(profile_root)
     if not origins:
         return
-    for conversation in conversations:
-        origin = origins.get(conversation.id)
+    for session in sessions:
+        origin = origins.get(session.id)
         if not origin:
             continue
-        conversation.origin = origin
+        session.origin = origin
         chat_id = value_as_text(origin.get("chat_id"))
         if chat_id:
-            conversation.chatId = chat_id
+            session.chatId = chat_id
 
 
 def session_origins_by_id(profile_root: Path) -> dict[str, dict[str, Any]]:
@@ -548,7 +548,7 @@ def session_origins_by_id(profile_root: Path) -> dict[str, dict[str, Any]]:
     return origins
 
 
-def read_session_file_conversation_detail(profile_root: Path, conversation_id: str) -> ConversationDetail | None:
+def read_session_file_session_detail(profile_root: Path, session_id: str) -> SessionDetail | None:
     sessions_dir = profile_root / "sessions"
     try:
         safe_sessions_dir = assert_within_profile(sessions_dir, profile_root)
@@ -566,22 +566,22 @@ def read_session_file_conversation_detail(profile_root: Path, conversation_id: s
         if not isinstance(payload, dict):
             continue
         summary = normalize_session_file(payload)
-        if summary is None or summary.id != conversation_id or not is_visible_chat_conversation(summary):
+        if summary is None or summary.id != session_id or not is_visible_chat_session(summary):
             continue
         messages = normalize_file_messages(payload.get("messages"))
-        return ConversationDetail(
+        return SessionDetail(
             path=str(safe_path),
             schema_version=None,
-            conversation=summary,
-            messages=conversation_messages(conversation_id, messages),
+            session=summary,
+            messages=session_messages(session_id, messages),
         )
     return None
 
 
-def normalize_session_file(payload: dict[str, Any]) -> ConversationSummary | None:
+def normalize_session_file(payload: dict[str, Any]) -> SessionSummary | None:
     messages = normalize_file_messages(payload.get("messages"))
     row = {
-        "id": payload.get("id") or payload.get("session_id") or payload.get("conversation_id"),
+        "id": payload.get("id") or payload.get("session_id") or payload.get("session_id"),
         "source": payload.get("source") or payload.get("platform"),
         "model": payload.get("model") or payload.get("model_name"),
         "title": payload.get("title") or payload.get("name") or payload.get("summary"),
@@ -590,10 +590,10 @@ def normalize_session_file(payload: dict[str, Any]) -> ConversationSummary | Non
         "last_updated": payload.get("last_updated") or payload.get("updated_at"),
         "message_count": payload.get("message_count"),
     }
-    return normalize_conversation_row(row, normalize_columns(row.keys()), messages, default_source="session-file")
+    return normalize_session_row(row, normalize_columns(row.keys()), messages, default_source="session-file")
 
 
-def is_visible_chat_conversation(summary: ConversationSummary) -> bool:
+def is_visible_chat_session(summary: SessionSummary) -> bool:
     source = summary.source.strip().lower()
     return source != "cron" and not summary.id.startswith("cron_")
 
@@ -625,13 +625,13 @@ def normalize_file_messages(value: Any) -> list[MessageRow]:
     return messages
 
 
-def conversation_messages(conversation_id: str, messages: list[MessageRow]) -> list[ConversationMessage]:
-    rows: list[ConversationMessage] = []
+def session_messages(session_id: str, messages: list[MessageRow]) -> list[SessionMessage]:
+    rows: list[SessionMessage] = []
     for index, message in enumerate(messages):
         rows.append(
-            ConversationMessage(
-                id=message.id or f"{conversation_id}-{index}",
-                sessionId=conversation_id,
+            SessionMessage(
+                id=message.id or f"{session_id}-{index}",
+                sessionId=session_id,
                 role=safe_role(message.role),
                 content=message.content,
                 toolName=message.tool_name,
@@ -673,7 +673,7 @@ def first_column(columns: dict[str, str], candidates: tuple[str, ...]) -> str | 
 
 
 def first_message_link_column(columns: dict[str, str]) -> str | None:
-    for candidate in ("session_id", "conversation_id", "thread_id", "chat_id", "parent_session_id"):
+    for candidate in ("session_id", "session_id", "thread_id", "chat_id", "parent_session_id"):
         if candidate in columns:
             return columns[candidate]
     return None

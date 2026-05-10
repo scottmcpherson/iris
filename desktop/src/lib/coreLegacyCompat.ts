@@ -1,38 +1,38 @@
 import type {
-  AgentUICoreConversation,
+  AgentUICoreSession,
   AgentUICoreEvent,
   AgentUICoreMessage,
 } from "./agentuiCore";
 
-export function coreConversationToLegacy(conversation: AgentUICoreConversation) {
+export function coreSessionToLegacy(session: AgentUICoreSession) {
   const origin = {
-    ...(conversation.origin || {}),
-    runtimeId: conversation.runtimeId,
-    runtimeProfile: conversation.runtimeProfile,
-    externalSessionId: conversation.externalSessionId,
-    externalChatId: conversation.externalChatId,
+    ...(session.origin || {}),
+    runtimeId: session.runtimeId,
+    runtimeProfile: session.runtimeProfile,
+    externalSessionId: session.externalSessionId,
+    externalChatId: session.externalChatId,
   };
   return {
-    id: conversation.id,
+    id: session.id,
     source: "agentui-core",
-    model: String(conversation.metadata?.model || ""),
-    title: conversation.title || conversation.summary || "Untitled session",
-    preview: conversation.summary || String(conversation.metadata?.preview || ""),
-    chatId: conversation.externalChatId || "",
+    model: String(session.metadata?.model || ""),
+    title: session.title || session.summary || "Untitled session",
+    preview: session.summary || String(session.metadata?.preview || ""),
+    chatId: session.externalChatId || "",
     origin,
-    metadata: conversation.metadata || {},
-    readState: conversation.readState,
-    startedAt: conversation.createdAt || null,
+    metadata: session.metadata || {},
+    readState: session.readState,
+    startedAt: session.createdAt || null,
     endedAt: null,
-    lastActiveAt: conversation.updatedAt || conversation.createdAt || null,
-    messageCount: Number(conversation.metadata?.messageCount || 0),
+    lastActiveAt: session.updatedAt || session.createdAt || null,
+    messageCount: Number(session.metadata?.messageCount || 0),
   };
 }
 
-export function coreMessageToLegacy(message: AgentUICoreMessage, conversationId: string) {
+export function coreMessageToLegacy(message: AgentUICoreMessage, sessionId: string) {
   return {
     id: message.id,
-    sessionId: conversationId,
+    sessionId: sessionId,
     role: message.role,
     content: message.content,
     status: message.status,
@@ -52,7 +52,7 @@ export function coreEventToInboxMessage(event: AgentUICoreEvent, fallbackProfile
     source: String(metadata.source || "agentui-core-events"),
     platform: "agentui",
     profile: String(metadata.profile || fallbackProfile),
-    chatId: String(metadata.chatId || event.conversationId),
+    chatId: String(metadata.chatId || event.sessionId),
     content: event.content,
     metadata: {
       ...metadata,

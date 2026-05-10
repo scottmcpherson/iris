@@ -52,7 +52,7 @@ Iris Core is the local-first control plane for Iris at `http://127.0.0.1:8765/v1
 
 Core stores Core-owned state at `~/.iris/core.sqlite3` by default. Hermes remains the source of truth for Hermes profiles, sessions, messages, models, commands, and jobs; Core normalizes those records through runtime adapters instead of copying them into SQLite. Existing default installs are migrated from `~/.agent-ui/core.sqlite3` with backups before duplicate runtime-owned tables are dropped. Iris Desktop sessions create short-lived Core draft targets and send messages through Core, while Hermes platform deliveries land in `/v1/runtime-deliveries/hermes` and replay through the in-memory `/v1/events` live buffer.
 
-Product terminology uses "sessions" for user-facing work threads. Some compatibility APIs, schemas, and legacy adapter fields still use `conversation` or `chat` names.
+Product terminology uses "sessions" for user-facing work threads. Core API routes, payload fields, and SQLite overlay tables use session naming; runtime adapter metadata may still carry lower-level `chat` identifiers when Hermes requires them.
 
 ## Iris Hermes Adapter
 

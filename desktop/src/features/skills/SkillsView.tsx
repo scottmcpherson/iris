@@ -24,15 +24,6 @@ const fallbackSkills: HermesSkill[] = [
     version: "0.1.0",
     tags: ["authoring", "workflow"],
   }),
-  makeVirtualSkill({
-    name: "Artifact preview",
-    category: "desktop",
-    description: "Turn useful previews into reusable skills after validation.",
-    path: "hub://bundled/artifact-preview",
-    source: "bundled",
-    version: "0.1.0",
-    tags: ["preview", "artifacts"],
-  }),
 ];
 
 const communitySkills: HermesSkill[] = [

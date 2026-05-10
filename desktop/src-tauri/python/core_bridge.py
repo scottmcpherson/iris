@@ -120,7 +120,7 @@ def core_upload_path(payload: dict[str, Any]) -> dict[str, Any]:
         "profile": str(payload.get("profile") or "default"),
         "runtimeId": str(payload.get("runtimeId") or "runtime_local_hermes"),
         "kind": str(payload.get("kind") or kind_from_mime(mime_type)),
-        "conversationId": str(payload.get("conversationId") or ""),
+        "sessionId": str(payload.get("sessionId") or ""),
         "messageId": str(payload.get("messageId") or ""),
         "metadata": json.dumps(payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {}),
     }

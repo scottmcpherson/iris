@@ -23,7 +23,7 @@ def register_attachment_routes(app: FastAPI, require_auth: Callable[..., Any]) -
     async def core_create_attachment(
         request: Request,
         file: UploadFile = File(...),
-        conversationId: str = Form(""),
+        sessionId: str = Form(""),
         messageId: str = Form(""),
         runtimeId: str = Form(DEFAULT_RUNTIME_ID),
         profile: str = Form("default"),
@@ -67,7 +67,7 @@ def register_attachment_routes(app: FastAPI, require_auth: Callable[..., Any]) -
                     source_path=temp_path,
                     runtime_id=runtimeId or DEFAULT_RUNTIME_ID,
                     profile=profile or "default",
-                    conversation_id=conversationId,
+                    session_id=sessionId,
                     message_id=messageId,
                     owner_device_id=str(getattr(getattr(request, "state", None), "agentui_device", {}).get("id", "")),
                     name=filename,

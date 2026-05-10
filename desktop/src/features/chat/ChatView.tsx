@@ -58,7 +58,7 @@ import {
 
 type ChatViewProps = {
   messages: Message[];
-  selectedConversationId: string | null;
+  selectedSessionId: string | null;
   input: string;
   onInput: (value: string) => void;
   onSend: (options?: {
@@ -113,7 +113,7 @@ type ModelMenuOption = {
 
 export function ChatView({
   messages,
-  selectedConversationId,
+  selectedSessionId,
   input,
   onInput,
   onSend,
@@ -171,10 +171,10 @@ export function ChatView({
     const unseenMessages = renderedMessages.filter((message) => !seenRenderedMessageIdsRef.current.has(message.id));
     return new Set(unseenMessages.slice(-2).map((message) => message.id));
   }, [renderedMessages, requestActive]);
-  const showEmptyState = shouldShowChatEmptyState(selectedConversationId, renderedMessages.length);
-  const transcriptScrollKey = chatTranscriptScrollKey(selectedConversationId, renderedMessages.length);
+  const showEmptyState = shouldShowChatEmptyState(selectedSessionId, renderedMessages.length);
+  const transcriptScrollKey = chatTranscriptScrollKey(selectedSessionId, renderedMessages.length);
   const transcriptResizeBehavior = requestActive ? "smooth" : "instant";
-  const newChat = !selectedConversationId && renderedMessages.length === 0;
+  const newChat = !selectedSessionId && renderedMessages.length === 0;
   const inputHasText = input.trim().length > 0;
   const composerCanSend = inputHasText || attachments.length > 0;
   const composerBusy = requestActive || sendPending;
@@ -225,7 +225,7 @@ export function ChatView({
   );
 
   useLayoutEffect(() => {
-    if (newChat || requestActive || !selectedConversationId || renderedMessages.length === 0) {
+    if (newChat || requestActive || !selectedSessionId || renderedMessages.length === 0) {
       setTranscriptScrollSettling(false);
       return;
     }
@@ -238,7 +238,7 @@ export function ChatView({
     return () => {
       window.clearTimeout(settleTimer);
     };
-  }, [newChat, renderedMessages.length, requestActive, selectedConversationId, transcriptScrollKey]);
+  }, [newChat, renderedMessages.length, requestActive, selectedSessionId, transcriptScrollKey]);
 
   const profileSelectorTitle = profileSelectionLocked
     ? "Agent is locked for this session"
@@ -728,7 +728,7 @@ export function ChatView({
             resize={transcriptResizeBehavior}
             role="log"
           >
-            <StickToBottom.Content className="conversation-column" scrollClassName="message-list">
+            <StickToBottom.Content className="session-column" scrollClassName="message-list">
               {renderedMessages.length ? (
                 renderedMessages.map((message) => (
                   <MessageRow
@@ -798,7 +798,7 @@ export function ChatView({
             onKeyUp={(event) => updateComposerSelection(event.currentTarget)}
             onSelect={(event) => updateComposerSelection(event.currentTarget)}
             placeholder={
-              selectedConversationId
+              selectedSessionId
                 ? "Ask for follow-up changes"
                 : "Ask Iris to research, build, remember, or create a reusable skill..."
             }
@@ -1124,13 +1124,13 @@ export function shouldRenderMessageBody(message: Message) {
   );
 }
 
-export function shouldShowChatEmptyState(selectedConversationId: string | null, renderedMessageCount: number) {
-  return !selectedConversationId && renderedMessageCount === 0;
+export function shouldShowChatEmptyState(selectedSessionId: string | null, renderedMessageCount: number) {
+  return !selectedSessionId && renderedMessageCount === 0;
 }
 
-export function chatTranscriptScrollKey(selectedConversationId: string | null, renderedMessageCount: number) {
-  if (!selectedConversationId) return "new-chat";
-  return `${selectedConversationId}:${renderedMessageCount > 0 ? "ready" : "pending"}`;
+export function chatTranscriptScrollKey(selectedSessionId: string | null, renderedMessageCount: number) {
+  if (!selectedSessionId) return "new-chat";
+  return `${selectedSessionId}:${renderedMessageCount > 0 ? "ready" : "pending"}`;
 }
 
 function filterModelProviders(providers: HermesModelProvider[], query: string) {

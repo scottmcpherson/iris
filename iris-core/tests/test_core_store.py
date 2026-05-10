@@ -19,7 +19,7 @@ def test_core_store_creates_only_core_owned_schema(tmp_path):
         }
     )
 
-    assert store.health()["schemaVersion"] == 6
+    assert store.health()["schemaVersion"] == 7
     assert store.health()["sourceOfTruthMigration"] == "complete"
     assert runtime["id"] == "runtime_local_hermes"
     assert set(store.tables()) == {
@@ -31,8 +31,8 @@ def test_core_store_creates_only_core_owned_schema(tmp_path):
         "attachments",
         "message_attachments",
         "projects",
-        "project_conversations",
-        "conversation_read_state",
+        "project_sessions",
+        "session_read_state",
     }
 
 
@@ -79,10 +79,10 @@ def test_source_of_truth_migration_drops_duplicate_tables_and_preserves_core_dat
             );
             insert into runtimes values('runtime_local_hermes', 'hermes', 'Local Hermes', '{}', 1, 1, 1, '{}');
             create table agents(id text primary key);
-            create table conversations(id text primary key);
-            create table conversation_runtime_links(conversation_id text primary key);
+            create table sessions(id text primary key);
+            create table session_runtime_links(session_id text primary key);
             create table message_events(cursor integer primary key autoincrement);
-            create table conversation_messages(id text primary key);
+            create table session_messages(id text primary key);
             create table automations(id text primary key);
             """
         )
@@ -102,14 +102,98 @@ def test_source_of_truth_migration_drops_duplicate_tables_and_preserves_core_dat
         "attachments",
         "message_attachments",
         "projects",
-        "project_conversations",
-        "conversation_read_state",
+        "project_sessions",
+        "session_read_state",
     }
     assert store.list_devices()[0]["id"] == "dev_1"
     assert store.list_runtimes()[0]["id"] == "runtime_local_hermes"
 
 
-def test_core_store_project_crud_and_conversation_links(tmp_path):
+def test_core_store_migrates_legacy_session_overlay_tables(tmp_path):
+    path = tmp_path / "core.sqlite3"
+    with sqlite3.connect(path) as connection:
+        connection.executescript(
+            """
+            create table projects(
+              id text primary key,
+              name text not null,
+              slug text not null unique,
+              default_agent_id text not null,
+              system_prompt text not null,
+              created_at integer not null,
+              updated_at integer not null,
+              archived_at integer,
+              metadata_json text not null
+            );
+            insert into projects values('project_1', 'Iris', 'iris', 'agent_default', '', 1, 1, null, '{}');
+            create table project_conversations(
+              project_id text not null,
+              conversation_id text not null,
+              agent_id text not null,
+              runtime_id text not null,
+              runtime_profile text not null,
+              external_session_id text,
+              external_chat_id text,
+              created_at integer not null,
+              updated_at integer not null,
+              metadata_json text not null,
+              primary key (project_id, conversation_id)
+            );
+            insert into project_conversations values(
+              'project_1', 'session_1', 'agent_default', 'runtime_local_hermes',
+              'default', 'external_1', 'chat_1', 1, 2, '{}'
+            );
+            create table conversation_read_state(
+              conversation_id text primary key,
+              state text not null,
+              created_at integer not null,
+              updated_at integer not null,
+              metadata_json text not null
+            );
+            insert into conversation_read_state values('session_1', 'unread', 1, 2, '{}');
+            create table attachments(
+              id text primary key,
+              owner_device_id text,
+              runtime_id text not null,
+              profile text not null,
+              conversation_id text,
+              message_id text,
+              name text not null,
+              mime_type text not null,
+              kind text not null,
+              size_bytes integer not null,
+              sha256 text not null,
+              storage_kind text not null,
+              storage_path text not null,
+              created_at integer not null,
+              updated_at integer not null,
+              deleted_at integer,
+              metadata_json text not null
+            );
+            insert into attachments values(
+              'att_1', '', 'runtime_local_hermes', 'default', 'session_1', null,
+              'note.txt', 'text/plain', 'document', 10, 'abc', 'local_file',
+              '/tmp/note.txt', 1, 1, null, '{}'
+            );
+            """
+        )
+
+    store = CoreStore(path)
+
+    assert "project_conversations" not in store.tables()
+    assert "conversation_read_state" not in store.tables()
+    assert store.list_project_session_links("project_1")[0]["sessionId"] == "session_1"
+    assert store.session_read_state("session_1")["state"] == "unread"
+    with store.connect() as connection:
+        attachment_columns = {
+            str(row["name"])
+            for row in connection.execute("pragma table_info(attachments)").fetchall()
+        }
+    assert "session_id" in attachment_columns
+    assert "conversation_id" not in attachment_columns
+
+
+def test_core_store_project_crud_and_session_links(tmp_path):
     store = CoreStore(tmp_path / "core.sqlite3")
     project = store.create_project(
         name="AgentUI",
@@ -123,21 +207,21 @@ def test_core_store_project_crud_and_conversation_links(tmp_path):
         system_prompt="Use project notes.",
         metadata={"color": "green"},
     )
-    conversation = {
-        "id": "conv_1",
+    session = {
+        "id": "session_1",
         "agentId": "agent_default",
         "runtimeId": "runtime_local_hermes",
         "runtimeProfile": "default",
         "externalSessionId": "session-1",
         "externalChatId": "chat-1",
     }
-    link = store.link_project_conversation(project["id"], conversation)
-    real_conversation = {
-        **conversation,
-        "id": "conv_2",
+    link = store.link_project_session(project["id"], session)
+    real_session = {
+        **session,
+        "id": "session_2",
         "externalSessionId": "session-2",
     }
-    real_link = store.link_project_conversation(project["id"], real_conversation)
+    real_link = store.link_project_session(project["id"], real_session)
 
     assert renamed["name"] == "Iris"
     assert renamed["slug"] == "iris"
@@ -146,36 +230,36 @@ def test_core_store_project_crud_and_conversation_links(tmp_path):
     assert renamed["metadata"]["color"] == "green"
     assert link["projectId"] == project["id"]
     assert real_link["projectId"] == project["id"]
-    assert store.project_for_conversation("conv_1") is None
-    assert store.project_for_conversation("conv_2")["id"] == project["id"]
-    assert [item["conversationId"] for item in store.list_project_conversation_links(project["id"])] == ["conv_2"]
+    assert store.project_for_session("session_1") is None
+    assert store.project_for_session("session_2")["id"] == project["id"]
+    assert [item["sessionId"] for item in store.list_project_session_links(project["id"])] == ["session_2"]
     archived = store.archive_project(project["id"])
     assert archived["archivedAt"] is not None
     assert store.list_projects() == []
 
 
-def test_core_store_conversation_read_state_is_shared_by_conversation(tmp_path):
+def test_core_store_session_read_state_is_shared_by_session(tmp_path):
     store = CoreStore(tmp_path / "core.sqlite3")
 
-    unread = store.upsert_conversation_read_state(
-        "conv_1",
+    unread = store.upsert_session_read_state(
+        "session_1",
         "unread",
         metadata={"eventCursor": 12},
     )
-    read = store.upsert_conversation_read_state("conv_1", "read")
+    read = store.upsert_session_read_state("session_1", "read")
 
-    assert unread["conversationId"] == "conv_1"
+    assert unread["sessionId"] == "session_1"
     assert unread["state"] == "unread"
     assert unread["metadata"]["eventCursor"] == 12
     assert read["state"] == "read"
-    assert store.conversation_read_states(["conv_1"])["conv_1"]["state"] == "read"
+    assert store.session_read_states(["session_1"])["session_1"]["state"] == "read"
 
 
-def test_core_store_rejects_unbounded_conversation_read_state_queries(tmp_path):
+def test_core_store_rejects_unbounded_session_read_state_queries(tmp_path):
     store = CoreStore(tmp_path / "core.sqlite3")
 
     with pytest.raises(ValueError, match="At most 500"):
-        store.conversation_read_states([f"conv_{index}" for index in range(501)])
+        store.session_read_states([f"session_{index}" for index in range(501)])
 
 
 def test_core_store_accepts_general_attachment_mime_types(tmp_path):

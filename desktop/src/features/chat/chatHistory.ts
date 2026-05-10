@@ -1,5 +1,5 @@
 import type { Message, MessageAttachment } from "../../app/types";
-import type { HermesConversationMessage, HermesStreamToolEvent } from "../../types/hermes";
+import type { HermesSessionMessage, HermesStreamToolEvent } from "../../types/hermes";
 import {
   attachmentsFromMetadata,
   contentWithoutRenderedAttachmentMarkers,
@@ -10,12 +10,12 @@ import {
   streamToolEventFromHistoryCall,
 } from "./toolEvents";
 
-export function toAppMessages(messages: HermesConversationMessage[]): Message[] {
+export function toAppMessages(messages: HermesSessionMessage[]): Message[] {
   const normalized: Message[] = [];
   let pendingToolEvents: HermesStreamToolEvent[] = [];
 
   for (const message of messages) {
-    if (isHiddenConversationMessage(message)) {
+    if (isHiddenSessionMessage(message)) {
       continue;
     }
 
@@ -72,7 +72,7 @@ function toolEventMessage(id: string, streamEvents: HermesStreamToolEvent[]): Me
   };
 }
 
-function toAppMessage(message: HermesConversationMessage): Message {
+function toAppMessage(message: HermesSessionMessage): Message {
   const attachments = message.role === "user" || message.role === "assistant"
     ? attachmentsFromMetadata(message.metadata)
     : [];
@@ -115,7 +115,7 @@ function isAttachmentOnlyContent(content: string, attachments: MessageAttachment
   });
 }
 
-function isHiddenConversationMessage(message: HermesConversationMessage) {
+function isHiddenSessionMessage(message: HermesSessionMessage) {
   return isHiddenDeliveryMetadata(message.metadata || {});
 }
 

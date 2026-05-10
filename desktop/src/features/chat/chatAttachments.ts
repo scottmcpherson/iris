@@ -7,7 +7,7 @@ import type { AttachmentUploadFailure, SendableAttachment } from "./chatTypes";
 type UploadAttachmentsForSendOptions = {
   profile: string;
   messageId: string;
-  conversationId: string;
+  sessionId: string;
   runtimeConfig: HermesRuntimeConfig;
 };
 
@@ -33,7 +33,7 @@ export async function uploadAttachmentsForSend(
         mimeType: attachment.mimeType,
         kind: attachment.kind,
         profile: options.profile,
-        conversationId: options.conversationId,
+        sessionId: options.sessionId,
         messageId: options.messageId,
         metadata: {
           clientDraftId: attachment.id,

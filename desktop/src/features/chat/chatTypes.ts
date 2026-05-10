@@ -1,9 +1,9 @@
 import type { MessageAttachment } from "../../app/types";
 import type { HermesModelSelection } from "../../types/hermes";
 
-export type PendingProfileConversationSelection = {
+export type PendingProfileSessionSelection = {
   profile: string;
-  conversationId: string;
+  sessionId: string;
 };
 
 export type SendMessageOptions = {

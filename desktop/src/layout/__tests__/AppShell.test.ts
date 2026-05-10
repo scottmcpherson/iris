@@ -1,38 +1,43 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { AppShell, unpinnedProfileConversations } from "../AppShell";
+import {
+  AppShell,
+  buildSessionSearchItems,
+  shouldCloseSessionMenuForPointerTarget,
+  unpinnedProfileSessions,
+} from "../AppShell";
 import { storageKeys } from "../../app/storage";
 import type { AgentUICoreAgent, IrisProject } from "../../lib/agentuiCore";
-import type { HermesConversation, HermesProfile, HermesStatus } from "../../types/hermes";
+import type { HermesSession, HermesProfile, HermesStatus } from "../../types/hermes";
 
 afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe("AppShell pinned conversations", () => {
-  it("keeps pinned conversations out of the agent conversation branch", () => {
-    const conversations = [
-      { id: "conv-1", title: "Pinned chat" },
-      { id: "conv-2", title: "Normal chat" },
-      { id: "conv-3", title: "Other profile chat" },
+describe("AppShell pinned sessions", () => {
+  it("keeps pinned sessions out of the agent session branch", () => {
+    const sessions = [
+      { id: "session-1", title: "Pinned chat" },
+      { id: "session-2", title: "Normal chat" },
+      { id: "session-3", title: "Other profile chat" },
     ];
 
     expect(
-      unpinnedProfileConversations("default", conversations, {
-        "default:conv-1": true,
-        "health:conv-3": true,
+      unpinnedProfileSessions("default", sessions, {
+        "default:session-1": true,
+        "health:session-3": true,
       }),
     ).toEqual([
-      { id: "conv-2", title: "Normal chat" },
-      { id: "conv-3", title: "Other profile chat" },
+      { id: "session-2", title: "Normal chat" },
+      { id: "session-3", title: "Other profile chat" },
     ]);
   });
 
   it("shows the streaming status for a project-scoped chat in the project branch", () => {
     const project = projectFixture();
-    const projectChat = conversationFixture({
-      id: "conv_project",
+    const projectChat = sessionFixture({
+      id: "session_project",
       title: "Project stream",
       metadata: { projectId: project.id },
     });
@@ -42,46 +47,43 @@ describe("AppShell pinned conversations", () => {
         activeView: "chat",
         connected: true,
         isRefreshing: false,
-        previewOpen: false,
         primaryPane: null,
-        previewPane: null,
         selectedProfile: "default",
         status: statusFixture(),
-        conversations: [],
-        conversationsByProfile: {},
-        conversationReadStates: {},
+        sessions: [],
+        sessionsByProfile: {},
+        sessionReadStates: {},
         projects: [project],
         projectAgents: [agentFixture()],
-        conversationsByProject: { [project.id]: [projectChat] },
-        projectConversationsLoading: {},
-        projectConversationsLoaded: { [project.id]: true },
+        sessionsByProject: { [project.id]: [projectChat] },
+        projectSessionsLoading: {},
+        projectSessionsLoaded: { [project.id]: true },
         projectErrors: {},
         collapsedProjects: { [project.id]: false },
-        unprojectedConversations: [],
-        conversationsLoadedByProfile: {},
-        conversationsLoading: false,
-        conversationsLoadingByProfile: {},
+        unprojectedSessions: [],
+        sessionsLoadedByProfile: {},
+        sessionsLoading: false,
+        sessionsLoadingByProfile: {},
         historyError: null,
         historyErrorsByProfile: {},
-        selectedConversationId: projectChat.id,
+        selectedSessionId: projectChat.id,
         selectedProjectId: project.id,
-        activeConversationIds: [projectChat.id],
+        activeSessionIds: [projectChat.id],
         coreApiUrl: "http://127.0.0.1:8765",
-        onNewConversation: noop,
+        onNewSession: noop,
         onCreateProject: async () => project,
         onUpdateProject: async () => project,
         onToggleProjectCollapsed: noop,
         onRefreshProjects: noop,
-        onRefreshProjectConversations: noop,
-        onPreviewToggle: noop,
+        onRefreshProjectSessions: noop,
         onEditProfile: noop,
         onProfileAction: async () => "",
         onRefresh: noop,
-        onRefreshConversations: noop,
-        onDeleteConversation: async () => "",
-        onRenameConversation: async () => "",
-        onSelectConversation: noop,
-        onSelectProjectConversation: noop,
+        onRefreshSessions: noop,
+        onDeleteSession: async () => "",
+        onRenameSession: async () => "",
+        onSelectSession: noop,
+        onSelectProjectSession: noop,
         onSelectProfile: noop,
         onSelectView: noop,
       }),
@@ -94,8 +96,8 @@ describe("AppShell pinned conversations", () => {
 
   it("shows the unread status for a background completed project chat", () => {
     const project = projectFixture();
-    const projectChat = conversationFixture({
-      id: "conv_project",
+    const projectChat = sessionFixture({
+      id: "session_project",
       title: "Project complete",
       metadata: { projectId: project.id },
     });
@@ -105,46 +107,43 @@ describe("AppShell pinned conversations", () => {
         activeView: "chat",
         connected: true,
         isRefreshing: false,
-        previewOpen: false,
         primaryPane: null,
-        previewPane: null,
         selectedProfile: "default",
         status: statusFixture(),
-        conversations: [],
-        conversationsByProfile: {},
-        conversationReadStates: { [projectChat.id]: "unread" },
+        sessions: [],
+        sessionsByProfile: {},
+        sessionReadStates: { [projectChat.id]: "unread" },
         projects: [project],
         projectAgents: [agentFixture()],
-        conversationsByProject: { [project.id]: [projectChat] },
-        projectConversationsLoading: {},
-        projectConversationsLoaded: { [project.id]: true },
+        sessionsByProject: { [project.id]: [projectChat] },
+        projectSessionsLoading: {},
+        projectSessionsLoaded: { [project.id]: true },
         projectErrors: {},
         collapsedProjects: { [project.id]: false },
-        unprojectedConversations: [],
-        conversationsLoadedByProfile: {},
-        conversationsLoading: false,
-        conversationsLoadingByProfile: {},
+        unprojectedSessions: [],
+        sessionsLoadedByProfile: {},
+        sessionsLoading: false,
+        sessionsLoadingByProfile: {},
         historyError: null,
         historyErrorsByProfile: {},
-        selectedConversationId: "conv_other",
+        selectedSessionId: "session_other",
         selectedProjectId: project.id,
-        activeConversationIds: [],
+        activeSessionIds: [],
         coreApiUrl: "http://127.0.0.1:8765",
-        onNewConversation: noop,
+        onNewSession: noop,
         onCreateProject: async () => project,
         onUpdateProject: async () => project,
         onToggleProjectCollapsed: noop,
         onRefreshProjects: noop,
-        onRefreshProjectConversations: noop,
-        onPreviewToggle: noop,
+        onRefreshProjectSessions: noop,
         onEditProfile: noop,
         onProfileAction: async () => "",
         onRefresh: noop,
-        onRefreshConversations: noop,
-        onDeleteConversation: async () => "",
-        onRenameConversation: async () => "",
-        onSelectConversation: noop,
-        onSelectProjectConversation: noop,
+        onRefreshSessions: noop,
+        onDeleteSession: async () => "",
+        onRenameSession: async () => "",
+        onSelectSession: noop,
+        onSelectProjectSession: noop,
         onSelectProfile: noop,
         onSelectView: noop,
       }),
@@ -155,54 +154,51 @@ describe("AppShell pinned conversations", () => {
     expect(html).toContain("aria-label=\"Unread response\"");
   });
 
-  it("only shows a selected conversation as active while the chat view is active", () => {
-    const looseChat = conversationFixture({ id: "conv_loose", title: "Loose chat" });
+  it("only shows a selected session as active while the chat view is active", () => {
+    const looseChat = sessionFixture({ id: "session_loose", title: "Loose chat" });
 
     const html = renderToStaticMarkup(
       createElement(AppShell, {
         activeView: "jobs",
         connected: true,
         isRefreshing: false,
-        previewOpen: false,
         primaryPane: null,
-        previewPane: null,
         selectedProfile: "default",
         status: statusFixture(),
-        conversations: [looseChat],
-        conversationsByProfile: {},
-        conversationReadStates: {},
+        sessions: [looseChat],
+        sessionsByProfile: {},
+        sessionReadStates: {},
         projects: [],
         projectAgents: [],
-        conversationsByProject: {},
-        projectConversationsLoading: {},
-        projectConversationsLoaded: {},
+        sessionsByProject: {},
+        projectSessionsLoading: {},
+        projectSessionsLoaded: {},
         projectErrors: {},
         collapsedProjects: {},
-        unprojectedConversations: [looseChat],
-        conversationsLoadedByProfile: {},
-        conversationsLoading: false,
-        conversationsLoadingByProfile: {},
+        unprojectedSessions: [looseChat],
+        sessionsLoadedByProfile: {},
+        sessionsLoading: false,
+        sessionsLoadingByProfile: {},
         historyError: null,
         historyErrorsByProfile: {},
-        selectedConversationId: looseChat.id,
+        selectedSessionId: looseChat.id,
         selectedProjectId: "",
-        activeConversationIds: [],
+        activeSessionIds: [],
         coreApiUrl: "http://127.0.0.1:8765",
-        onNewConversation: noop,
+        onNewSession: noop,
         onCreateProject: async () => projectFixture(),
         onUpdateProject: async () => projectFixture(),
         onToggleProjectCollapsed: noop,
         onRefreshProjects: noop,
-        onRefreshProjectConversations: noop,
-        onPreviewToggle: noop,
+        onRefreshProjectSessions: noop,
         onEditProfile: noop,
         onProfileAction: async () => "",
         onRefresh: noop,
-        onRefreshConversations: noop,
-        onDeleteConversation: async () => "",
-        onRenameConversation: async () => "",
-        onSelectConversation: noop,
-        onSelectProjectConversation: noop,
+        onRefreshSessions: noop,
+        onDeleteSession: async () => "",
+        onRenameSession: async () => "",
+        onSelectSession: noop,
+        onSelectProjectSession: noop,
         onSelectProfile: noop,
         onSelectView: noop,
       }),
@@ -217,19 +213,19 @@ describe("AppShell pinned conversations", () => {
 
   it("honors persisted top-level sidebar section collapse state", () => {
     const project = projectFixture();
-    const projectChat = conversationFixture({
-      id: "conv_project",
+    const projectChat = sessionFixture({
+      id: "session_project",
       title: "Project stream",
       metadata: { projectId: project.id },
     });
-    const looseChat = conversationFixture({ id: "conv_loose", title: "Loose chat" });
+    const looseChat = sessionFixture({ id: "session_loose", title: "Loose chat" });
 
     vi.stubGlobal("localStorage", {
       getItem: (key: string) => {
         if (key === storageKeys.collapsedSidebarSections) {
           return JSON.stringify({ pinned: true, projects: true, chats: true, agents: true });
         }
-        if (key === storageKeys.pinnedConversations) {
+        if (key === storageKeys.pinnedSessions) {
           return JSON.stringify({ [`project:${project.id}:${projectChat.id}`]: true });
         }
         return null;
@@ -242,46 +238,43 @@ describe("AppShell pinned conversations", () => {
         activeView: "chat",
         connected: true,
         isRefreshing: false,
-        previewOpen: false,
         primaryPane: null,
-        previewPane: null,
         selectedProfile: "default",
         status: statusFixture(),
-        conversations: [looseChat],
-        conversationsByProfile: {},
-        conversationReadStates: {},
+        sessions: [looseChat],
+        sessionsByProfile: {},
+        sessionReadStates: {},
         projects: [project],
         projectAgents: [agentFixture()],
-        conversationsByProject: { [project.id]: [projectChat] },
-        projectConversationsLoading: {},
-        projectConversationsLoaded: { [project.id]: true },
+        sessionsByProject: { [project.id]: [projectChat] },
+        projectSessionsLoading: {},
+        projectSessionsLoaded: { [project.id]: true },
         projectErrors: {},
         collapsedProjects: { [project.id]: false },
-        unprojectedConversations: [looseChat],
-        conversationsLoadedByProfile: {},
-        conversationsLoading: false,
-        conversationsLoadingByProfile: {},
+        unprojectedSessions: [looseChat],
+        sessionsLoadedByProfile: {},
+        sessionsLoading: false,
+        sessionsLoadingByProfile: {},
         historyError: null,
         historyErrorsByProfile: {},
-        selectedConversationId: null,
+        selectedSessionId: null,
         selectedProjectId: "",
-        activeConversationIds: [],
+        activeSessionIds: [],
         coreApiUrl: "http://127.0.0.1:8765",
-        onNewConversation: noop,
+        onNewSession: noop,
         onCreateProject: async () => project,
         onUpdateProject: async () => project,
         onToggleProjectCollapsed: noop,
         onRefreshProjects: noop,
-        onRefreshProjectConversations: noop,
-        onPreviewToggle: noop,
+        onRefreshProjectSessions: noop,
         onEditProfile: noop,
         onProfileAction: async () => "",
         onRefresh: noop,
-        onRefreshConversations: noop,
-        onDeleteConversation: async () => "",
-        onRenameConversation: async () => "",
-        onSelectConversation: noop,
-        onSelectProjectConversation: noop,
+        onRefreshSessions: noop,
+        onDeleteSession: async () => "",
+        onRenameSession: async () => "",
+        onSelectSession: noop,
+        onSelectProjectSession: noop,
         onSelectProfile: noop,
         onSelectView: noop,
       }),
@@ -299,12 +292,12 @@ describe("AppShell pinned conversations", () => {
 
   it("uses the persisted agents organization without rendering project buckets", () => {
     const project = projectFixture();
-    const projectChat = conversationFixture({
-      id: "conv_project",
+    const projectChat = sessionFixture({
+      id: "session_project",
       title: "Project stream",
       metadata: { projectId: project.id },
     });
-    const looseChat = conversationFixture({ id: "conv_loose", title: "Loose chat" });
+    const looseChat = sessionFixture({ id: "session_loose", title: "Loose chat" });
 
     vi.stubGlobal("localStorage", {
       getItem: (key: string) =>
@@ -317,46 +310,43 @@ describe("AppShell pinned conversations", () => {
         activeView: "chat",
         connected: true,
         isRefreshing: false,
-        previewOpen: false,
         primaryPane: null,
-        previewPane: null,
         selectedProfile: "default",
         status: statusFixture(),
-        conversations: [projectChat, looseChat],
-        conversationsByProfile: {},
-        conversationReadStates: {},
+        sessions: [projectChat, looseChat],
+        sessionsByProfile: {},
+        sessionReadStates: {},
         projects: [project],
         projectAgents: [agentFixture()],
-        conversationsByProject: { [project.id]: [projectChat] },
-        projectConversationsLoading: {},
-        projectConversationsLoaded: { [project.id]: true },
+        sessionsByProject: { [project.id]: [projectChat] },
+        projectSessionsLoading: {},
+        projectSessionsLoaded: { [project.id]: true },
         projectErrors: {},
         collapsedProjects: { [project.id]: false },
-        unprojectedConversations: [looseChat],
-        conversationsLoadedByProfile: { default: true },
-        conversationsLoading: false,
-        conversationsLoadingByProfile: {},
+        unprojectedSessions: [looseChat],
+        sessionsLoadedByProfile: { default: true },
+        sessionsLoading: false,
+        sessionsLoadingByProfile: {},
         historyError: null,
         historyErrorsByProfile: {},
-        selectedConversationId: null,
+        selectedSessionId: null,
         selectedProjectId: "",
-        activeConversationIds: [],
+        activeSessionIds: [],
         coreApiUrl: "http://127.0.0.1:8765",
-        onNewConversation: noop,
+        onNewSession: noop,
         onCreateProject: async () => project,
         onUpdateProject: async () => project,
         onToggleProjectCollapsed: noop,
         onRefreshProjects: noop,
-        onRefreshProjectConversations: noop,
-        onPreviewToggle: noop,
+        onRefreshProjectSessions: noop,
         onEditProfile: noop,
         onProfileAction: async () => "",
         onRefresh: noop,
-        onRefreshConversations: noop,
-        onDeleteConversation: async () => "",
-        onRenameConversation: async () => "",
-        onSelectConversation: noop,
-        onSelectProjectConversation: noop,
+        onRefreshSessions: noop,
+        onDeleteSession: async () => "",
+        onRenameSession: async () => "",
+        onSelectSession: noop,
+        onSelectProjectSession: noop,
         onSelectProfile: noop,
         onSelectView: noop,
       }),
@@ -369,6 +359,55 @@ describe("AppShell pinned conversations", () => {
     expect(html).not.toContain('aria-controls="sidebar-projects-section"');
     expect(html).not.toContain('aria-controls="sidebar-chats-section"');
     expect(html).not.toContain("Pirate");
+  });
+
+  it("deduplicates the selected profile session in sidebar search results", () => {
+    const sharedSession = sessionFixture({
+      id: "session_3782123ec7792ff6f4fa59",
+      title: "Shared session",
+      lastActiveAt: 10,
+    });
+    const project = projectFixture();
+    const projectSession = sessionFixture({
+      id: "session_project",
+      title: "Project session",
+      metadata: { projectId: project.id },
+      lastActiveAt: 20,
+    });
+
+    const items = buildSessionSearchItems({
+      sessions: [sharedSession, projectSession],
+      sessionsByProfile: {},
+      sessionsByProject: { [project.id]: [projectSession] },
+      profiles: [profileFixture()],
+      projects: [project],
+      selectedProfile: "default",
+      unprojectedSessions: [sharedSession],
+      onSelectSession: noop,
+      onSelectProjectSession: noop,
+    });
+
+    expect(items.map((item) => `${item.profileName}:${item.session.id}`)).toEqual([
+      "default:session_project",
+      "default:session_3782123ec7792ff6f4fa59",
+    ]);
+    expect(items.map((item) => item.sourceLabel)).toEqual([
+      "Pirate / default",
+      "Sessions / default",
+    ]);
+  });
+
+  it("closes the session context menu when another session row is clicked", () => {
+    const sessionRowTarget = {
+      closest: (selector: string) => (selector === ".session-context-menu" ? null : {}),
+    } as unknown as Element;
+    const menuTarget = {
+      closest: (selector: string) => (selector === ".session-context-menu" ? {} : null),
+    } as unknown as Element;
+
+    expect(shouldCloseSessionMenuForPointerTarget(sessionRowTarget)).toBe(true);
+    expect(shouldCloseSessionMenuForPointerTarget(menuTarget)).toBe(false);
+    expect(shouldCloseSessionMenuForPointerTarget(null)).toBe(true);
   });
 });
 
@@ -430,9 +469,9 @@ function agentFixture(): AgentUICoreAgent {
   };
 }
 
-function conversationFixture(overrides: Partial<HermesConversation> = {}): HermesConversation {
+function sessionFixture(overrides: Partial<HermesSession> = {}): HermesSession {
   return {
-    id: "conv_1",
+    id: "session_1",
     source: "agentui-core",
     model: "gpt-5.5",
     title: "Chat",

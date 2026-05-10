@@ -19,6 +19,21 @@ describe("AgentTopbar", () => {
     expect(html).not.toContain("<p>Agents</p>");
     expect(html).not.toContain("127.0.0.1");
   });
+
+  it("renders the agent detail title without the topbar avatar", () => {
+    const html = renderToStaticMarkup(
+      createElement(AgentTopbar, {
+        detailProfile: "default",
+        profile: profileFixture(),
+        section: "overview",
+        onBack: noop,
+        onSectionChange: noop,
+      }),
+    );
+
+    expect(html).toContain("Agents / default");
+    expect(html).not.toContain("agent-avatar");
+  });
 });
 
 function noop() {}

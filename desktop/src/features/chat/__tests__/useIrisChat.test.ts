@@ -2,19 +2,19 @@ import { describe, expect, it } from "vitest";
 import type { Message } from "../../../app/types";
 import type { HermesInboxMessage } from "../../../types/hermes";
 import {
-  activeConversationReplacements,
+  activeSessionReplacements,
   activeRequestCompletedByHistory,
-  isTransientConversationLoadError,
-  mergeConversationChatIdMap,
+  isTransientSessionLoadError,
+  mergeSessionChatIdMap,
   preserveLocalScheduledDeliveries,
-  preserveLocalConversationProjectMetadata,
-  preserveActiveConversationTitles,
-  shouldApplyConversationDetailSelection,
+  preserveLocalSessionProjectMetadata,
+  preserveActiveSessionTitles,
+  shouldApplySessionDetailSelection,
   shouldPreserveLocalMessagesOnEmptyHistory,
-  shouldPreserveProfileConversationSelection,
+  shouldPreserveProfileSessionSelection,
   shouldRetryUnmappedDelivery,
   shouldSendModelSwitch,
-  shouldSkipConversationDetailLoad,
+  shouldSkipSessionDetailLoad,
 } from "../useIrisChat";
 import {
   coalescePostStreamAttachments,
@@ -58,21 +58,21 @@ describe("Iris chat inbox merging", () => {
     size: 42,
   };
 
-  it("keeps the chat-id map stable when a conversation refresh has no new mappings", () => {
-    const current = { "conversation-1": "chat-1" };
+  it("keeps the chat-id map stable when a session refresh has no new mappings", () => {
+    const current = { "session-1": "chat-1" };
 
     expect(
-      mergeConversationChatIdMap(current, [
-        { id: "conversation-1", chatId: "chat-1" },
-        { id: "conversation-2", chatId: "" },
+      mergeSessionChatIdMap(current, [
+        { id: "session-1", chatId: "chat-1" },
+        { id: "session-2", chatId: "" },
       ]),
     ).toBe(current);
   });
 
-  it("preserves project metadata while agent conversation refresh catches up", () => {
+  it("preserves project metadata while agent session refresh catches up", () => {
     const endpoint = [
       {
-        id: "conv_1",
+        id: "session_1",
         source: "agentui-core",
         model: "",
         title: "Project chat",
@@ -94,7 +94,7 @@ describe("Iris chat inbox merging", () => {
       },
     ];
 
-    expect(preserveLocalConversationProjectMetadata(endpoint, current)[0].metadata?.projectId).toBe("project_1");
+    expect(preserveLocalSessionProjectMetadata(endpoint, current)[0].metadata?.projectId).toBe("project_1");
   });
 
   it("caps retries for unmapped inbox deliveries so stale rows cannot refresh forever", () => {
@@ -109,7 +109,7 @@ describe("Iris chat inbox merging", () => {
     expect(isHiddenDeliveryMetadata({ replyTo: "client-message-1" })).toBe(false);
   });
 
-  it("omits hidden model-switch replies when loading conversation history", () => {
+  it("omits hidden model-switch replies when loading session history", () => {
     const messages = toAppMessages([
       {
         id: "model-reply",
@@ -140,7 +140,7 @@ describe("Iris chat inbox merging", () => {
     ]);
   });
 
-  it("maps assistant metadata attachments from conversation history", () => {
+  it("maps assistant metadata attachments from session history", () => {
     const messages = toAppMessages([
       {
         id: "assistant-1",
@@ -253,7 +253,7 @@ describe("Iris chat inbox merging", () => {
     });
   });
 
-  it("replaces local duplicate messages with persisted history rows when merging conversation aliases", () => {
+  it("replaces local duplicate messages with persisted history rows when merging session aliases", () => {
     const attachment = {
       id: "local-attachment-1",
       kind: "image" as const,
@@ -398,7 +398,7 @@ describe("Iris chat inbox merging", () => {
       {
         cursor: 1,
         id: "evt_delivery_agentui-delivery-1",
-        conversationId: "conv-1",
+        sessionId: "session-1",
         agentId: "agent-1",
         runtimeId: "runtime-1",
         type: "message.assistant.completed",
@@ -419,7 +419,7 @@ describe("Iris chat inbox merging", () => {
       {
         cursor: 2,
         id: "evt_delivery_agentui-delivery-1:edit:2",
-        conversationId: "conv-1",
+        sessionId: "session-1",
         agentId: "agent-1",
         runtimeId: "runtime-1",
         type: "message.assistant.completed",
@@ -961,44 +961,44 @@ describe("Iris chat inbox merging", () => {
 });
 
 describe("Iris chat profile selection", () => {
-  it("preserves an explicit conversation selection while switching profiles", () => {
+  it("preserves an explicit session selection while switching profiles", () => {
     expect(
-      shouldPreserveProfileConversationSelection("default", "cron-default", {
+      shouldPreserveProfileSessionSelection("default", "cron-default", {
         profile: "default",
-        conversationId: "cron-default",
+        sessionId: "cron-default",
       }),
     ).toBe(true);
   });
 
   it("does not preserve stale selections from another profile", () => {
     expect(
-      shouldPreserveProfileConversationSelection("health", "cron-default", {
+      shouldPreserveProfileSessionSelection("health", "cron-default", {
         profile: "default",
-        conversationId: "cron-default",
+        sessionId: "cron-default",
       }),
     ).toBe(false);
-    expect(shouldPreserveProfileConversationSelection("default", null, null)).toBe(false);
+    expect(shouldPreserveProfileSessionSelection("default", null, null)).toBe(false);
   });
 });
 
-describe("Iris chat conversation loading", () => {
-  it("treats timeout-like conversation list failures as transient", () => {
-    expect(isTransientConversationLoadError("timed out")).toBe(true);
-    expect(isTransientConversationLoadError("AbortError: The operation was aborted")).toBe(true);
-    expect(isTransientConversationLoadError("Failed to fetch")).toBe(true);
-    expect(isTransientConversationLoadError("Could not resolve Iris agent.")).toBe(false);
+describe("Iris chat session loading", () => {
+  it("treats timeout-like session list failures as transient", () => {
+    expect(isTransientSessionLoadError("timed out")).toBe(true);
+    expect(isTransientSessionLoadError("AbortError: The operation was aborted")).toBe(true);
+    expect(isTransientSessionLoadError("Failed to fetch")).toBe(true);
+    expect(isTransientSessionLoadError("Could not resolve Iris agent.")).toBe(false);
   });
 
-  it("moves active request markers to a refreshed Hermes conversation with the same chat id", () => {
-    const replacements = activeConversationReplacements(
-      { "conv-core-draft": "user-1" },
+  it("moves active request markers to a refreshed Hermes session with the same chat id", () => {
+    const replacements = activeSessionReplacements(
+      { "session-core-draft": "user-1" },
       [
         {
           id: "session-hermes",
           source: "hermes-management",
           title: "Hermes title",
           preview: "",
-          chatId: "core-conv-core-draft",
+          chatId: "core-session-core-draft",
           origin: {},
           startedAt: 1,
           endedAt: null,
@@ -1008,23 +1008,23 @@ describe("Iris chat conversation loading", () => {
         },
       ],
       [],
-      { "conv-core-draft": "core-conv-core-draft" },
+      { "session-core-draft": "core-session-core-draft" },
     );
 
     expect(replacements).toHaveLength(1);
-    expect(replacements[0].fromId).toBe("conv-core-draft");
+    expect(replacements[0].fromId).toBe("session-core-draft");
     expect(replacements[0].to.id).toBe("session-hermes");
   });
 
-  it("keeps an active prompt title when Hermes temporarily returns an untitled conversation", () => {
-    const endpoint = preserveActiveConversationTitles(
+  it("keeps an active prompt title when Hermes temporarily returns an untitled session", () => {
+    const endpoint = preserveActiveSessionTitles(
       [
         {
           id: "session-hermes",
           source: "hermes-management",
-          title: "Untitled conversation",
+          title: "Untitled session",
           preview: "",
-          chatId: "core-conv-core-draft",
+          chatId: "core-session-core-draft",
           origin: {},
           startedAt: 1,
           endedAt: null,
@@ -1035,11 +1035,11 @@ describe("Iris chat conversation loading", () => {
       ],
       [
         {
-          id: "conv-core-draft",
+          id: "session-core-draft",
           source: "agentui-core",
           title: "Write a 4 paragraph streaming verification answer",
           preview: "",
-          chatId: "core-conv-core-draft",
+          chatId: "core-session-core-draft",
           origin: {},
           startedAt: 1,
           endedAt: null,
@@ -1048,23 +1048,23 @@ describe("Iris chat conversation loading", () => {
           model: "",
         },
       ],
-      { "conv-core-draft": "user-1" },
+      { "session-core-draft": "user-1" },
       {},
-      { "conv-core-draft": "core-conv-core-draft" },
+      { "session-core-draft": "core-session-core-draft" },
     );
 
     expect(endpoint[0].title).toBe("Write a 4 paragraph streaming verification answer");
   });
 
   it("uses the real Hermes title once Hermes returns one", () => {
-    const endpoint = preserveActiveConversationTitles(
+    const endpoint = preserveActiveSessionTitles(
       [
         {
           id: "session-hermes",
           source: "hermes-management",
           title: "Streaming Verification Answer",
           preview: "",
-          chatId: "core-conv-core-draft",
+          chatId: "core-session-core-draft",
           origin: {},
           startedAt: 1,
           endedAt: null,
@@ -1075,11 +1075,11 @@ describe("Iris chat conversation loading", () => {
       ],
       [
         {
-          id: "conv-core-draft",
+          id: "session-core-draft",
           source: "agentui-core",
           title: "Write a 4 paragraph streaming verification answer",
           preview: "",
-          chatId: "core-conv-core-draft",
+          chatId: "core-session-core-draft",
           origin: {},
           startedAt: 1,
           endedAt: null,
@@ -1088,21 +1088,21 @@ describe("Iris chat conversation loading", () => {
           model: "",
         },
       ],
-      { "conv-core-draft": "user-1" },
+      { "session-core-draft": "user-1" },
       {},
-      { "conv-core-draft": "core-conv-core-draft" },
+      { "session-core-draft": "core-session-core-draft" },
     );
 
     expect(endpoint[0].title).toBe("Streaming Verification Answer");
   });
 
-  it("keeps the previous title when an existing conversation refreshes with a temporary placeholder", () => {
-    const endpoint = preserveActiveConversationTitles(
+  it("keeps the previous title when an existing session refreshes with a temporary placeholder", () => {
+    const endpoint = preserveActiveSessionTitles(
       [
         {
-          id: "conv-existing",
+          id: "session-existing",
           source: "agentui-core",
-          title: "Untitled conversation",
+          title: "Untitled session",
           preview: "",
           chatId: "chat-existing",
           origin: {},
@@ -1115,7 +1115,7 @@ describe("Iris chat conversation loading", () => {
       ],
       [
         {
-          id: "conv-existing",
+          id: "session-existing",
           source: "agentui-core",
           title: "Roadmap planning",
           preview: "",
@@ -1137,13 +1137,13 @@ describe("Iris chat conversation loading", () => {
     expect(endpoint[0].lastActiveAt).toBe(5);
   });
 
-  it("prefers an existing conversation title over the latest active prompt title", () => {
-    const endpoint = preserveActiveConversationTitles(
+  it("prefers an existing session title over the latest active prompt title", () => {
+    const endpoint = preserveActiveSessionTitles(
       [
         {
-          id: "conv-existing",
+          id: "session-existing",
           source: "agentui-core",
-          title: "Untitled conversation",
+          title: "Untitled session",
           preview: "",
           chatId: "chat-existing",
           origin: {},
@@ -1156,7 +1156,7 @@ describe("Iris chat conversation loading", () => {
       ],
       [
         {
-          id: "conv-existing",
+          id: "session-existing",
           source: "agentui-core",
           title: "Roadmap planning",
           preview: "",
@@ -1169,16 +1169,16 @@ describe("Iris chat conversation loading", () => {
           model: "",
         },
       ],
-      { "conv-existing": "user-1" },
-      { "conv-existing": "what about the budget" },
-      { "conv-existing": "chat-existing" },
+      { "session-existing": "user-1" },
+      { "session-existing": "what about the budget" },
+      { "session-existing": "chat-existing" },
     );
 
     expect(endpoint[0].title).toBe("Roadmap planning");
   });
 
   it("preserves a second active prompt title even after its local row has been replaced", () => {
-    const endpoint = preserveActiveConversationTitles(
+    const endpoint = preserveActiveSessionTitles(
       [
         {
           id: "session-first",
@@ -1196,7 +1196,7 @@ describe("Iris chat conversation loading", () => {
         {
           id: "session-second",
           source: "hermes-management",
-          title: "Untitled conversation",
+          title: "Untitled session",
           preview: "",
           chatId: "core-second",
           origin: {},
@@ -1222,9 +1222,9 @@ describe("Iris chat conversation loading", () => {
           model: "",
         },
       ],
-      { "session-first": "user-1", "conv-second": "user-2" },
-      { "conv-second": "Second prompt title" },
-      { "session-first": "core-first", "conv-second": "core-second" },
+      { "session-first": "user-1", "session-second": "user-2" },
+      { "session-second": "Second prompt title" },
+      { "session-first": "core-first", "session-second": "core-second" },
     );
 
     expect(endpoint[0].title).toBe("First Real Title");
@@ -1258,7 +1258,7 @@ describe("Iris chat model switching", () => {
   });
 });
 
-describe("Iris chat conversation detail loading", () => {
+describe("Iris chat session detail loading", () => {
   it("does not let empty canonical history erase a local failed first request", () => {
     expect(
       shouldPreserveLocalMessagesOnEmptyHistory(
@@ -1396,34 +1396,34 @@ describe("Iris chat conversation detail loading", () => {
     ).toBe(false);
   });
 
-  it("does not let a stale detail response retake selection after another conversation was clicked", () => {
+  it("does not let a stale detail response retake selection after another session was clicked", () => {
     expect(
-      shouldApplyConversationDetailSelection(
-        "conversation-b",
+      shouldApplySessionDetailSelection(
+        "session-b",
         "chat-b",
-        "conversation-a",
-        { id: "conversation-a", chatId: "chat-a" },
+        "session-a",
+        { id: "session-a", chatId: "chat-a" },
       ),
     ).toBe(false);
   });
 
-  it("allows a current detail response to replace an alias with its loaded conversation id", () => {
+  it("allows a current detail response to replace an alias with its loaded session id", () => {
     expect(
-      shouldApplyConversationDetailSelection(
-        "conversation-alias",
+      shouldApplySessionDetailSelection(
+        "session-alias",
         "chat-a",
-        "conversation-alias",
-        { id: "conversation-a", chatId: "chat-a" },
+        "session-alias",
+        { id: "session-a", chatId: "chat-a" },
       ),
     ).toBe(true);
   });
 
-  it("reloads completed real conversations even when live messages are already cached", () => {
-    expect(shouldSkipConversationDetailLoad("session-1", {})).toBe(false);
+  it("reloads completed real sessions even when live messages are already cached", () => {
+    expect(shouldSkipSessionDetailLoad("session-1", {})).toBe(false);
   });
 
-  it("keeps active and optimistic conversations on provisional state", () => {
-    expect(shouldSkipConversationDetailLoad("session-1", { "session-1": "request-1" })).toBe(true);
-    expect(shouldSkipConversationDetailLoad("optimistic-1", {})).toBe(true);
+  it("keeps active and optimistic sessions on provisional state", () => {
+    expect(shouldSkipSessionDetailLoad("session-1", { "session-1": "request-1" })).toBe(true);
+    expect(shouldSkipSessionDetailLoad("optimistic-1", {})).toBe(true);
   });
 });

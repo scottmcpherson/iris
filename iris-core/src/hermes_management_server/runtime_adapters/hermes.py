@@ -17,7 +17,7 @@ from ..core_store import (
     DEFAULT_RUNTIME_ID,
     CoreStore,
     agent_from_profile_summary,
-    conversation_from_runtime_summary,
+    session_from_runtime_summary,
     core_message_from_hermes,
     message_content_hash_candidates,
 )
@@ -203,91 +203,91 @@ class HermesRuntimeAdapter:
         summary, content = self.require_store().save_skill(profile, payload, skill_id)
         return {"ok": True, "profile": profile, "skill": {"content": content, "history": [], **summary.model_dump()}}
 
-    def list_conversations(self, agent: dict[str, Any], limit: int = 80) -> list[dict[str, Any]]:
+    def list_sessions(self, agent: dict[str, Any], limit: int = 80) -> list[dict[str, Any]]:
         store = self.require_store()
-        result = store.conversations(str(agent["runtimeProfile"]), limit)
-        return [conversation_from_runtime_summary(agent, conversation) for conversation in result.conversations]
+        result = store.sessions(str(agent["runtimeProfile"]), limit)
+        return [session_from_runtime_summary(agent, session) for session in result.sessions]
 
-    def get_conversation(
+    def get_session(
         self,
         agent: dict[str, Any],
         external_id: str = "",
         *,
         chat_id: str = "",
-        conversation_id: str = "",
+        session_id: str = "",
     ) -> dict[str, Any] | None:
         external_id = str(external_id or "").strip()
         chat_id = str(chat_id or "").strip()
         if external_id:
             try:
-                detail = self.require_store().conversation_detail(str(agent["runtimeProfile"]), external_id)
-                return conversation_from_runtime_summary(agent, detail.conversation)
+                detail = self.require_store().session_detail(str(agent["runtimeProfile"]), external_id)
+                return session_from_runtime_summary(agent, detail.session)
             except ManagementError:
                 pass
-        for conversation in self.list_conversations(agent, 200):
-            if conversation_id and conversation["id"] == conversation_id:
-                return conversation
-            if chat_id and conversation["externalChatId"] == chat_id:
-                return conversation
+        for session in self.list_sessions(agent, 200):
+            if session_id and session["id"] == session_id:
+                return session
+            if chat_id and session["externalChatId"] == chat_id:
+                return session
         return None
 
-    def rename_conversation(
+    def rename_session(
         self,
         agent: dict[str, Any],
-        conversation: dict[str, Any],
+        session: dict[str, Any],
         title: str,
     ) -> dict[str, Any]:
         clean_title = title.strip()
         if not clean_title:
             raise ManagementError("Session title is required.", status_code=400)
-        external_session_id = str(conversation.get("externalSessionId") or "").strip()
+        external_session_id = str(session.get("externalSessionId") or "").strip()
         if not external_session_id:
-            return {**conversation, "title": clean_title, "updatedAt": int(time.time())}
-        detail = self.require_store().rename_conversation(
+            return {**session, "title": clean_title, "updatedAt": int(time.time())}
+        detail = self.require_store().rename_session(
             str(agent["runtimeProfile"]),
             external_session_id,
             clean_title,
         )
-        return conversation_from_runtime_summary(agent, detail.conversation)
+        return session_from_runtime_summary(agent, detail.session)
 
-    def delete_conversation(
+    def delete_session(
         self,
         agent: dict[str, Any],
-        conversation: dict[str, Any],
+        session: dict[str, Any],
     ) -> dict[str, Any]:
-        external_session_id = str(conversation.get("externalSessionId") or "").strip()
+        external_session_id = str(session.get("externalSessionId") or "").strip()
         if external_session_id:
-            self.require_store().delete_conversation(str(agent["runtimeProfile"]), external_session_id)
-        return conversation
+            self.require_store().delete_session(str(agent["runtimeProfile"]), external_session_id)
+        return session
 
-    def get_conversation_messages(
+    def get_session_messages(
         self,
         agent: dict[str, Any],
         external_id: str = "",
         *,
         chat_id: str = "",
-        conversation_id: str = "",
+        session_id: str = "",
     ) -> tuple[list[dict[str, Any]], str | None]:
-        conversation = self.get_conversation(
+        session = self.get_session(
             agent,
             external_id,
             chat_id=chat_id,
-            conversation_id=conversation_id,
+            session_id=session_id,
         )
-        if not conversation or not conversation["externalSessionId"]:
+        if not session or not session["externalSessionId"]:
             return [], None
-        detail = self.require_store().conversation_detail(
+        detail = self.require_store().session_detail(
             str(agent["runtimeProfile"]),
-            str(conversation["externalSessionId"]),
+            str(session["externalSessionId"]),
         )
         messages = [
-            {**core_message_from_hermes(message), "conversationId": conversation["id"]}
+            {**core_message_from_hermes(message), "sessionId": session["id"]}
             for message in detail.messages
         ]
         return self.with_client_message_metadata(
             messages,
             profile=str(agent["runtimeProfile"]),
-            chat_id=str(conversation["externalChatId"] or ""),
+            chat_id=str(session["externalChatId"] or ""),
         ), detail.warning
 
     def with_client_message_metadata(

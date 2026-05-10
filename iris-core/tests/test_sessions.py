@@ -6,7 +6,7 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
-from hermes_management_server.runtime_adapters.hermes_conversations import discover_conversations
+from hermes_management_server.runtime_adapters.hermes_sessions import discover_sessions
 from hermes_management_server.main import Settings, create_app
 
 
@@ -20,17 +20,17 @@ def default_agent_id(client: TestClient) -> str:
     return response.json()["agents"][0]["id"]
 
 
-def conversations_url(client: TestClient, *, limit: int = 80) -> str:
-    return f"/v1/conversations?agentId={default_agent_id(client)}&limit={limit}"
+def sessions_url(client: TestClient, *, limit: int = 80) -> str:
+    return f"/v1/sessions?agentId={default_agent_id(client)}&limit={limit}"
 
 
-def core_conversation_id(client: TestClient, external_session_id: str) -> str:
-    response = client.get(conversations_url(client))
+def core_session_id(client: TestClient, external_session_id: str) -> str:
+    response = client.get(sessions_url(client))
     assert response.status_code == 200
-    for conversation in response.json()["conversations"]:
-        if conversation["externalSessionId"] == external_session_id:
-            return conversation["id"]
-    raise AssertionError(f"Core conversation for {external_session_id} was not found.")
+    for session in response.json()["sessions"]:
+        if session["externalSessionId"] == external_session_id:
+            return session["id"]
+    raise AssertionError(f"Core session for {external_session_id} was not found.")
 
 
 def create_observed_state_db(path: Path) -> None:
@@ -83,18 +83,18 @@ def create_observed_state_db(path: Path) -> None:
     connection.close()
 
 
-def test_conversations_from_observed_sqlite_schema(tmp_path):
+def test_sessions_from_observed_sqlite_schema(tmp_path):
     root = tmp_path / ".hermes"
     root.mkdir()
     create_observed_state_db(root / "state.db")
 
-    result = discover_conversations(root, limit=80)
+    result = discover_sessions(root, limit=80)
 
     assert result.path == str(root / "state.db")
     assert result.schema_version == 11
     assert result.warning is None
-    assert [item.id for item in result.conversations] == ["newer", "older"]
-    newer = result.conversations[0]
+    assert [item.id for item in result.sessions] == ["newer", "older"]
+    newer = result.sessions[0]
     assert newer.source == "api_server"
     assert newer.model == "gpt-5.5"
     assert newer.title == "How do I list profiles?"
@@ -105,7 +105,7 @@ def test_conversations_from_observed_sqlite_schema(tmp_path):
     assert newer.messageCount == 2
 
 
-def test_conversations_hide_cron_runner_sessions(tmp_path):
+def test_sessions_hide_cron_runner_sessions(tmp_path):
     root = tmp_path / ".hermes"
     root.mkdir()
     create_observed_state_db(root / "state.db")
@@ -119,17 +119,17 @@ def test_conversations_hide_cron_runner_sessions(tmp_path):
             ("cron_job_1", "user", "[IMPORTANT: You are running as a scheduled cron job.]", 3001),
         )
 
-    result = discover_conversations(root, limit=80)
+    result = discover_sessions(root, limit=80)
     client = make_client(root)
     detail_response = client.get(
-        "/v1/conversations/conv_missing?externalSessionId=cron_job_1"
+        "/v1/sessions/session_missing?externalSessionId=cron_job_1"
     )
 
-    assert [item.id for item in result.conversations] == ["newer", "older"]
+    assert [item.id for item in result.sessions] == ["newer", "older"]
     assert detail_response.status_code == 404
 
 
-def test_conversations_endpoint_clamps_limit(tmp_path):
+def test_sessions_endpoint_clamps_limit(tmp_path):
     root = tmp_path / ".hermes"
     root.mkdir()
     connection = sqlite3.connect(root / "state.db")
@@ -152,35 +152,35 @@ def test_conversations_endpoint_clamps_limit(tmp_path):
     connection.close()
 
     client = make_client(root)
-    response = client.get(conversations_url(client, limit=999))
+    response = client.get(sessions_url(client, limit=999))
 
     assert response.status_code == 200
     body = response.json()
     assert body["ok"] is True
-    assert len(body["conversations"]) == 200
-    assert body["conversations"][0]["externalSessionId"] == "session-204"
+    assert len(body["sessions"]) == 200
+    assert body["sessions"][0]["externalSessionId"] == "session-204"
 
 
-def test_conversation_detail_endpoint_reads_messages(tmp_path):
+def test_session_detail_endpoint_reads_messages(tmp_path):
     root = tmp_path / ".hermes"
     root.mkdir()
     create_observed_state_db(root / "state.db")
 
     client = make_client(root)
-    conversation_id = core_conversation_id(client, "newer")
-    response = client.get(f"/v1/conversations/{conversation_id}/messages")
+    session_id = core_session_id(client, "newer")
+    response = client.get(f"/v1/sessions/{session_id}/messages")
 
     assert response.status_code == 200
     body = response.json()
     assert body["ok"] is True
     assert body["source"] == "hermes-management"
-    assert body["conversationId"] == conversation_id
+    assert body["sessionId"] == session_id
     assert [message["role"] for message in body["messages"]] == ["user", "assistant"]
     assert body["messages"][0]["metadata"]["sessionId"] == "newer"
     assert body["messages"][1]["content"] == "Use the profiles endpoint."
 
 
-def test_conversation_detail_orders_timestamp_ties_by_message_id(tmp_path):
+def test_session_detail_orders_timestamp_ties_by_message_id(tmp_path):
     root = tmp_path / ".hermes"
     root.mkdir()
     connection = sqlite3.connect(root / "state.db")
@@ -217,8 +217,8 @@ def test_conversation_detail_orders_timestamp_ties_by_message_id(tmp_path):
     connection.close()
 
     client = make_client(root)
-    conversation_id = core_conversation_id(client, "tied")
-    response = client.get(f"/v1/conversations/{conversation_id}/messages")
+    session_id = core_session_id(client, "tied")
+    response = client.get(f"/v1/sessions/{session_id}/messages")
 
     assert response.status_code == 200
     body = response.json()
@@ -226,7 +226,7 @@ def test_conversation_detail_orders_timestamp_ties_by_message_id(tmp_path):
     assert [message["content"] for message in body["messages"]] == ["First", "Second", "Third"]
 
 
-def test_conversation_detail_endpoint_includes_tool_call_metadata(tmp_path):
+def test_session_detail_endpoint_includes_tool_call_metadata(tmp_path):
     root = tmp_path / ".hermes"
     root.mkdir()
     create_observed_state_db(root / "state.db")
@@ -252,8 +252,8 @@ def test_conversation_detail_endpoint_includes_tool_call_metadata(tmp_path):
         )
 
     client = make_client(root)
-    conversation_id = core_conversation_id(client, "newer")
-    response = client.get(f"/v1/conversations/{conversation_id}/messages")
+    session_id = core_session_id(client, "newer")
+    response = client.get(f"/v1/sessions/{session_id}/messages")
 
     assert response.status_code == 200
     body = response.json()
@@ -263,18 +263,18 @@ def test_conversation_detail_endpoint_includes_tool_call_metadata(tmp_path):
     assert tool_result["metadata"]["toolCallId"] == "call_1"
 
 
-def test_conversation_detail_endpoint_returns_404_for_missing_session(tmp_path):
+def test_session_detail_endpoint_returns_404_for_missing_session(tmp_path):
     root = tmp_path / ".hermes"
     root.mkdir()
     create_observed_state_db(root / "state.db")
 
-    response = make_client(root).get("/v1/conversations/conv_missing?externalSessionId=missing")
+    response = make_client(root).get("/v1/sessions/session_missing?externalSessionId=missing")
 
     assert response.status_code == 404
     assert response.json()["error"] == "Session was not found."
 
 
-def test_conversations_falls_back_to_session_json_files(tmp_path):
+def test_sessions_falls_back_to_session_json_files(tmp_path):
     root = tmp_path / ".hermes"
     sessions = root / "sessions"
     sessions.mkdir(parents=True)
@@ -296,19 +296,19 @@ def test_conversations_falls_back_to_session_json_files(tmp_path):
         encoding="utf-8",
     )
 
-    result = discover_conversations(root, limit=80)
+    result = discover_sessions(root, limit=80)
 
     assert result.path == str(sessions)
     assert result.schema_version is None
     assert "session JSON" in (result.warning or "")
-    assert len(result.conversations) == 1
-    assert result.conversations[0].id == "file-session"
-    assert result.conversations[0].title == "Summarize this"
-    assert result.conversations[0].preview == "Short summary"
-    assert result.conversations[0].messageCount == 2
+    assert len(result.sessions) == 1
+    assert result.sessions[0].id == "file-session"
+    assert result.sessions[0].title == "Summarize this"
+    assert result.sessions[0].preview == "Short summary"
+    assert result.sessions[0].messageCount == 2
 
 
-def test_conversation_detail_falls_back_to_session_json_file(tmp_path):
+def test_session_detail_falls_back_to_session_json_file(tmp_path):
     root = tmp_path / ".hermes"
     sessions = root / "sessions"
     sessions.mkdir(parents=True)
@@ -331,8 +331,8 @@ def test_conversation_detail_falls_back_to_session_json_file(tmp_path):
     )
 
     client = make_client(root)
-    conversation_id = core_conversation_id(client, "file-session")
-    response = client.get(f"/v1/conversations/{conversation_id}/messages")
+    session_id = core_session_id(client, "file-session")
+    response = client.get(f"/v1/sessions/{session_id}/messages")
 
     assert response.status_code == 200
     body = response.json()
@@ -340,21 +340,21 @@ def test_conversation_detail_falls_back_to_session_json_file(tmp_path):
     assert body["messages"][1]["content"] == "Short summary"
 
 
-def test_conversations_unknown_store_returns_warning(tmp_path):
+def test_sessions_unknown_store_returns_warning(tmp_path):
     root = tmp_path / ".hermes"
     root.mkdir()
     sqlite3.connect(root / "state.db").execute("create table unrelated (id text)").connection.close()
 
     client = make_client(root)
-    response = client.get(conversations_url(client))
+    response = client.get(sessions_url(client))
 
     assert response.status_code == 200
     body = response.json()
     assert body["ok"] is True
-    assert body["conversations"] == []
+    assert body["sessions"] == []
 
 
-def test_conversation_file_fallback_rejects_symlink_escape(tmp_path):
+def test_session_file_fallback_rejects_symlink_escape(tmp_path):
     root = tmp_path / ".hermes"
     outside = tmp_path / "outside"
     outside.mkdir()
@@ -362,7 +362,7 @@ def test_conversation_file_fallback_rejects_symlink_escape(tmp_path):
     root.mkdir()
     (root / "sessions").symlink_to(outside)
 
-    result = discover_conversations(root, limit=80)
+    result = discover_sessions(root, limit=80)
 
-    assert result.conversations == []
+    assert result.sessions == []
     assert "inside the selected Hermes profile directory" in (result.warning or "")

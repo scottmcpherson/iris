@@ -2,25 +2,6 @@ import type { HermesParsedEvents, HermesStreamToolEvent } from "../types/hermes"
 
 export type View = "chat" | "agents" | "jobs";
 
-export type PreviewMode = "html" | "react" | "markdown" | "diagram";
-
-export type PreviewPermissions = {
-  scripts: boolean;
-  forms: boolean;
-  modals: boolean;
-  downloads: boolean;
-};
-
-export type PreviewArtifact = {
-  id: string;
-  name: string;
-  mode: PreviewMode;
-  source: string;
-  createdAt: number;
-  updatedAt: number;
-  permissions: PreviewPermissions;
-};
-
 export type Message = {
   id: string;
   role: "user" | "assistant" | "system" | "tool";

@@ -132,7 +132,7 @@ class SkillSummary(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
-class CoreConversationCreateRequest(BaseModel):
+class CoreSessionCreateRequest(BaseModel):
     agentId: str | None = None
     title: str = "New session"
     externalChatId: str | None = None
@@ -141,12 +141,12 @@ class CoreConversationCreateRequest(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
-class CoreConversationUpdateRequest(BaseModel):
+class CoreSessionUpdateRequest(BaseModel):
     title: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
-class ConversationReadStateUpdateRequest(BaseModel):
+class SessionReadStateUpdateRequest(BaseModel):
     state: str = "read"
     metadata: dict[str, Any] = Field(default_factory=dict)
 
@@ -177,8 +177,8 @@ class ProjectUpdateRequest(BaseModel):
     metadata: dict[str, Any] | None = None
 
 
-class ProjectConversationLinkRequest(BaseModel):
-    conversationId: str
+class ProjectSessionLinkRequest(BaseModel):
+    sessionId: str
 
 
 class DeviceCursorUpdateRequest(BaseModel):
@@ -210,7 +210,7 @@ class CoreAutomationCreateRequest(BaseModel):
     prompt: str
     repeat: int | None = None
     deliver: str | None = None
-    deliverToConversationId: str | None = None
+    deliverToSessionId: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -220,12 +220,12 @@ class CoreAutomationUpdateRequest(BaseModel):
     prompt: str | None = None
     repeat: int | None = None
     deliver: str | None = None
-    deliverToConversationId: str | None = None
+    deliverToSessionId: str | None = None
     status: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
-class ConversationSummary(BaseModel):
+class SessionSummary(BaseModel):
     id: str
     source: str
     model: str
@@ -239,7 +239,7 @@ class ConversationSummary(BaseModel):
     messageCount: int
 
 
-class ConversationMessage(BaseModel):
+class SessionMessage(BaseModel):
     id: str
     sessionId: str
     role: str

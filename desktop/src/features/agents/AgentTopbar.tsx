@@ -1,4 +1,4 @@
-import { ArrowLeft, Bot } from "lucide-react";
+import { ArrowLeft } from "lucide-react";
 import type { HermesProfile } from "../../types/hermes";
 import type { AgentDetailSection } from "./types";
 
@@ -27,9 +27,6 @@ export function AgentTopbar({
         <ArrowLeft size={16} />
       </button>
       <div className="agent-detail-title">
-        <span className="agent-avatar">
-          <Bot size={18} />
-        </span>
         <div>
           <p className="eyebrow">Agents / {profile.name}</p>
           <h1>{profile.name}</h1>

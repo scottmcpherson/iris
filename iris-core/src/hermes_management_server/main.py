@@ -33,10 +33,10 @@ from .attachment_types import (
 from .core_store import (
     DEFAULT_RUNTIME_ID,
     CoreStore,
-    chat_id_for_conversation,
+    chat_id_for_session,
     clamp_int,
     client_attachment_payload,
-    draft_conversation,
+    draft_session,
     now,
     random_id,
     stable_hash,
@@ -55,10 +55,10 @@ from .models import (
     AgentSkillSaveRequest,
     CoreAutomationCreateRequest,
     CoreAutomationUpdateRequest,
-    CoreConversationCreateRequest,
-    CoreConversationUpdateRequest,
+    CoreSessionCreateRequest,
+    CoreSessionUpdateRequest,
     CoreMessageCreateRequest,
-    ConversationReadStateUpdateRequest,
+    SessionReadStateUpdateRequest,
     DeviceCursorUpdateRequest,
     DevicePairRequest,
     ErrorResponse,
@@ -67,7 +67,7 @@ from .models import (
     InboxMessageCreateRequest,
     InboxMessageResponse,
     InboxMessagesResponse,
-    ProjectConversationLinkRequest,
+    ProjectSessionLinkRequest,
     ProjectCreateRequest,
     ProjectUpdateRequest,
     ProfileSummary,
@@ -109,7 +109,7 @@ class LiveDeliveryBus:
             payload = {
                 "cursor": self._cursor,
                 "id": event_id or random_id("evt"),
-                "conversationId": str(event.get("conversationId") or ""),
+                "sessionId": str(event.get("sessionId") or ""),
                 "agentId": str(event.get("agentId") or ""),
                 "runtimeId": str(event.get("runtimeId") or ""),
                 "type": str(event.get("type") or "message.assistant.completed"),
@@ -130,7 +130,7 @@ class LiveDeliveryBus:
         *,
         after: int = 0,
         limit: int = 200,
-        conversation_id: str = "",
+        session_id: str = "",
         agent_id: str = "",
     ) -> list[dict[str, Any]]:
         with self._lock:
@@ -139,16 +139,16 @@ class LiveDeliveryBus:
                 event
                 for event in self._events
                 if event["cursor"] > after
-                and (not conversation_id or event["conversationId"] == conversation_id)
+                and (not session_id or event["sessionId"] == session_id)
                 and (not agent_id or event["agentId"] == agent_id)
             ]
             return rows[:limit]
 
-    def latest_cursor(self, *, conversation_id: str = "", agent_id: str = "") -> int:
+    def latest_cursor(self, *, session_id: str = "", agent_id: str = "") -> int:
         with self._lock:
             self.prune()
             for event in reversed(self._events):
-                if conversation_id and event["conversationId"] != conversation_id:
+                if session_id and event["sessionId"] != session_id:
                     continue
                 if agent_id and event["agentId"] != agent_id:
                     continue
@@ -397,7 +397,7 @@ def ingest_generated_file_attachments(
     runtime_id: str,
     profile: str,
     chat_id: str,
-    conversation_id: str,
+    session_id: str,
     message_id: str,
     content: str,
     metadata: dict[str, Any],
@@ -423,7 +423,7 @@ def ingest_generated_file_attachments(
                 source_path=source_path,
                 runtime_id=runtime_id,
                 profile=profile,
-                conversation_id=conversation_id,
+                session_id=session_id,
                 message_id=message_id,
                 name=name,
                 mime_type=mime_type,
@@ -532,14 +532,14 @@ def persist_assistant_attachment_metadata(
 def import_generated_file_history_attachments(
     app: FastAPI,
     *,
-    conversation: dict[str, Any],
+    session: dict[str, Any],
     messages: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    chat_id = str(conversation.get("externalChatId") or "")
-    runtime_id = str(conversation.get("runtimeId") or DEFAULT_RUNTIME_ID)
-    profile = str(conversation.get("runtimeProfile") or "default")
-    conversation_id = str(conversation.get("id") or "")
-    if not chat_id or not runtime_id or not profile or not conversation_id:
+    chat_id = str(session.get("externalChatId") or "")
+    runtime_id = str(session.get("runtimeId") or DEFAULT_RUNTIME_ID)
+    profile = str(session.get("runtimeProfile") or "default")
+    session_id = str(session.get("id") or "")
+    if not chat_id or not runtime_id or not profile or not session_id:
         return messages
 
     enriched: list[dict[str, Any]] = []
@@ -569,7 +569,7 @@ def import_generated_file_history_attachments(
             runtime_id=runtime_id,
             profile=profile,
             chat_id=chat_id,
-            conversation_id=conversation_id,
+            session_id=session_id,
             message_id=message_id,
             content=content,
             metadata={**metadata, "source": str(metadata.get("source") or "hermes-history")},
@@ -639,8 +639,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             maximum=128,
         )
     )
-    app.state.active_conversations = {}
-    app.state.active_conversations_by_chat = {}
+    app.state.active_sessions = {}
+    app.state.active_sessions_by_chat = {}
     app.state.accepted_client_messages = {}
     app.state.inbox_acknowledged_at = {}
     if app_settings.cors_origins:
@@ -1053,8 +1053,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise ManagementError("Project was not found.", status_code=404)
         return {"ok": True, "project": project}
 
-    @app.get("/v1/projects/{project_id}/conversations")
-    async def core_project_conversations(
+    @app.get("/v1/projects/{project_id}/sessions")
+    async def core_project_sessions(
         project_id: str,
         limit: int = Query(80),
         _auth: None = Depends(require_auth),
@@ -1063,37 +1063,37 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if not project:
             raise ManagementError("Project was not found.", status_code=404)
         limit = clamp_int(limit, default=80, minimum=1, maximum=200)
-        conversations = with_read_states(app, project_conversations(app, project)[:limit])
-        return {"ok": True, "conversations": conversations}
+        sessions = with_read_states(app, project_sessions(app, project)[:limit])
+        return {"ok": True, "sessions": sessions}
 
-    @app.post("/v1/projects/{project_id}/conversations")
-    async def core_link_project_conversation(
+    @app.post("/v1/projects/{project_id}/sessions")
+    async def core_link_project_session(
         project_id: str,
-        request: ProjectConversationLinkRequest,
+        request: ProjectSessionLinkRequest,
         _auth: None = Depends(require_auth),
     ) -> dict[str, Any]:
         project = app.state.core_store.get_project(project_id)
         if not project:
             raise ManagementError("Project was not found.", status_code=404)
-        conversation = resolve_core_conversation(app, request.conversationId)
-        if not conversation:
+        session = resolve_core_session(app, request.sessionId)
+        if not session:
             raise ManagementError("Session was not found.", status_code=404)
-        link = app.state.core_store.link_project_conversation(project_id, conversation)
-        return {"ok": True, "link": link, "conversation": with_project_metadata(conversation, project)}
+        link = app.state.core_store.link_project_session(project_id, session)
+        return {"ok": True, "link": link, "session": with_project_metadata(session, project)}
 
-    @app.delete("/v1/projects/{project_id}/conversations/{conversation_id}")
-    async def core_unlink_project_conversation(
+    @app.delete("/v1/projects/{project_id}/sessions/{session_id}")
+    async def core_unlink_project_session(
         project_id: str,
-        conversation_id: str,
+        session_id: str,
         _auth: None = Depends(require_auth),
     ) -> dict[str, Any]:
         if not app.state.core_store.get_project(project_id):
             raise ManagementError("Project was not found.", status_code=404)
-        app.state.core_store.unlink_project_conversation(project_id, conversation_id)
-        return {"ok": True, "projectId": project_id, "conversationId": conversation_id}
+        app.state.core_store.unlink_project_session(project_id, session_id)
+        return {"ok": True, "projectId": project_id, "sessionId": session_id}
 
-    @app.get("/v1/conversations")
-    async def core_conversations(
+    @app.get("/v1/sessions")
+    async def core_sessions(
         agentId: str | None = Query(None),
         limit: int = Query(80),
         cursor: int = Query(0),
@@ -1105,20 +1105,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if agentId and not agent:
             raise ManagementError("Agent was not found.", status_code=404)
         agents = [agent] if agent else app.state.runtime_registry.agents()
-        conversations: list[dict[str, Any]] = []
+        sessions: list[dict[str, Any]] = []
         for item in [row for row in agents if row]:
             adapter = app.state.runtime_registry.adapter_for_runtime(item["runtimeId"])
-            conversations.extend(await run_runtime_call(app, adapter.list_conversations, item, limit))
-        conversations.sort(key=lambda row: int(row.get("updatedAt") or 0), reverse=True)
-        conversations = with_read_states(app, conversations)
+            sessions.extend(await run_runtime_call(app, adapter.list_sessions, item, limit))
+        sessions.sort(key=lambda row: int(row.get("updatedAt") or 0), reverse=True)
+        sessions = with_read_states(app, sessions)
         return {
             "ok": True,
-            "conversations": conversations[:limit],
+            "sessions": sessions[:limit],
         }
 
-    @app.post("/v1/conversations")
-    async def core_create_conversation(
-        request: CoreConversationCreateRequest,
+    @app.post("/v1/sessions")
+    async def core_create_session(
+        request: CoreSessionCreateRequest,
         _auth: None = Depends(require_auth),
     ) -> dict[str, Any]:
         project = app.state.core_store.get_project(request.projectId) if request.projectId else None
@@ -1133,106 +1133,106 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         metadata = dict(request.metadata)
         if project:
             metadata["projectId"] = project["id"]
-        conversation = draft_conversation(
+        session = draft_session(
             agent,
             title=request.title,
             external_chat_id=external_chat_id,
             external_session_id=external_session_id,
             metadata=metadata,
         )
-        remember_active_conversation(app, conversation)
+        remember_active_session(app, session)
         if project:
-            app.state.core_store.link_project_conversation(project["id"], conversation)
-            conversation = with_project_metadata(conversation, project)
-        conversation = with_read_state(app, conversation)
-        return {"ok": True, "conversation": conversation}
+            app.state.core_store.link_project_session(project["id"], session)
+            session = with_project_metadata(session, project)
+        session = with_read_state(app, session)
+        return {"ok": True, "session": session}
 
-    @app.get("/v1/conversations/{conversation_id}")
-    async def core_conversation_detail(
-        conversation_id: str,
+    @app.get("/v1/sessions/{session_id}")
+    async def core_session_detail(
+        session_id: str,
         externalSessionId: str | None = Query(None),
         externalChatId: str | None = Query(None),
         _auth: None = Depends(require_auth),
     ) -> dict[str, Any]:
-        conversation = resolve_core_conversation(
+        session = resolve_core_session(
             app,
-            conversation_id,
+            session_id,
             external_session_id=externalSessionId or "",
             external_chat_id=externalChatId or "",
         )
-        if not conversation:
+        if not session:
             raise ManagementError("Session was not found.", status_code=404)
-        return {"ok": True, "conversation": with_read_state(app, conversation)}
+        return {"ok": True, "session": with_read_state(app, session)}
 
-    @app.patch("/v1/conversations/{conversation_id}")
-    async def core_update_conversation(
-        conversation_id: str,
-        request: CoreConversationUpdateRequest,
+    @app.patch("/v1/sessions/{session_id}")
+    async def core_update_session(
+        session_id: str,
+        request: CoreSessionUpdateRequest,
         _auth: None = Depends(require_auth),
     ) -> dict[str, Any]:
-        conversation = resolve_core_conversation(app, conversation_id)
-        if not conversation:
+        session = resolve_core_session(app, session_id)
+        if not session:
             raise ManagementError("Session was not found.", status_code=404)
         if request.title is None:
-            return {"ok": True, "conversation": with_read_state(app, conversation)}
+            return {"ok": True, "session": with_read_state(app, session)}
         title = request.title.strip()
         if not title:
             raise ManagementError("Session title is required.", status_code=400)
-        adapter = app.state.runtime_registry.adapter_for_runtime(conversation["runtimeId"])
+        adapter = app.state.runtime_registry.adapter_for_runtime(session["runtimeId"])
         updated = await run_runtime_call(app, 
-            adapter.rename_conversation,
-            conversation_agent(app, conversation),
-            conversation,
+            adapter.rename_session,
+            session_agent(app, session),
+            session,
             title,
         )
-        remember_active_conversation(app, updated)
-        return {"ok": True, "conversation": with_read_state(app, updated)}
+        remember_active_session(app, updated)
+        return {"ok": True, "session": with_read_state(app, updated)}
 
-    @app.delete("/v1/conversations/{conversation_id}")
-    async def core_delete_conversation(
-        conversation_id: str,
+    @app.delete("/v1/sessions/{session_id}")
+    async def core_delete_session(
+        session_id: str,
         _auth: None = Depends(require_auth),
     ) -> dict[str, Any]:
-        conversation = resolve_core_conversation(app, conversation_id)
-        if not conversation:
+        session = resolve_core_session(app, session_id)
+        if not session:
             raise ManagementError("Session was not found.", status_code=404)
-        agent = conversation_agent(app, conversation)
-        adapter = app.state.runtime_registry.adapter_for_runtime(conversation["runtimeId"])
-        deleted = await run_runtime_call(app, adapter.delete_conversation, agent, conversation)
-        app.state.core_store.delete_conversation_overlays(
-            conversation_id=conversation_id,
-            runtime_id=str(conversation.get("runtimeId") or agent["runtimeId"]),
-            profile=str(conversation.get("runtimeProfile") or agent["runtimeProfile"]),
-            chat_id=str(conversation.get("externalChatId") or ""),
+        agent = session_agent(app, session)
+        adapter = app.state.runtime_registry.adapter_for_runtime(session["runtimeId"])
+        deleted = await run_runtime_call(app, adapter.delete_session, agent, session)
+        app.state.core_store.delete_session_overlays(
+            session_id=session_id,
+            runtime_id=str(session.get("runtimeId") or agent["runtimeId"]),
+            profile=str(session.get("runtimeProfile") or agent["runtimeProfile"]),
+            chat_id=str(session.get("externalChatId") or ""),
         )
-        forget_active_conversation(app, conversation_id, deleted)
-        return {"ok": True, "conversationId": conversation_id}
+        forget_active_session(app, session_id, deleted)
+        return {"ok": True, "sessionId": session_id}
 
-    @app.get("/v1/conversations/{conversation_id}/read-state")
-    async def core_conversation_read_state(
-        conversation_id: str,
+    @app.get("/v1/sessions/{session_id}/read-state")
+    async def core_session_read_state(
+        session_id: str,
         _auth: None = Depends(require_auth),
     ) -> dict[str, Any]:
-        conversation = resolve_core_conversation(app, conversation_id)
-        if not conversation:
+        session = resolve_core_session(app, session_id)
+        if not session:
             raise ManagementError("Session was not found.", status_code=404)
         return {
             "ok": True,
-            "readState": read_state_or_default(app, conversation_id),
+            "readState": read_state_or_default(app, session_id),
         }
 
-    @app.patch("/v1/conversations/{conversation_id}/read-state")
-    async def core_update_conversation_read_state(
-        conversation_id: str,
-        request: ConversationReadStateUpdateRequest,
+    @app.patch("/v1/sessions/{session_id}/read-state")
+    async def core_update_session_read_state(
+        session_id: str,
+        request: SessionReadStateUpdateRequest,
         _auth: None = Depends(require_auth),
     ) -> dict[str, Any]:
-        conversation = resolve_core_conversation(app, conversation_id)
-        if not conversation:
+        session = resolve_core_session(app, session_id)
+        if not session:
             raise ManagementError("Session was not found.", status_code=404)
         try:
-            read_state = app.state.core_store.upsert_conversation_read_state(
-                conversation_id,
+            read_state = app.state.core_store.upsert_session_read_state(
+                session_id,
                 request.state,
                 metadata=request.metadata,
             )
@@ -1240,50 +1240,50 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise ManagementError(str(exc), status_code=400) from exc
         return {"ok": True, "readState": read_state}
 
-    @app.get("/v1/conversations/{conversation_id}/messages")
-    async def core_conversation_messages(
-        conversation_id: str,
+    @app.get("/v1/sessions/{session_id}/messages")
+    async def core_session_messages(
+        session_id: str,
         externalSessionId: str | None = Query(None),
         externalChatId: str | None = Query(None),
         _auth: None = Depends(require_auth),
     ) -> dict[str, Any]:
-        conversation = resolve_core_conversation(
+        session = resolve_core_session(
             app,
-            conversation_id,
+            session_id,
             external_session_id=externalSessionId or "",
             external_chat_id=externalChatId or "",
         )
-        if not conversation:
+        if not session:
             raise ManagementError("Session was not found.", status_code=404)
-        adapter = app.state.runtime_registry.adapter_for_runtime(conversation["runtimeId"])
+        adapter = app.state.runtime_registry.adapter_for_runtime(session["runtimeId"])
         try:
             messages, warning = await run_runtime_call(app, 
-                adapter.get_conversation_messages,
-                conversation_agent(app, conversation),
-                conversation.get("externalSessionId") or "",
-                chat_id=conversation.get("externalChatId") or "",
-                conversation_id=conversation_id,
+                adapter.get_session_messages,
+                session_agent(app, session),
+                session.get("externalSessionId") or "",
+                chat_id=session.get("externalChatId") or "",
+                session_id=session_id,
             )
         except ManagementError as exc:
-            return {"ok": True, "conversationId": conversation_id, "messages": [], "warning": exc.error}
+            return {"ok": True, "sessionId": session_id, "messages": [], "warning": exc.error}
         messages = import_generated_file_history_attachments(
             app,
-            conversation=conversation,
+            session=session,
             messages=messages,
         )
-        return {"ok": True, "conversationId": conversation_id, "messages": messages, "source": "hermes-management", "warning": warning}
+        return {"ok": True, "sessionId": session_id, "messages": messages, "source": "hermes-management", "warning": warning}
 
-    @app.post("/v1/conversations/{conversation_id}/messages")
+    @app.post("/v1/sessions/{session_id}/messages")
     async def core_send_message(
-        conversation_id: str,
+        session_id: str,
         request: CoreMessageCreateRequest,
         http_request: Request,
         _auth: None = Depends(require_auth),
     ) -> dict[str, Any]:
-        conversation = resolve_core_conversation(app, conversation_id)
-        if not conversation:
+        session = resolve_core_session(app, session_id)
+        if not session:
             raise ManagementError("Session was not found.", status_code=404)
-        agent = app.state.runtime_registry.agent(conversation["agentId"])
+        agent = app.state.runtime_registry.agent(session["agentId"])
         if not agent:
             raise ManagementError("Agent was not found.", status_code=404)
         text = request.text.strip()
@@ -1292,27 +1292,27 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise ManagementError("Message text is required.", status_code=400)
         idempotency_key = http_request.headers.get("Idempotency-Key") or request.clientMessageId
         message_id = request.clientMessageId or random_id("msg")
-        accepted_key = (conversation_id, idempotency_key or message_id)
+        accepted_key = (session_id, idempotency_key or message_id)
         accepted_message = app.state.accepted_client_messages.get(accepted_key)
         if accepted_message:
             return {
                 "ok": True,
-                "conversationId": conversation_id,
+                "sessionId": session_id,
                 "messageId": accepted_message["messageId"],
                 "accepted": True,
                 "eventCursor": accepted_message["eventCursor"],
                 "duplicate": True,
             }
         adapter = app.state.runtime_registry.adapter_for_runtime(agent["runtimeId"])
-        chat_id = conversation["externalChatId"] or chat_id_for_conversation(conversation_id)
-        if not conversation["externalChatId"]:
-            conversation = {**conversation, "externalChatId": chat_id}
-            remember_active_conversation(app, conversation)
+        chat_id = session["externalChatId"] or chat_id_for_session(session_id)
+        if not session["externalChatId"]:
+            session = {**session, "externalChatId": chat_id}
+            remember_active_session(app, session)
         try:
             resolved_attachments = app.state.core_store.resolve_message_attachments(
                 runtime_id=agent["runtimeId"],
                 profile=agent["runtimeProfile"],
-                conversation_id=conversation_id,
+                session_id=session_id,
                 chat_id=chat_id,
                 message_id=message_id,
                 refs=attachment_refs,
@@ -1320,7 +1320,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except ValueError as exc:
             raise ManagementError(str(exc), status_code=400) from exc
         client_attachments = [client_attachment_payload(attachment) for attachment in resolved_attachments]
-        project = linked_project_for_message(app, conversation, request.metadata)
+        project = linked_project_for_message(app, session, request.metadata)
         runtime_metadata = {
             key: value
             for key, value in request.metadata.items()
@@ -1329,7 +1329,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if project:
             runtime_metadata.update(project_runtime_metadata(project))
         runtime_metadata.update({
-                    "agentuiConversationId": conversation_id,
+                    "agentuiSessionId": session_id,
                     "chatId": chat_id,
                     "profile": agent["runtimeProfile"],
                     "idempotencyKey": idempotency_key,
@@ -1340,10 +1340,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 adapter.send_message,
                 profile=agent["runtimeProfile"],
                 chat_id=chat_id,
-                chat_name=conversation["title"],
+                chat_name=session["title"],
                 message_id=f"{message_id}-model",
                 text=switch_command,
-                session_id=conversation.get("externalSessionId") or "",
+                session_id=session.get("externalSessionId") or "",
                 metadata={
                     **runtime_metadata,
                     "hidden": True,
@@ -1354,7 +1354,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             if not switch_result.get("ok"):
                 error_event = publish_core_event(
                     app,
-                    conversation_id=conversation_id,
+                    session_id=session_id,
                     agent_id=agent["id"],
                     runtime_id=agent["runtimeId"],
                     event_type="message.error",
@@ -1370,7 +1370,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 )
                 return {
                     "ok": False,
-                    "conversationId": conversation_id,
+                    "sessionId": session_id,
                     "messageId": message_id,
                     "accepted": False,
                     "eventCursor": error_event["cursor"],
@@ -1380,17 +1380,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             adapter.send_message,
             profile=agent["runtimeProfile"],
             chat_id=chat_id,
-            chat_name=conversation["title"],
+            chat_name=session["title"],
             message_id=message_id,
             text=text,
-            session_id=conversation.get("externalSessionId") or "",
+            session_id=session.get("externalSessionId") or "",
             metadata=runtime_metadata,
             attachments=resolved_attachments,
         )
         if not result.get("ok"):
             error_event = publish_core_event(
                 app,
-                conversation_id=conversation_id,
+                session_id=session_id,
                 agent_id=agent["id"],
                 runtime_id=agent["runtimeId"],
                 event_type="message.error",
@@ -1406,18 +1406,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             )
             return {
                 "ok": False,
-                "conversationId": conversation_id,
+                "sessionId": session_id,
                 "messageId": message_id,
                 "accepted": False,
                 "eventCursor": error_event["cursor"],
                 "error": result.get("error") or "Hermes gateway did not accept the message.",
             }
         accepted_chat_id = str(result.get("chatId") or chat_id)
-        if accepted_chat_id != conversation.get("externalChatId"):
-            conversation = {**conversation, "externalChatId": accepted_chat_id}
-            remember_active_conversation(app, conversation)
+        if accepted_chat_id != session.get("externalChatId"):
+            session = {**session, "externalChatId": accepted_chat_id}
+            remember_active_session(app, session)
         if project:
-            app.state.core_store.link_project_conversation(project["id"], conversation)
+            app.state.core_store.link_project_session(project["id"], session)
         app.state.core_store.upsert_client_message_metadata(
             runtime_id=agent["runtimeId"],
             profile=agent["runtimeProfile"],
@@ -1441,33 +1441,33 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         }
         return {
             "ok": True,
-            "conversationId": conversation_id,
+            "sessionId": session_id,
             "messageId": message_id,
             "accepted": True,
             "eventCursor": event_cursor,
             "runtime": result,
         }
 
-    @app.post("/v1/conversations/{conversation_id}/cancel")
-    async def core_cancel_message(conversation_id: str, _auth: None = Depends(require_auth)) -> dict[str, Any]:
-        conversation = resolve_core_conversation(app, conversation_id)
-        if not conversation:
+    @app.post("/v1/sessions/{session_id}/cancel")
+    async def core_cancel_message(session_id: str, _auth: None = Depends(require_auth)) -> dict[str, Any]:
+        session = resolve_core_session(app, session_id)
+        if not session:
             raise ManagementError("Session was not found.", status_code=404)
-        agent = app.state.runtime_registry.agent(conversation["agentId"])
+        agent = app.state.runtime_registry.agent(session["agentId"])
         if not agent:
             raise ManagementError("Agent was not found.", status_code=404)
         adapter = app.state.runtime_registry.adapter_for_runtime(agent["runtimeId"])
         result = await run_runtime_call(app, 
             adapter.send_message,
             profile=agent["runtimeProfile"],
-            chat_id=conversation["externalChatId"] or chat_id_for_conversation(conversation_id),
-            chat_name=conversation["title"],
+            chat_id=session["externalChatId"] or chat_id_for_session(session_id),
+            chat_name=session["title"],
             message_id=random_id("msg"),
             text="/stop",
-            session_id=conversation.get("externalSessionId") or "",
-            metadata={"kind": "cancel", "agentuiConversationId": conversation_id},
+            session_id=session.get("externalSessionId") or "",
+            metadata={"kind": "cancel", "agentuiSessionId": session_id},
         )
-        return {"ok": bool(result.get("ok")), "conversationId": conversation_id, "runtime": result}
+        return {"ok": bool(result.get("ok")), "sessionId": session_id, "runtime": result}
 
     @app.get("/v1/events")
     async def core_events(
@@ -1487,22 +1487,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "cursor": events[-1]["cursor"] if events else app.state.live_delivery_bus.latest_cursor(agent_id=agentId or ""),
         }
 
-    @app.get("/v1/conversations/{conversation_id}/events")
-    async def core_conversation_events(
-        conversation_id: str,
+    @app.get("/v1/sessions/{session_id}/events")
+    async def core_session_events(
+        session_id: str,
         after: int = Query(0),
         limit: int = Query(200),
         _auth: None = Depends(require_auth),
     ) -> dict[str, Any]:
-        if not resolve_core_conversation(app, conversation_id):
+        if not resolve_core_session(app, session_id):
             raise ManagementError("Session was not found.", status_code=404)
         after = clamp_int(after, default=0, minimum=0, maximum=9_223_372_036_854_775_807)
         limit = clamp_int(limit, default=200, minimum=1, maximum=500)
-        events = app.state.live_delivery_bus.list_events(after=after, limit=limit, conversation_id=conversation_id)
+        events = app.state.live_delivery_bus.list_events(after=after, limit=limit, session_id=session_id)
         return {
             "ok": True,
             "events": events,
-            "cursor": events[-1]["cursor"] if events else app.state.live_delivery_bus.latest_cursor(conversation_id=conversation_id),
+            "cursor": events[-1]["cursor"] if events else app.state.live_delivery_bus.latest_cursor(session_id=session_id),
         }
 
     @app.get("/v1/events/stream")
@@ -1550,22 +1550,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         agent = agent_for_runtime_profile(app, delivery.runtimeId, delivery.profile)
         if not agent:
             raise ManagementError("Delivery profile is not mapped to an Iris agent.", status_code=404)
-        conversation = resolve_core_conversation(
+        session = resolve_core_session(
             app,
             "",
             runtime_id=delivery.runtimeId,
             runtime_profile=delivery.profile,
             external_chat_id=delivery.chatId,
         )
-        if not conversation:
-            conversation = draft_conversation(
+        if not session:
+            session = draft_session(
                 agent,
                 title=f"{delivery.profile} delivery",
                 external_chat_id=delivery.chatId,
                 metadata={"createdBy": "runtime-delivery"},
             )
-            remember_active_conversation(app, conversation)
-        conversation_id = conversation["id"]
+            remember_active_session(app, session)
+        session_id = session["id"]
         stream_message_id = str(
             delivery.metadata.get("streamMessageId")
             or delivery.metadata.get("stream_message_id")
@@ -1589,7 +1589,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             runtime_id=delivery.runtimeId,
             profile=delivery.profile,
             chat_id=delivery.chatId,
-            conversation_id=conversation_id,
+            session_id=session_id,
             message_id=delivery.messageId,
             content=delivery.content,
             metadata=event_metadata,
@@ -1607,7 +1607,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
         event = publish_core_event(
             app,
-            conversation_id=conversation_id,
+            session_id=session_id,
             agent_id=agent["id"],
             runtime_id=delivery.runtimeId,
             event_type=event_type,
@@ -1620,7 +1620,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
         return {
             "ok": True,
-            "conversationId": conversation_id,
+            "sessionId": session_id,
             "event": event,
             "suppressed": False,
         }
@@ -1829,22 +1829,22 @@ def mirror_inbox_message_to_core(app: FastAPI, message: dict[str, Any]) -> dict[
     agent = agent_for_runtime_profile(app, runtime_id, profile)
     if not agent:
         return None
-    conversation = resolve_core_conversation(
+    session = resolve_core_session(
         app,
         "",
         runtime_id=runtime_id,
         runtime_profile=profile,
         external_chat_id=chat_id,
     )
-    if not conversation:
-        conversation = draft_conversation(
+    if not session:
+        session = draft_session(
             agent,
             title=f"{profile} delivery",
             external_chat_id=chat_id,
             metadata={"createdBy": "legacy-inbox-delivery"},
         )
-        remember_active_conversation(app, conversation)
-    conversation_id = conversation["id"]
+        remember_active_session(app, session)
+    session_id = session["id"]
     metadata = message.get("metadata") if isinstance(message.get("metadata"), dict) else {}
     stream_message_id = str(metadata.get("streamMessageId") or metadata.get("stream_message_id") or "")
     is_streaming = bool(metadata.get("streaming"))
@@ -1866,7 +1866,7 @@ def mirror_inbox_message_to_core(app: FastAPI, message: dict[str, Any]) -> dict[
         runtime_id=runtime_id,
         profile=profile,
         chat_id=chat_id,
-        conversation_id=conversation_id,
+        session_id=session_id,
         message_id=str(message.get("id") or ""),
         content=original_content,
         metadata=event_metadata,
@@ -1884,7 +1884,7 @@ def mirror_inbox_message_to_core(app: FastAPI, message: dict[str, Any]) -> dict[
     )
     return publish_core_event(
         app,
-        conversation_id=conversation_id,
+        session_id=session_id,
         agent_id=agent["id"],
         runtime_id=runtime_id,
         event_type=event_type,
@@ -1908,7 +1908,7 @@ def inbox_message_from_event(app: FastAPI, event: dict[str, Any]) -> dict[str, A
         "source": str(metadata.get("source") or "agentui-core-events"),
         "platform": "agentui",
         "profile": str(metadata.get("profile") or "default"),
-        "chatId": str(metadata.get("chatId") or event.get("conversationId") or "agentui"),
+        "chatId": str(metadata.get("chatId") or event.get("sessionId") or "agentui"),
         "content": str(event.get("content") or ""),
         "metadata": metadata,
         "createdAt": int(event.get("createdAt") or now()),
@@ -1925,21 +1925,21 @@ def inbox_message_for_id(app: FastAPI, message_id: str) -> dict[str, Any] | None
     return None
 
 
-def remember_active_conversation(app: FastAPI, conversation: dict[str, Any]) -> None:
-    app.state.active_conversations[conversation["id"]] = conversation
-    chat_id = str(conversation.get("externalChatId") or "")
+def remember_active_session(app: FastAPI, session: dict[str, Any]) -> None:
+    app.state.active_sessions[session["id"]] = session
+    chat_id = str(session.get("externalChatId") or "")
     if chat_id:
-        app.state.active_conversations_by_chat[
-            (conversation["runtimeId"], conversation["runtimeProfile"], chat_id)
-        ] = conversation["id"]
+        app.state.active_sessions_by_chat[
+            (session["runtimeId"], session["runtimeProfile"], chat_id)
+        ] = session["id"]
 
 
-def forget_active_conversation(app: FastAPI, conversation_id: str, conversation: dict[str, Any] | None = None) -> None:
-    cached = app.state.active_conversations.pop(conversation_id, None)
-    row = conversation or cached or {}
+def forget_active_session(app: FastAPI, session_id: str, session: dict[str, Any] | None = None) -> None:
+    cached = app.state.active_sessions.pop(session_id, None)
+    row = session or cached or {}
     chat_id = str(row.get("externalChatId") or "")
     if chat_id:
-        app.state.active_conversations_by_chat.pop(
+        app.state.active_sessions_by_chat.pop(
             (row.get("runtimeId") or DEFAULT_RUNTIME_ID, row.get("runtimeProfile") or "default", chat_id),
             None,
         )
@@ -1953,10 +1953,10 @@ def project_runtime_metadata(project: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def with_project_metadata(conversation: dict[str, Any], project: dict[str, Any]) -> dict[str, Any]:
-    metadata = conversation.get("metadata") if isinstance(conversation.get("metadata"), dict) else {}
+def with_project_metadata(session: dict[str, Any], project: dict[str, Any]) -> dict[str, Any]:
+    metadata = session.get("metadata") if isinstance(session.get("metadata"), dict) else {}
     return {
-        **conversation,
+        **session,
         "metadata": {
             **metadata,
             "project": {
@@ -1969,13 +1969,13 @@ def with_project_metadata(conversation: dict[str, Any], project: dict[str, Any])
     }
 
 
-def read_state_or_default(app: FastAPI, conversation_id: str) -> dict[str, Any]:
-    return app.state.core_store.conversation_read_state(conversation_id) or default_read_state(conversation_id)
+def read_state_or_default(app: FastAPI, session_id: str) -> dict[str, Any]:
+    return app.state.core_store.session_read_state(session_id) or default_read_state(session_id)
 
 
-def default_read_state(conversation_id: str) -> dict[str, Any]:
+def default_read_state(session_id: str) -> dict[str, Any]:
     return {
-        "conversationId": conversation_id,
+        "sessionId": session_id,
         "state": "read",
         "createdAt": None,
         "updatedAt": None,
@@ -1983,36 +1983,36 @@ def default_read_state(conversation_id: str) -> dict[str, Any]:
     }
 
 
-def with_read_state(app: FastAPI, conversation: dict[str, Any]) -> dict[str, Any]:
-    conversation_id = str(conversation.get("id") or "")
-    if not conversation_id:
-        return conversation
+def with_read_state(app: FastAPI, session: dict[str, Any]) -> dict[str, Any]:
+    session_id = str(session.get("id") or "")
+    if not session_id:
+        return session
     return {
-        **conversation,
-        "readState": read_state_or_default(app, conversation_id),
+        **session,
+        "readState": read_state_or_default(app, session_id),
     }
 
 
-def with_read_states(app: FastAPI, conversations: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    states = app.state.core_store.conversation_read_states([
-        str(conversation.get("id") or "")
-        for conversation in conversations
+def with_read_states(app: FastAPI, sessions: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    states = app.state.core_store.session_read_states([
+        str(session.get("id") or "")
+        for session in sessions
     ])
     return [
         {
-            **conversation,
-            "readState": states.get(str(conversation.get("id") or "")) or default_read_state(
-                str(conversation.get("id") or ""),
+            **session,
+            "readState": states.get(str(session.get("id") or "")) or default_read_state(
+                str(session.get("id") or ""),
             ),
         }
-        for conversation in conversations
+        for session in sessions
     ]
 
 
-def should_mark_conversation_unread(event: dict[str, Any]) -> bool:
+def should_mark_session_unread(event: dict[str, Any]) -> bool:
     metadata = event.get("metadata") if isinstance(event.get("metadata"), dict) else {}
     return (
-        bool(event.get("conversationId")) and
+        bool(event.get("sessionId")) and
         str(event.get("role") or "") == "assistant" and
         str(event.get("type") or "") == "message.assistant.completed" and
         not bool(metadata.get("hidden"))
@@ -2021,7 +2021,7 @@ def should_mark_conversation_unread(event: dict[str, Any]) -> bool:
 
 def linked_project_for_message(
     app: FastAPI,
-    conversation: dict[str, Any],
+    session: dict[str, Any],
     request_metadata: dict[str, Any],
 ) -> dict[str, Any] | None:
     requested_project_id = str(request_metadata.get("projectId") or "").strip()
@@ -2030,33 +2030,33 @@ def linked_project_for_message(
         if not project:
             raise ManagementError("Project was not found.", status_code=404)
         return project
-    return app.state.core_store.project_for_conversation(str(conversation.get("id") or ""))
+    return app.state.core_store.project_for_session(str(session.get("id") or ""))
 
 
-def project_conversations(app: FastAPI, project: dict[str, Any]) -> list[dict[str, Any]]:
+def project_sessions(app: FastAPI, project: dict[str, Any]) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     seen: set[tuple[str, str, str, str]] = set()
-    for link in app.state.core_store.list_project_conversation_links(project["id"]):
-        conversation = resolve_core_conversation(
+    for link in app.state.core_store.list_project_session_links(project["id"]):
+        session = resolve_core_session(
             app,
-            link["conversationId"],
+            link["sessionId"],
             runtime_id=link["runtimeId"],
             runtime_profile=link["runtimeProfile"],
             external_session_id=link["externalSessionId"],
             external_chat_id=link["externalChatId"],
         )
-        if not conversation:
+        if not session:
             continue
         key = (
-            str(conversation.get("runtimeId") or link["runtimeId"]),
-            str(conversation.get("runtimeProfile") or link["runtimeProfile"]),
-            str(conversation.get("externalSessionId") or ""),
-            str(conversation.get("externalChatId") or link["externalChatId"]),
+            str(session.get("runtimeId") or link["runtimeId"]),
+            str(session.get("runtimeProfile") or link["runtimeProfile"]),
+            str(session.get("externalSessionId") or ""),
+            str(session.get("externalChatId") or link["externalChatId"]),
         )
         if key in seen:
             continue
         seen.add(key)
-        rows.append(with_project_metadata(conversation, project))
+        rows.append(with_project_metadata(session, project))
     rows.sort(key=lambda row: int(row.get("updatedAt") or 0), reverse=True)
     return rows
 
@@ -2072,31 +2072,31 @@ def agent_for_runtime_profile(app: FastAPI, runtime_id: str, profile: str) -> di
     )
 
 
-def conversation_agent(app: FastAPI, conversation: dict[str, Any]) -> dict[str, Any]:
-    agent = app.state.runtime_registry.agent(str(conversation.get("agentId") or ""))
+def session_agent(app: FastAPI, session: dict[str, Any]) -> dict[str, Any]:
+    agent = app.state.runtime_registry.agent(str(session.get("agentId") or ""))
     if not agent:
         raise ManagementError("Session agent was not found.", status_code=404)
     return agent
 
 
-def resolve_core_conversation(
+def resolve_core_session(
     app: FastAPI,
-    conversation_id: str,
+    session_id: str,
     *,
     runtime_id: str = "",
     runtime_profile: str = "",
     external_session_id: str = "",
     external_chat_id: str = "",
 ) -> dict[str, Any] | None:
-    active = app.state.active_conversations.get(conversation_id) if conversation_id else None
+    active = app.state.active_sessions.get(session_id) if session_id else None
     if active:
         return active
     if external_chat_id:
-        mapped_id = app.state.active_conversations_by_chat.get(
+        mapped_id = app.state.active_sessions_by_chat.get(
             (runtime_id or DEFAULT_RUNTIME_ID, runtime_profile or "default", external_chat_id)
         )
-        if mapped_id and mapped_id in app.state.active_conversations:
-            return app.state.active_conversations[mapped_id]
+        if mapped_id and mapped_id in app.state.active_sessions:
+            return app.state.active_sessions[mapped_id]
 
     agents = app.state.runtime_registry.agents()
     for agent in agents:
@@ -2105,21 +2105,21 @@ def resolve_core_conversation(
         if runtime_profile and agent["runtimeProfile"] != runtime_profile:
             continue
         adapter = app.state.runtime_registry.adapter_for_runtime(agent["runtimeId"])
-        conversation = adapter.get_conversation(
+        session = adapter.get_session(
             agent,
             external_session_id,
             chat_id=external_chat_id,
-            conversation_id=conversation_id,
+            session_id=session_id,
         )
-        if conversation:
-            return conversation
+        if session:
+            return session
     return None
 
 
 def publish_core_event(
     app: FastAPI,
     *,
-    conversation_id: str,
+    session_id: str,
     agent_id: str,
     runtime_id: str,
     event_type: str,
@@ -2134,7 +2134,7 @@ def publish_core_event(
     event = app.state.live_delivery_bus.publish(
         {
             "id": event_id,
-            "conversationId": conversation_id,
+            "sessionId": session_id,
             "agentId": agent_id,
             "runtimeId": runtime_id,
             "type": event_type,
@@ -2146,9 +2146,9 @@ def publish_core_event(
             "metadata": metadata or {},
         }
     )
-    if should_mark_conversation_unread(event):
-        app.state.core_store.upsert_conversation_read_state(
-            conversation_id,
+    if should_mark_session_unread(event):
+        app.state.core_store.upsert_session_read_state(
+            session_id,
             "unread",
             metadata={"eventCursor": event["cursor"], "eventType": event["type"]},
         )
@@ -2201,7 +2201,7 @@ def automation_record_from_job(
         "name": str(job.get("name") or request_payload.get("name") or "Hermes job"),
         "schedule": job_schedule(job) or str(request_payload.get("schedule") or ""),
         "prompt": str(job.get("prompt") or request_payload.get("prompt") or ""),
-        "deliverToConversationId": str(request_payload.get("deliverToConversationId") or ""),
+        "deliverToSessionId": str(request_payload.get("deliverToSessionId") or ""),
         "status": job_status(job) or "active",
         "createdAt": job_timestamp(job, "createdAt", "created_at", "created") or timestamp,
         "updatedAt": job_timestamp(job, "updatedAt", "updated_at", "updated") or timestamp,
@@ -2225,12 +2225,12 @@ def automation_create_payload(app: FastAPI, agent: dict[str, Any], request: dict
     if not prompt:
         raise ManagementError("Automation prompt is required.", status_code=400)
     deliver = str(request.get("deliver") or "").strip()
-    conversation_id = str(request.get("deliverToConversationId") or "").strip()
-    if conversation_id:
-        conversation = resolve_core_conversation(app, conversation_id)
-        if not conversation or conversation["agentId"] != agent["id"]:
-            raise ManagementError("Delivery conversation was not found for this agent.", status_code=404)
-        deliver = deliver or f"iris:{conversation['externalChatId'] or chat_id_for_conversation(conversation_id)}"
+    session_id = str(request.get("deliverToSessionId") or "").strip()
+    if session_id:
+        session = resolve_core_session(app, session_id)
+        if not session or session["agentId"] != agent["id"]:
+            raise ManagementError("Delivery session was not found for this agent.", status_code=404)
+        deliver = deliver or f"iris:{session['externalChatId'] or chat_id_for_session(session_id)}"
     payload: dict[str, Any] = {
         "name": str(request.get("name") or "Iris reminder"),
         "schedule": schedule,

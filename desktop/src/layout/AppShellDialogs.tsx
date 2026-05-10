@@ -1,7 +1,7 @@
 import type { FormEvent } from "react";
 import { CodeEditor } from "../shared/CodeEditor";
 import type { AgentUICoreAgent } from "../lib/agentuiCore";
-import type { HermesConversation } from "../types/hermes";
+import type { HermesSession } from "../types/hermes";
 
 export type ProfileDialog =
   | { action: "create"; name: string }
@@ -12,8 +12,8 @@ export type ProjectDialog =
   | { action: "create"; name: string; defaultAgentId: string; systemPrompt: string }
   | { action: "edit"; projectId: string; name: string; defaultAgentId: string; systemPrompt: string };
 
-export type ConversationDialog = {
-  conversation: HermesConversation;
+export type SessionDialog = {
+  session: HermesSession;
   profileName: string;
   name: string;
 };
@@ -37,12 +37,12 @@ type ProjectActionDialogProps = {
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
 };
 
-type ConversationActionDialogProps = {
-  dialog: ConversationDialog;
+type SessionActionDialogProps = {
+  dialog: SessionDialog;
   busy: boolean;
   error: string;
   onCancel: () => void;
-  onChange: (dialog: ConversationDialog) => void;
+  onChange: (dialog: SessionDialog) => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
 };
 
@@ -113,23 +113,23 @@ export function ProjectActionDialog({
   );
 }
 
-export function ConversationActionDialog({
+export function SessionActionDialog({
   dialog,
   busy,
   error,
   onCancel,
   onChange,
   onSubmit,
-}: ConversationActionDialogProps) {
+}: SessionActionDialogProps) {
   const inputValue = dialog.name;
   const submitDisabled = busy || !inputValue.trim();
 
   return (
-    <div className="profile-action-modal" role="dialog" aria-modal="true" aria-labelledby="conversation-action-title">
+    <div className="profile-action-modal" role="dialog" aria-modal="true" aria-labelledby="session-action-title">
       <form onSubmit={onSubmit}>
         <div>
           <p className="eyebrow">Session</p>
-          <h2 id="conversation-action-title">Rename session</h2>
+          <h2 id="session-action-title">Rename session</h2>
         </div>
         <label>
           <span>Session name</span>

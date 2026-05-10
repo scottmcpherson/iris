@@ -1,11 +1,11 @@
 import type {
-  HermesConversationMessage,
+  HermesSessionMessage,
   HermesHistoryToolCall,
   HermesStreamToolEvent,
 } from "../../types/hermes";
 import { stringValue, titleCase } from "../../shared/strings";
 
-export function streamToolEventFromHistory(message: HermesConversationMessage): HermesStreamToolEvent {
+export function streamToolEventFromHistory(message: HermesSessionMessage): HermesStreamToolEvent {
   const parsed = parseJsonObject(message.content.trim());
   const toolName = historyToolName(message, parsed);
   const status = historyToolStatus(parsed);
@@ -21,7 +21,7 @@ export function streamToolEventFromHistory(message: HermesConversationMessage): 
 }
 
 export function streamToolEventFromHistoryCall(
-  message: HermesConversationMessage,
+  message: HermesSessionMessage,
   toolCall: HermesHistoryToolCall,
   index: number,
 ): HermesStreamToolEvent {
@@ -97,7 +97,7 @@ function prettyToolText(value: string) {
   }
 }
 
-function historyToolName(message: HermesConversationMessage, data: Record<string, unknown> | null) {
+function historyToolName(message: HermesSessionMessage, data: Record<string, unknown> | null) {
   if (message.toolName) return message.toolName;
   return legacyToolName(data);
 }

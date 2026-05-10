@@ -103,7 +103,7 @@ describe("runtime jobs helpers", () => {
           status: "active",
           nextRunAt: 1_777_777_777,
           metadata: {
-            deliver: "iris:core-conv_1",
+            deliver: "iris:core-session_1",
             repeat: 1,
           },
         },
@@ -115,7 +115,7 @@ describe("runtime jobs helpers", () => {
       name: "Core reminder",
       schedule: "10m",
       status: "active",
-      deliver: "iris:core-conv_1",
+      deliver: "iris:core-session_1",
       repeat: 1,
       nextRunAt: 1_777_777_777,
     });

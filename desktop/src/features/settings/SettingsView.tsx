@@ -239,7 +239,7 @@ export function SettingsView({
             title="Routes and credentials"
             variant="plain"
           >
-            <div className="core-connection-form">
+            <article className="core-connection-form">
               <div className="core-connection-heading">
                 <div>
                   <span className={status?.managementStatus?.ok ? "service-health-dot online" : "service-health-dot offline"} />
@@ -282,7 +282,7 @@ export function SettingsView({
                   Save Core connection
                 </button>
               </div>
-            </div>
+            </article>
           </SettingsSection>
 
           <section className="settings-section model-section">

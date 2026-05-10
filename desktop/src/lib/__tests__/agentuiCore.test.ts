@@ -15,8 +15,8 @@ import {
   saveAgentUICoreAgentMemory,
   saveAgentUICoreAgentSkill,
   sendAgentUICoreMessage,
-  updateAgentUICoreConversation,
-  updateAgentUICoreConversationReadState,
+  updateAgentUICoreSession,
+  updateAgentUICoreSessionReadState,
   updateIrisProject,
   uploadAgentUICoreAttachment,
 } from "../agentuiCore";
@@ -69,7 +69,7 @@ describe("agentuiCore", () => {
       status: 200,
       json: async () => ({
         ok: true,
-        conversationId: "conv-1",
+        sessionId: "session-1",
         messageId: "client-message-1",
         accepted: true,
         eventCursor: 3,
@@ -78,13 +78,13 @@ describe("agentuiCore", () => {
     vi.stubGlobal("fetch", fetch);
 
     await sendAgentUICoreMessage(
-      "conv-1",
+      "session-1",
       { text: "hello", clientMessageId: "client-message-1" },
       defaultRuntimeConfig,
     );
 
     expect(fetch).toHaveBeenCalledWith(
-      expect.stringContaining("/v1/conversations/conv-1/messages"),
+      expect.stringContaining("/v1/sessions/session-1/messages"),
       expect.objectContaining({
         method: "POST",
         headers: expect.objectContaining({
@@ -214,7 +214,7 @@ describe("agentuiCore", () => {
     );
 
     const pending = sendAgentUICoreMessage(
-      "conv-1",
+      "session-1",
       { text: "hello", clientMessageId: "client-message-1" },
       defaultRuntimeConfig,
     );
@@ -397,8 +397,8 @@ describe("agentuiCore", () => {
     await cloneAgentUICoreAgent("agent_default", { name: "copy" }, defaultRuntimeConfig);
     await renameAgentUICoreAgent("agent_default", { name: "renamed" }, defaultRuntimeConfig);
     await deleteAgentUICoreAgent("agent_default", defaultRuntimeConfig);
-    await updateAgentUICoreConversation("conv_123", { title: "Pinned plan" }, defaultRuntimeConfig);
-    await updateAgentUICoreConversationReadState("conv_123", "read", defaultRuntimeConfig);
+    await updateAgentUICoreSession("session_123", { title: "Pinned plan" }, defaultRuntimeConfig);
+    await updateAgentUICoreSessionReadState("session_123", "read", defaultRuntimeConfig);
 
     expect(calls.map((call) => [call.init.method, new URL(call.url).pathname])).toEqual([
       ["GET", "/v1/agents/agent_default/memory"],
@@ -412,8 +412,8 @@ describe("agentuiCore", () => {
       ["POST", "/v1/agents/agent_default/clone"],
       ["PATCH", "/v1/agents/agent_default"],
       ["DELETE", "/v1/agents/agent_default"],
-      ["PATCH", "/v1/conversations/conv_123"],
-      ["PATCH", "/v1/conversations/conv_123/read-state"],
+      ["PATCH", "/v1/sessions/session_123"],
+      ["PATCH", "/v1/sessions/session_123/read-state"],
     ]);
   });
 });

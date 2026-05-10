@@ -12,16 +12,16 @@ import time
 from pathlib import Path
 from typing import Any
 
-from .hermes_conversations import (
+from .hermes_sessions import (
     ID_COLUMNS,
     TITLE_COLUMNS,
-    ConversationDetail,
-    ConversationDiscovery,
+    SessionDetail,
+    SessionDiscovery,
     assert_within_profile,
     choose_session_table,
     choose_message_table,
-    discover_conversation_detail,
-    discover_conversations,
+    discover_session_detail,
+    discover_sessions,
     first_message_link_column,
     inspect_sqlite_schema,
     normalize_columns,
@@ -616,39 +616,39 @@ class HermesStore:
         summary = skill_payload(path, directory, skills_dir.resolve())
         return summary, safe_read_text(path, directory)
 
-    def conversations(self, profile: str, limit: int | None = 80) -> ConversationDiscovery:
+    def sessions(self, profile: str, limit: int | None = 80) -> SessionDiscovery:
         directory = self.profile_directory(validate_profile_name(profile))
-        return discover_conversations(directory, limit)
+        return discover_sessions(directory, limit)
 
-    def conversation_detail(self, profile: str, conversation_id: str) -> ConversationDetail:
+    def session_detail(self, profile: str, session_id: str) -> SessionDetail:
         directory = self.profile_directory(validate_profile_name(profile))
-        return discover_conversation_detail(directory, conversation_id)
+        return discover_session_detail(directory, session_id)
 
-    def rename_conversation(self, profile: str, conversation_id: str, title: str) -> ConversationDetail:
+    def rename_session(self, profile: str, session_id: str, title: str) -> SessionDetail:
         directory = self.profile_directory(validate_profile_name(profile))
         clean_title = title.strip()
         if not clean_title:
             raise ManagementError("Session title is required.", status_code=400)
         if len(clean_title) > 160:
             raise ManagementError("Session title must be 160 characters or fewer.", status_code=400)
-        if self._rename_sqlite_conversation(directory, conversation_id, clean_title):
-            return self.conversation_detail(profile, conversation_id)
-        if self._rename_session_file_conversation(directory, conversation_id, clean_title):
-            return self.conversation_detail(profile, conversation_id)
+        if self._rename_sqlite_session(directory, session_id, clean_title):
+            return self.session_detail(profile, session_id)
+        if self._rename_session_file_session(directory, session_id, clean_title):
+            return self.session_detail(profile, session_id)
         raise ManagementError("Session was not found.", status_code=404)
 
-    def delete_conversation(self, profile: str, conversation_id: str) -> None:
+    def delete_session(self, profile: str, session_id: str) -> None:
         directory = self.profile_directory(validate_profile_name(profile))
-        clean_id = conversation_id.strip()
+        clean_id = session_id.strip()
         if not clean_id:
             raise ManagementError("Session id is required.", status_code=400)
-        deleted = self._delete_sqlite_conversation(directory, clean_id)
-        deleted = self._delete_session_file_conversation(directory, clean_id) or deleted
+        deleted = self._delete_sqlite_session(directory, clean_id)
+        deleted = self._delete_session_file_session(directory, clean_id) or deleted
         if not deleted:
             raise ManagementError("Session was not found.", status_code=404)
         self._delete_session_origin(directory, clean_id)
 
-    def _delete_sqlite_conversation(self, directory: Path, conversation_id: str) -> bool:
+    def _delete_sqlite_session(self, directory: Path, session_id: str) -> bool:
         for db_path in sqlite_candidates(directory):
             try:
                 safe_path = assert_within_profile(db_path, directory)
@@ -670,7 +670,7 @@ class HermesStore:
                         f"delete from {quote_identifier(session_table)} "
                         f"where {quote_identifier(id_column)} = ?"
                     ),
-                    (conversation_id,),
+                    (session_id,),
                 ).rowcount
                 if not session_deleted:
                     connection.rollback()
@@ -685,7 +685,7 @@ class HermesStore:
                                 f"delete from {quote_identifier(message_table)} "
                                 f"where {quote_identifier(link_column)} = ?"
                             ),
-                            (conversation_id,),
+                            (session_id,),
                         )
                 connection.commit()
                 return True
@@ -696,7 +696,7 @@ class HermesStore:
                 connection.close()
         return False
 
-    def _delete_session_file_conversation(self, directory: Path, conversation_id: str) -> bool:
+    def _delete_session_file_session(self, directory: Path, session_id: str) -> bool:
         sessions_dir = directory / "sessions"
         try:
             safe_sessions_dir = assert_within_profile(sessions_dir, directory)
@@ -715,13 +715,13 @@ class HermesStore:
             if not isinstance(payload, dict):
                 continue
             summary = normalize_session_file(payload)
-            if summary is None or summary.id != conversation_id:
+            if summary is None or summary.id != session_id:
                 continue
             safe_path.unlink()
             return True
         return False
 
-    def _delete_session_origin(self, directory: Path, conversation_id: str) -> None:
+    def _delete_session_origin(self, directory: Path, session_id: str) -> None:
         path = directory / "sessions" / "sessions.json"
         try:
             safe_path = assert_within_profile(path, directory)
@@ -733,13 +733,13 @@ class HermesStore:
         next_loaded = {
             key: value
             for key, value in loaded.items()
-            if key != conversation_id
-            and not (isinstance(value, dict) and str(value.get("session_id") or "").strip() == conversation_id)
+            if key != session_id
+            and not (isinstance(value, dict) and str(value.get("session_id") or "").strip() == session_id)
         }
         if len(next_loaded) != len(loaded):
             safe_path.write_text(json.dumps(next_loaded, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
-    def _rename_sqlite_conversation(self, directory: Path, conversation_id: str, title: str) -> bool:
+    def _rename_sqlite_session(self, directory: Path, session_id: str, title: str) -> bool:
         for db_path in sqlite_candidates(directory):
             try:
                 safe_path = assert_within_profile(db_path, directory)
@@ -763,7 +763,7 @@ class HermesStore:
                         f"set {quote_identifier(title_column)} = ? "
                         f"where {quote_identifier(id_column)} = ?"
                     ),
-                    (title, conversation_id),
+                    (title, session_id),
                 )
                 connection.commit()
                 if cursor.rowcount:
@@ -774,7 +774,7 @@ class HermesStore:
                 connection.close()
         return False
 
-    def _rename_session_file_conversation(self, directory: Path, conversation_id: str, title: str) -> bool:
+    def _rename_session_file_session(self, directory: Path, session_id: str, title: str) -> bool:
         sessions_dir = directory / "sessions"
         try:
             safe_sessions_dir = assert_within_profile(sessions_dir, directory)
@@ -791,7 +791,7 @@ class HermesStore:
             if not isinstance(payload, dict):
                 continue
             summary = normalize_session_file(payload)
-            if summary is None or summary.id != conversation_id:
+            if summary is None or summary.id != session_id:
                 continue
             payload["title"] = title
             safe_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")

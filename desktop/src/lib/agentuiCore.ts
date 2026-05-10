@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
-  HermesConversationMessage,
+  HermesSessionMessage,
   HermesModelProvider,
   HermesModelSelection,
   HermesRuntimeConfig,
@@ -64,7 +64,7 @@ export type CoreRuntimeResult = {
 };
 
 export type AgentUICoreSendMessageResult = {
-  conversationId: string;
+  sessionId: string;
   messageId: string;
   accepted: boolean;
   eventCursor: number;
@@ -108,7 +108,7 @@ export type AgentUICoreAgent = {
   metadata?: CoreMetadata;
 };
 
-export type AgentUICoreConversation = {
+export type AgentUICoreSession = {
   id: string;
   agentId: string;
   title: string;
@@ -121,11 +121,11 @@ export type AgentUICoreConversation = {
   externalSessionId: string;
   externalChatId: string;
   origin?: CoreMetadata;
-  readState?: AgentUICoreConversationReadState;
+  readState?: AgentUICoreSessionReadState;
 };
 
-export type AgentUICoreConversationReadState = {
-  conversationId: string;
+export type AgentUICoreSessionReadState = {
+  sessionId: string;
   state: "read" | "unread";
   createdAt: number | null;
   updatedAt: number | null;
@@ -144,8 +144,8 @@ export type IrisProject = {
   metadata?: CoreMetadata;
 };
 
-export type AgentUICoreMessage = HermesConversationMessage & {
-  conversationId?: string;
+export type AgentUICoreMessage = HermesSessionMessage & {
+  sessionId?: string;
   createdAt?: number;
   updatedAt?: number;
 };
@@ -153,7 +153,7 @@ export type AgentUICoreMessage = HermesConversationMessage & {
 export type AgentUICoreEvent = {
   cursor: number;
   id: string;
-  conversationId: string;
+  sessionId: string;
   agentId: string;
   runtimeId: string;
   type: string;
@@ -173,7 +173,7 @@ export type AgentUICoreAutomation = {
   name: string;
   schedule: string;
   prompt: string;
-  deliverToConversationId: string;
+  deliverToSessionId: string;
   status: string;
   createdAt: number;
   updatedAt: number;
@@ -412,38 +412,38 @@ export async function archiveIrisProject(projectId: string, runtime?: HermesRunt
   );
 }
 
-export async function getIrisProjectConversations(
+export async function getIrisProjectSessions(
   projectId: string,
   limit = 80,
   runtime?: HermesRuntimeConfig,
 ) {
   const query = new URLSearchParams({ limit: String(limit) });
-  return coreRequest<{ conversations: AgentUICoreConversation[] }>(
+  return coreRequest<{ sessions: AgentUICoreSession[] }>(
     runtime,
     "GET",
-    `/projects/${encodeURIComponent(projectId)}/conversations?${query}`,
+    `/projects/${encodeURIComponent(projectId)}/sessions?${query}`,
   );
 }
 
-export async function linkIrisProjectConversation(
+export async function linkIrisProjectSession(
   projectId: string,
-  conversationId: string,
+  sessionId: string,
   runtime?: HermesRuntimeConfig,
 ) {
-  return coreRequest<{ conversation: AgentUICoreConversation }>(
+  return coreRequest<{ session: AgentUICoreSession }>(
     runtime,
     "POST",
-    `/projects/${encodeURIComponent(projectId)}/conversations`,
-    { conversationId },
+    `/projects/${encodeURIComponent(projectId)}/sessions`,
+    { sessionId },
   );
 }
 
-export async function getAgentUICoreConversations(agentId: string, limit = 80, runtime?: HermesRuntimeConfig) {
+export async function getAgentUICoreSessions(agentId: string, limit = 80, runtime?: HermesRuntimeConfig) {
   const query = new URLSearchParams({ agentId, limit: String(limit) });
-  return coreRequest<{ conversations: AgentUICoreConversation[] }>(runtime, "GET", `/conversations?${query}`);
+  return coreRequest<{ sessions: AgentUICoreSession[] }>(runtime, "GET", `/sessions?${query}`);
 }
 
-export async function createAgentUICoreConversation(
+export async function createAgentUICoreSession(
   payload: {
     agentId: string;
     title: string;
@@ -454,74 +454,74 @@ export async function createAgentUICoreConversation(
   },
   runtime?: HermesRuntimeConfig,
 ) {
-  return coreRequest<{ conversation: AgentUICoreConversation }>(runtime, "POST", "/conversations", payload);
+  return coreRequest<{ session: AgentUICoreSession }>(runtime, "POST", "/sessions", payload);
 }
 
-export async function getAgentUICoreConversation(
-  conversationId: string,
+export async function getAgentUICoreSession(
+  sessionId: string,
   runtime?: HermesRuntimeConfig,
   reference: { externalSessionId?: string; externalChatId?: string } = {},
 ) {
-  const query = conversationReferenceQuery(reference);
-  return coreRequest<{ conversation: AgentUICoreConversation }>(
+  const query = sessionReferenceQuery(reference);
+  return coreRequest<{ session: AgentUICoreSession }>(
     runtime,
     "GET",
-    `/conversations/${encodeURIComponent(conversationId)}${query}`,
+    `/sessions/${encodeURIComponent(sessionId)}${query}`,
   );
 }
 
-export async function updateAgentUICoreConversation(
-  conversationId: string,
+export async function updateAgentUICoreSession(
+  sessionId: string,
   payload: { title?: string; metadata?: CoreMetadata },
   runtime?: HermesRuntimeConfig,
 ) {
-  return coreRequest<{ conversation: AgentUICoreConversation }>(
+  return coreRequest<{ session: AgentUICoreSession }>(
     runtime,
     "PATCH",
-    `/conversations/${encodeURIComponent(conversationId)}`,
+    `/sessions/${encodeURIComponent(sessionId)}`,
     payload,
   );
 }
 
-export async function deleteAgentUICoreConversation(
-  conversationId: string,
+export async function deleteAgentUICoreSession(
+  sessionId: string,
   runtime?: HermesRuntimeConfig,
 ) {
-  return coreRequest<{ conversationId: string }>(
+  return coreRequest<{ sessionId: string }>(
     runtime,
     "DELETE",
-    `/conversations/${encodeURIComponent(conversationId)}`,
+    `/sessions/${encodeURIComponent(sessionId)}`,
   );
 }
 
-export async function updateAgentUICoreConversationReadState(
-  conversationId: string,
+export async function updateAgentUICoreSessionReadState(
+  sessionId: string,
   state: "read" | "unread",
   runtime?: HermesRuntimeConfig,
   metadata: CoreMetadata = {},
 ) {
-  return coreRequest<{ readState: AgentUICoreConversationReadState }>(
+  return coreRequest<{ readState: AgentUICoreSessionReadState }>(
     runtime,
     "PATCH",
-    `/conversations/${encodeURIComponent(conversationId)}/read-state`,
+    `/sessions/${encodeURIComponent(sessionId)}/read-state`,
     { state, metadata },
   );
 }
 
-export async function getAgentUICoreConversationMessages(
-  conversationId: string,
+export async function getAgentUICoreSessionMessages(
+  sessionId: string,
   runtime?: HermesRuntimeConfig,
   reference: { externalSessionId?: string; externalChatId?: string } = {},
 ) {
-  const query = conversationReferenceQuery(reference);
-  return coreRequest<{ conversationId: string; messages: AgentUICoreMessage[]; warning?: string }>(
+  const query = sessionReferenceQuery(reference);
+  return coreRequest<{ sessionId: string; messages: AgentUICoreMessage[]; warning?: string }>(
     runtime,
     "GET",
-    `/conversations/${encodeURIComponent(conversationId)}/messages${query}`,
+    `/sessions/${encodeURIComponent(sessionId)}/messages${query}`,
   );
 }
 
-function conversationReferenceQuery(reference: { externalSessionId?: string; externalChatId?: string }) {
+function sessionReferenceQuery(reference: { externalSessionId?: string; externalChatId?: string }) {
   const query = new URLSearchParams();
   if (reference.externalSessionId) query.set("externalSessionId", reference.externalSessionId);
   if (reference.externalChatId) query.set("externalChatId", reference.externalChatId);
@@ -530,7 +530,7 @@ function conversationReferenceQuery(reference: { externalSessionId?: string; ext
 }
 
 export async function sendAgentUICoreMessage(
-  conversationId: string,
+  sessionId: string,
   payload: {
     text: string;
     attachments?: CoreMessageAttachmentRef[];
@@ -543,7 +543,7 @@ export async function sendAgentUICoreMessage(
   return coreRequest<AgentUICoreSendMessageResult>(
     runtime,
     "POST",
-    `/conversations/${encodeURIComponent(conversationId)}/messages`,
+    `/sessions/${encodeURIComponent(sessionId)}/messages`,
     payload,
     { idempotencyKey: payload.clientMessageId, timeoutMs: 12_000 },
   );
@@ -557,7 +557,7 @@ export async function uploadAgentUICoreAttachment(
     mimeType?: string;
     kind?: AttachmentKind;
     profile: string;
-    conversationId?: string;
+    sessionId?: string;
     messageId?: string;
     runtimeId?: string;
     metadata?: CoreMetadata;
@@ -571,7 +571,7 @@ export async function uploadAgentUICoreAttachment(
     form.set("runtimeId", payload.runtimeId || "runtime_local_hermes");
     if (payload.mimeType) form.set("mimeType", payload.mimeType);
     form.set("kind", payload.kind || attachmentKindFromMime(payload.mimeType || payload.file.type, payload.name));
-    if (payload.conversationId) form.set("conversationId", payload.conversationId);
+    if (payload.sessionId) form.set("sessionId", payload.sessionId);
     if (payload.messageId) form.set("messageId", payload.messageId);
     if (payload.metadata) form.set("metadata", JSON.stringify(payload.metadata));
     try {
@@ -727,11 +727,11 @@ function nullableNumberMetadata(value: unknown) {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
-export async function cancelAgentUICoreMessage(conversationId: string, runtime?: HermesRuntimeConfig) {
-  return coreRequest<{ conversationId: string; runtime?: CoreRuntimeResult }>(
+export async function cancelAgentUICoreMessage(sessionId: string, runtime?: HermesRuntimeConfig) {
+  return coreRequest<{ sessionId: string; runtime?: CoreRuntimeResult }>(
     runtime,
     "POST",
-    `/conversations/${encodeURIComponent(conversationId)}/cancel`,
+    `/sessions/${encodeURIComponent(sessionId)}/cancel`,
     {},
   );
 }
@@ -792,7 +792,7 @@ export async function createAgentUICoreAutomation(
     prompt: string;
     repeat?: number | null;
     deliver?: string;
-    deliverToConversationId?: string;
+    deliverToSessionId?: string;
     metadata?: CoreMetadata;
   },
   runtime?: HermesRuntimeConfig,
@@ -813,7 +813,7 @@ export async function updateAgentUICoreAutomation(
     prompt?: string;
     repeat?: number | null;
     deliver?: string;
-    deliverToConversationId?: string;
+    deliverToSessionId?: string;
     status?: string;
     metadata?: CoreMetadata;
   },

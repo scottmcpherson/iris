@@ -3,16 +3,16 @@ import { loadJsonValue, loadStringValue, saveJsonValue, saveStringValue, storage
 import {
   createIrisProject,
   getAgentUICoreAgents,
-  getIrisProjectConversations,
+  getIrisProjectSessions,
   getIrisProjects,
   updateIrisProject,
   type AgentUICoreAgent,
   type IrisProject,
 } from "../../lib/agentuiCore";
-import { coreConversationToLegacy } from "../../lib/coreLegacyCompat";
-import type { HermesConversation, HermesRuntimeConfig } from "../../types/hermes";
+import { coreSessionToLegacy } from "../../lib/coreLegacyCompat";
+import type { HermesSession, HermesRuntimeConfig } from "../../types/hermes";
 
-export type ProjectConversationMap = Record<string, HermesConversation[]>;
+export type ProjectSessionMap = Record<string, HermesSession[]>;
 
 export type CreateProjectPayload = {
   name: string;
@@ -28,10 +28,10 @@ export function useIrisProjects(runtimeConfig: HermesRuntimeConfig) {
   const [selectedProjectId, setSelectedProjectIdState] = useState(() =>
     loadStringValue(storageKeys.selectedProjectId, ""),
   );
-  const [conversationsByProject, setConversationsByProject] = useState<ProjectConversationMap>({});
+  const [sessionsByProject, setSessionsByProject] = useState<ProjectSessionMap>({});
   const [projectsLoading, setProjectsLoading] = useState(false);
-  const [projectConversationsLoading, setProjectConversationsLoading] = useState<Record<string, boolean>>({});
-  const [projectConversationsLoaded, setProjectConversationsLoaded] = useState<Record<string, boolean>>({});
+  const [projectSessionsLoading, setProjectSessionsLoading] = useState<Record<string, boolean>>({});
+  const [projectSessionsLoaded, setProjectSessionsLoaded] = useState<Record<string, boolean>>({});
   const [projectErrors, setProjectErrors] = useState<Record<string, string | null>>({});
   const [collapsedProjects, setCollapsedProjects] = useState<Record<string, boolean>>(
     () => loadCollapsedProjects(),
@@ -69,33 +69,33 @@ export function useIrisProjects(runtimeConfig: HermesRuntimeConfig) {
     }
   }, [runtimeConfig]);
 
-  const refreshProjectConversations = useCallback(async (projectId: string) => {
+  const refreshProjectSessions = useCallback(async (projectId: string) => {
     if (!projectId) return;
-    setProjectConversationsLoading((current) => ({ ...current, [projectId]: true }));
+    setProjectSessionsLoading((current) => ({ ...current, [projectId]: true }));
     try {
-      const result = await getIrisProjectConversations(projectId, 80, runtimeConfig);
+      const result = await getIrisProjectSessions(projectId, 80, runtimeConfig);
       if (!result.ok) {
         setProjectErrors((current) => ({
           ...current,
-          [projectId]: result.error || "Could not load project conversations.",
+          [projectId]: result.error || "Could not load project sessions.",
         }));
-        setProjectConversationsLoaded((current) => ({ ...current, [projectId]: true }));
+        setProjectSessionsLoaded((current) => ({ ...current, [projectId]: true }));
         return;
       }
-      setConversationsByProject((current) => ({
+      setSessionsByProject((current) => ({
         ...current,
-        [projectId]: (result.conversations || []).map(coreConversationToLegacy),
+        [projectId]: (result.sessions || []).map(coreSessionToLegacy),
       }));
       setProjectErrors((current) => ({ ...current, [projectId]: null }));
-      setProjectConversationsLoaded((current) => ({ ...current, [projectId]: true }));
+      setProjectSessionsLoaded((current) => ({ ...current, [projectId]: true }));
     } catch (error) {
       setProjectErrors((current) => ({
         ...current,
-        [projectId]: error instanceof Error ? error.message : "Could not load project conversations.",
+        [projectId]: error instanceof Error ? error.message : "Could not load project sessions.",
       }));
-      setProjectConversationsLoaded((current) => ({ ...current, [projectId]: true }));
+      setProjectSessionsLoaded((current) => ({ ...current, [projectId]: true }));
     } finally {
-      setProjectConversationsLoading((current) => ({ ...current, [projectId]: false }));
+      setProjectSessionsLoading((current) => ({ ...current, [projectId]: false }));
     }
   }, [runtimeConfig]);
 
@@ -106,16 +106,16 @@ export function useIrisProjects(runtimeConfig: HermesRuntimeConfig) {
   useEffect(() => {
     for (const project of projects) {
       if (collapsedProjects[project.id]) continue;
-      if (projectConversationsLoaded[project.id]) continue;
-      if (projectConversationsLoading[project.id]) continue;
-      void refreshProjectConversations(project.id);
+      if (projectSessionsLoaded[project.id]) continue;
+      if (projectSessionsLoading[project.id]) continue;
+      void refreshProjectSessions(project.id);
     }
   }, [
     collapsedProjects,
-    projectConversationsLoaded,
-    projectConversationsLoading,
+    projectSessionsLoaded,
+    projectSessionsLoading,
     projects,
-    refreshProjectConversations,
+    refreshProjectSessions,
   ]);
 
   async function createProject(payload: CreateProjectPayload) {
@@ -167,16 +167,16 @@ export function useIrisProjects(runtimeConfig: HermesRuntimeConfig) {
     agents,
     selectedProject,
     selectedProjectId,
-    conversationsByProject,
+    sessionsByProject,
     projectsLoading,
-    projectConversationsLoading,
-    projectConversationsLoaded,
+    projectSessionsLoading,
+    projectSessionsLoaded,
     projectErrors,
     collapsedProjects,
     createProject,
     updateProject,
     refreshProjects,
-    refreshProjectConversations,
+    refreshProjectSessions,
     selectProject,
     toggleProjectCollapsed,
     setCollapsedProjectsValue,

@@ -6,8 +6,7 @@ This app lives in the `desktop/` workspace of the Iris monorepo. For normal setu
 
 ## Phase 1 Foundation
 
-- macOS-style app layout with sidebar navigation, session workspace, and toggleable live preview pane.
-- Sandboxed preview modes for HTML, React, Markdown, and Mermaid diagrams.
+- macOS-style app layout with sidebar navigation and session workspace.
 - Rust Tauri command bridge used only for Iris Core request fallback, Core attachment uploads from local paths, and Core credential storage.
 - Iris Core discovery for agents, memory files, skills, sessions, model catalogs, slash commands, automations, and runtime health.
 - Sessions, profile actions, memory writes, skill writes, model catalog, slash commands, and automations all route through Iris Core. Hermes remains a runtime adapter behind Core.
@@ -43,7 +42,7 @@ The desktop app expects one HTTP route:
 
 - Iris Core API: agents, sessions, automations, device auth, runtime routing, memory, skills, status, runtime health, model catalogs, slash commands, and session reads come from the monorepo service in `../iris-core`, defaulting to `http://127.0.0.1:8765/v1`.
 
-Settings edits only the Iris Core URL and Core bearer token. Runtime-specific routes, including Hermes gateway and adapter URLs, belong to Iris Core runtime configuration. The desktop app does not read local runtime files or SQLite history directly and does not keep a browser-side session cache. Some API paths and payload fields still use `conversation` for compatibility.
+Settings edits only the Iris Core URL and Core bearer token. Runtime-specific routes, including Hermes gateway and adapter URLs, belong to Iris Core runtime configuration. The desktop app does not read local runtime files or SQLite history directly and does not keep a browser-side session cache.
 
 Useful environment variables:
 

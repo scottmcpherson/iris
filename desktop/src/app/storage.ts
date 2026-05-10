@@ -1,8 +1,6 @@
 export const storageKeys = {
   runtimeConfig: "hermes.desktop.runtime",
   onboardingDismissed: "hermes.desktop.onboarding.dismissed",
-  previewOpen: "hermes.desktop.preview.open",
-  previewArtifacts: "hermes.preview.artifacts.v1",
   jobsDeliveryTarget: "hermes.desktop.jobs.deliveryTarget",
   memoryProviders: "hermes-memory-provider-controls",
   modelSelectionByProfile: "hermes.desktop.modelSelectionByProfile",
@@ -11,7 +9,7 @@ export const storageKeys = {
   collapsedSessionProfiles: "hermes.desktop.sidebar.collapsedSessions",
   collapsedProjects: "iris.desktop.sidebar.collapsedProjects",
   selectedProjectId: "iris.desktop.selectedProjectId",
-  pinnedConversations: "hermes.desktop.sidebar.pinnedConversations",
+  pinnedSessions: "hermes.desktop.sidebar.pinnedSessions",
 } as const;
 
 export function loadJsonValue<T>(key: string, fallback: T): T {

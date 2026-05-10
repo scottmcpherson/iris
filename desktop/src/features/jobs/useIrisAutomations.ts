@@ -243,7 +243,7 @@ function normalizeJob(row: Record<string, unknown>): HermesJob {
     name: rawStringValue(row.name) || "Untitled job",
     schedule: rawStringValue(row.schedule_display || schedule?.display || row.schedule || row.scheduleText || row.cron || row.when),
     prompt: rawStringValue(row.prompt),
-    deliver: rawStringValue(row.deliver || row.delivery || metadata.deliver || row.deliverToConversationId),
+    deliver: rawStringValue(row.deliver || row.delivery || metadata.deliver || row.deliverToSessionId),
     status: normalizeJobStatus(row.status || row.state || (row.enabled === false ? "paused" : "active")),
     nextRunAt: timestampValue(row.nextRunAt || row.next_run_at || row.nextRun || row.next_run || schedule?.run_at),
     lastRunAt: timestampValue(row.lastRunAt || row.last_run_at || row.lastRun || row.last_run),

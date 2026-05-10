@@ -161,9 +161,9 @@ export type HermesMemory = {
   error?: string;
 };
 
-export type HermesConversationSource = "hermes-api" | "hermes-management";
+export type HermesSessionSource = "hermes-api" | "hermes-management";
 
-export type HermesConversation = {
+export type HermesSession = {
   id: string;
   source: string;
   model: string;
@@ -172,22 +172,22 @@ export type HermesConversation = {
   chatId?: string;
   origin?: Record<string, unknown>;
   metadata?: Record<string, unknown>;
-  readState?: HermesConversationReadState;
+  readState?: HermesSessionReadState;
   startedAt: number | null;
   endedAt: number | null;
   lastActiveAt: number | null;
   messageCount: number;
 };
 
-export type HermesConversationReadState = {
-  conversationId: string;
+export type HermesSessionReadState = {
+  sessionId: string;
   state: "read" | "unread";
   createdAt: number | null;
   updatedAt: number | null;
   metadata?: Record<string, unknown>;
 };
 
-export type HermesConversationMessage = {
+export type HermesSessionMessage = {
   id: string;
   sessionId: string;
   role: "system" | "user" | "assistant" | "tool";
@@ -212,25 +212,25 @@ export type HermesHistoryToolCall = {
   };
 };
 
-export type HermesConversationsResult = {
+export type HermesSessionsResult = {
   ok: boolean;
   profile: string;
   path: string;
-  source: HermesConversationSource;
+  source: HermesSessionSource;
   schemaVersion?: number | null;
-  conversations: HermesConversation[];
+  sessions: HermesSession[];
   warning?: string;
   error?: string;
 };
 
-export type HermesConversationDetail = {
+export type HermesSessionDetail = {
   ok: boolean;
   profile: string;
   path: string;
-  source: HermesConversationSource;
+  source: HermesSessionSource;
   schemaVersion?: number | null;
-  conversation: HermesConversation | null;
-  messages: HermesConversationMessage[];
+  session: HermesSession | null;
+  messages: HermesSessionMessage[];
   warning?: string;
   error?: string;
 };

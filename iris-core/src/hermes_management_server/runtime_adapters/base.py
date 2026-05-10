@@ -28,33 +28,33 @@ class RuntimeAdapter(Protocol):
     def get_agent_skill(self, agent: dict[str, Any], skill_id: str) -> dict[str, Any]: ...
     def create_agent_skill(self, agent: dict[str, Any], payload: dict[str, Any]) -> dict[str, Any]: ...
     def save_agent_skill(self, agent: dict[str, Any], skill_id: str, payload: dict[str, Any]) -> dict[str, Any]: ...
-    def list_conversations(self, agent: dict[str, Any], limit: int = 80) -> list[dict[str, Any]]: ...
-    def get_conversation(
+    def list_sessions(self, agent: dict[str, Any], limit: int = 80) -> list[dict[str, Any]]: ...
+    def get_session(
         self,
         agent: dict[str, Any],
         external_id: str = "",
         *,
         chat_id: str = "",
-        conversation_id: str = "",
+        session_id: str = "",
     ) -> dict[str, Any] | None: ...
-    def rename_conversation(
+    def rename_session(
         self,
         agent: dict[str, Any],
-        conversation: dict[str, Any],
+        session: dict[str, Any],
         title: str,
     ) -> dict[str, Any]: ...
-    def delete_conversation(
+    def delete_session(
         self,
         agent: dict[str, Any],
-        conversation: dict[str, Any],
+        session: dict[str, Any],
     ) -> dict[str, Any]: ...
-    def get_conversation_messages(
+    def get_session_messages(
         self,
         agent: dict[str, Any],
         external_id: str = "",
         *,
         chat_id: str = "",
-        conversation_id: str = "",
+        session_id: str = "",
     ) -> tuple[list[dict[str, Any]], str | None]: ...
     def probe(self, profile: str = "default") -> dict[str, Any]: ...
     def send_message(self, **kwargs: Any) -> dict[str, Any]: ...

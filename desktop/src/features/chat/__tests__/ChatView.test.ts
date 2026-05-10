@@ -6,8 +6,8 @@ describe("shouldShowChatEmptyState", () => {
     expect(shouldShowChatEmptyState(null, 0)).toBe(true);
   });
 
-  it("does not show empty or loading chrome while a selected conversation waits for messages", () => {
-    expect(shouldShowChatEmptyState("conv_123", 0)).toBe(false);
+  it("does not show empty or loading chrome while a selected session waits for messages", () => {
+    expect(shouldShowChatEmptyState("session_123", 0)).toBe(false);
   });
 
   it("does not show the empty prompt once messages are visible", () => {
@@ -17,12 +17,12 @@ describe("shouldShowChatEmptyState", () => {
 
 describe("chatTranscriptScrollKey", () => {
   it("remounts the scroll frame when selected chat history arrives", () => {
-    expect(chatTranscriptScrollKey("conv_123", 0)).toBe("conv_123:pending");
-    expect(chatTranscriptScrollKey("conv_123", 4)).toBe("conv_123:ready");
+    expect(chatTranscriptScrollKey("session_123", 0)).toBe("session_123:pending");
+    expect(chatTranscriptScrollKey("session_123", 4)).toBe("session_123:ready");
   });
 
   it("keeps subsequent message updates in the same scroll frame", () => {
-    expect(chatTranscriptScrollKey("conv_123", 1)).toBe(chatTranscriptScrollKey("conv_123", 8));
+    expect(chatTranscriptScrollKey("session_123", 1)).toBe(chatTranscriptScrollKey("session_123", 8));
   });
 });
 

@@ -6,9 +6,6 @@ import type {
   AppNotification,
   CommandItem,
   ProfileAction,
-  PreviewArtifact,
-  PreviewMode,
-  PreviewPermissions,
   View,
 } from "./app/types";
 import { AgentsView } from "./features/agents/AgentsView";
@@ -22,40 +19,23 @@ import { useIrisRuntime } from "./features/iris/useIrisRuntime";
 import { JobsView } from "./features/jobs/JobsView";
 import { useAgentUIAutomations } from "./features/jobs/useIrisAutomations";
 import type { HermesInboxMessage } from "./types/hermes";
-import { LivePreviewPane } from "./features/preview/LivePreviewPane";
 import { useIrisProjects } from "./features/projects/useIrisProjects";
-import {
-  createPreviewArtifact,
-  createSkillArtifact,
-  duplicatePreviewArtifact,
-  extensionForMode,
-  loadPreviewArtifacts,
-  mimeForMode,
-  savePreviewArtifacts,
-} from "./features/preview/previewArtifacts";
-import { defaultPreviewSource } from "./features/preview/previewSamples";
-import { renderPreviewDocument } from "./features/preview/renderPreview";
 import { CommandMenu } from "./features/polish/CommandMenu";
 import { NotificationCenter } from "./features/polish/NotificationCenter";
 import { OnboardingOverlay } from "./features/polish/OnboardingOverlay";
 import { AppShell } from "./layout/AppShell";
 import { loadBooleanValue, saveBooleanValue, storageKeys } from "./app/storage";
-import { isProjectConversation, mergeProjectConversationsForSidebar } from "./app/projectConversations";
+import { isProjectSession, mergeProjectSessionsForSidebar } from "./app/projectSessions";
 
 function App() {
   const [activeView, setActiveView] = useState<View>("chat");
   const [agentDetailProfile, setAgentDetailProfile] = useState<string | null>(null);
   const [agentSection, setAgentSection] = useState<AgentDetailSection>("overview");
-  const [previewOpen, setPreviewOpen] = useState(() => loadPreviewOpenPreference());
   const [commandMenuOpen, setCommandMenuOpen] = useState(false);
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
   const [onboardingOpen, setOnboardingOpen] = useState(
     () => !loadBooleanValue(storageKeys.onboardingDismissed),
   );
-  const [previewArtifacts, setPreviewArtifacts] = useState<PreviewArtifact[]>(() =>
-    loadPreviewArtifacts(),
-  );
-  const [activeArtifactId, setActiveArtifactId] = useState(() => previewArtifacts[0]?.id || "");
   const appCommandHandlerRef = useRef<(payload: string) => void>(() => {});
 
   const iris = useIrisRuntime();
@@ -68,14 +48,6 @@ function App() {
   const projects = useIrisProjects(iris.runtimeConfig);
 
   useEffect(() => {
-    savePreviewArtifacts(previewArtifacts);
-  }, [previewArtifacts]);
-
-  useEffect(() => {
-    savePreviewOpenPreference(previewOpen);
-  }, [previewOpen]);
-
-  useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       const commandKey = event.metaKey || event.ctrlKey;
       if (!commandKey) return;
@@ -83,9 +55,6 @@ function App() {
       if (event.key.toLowerCase() === "p") {
         event.preventDefault();
         setCommandMenuOpen(true);
-      } else if (event.key === "\\" && activeView === "chat") {
-        event.preventDefault();
-        togglePreviewPane();
       } else if (event.key.toLowerCase() === "r") {
         event.preventDefault();
         void refreshWithNotice();
@@ -98,7 +67,7 @@ function App() {
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [activeView]);
+  }, []);
 
   useEffect(() => {
     if (!isTauri()) return;
@@ -120,15 +89,6 @@ function App() {
     };
   }, []);
 
-  const activeArtifact =
-    previewArtifacts.find((artifact) => artifact.id === activeArtifactId) || previewArtifacts[0];
-
-  const previewDocument = useMemo(
-    () => renderPreviewDocument(activeArtifact.mode, activeArtifact.source, activeArtifact.id),
-    [activeArtifact],
-  );
-
-  const previewVisible = activeView === "chat" && previewOpen;
   const agentProfiles = iris.status?.profiles?.length ? iris.status.profiles : [iris.activeProfile];
   const selectedProfileSummary =
     agentProfiles.find((profile) => profile.name === iris.selectedProfile) || iris.activeProfile;
@@ -151,44 +111,44 @@ function App() {
     () => new Map(projects.agents.map((agent) => [agent.id, agent])),
     [projects.agents],
   );
-  const projectedConversationIds = useMemo(() => {
+  const projectedSessionIds = useMemo(() => {
     const ids = new Set<string>();
-    for (const conversations of Object.values(projects.conversationsByProject)) {
-      for (const conversation of conversations) ids.add(conversation.id);
+    for (const sessions of Object.values(projects.sessionsByProject)) {
+      for (const session of sessions) ids.add(session.id);
     }
     return ids;
-  }, [projects.conversationsByProject]);
-  const sidebarConversationsByProject = useMemo(
+  }, [projects.sessionsByProject]);
+  const sidebarSessionsByProject = useMemo(
     () =>
-      mergeProjectConversationsForSidebar(
+      mergeProjectSessionsForSidebar(
         projects.projects.map((project) => project.id),
-        projects.conversationsByProject,
-        chat.conversations,
+        projects.sessionsByProject,
+        chat.sessions,
       ),
-    [chat.conversations, projects.conversationsByProject, projects.projects],
+    [chat.sessions, projects.sessionsByProject, projects.projects],
   );
-  const unprojectedConversations = useMemo(
-    () => chat.conversations.filter((conversation) => !isProjectConversation(conversation, projectedConversationIds)),
-    [chat.conversations, projectedConversationIds],
+  const unprojectedSessions = useMemo(
+    () => chat.sessions.filter((session) => !isProjectSession(session, projectedSessionIds)),
+    [chat.sessions, projectedSessionIds],
   );
 
   function openDeliveryChat(delivery: HermesInboxMessage) {
     const targetProfile = delivery.profile || iris.selectedProfile;
-    const allConversationEntries = [
-      ...chat.conversations.map((conversation) => ({ profile: iris.selectedProfile, conversation })),
-      ...Object.entries(chat.conversationsByProfile).flatMap(([profileName, conversations]) =>
-        conversations.map((conversation) => ({ profile: profileName, conversation })),
+    const allSessionEntries = [
+      ...chat.sessions.map((session) => ({ profile: iris.selectedProfile, session })),
+      ...Object.entries(chat.sessionsByProfile).flatMap(([profileName, sessions]) =>
+        sessions.map((session) => ({ profile: profileName, session })),
       ),
     ];
-    const match = allConversationEntries.find(
-      ({ conversation }) => conversation.chatId === delivery.chatId || conversation.id === delivery.chatId,
+    const match = allSessionEntries.find(
+      ({ session }) => session.chatId === delivery.chatId || session.id === delivery.chatId,
     );
-    const conversationId = match?.conversation.id || (delivery.chatId.startsWith("conv_") ? delivery.chatId : "");
-    if (!conversationId) {
+    const sessionId = match?.session.id || (delivery.chatId.startsWith("session_") ? delivery.chatId : "");
+    if (!sessionId) {
       pushNotification({
         tone: "info",
         title: "Chat not found",
-        message: "Refresh conversations, then try opening this delivery again.",
+        message: "Refresh sessions, then try opening this delivery again.",
       });
       return;
     }
@@ -198,7 +158,7 @@ function App() {
     if (profileName !== iris.selectedProfile) {
       iris.selectProfile(profileName);
     }
-    void chat.loadConversation(conversationId, profileName);
+    void chat.loadSession(sessionId, profileName);
   }
 
   const commands = useMemo<CommandItem[]>(
@@ -210,17 +170,6 @@ function App() {
         shortcut: `⌘${index + 1}`,
         run: () => selectView(view),
       })),
-      ...(activeView === "chat"
-        ? [
-            {
-              id: "toggle-preview",
-              label: previewOpen ? "Hide Live Preview" : "Show Live Preview",
-              detail: "Toggle the artifact preview pane",
-              shortcut: "⌘\\",
-              run: togglePreviewPane,
-            },
-          ]
-        : []),
       {
         id: "refresh",
         label: "Refresh Iris Connection",
@@ -235,7 +184,7 @@ function App() {
         run: () => setOnboardingOpen(true),
       },
     ],
-    [activeView, previewOpen],
+    [activeView],
   );
 
   appCommandHandlerRef.current = (payload: string) => {
@@ -243,11 +192,11 @@ function App() {
     if (payload === "show" || payload === "command-menu") setCommandMenuOpen(true);
     if (payload === "new-chat") {
       setCommandMenuOpen(false);
-      window.dispatchEvent(new CustomEvent("iris://new-conversation"));
+      window.dispatchEvent(new CustomEvent("iris://new-session"));
     }
     if (payload === "search") {
       setCommandMenuOpen(false);
-      window.dispatchEvent(new CustomEvent("iris://open-conversation-search"));
+      window.dispatchEvent(new CustomEvent("iris://open-session-search"));
     }
   };
 
@@ -258,25 +207,7 @@ function App() {
         connected={iris.connected}
         error={iris.status?.error}
         isRefreshing={iris.isRefreshing}
-        previewOpen={previewVisible}
         primaryPane={renderPrimaryPane()}
-        previewPane={
-          <LivePreviewPane
-            artifact={activeArtifact}
-            artifacts={previewArtifacts}
-            document={previewDocument}
-            onArtifactNameChange={renameActiveArtifact}
-            onArtifactSelect={setActiveArtifactId}
-            onDeleteArtifact={deleteActiveArtifact}
-            onDuplicateArtifact={duplicateActiveArtifact}
-            onExportArtifact={exportActiveArtifact}
-            onModeChange={changeActiveArtifactMode}
-            onNewArtifact={createNewArtifact}
-            onPermissionChange={changeActiveArtifactPermissions}
-            onSaveAsSkill={saveActiveArtifactAsSkill}
-            onSourceChange={updateActiveArtifactSource}
-          />
-        }
         topbarPane={
           activeView === "agents" ? (
             <AgentTopbar
@@ -294,17 +225,17 @@ function App() {
         selectedProfile={iris.selectedProfile}
         status={iris.status}
         coreApiUrl={iris.runtimeConfig.coreApiUrl}
-        conversations={chat.conversations}
-        conversationsByProfile={chat.conversationsByProfile}
-        conversationReadStates={chat.conversationReadStates}
+        sessions={chat.sessions}
+        sessionsByProfile={chat.sessionsByProfile}
+        sessionReadStates={chat.sessionReadStates}
         projects={projects.projects}
         projectAgents={projects.agents}
-        conversationsByProject={sidebarConversationsByProject}
-        projectConversationsLoading={projects.projectConversationsLoading}
-        projectConversationsLoaded={projects.projectConversationsLoaded}
+        sessionsByProject={sidebarSessionsByProject}
+        projectSessionsLoading={projects.projectSessionsLoading}
+        projectSessionsLoaded={projects.projectSessionsLoaded}
         projectErrors={projects.projectErrors}
         collapsedProjects={projects.collapsedProjects}
-        unprojectedConversations={unprojectedConversations}
+        unprojectedSessions={unprojectedSessions}
         selectedProjectId={projects.selectedProjectId}
         onCreateProject={async (payload) => {
           const project = await projects.createProject(payload);
@@ -326,15 +257,15 @@ function App() {
         }}
         onToggleProjectCollapsed={projects.toggleProjectCollapsed}
         onRefreshProjects={() => void projects.refreshProjects()}
-        onRefreshProjectConversations={(projectId) => void projects.refreshProjectConversations(projectId)}
-        conversationsLoadedByProfile={chat.conversationsLoadedByProfile}
-        conversationsLoading={chat.conversationsLoading}
-        conversationsLoadingByProfile={chat.conversationsLoadingByProfile}
+        onRefreshProjectSessions={(projectId) => void projects.refreshProjectSessions(projectId)}
+        sessionsLoadedByProfile={chat.sessionsLoadedByProfile}
+        sessionsLoading={chat.sessionsLoading}
+        sessionsLoadingByProfile={chat.sessionsLoadingByProfile}
         historyError={chat.historyError}
         historyErrorsByProfile={chat.historyErrorsByProfile}
-        selectedConversationId={chat.selectedConversationId}
-        activeConversationIds={chat.activeConversationIds}
-        onNewConversation={(profileName, projectId) => {
+        selectedSessionId={chat.selectedSessionId}
+        activeSessionIds={chat.activeSessionIds}
+        onNewSession={(profileName, projectId) => {
           setActiveView("chat");
           if (projectId) {
             const project = projects.projects.find((item) => item.id === projectId);
@@ -342,9 +273,9 @@ function App() {
             projects.selectProject(projectId);
             if (agent && agent.runtimeProfile !== iris.selectedProfile) {
               iris.selectProfile(agent.runtimeProfile);
-              chat.startNewConversation(agent.runtimeProfile);
+              chat.startNewSession(agent.runtimeProfile);
             } else {
-              chat.startNewConversation(profileName || iris.selectedProfile);
+              chat.startNewSession(profileName || iris.selectedProfile);
             }
             return;
           }
@@ -352,9 +283,8 @@ function App() {
           if (profileName && profileName !== iris.selectedProfile) {
             iris.selectProfile(profileName);
           }
-          chat.startNewConversation(profileName);
+          chat.startNewSession(profileName);
         }}
-        onPreviewToggle={togglePreviewPane}
         onEditProfile={(profileName) => {
           if (profileName !== iris.selectedProfile) {
             iris.selectProfile(profileName);
@@ -365,10 +295,10 @@ function App() {
         }}
         onProfileAction={runProfileActionWithNotice}
         onRefresh={() => void refreshWithNotice()}
-        onRefreshConversations={(profileName) => void chat.refreshConversations({ profileName })}
-        onDeleteConversation={async (profileName, conversationId) => {
-          const message = await chat.deleteConversation(profileName, conversationId);
-          const failed = isConversationActionFailure(message);
+        onRefreshSessions={(profileName) => void chat.refreshSessions({ profileName })}
+        onDeleteSession={async (profileName, sessionId) => {
+          const message = await chat.deleteSession(profileName, sessionId);
+          const failed = isSessionActionFailure(message);
           pushNotification({
             tone: failed ? "error" : "success",
             title: failed ? "Session delete failed" : "Session deleted",
@@ -376,14 +306,14 @@ function App() {
           });
           if (!failed) {
             for (const project of projects.projects) {
-              void projects.refreshProjectConversations(project.id);
+              void projects.refreshProjectSessions(project.id);
             }
           }
           return message;
         }}
-        onRenameConversation={async (profileName, conversationId, title) => {
-          const message = await chat.renameConversation(profileName, conversationId, title);
-          const failed = isConversationActionFailure(message);
+        onRenameSession={async (profileName, sessionId, title) => {
+          const message = await chat.renameSession(profileName, sessionId, title);
+          const failed = isSessionActionFailure(message);
           pushNotification({
             tone: failed ? "error" : "success",
             title: failed ? "Session rename failed" : "Session renamed",
@@ -391,21 +321,21 @@ function App() {
           });
           return message;
         }}
-        onSelectConversation={(profileName, conversationId) => {
+        onSelectSession={(profileName, sessionId) => {
           setActiveView("chat");
           projects.selectProject(null);
           if (profileName !== iris.selectedProfile) {
             iris.selectProfile(profileName);
           }
-          void chat.loadConversation(conversationId, profileName);
+          void chat.loadSession(sessionId, profileName);
         }}
-        onSelectProjectConversation={(projectId, profileName, conversationId) => {
+        onSelectProjectSession={(projectId, profileName, sessionId) => {
           setActiveView("chat");
           projects.selectProject(projectId);
           if (profileName !== iris.selectedProfile) {
             iris.selectProfile(profileName);
           }
-          void chat.loadConversation(conversationId, profileName);
+          void chat.loadSession(sessionId, profileName);
         }}
         onSelectProfile={(profileName) => {
           iris.selectProfile(profileName);
@@ -452,11 +382,6 @@ function App() {
     setOnboardingOpen(false);
   }
 
-  function togglePreviewPane() {
-    if (activeView !== "chat") return;
-    setPreviewOpen((open) => !open);
-  }
-
   function selectView(view: View) {
     setActiveView(view);
     if (view === "agents") {
@@ -481,75 +406,6 @@ function App() {
       message,
     });
     return message;
-  }
-
-  function updateActiveArtifact(updater: (artifact: PreviewArtifact) => PreviewArtifact) {
-    setPreviewArtifacts((current) =>
-      current.map((artifact) => (artifact.id === activeArtifact.id ? updater(artifact) : artifact)),
-    );
-  }
-
-  function updateActiveArtifactSource(source: string) {
-    updateActiveArtifact((artifact) => ({ ...artifact, source, updatedAt: Date.now() }));
-  }
-
-  function renameActiveArtifact(name: string) {
-    updateActiveArtifact((artifact) => ({ ...artifact, name, updatedAt: Date.now() }));
-  }
-
-  function changeActiveArtifactPermissions(permissions: PreviewPermissions) {
-    updateActiveArtifact((artifact) => ({ ...artifact, permissions, updatedAt: Date.now() }));
-  }
-
-  function changeActiveArtifactMode(mode: PreviewMode) {
-    updateActiveArtifact((artifact) => ({
-      ...artifact,
-      mode,
-      source: artifact.mode === mode ? artifact.source : defaultPreviewSource(mode),
-      name: artifact.mode === mode ? artifact.name : renameForMode(artifact.name, mode),
-      permissions: {
-        ...artifact.permissions,
-        scripts: mode === "react" || mode === "diagram" ? true : artifact.permissions.scripts,
-      },
-      updatedAt: Date.now(),
-    }));
-  }
-
-  function createNewArtifact() {
-    const artifact = createPreviewArtifact(activeArtifact.mode);
-    setPreviewArtifacts((current) => [...current, artifact]);
-    setActiveArtifactId(artifact.id);
-  }
-
-  function duplicateActiveArtifact() {
-    const artifact = duplicatePreviewArtifact(activeArtifact);
-    setPreviewArtifacts((current) => [...current, artifact]);
-    setActiveArtifactId(artifact.id);
-  }
-
-  function deleteActiveArtifact() {
-    if (previewArtifacts.length < 2) return;
-    const nextArtifacts = previewArtifacts.filter((artifact) => artifact.id !== activeArtifact.id);
-    setPreviewArtifacts(nextArtifacts);
-    setActiveArtifactId(nextArtifacts[0].id);
-  }
-
-  function saveActiveArtifactAsSkill() {
-    const skill = createSkillArtifact(activeArtifact);
-    setPreviewArtifacts((current) => [...current, skill]);
-    setActiveArtifactId(skill.id);
-  }
-
-  function exportActiveArtifact() {
-    const extension = extensionForMode(activeArtifact.mode);
-    const filename = ensureExtension(activeArtifact.name || `artifact.${extension}`, extension);
-    const blob = new Blob([activeArtifact.source], { type: `${mimeForMode(activeArtifact.mode)};charset=utf-8` });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = filename;
-    link.click();
-    window.setTimeout(() => URL.revokeObjectURL(url), 0);
   }
 
   function renderPrimaryPane() {
@@ -597,7 +453,7 @@ function App() {
     return (
       <ChatView
         messages={chat.messages}
-        selectedConversationId={chat.selectedConversationId}
+        selectedSessionId={chat.selectedSessionId}
         input={chat.input}
         onInput={chat.setInput}
         onSend={(options) =>
@@ -611,7 +467,7 @@ function App() {
           }).then((sent) => {
             const projectId = (options?.projectId ?? projects.selectedProjectId) || null;
             if (sent && projectId) {
-              window.setTimeout(() => void projects.refreshProjectConversations(projectId), 1400);
+              window.setTimeout(() => void projects.refreshProjectSessions(projectId), 1400);
             }
             return sent;
           })
@@ -649,22 +505,6 @@ function App() {
   }
 }
 
-function renameForMode(name: string, mode: PreviewMode) {
-  return ensureExtension(name.replace(/\.[^.]+$/, ""), extensionForMode(mode));
-}
-
-function ensureExtension(name: string, extension: string) {
-  return name.endsWith(`.${extension}`) ? name : `${name}.${extension}`;
-}
-
-function loadPreviewOpenPreference() {
-  return loadBooleanValue(storageKeys.previewOpen);
-}
-
-function savePreviewOpenPreference(open: boolean) {
-  saveBooleanValue(storageKeys.previewOpen, open);
-}
-
 function profileActionTitle(action: ProfileAction) {
   if (action === "create") return "Agent created";
   if (action === "clone") return "Agent duplicated";
@@ -677,7 +517,7 @@ function isProfileActionFailure(message: string) {
   return /\b(error|failed|cannot|already exists|does not exist|enter|invalid)\b/i.test(message);
 }
 
-function isConversationActionFailure(message: string) {
+function isSessionActionFailure(message: string) {
   return /\b(error|failed|cannot|could not|does not exist|not found|not allowed|enter|invalid|legacy|http|urlopen|connection refused|refused)\b/i.test(message);
 }
 

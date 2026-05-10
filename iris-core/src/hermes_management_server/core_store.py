@@ -20,10 +20,10 @@ from .attachment_types import (
     normalize_attachment_kind,
     normalize_attachment_mime_type,
 )
-from .models import ConversationMessage, ConversationSummary, ProfileSummary
+from .models import SessionMessage, SessionSummary, ProfileSummary
 
 
-CORE_SCHEMA_VERSION = 6
+CORE_SCHEMA_VERSION = 7
 DEFAULT_RUNTIME_ID = "runtime_local_hermes"
 PROFILE_SLUG_RE = re.compile(r"[^A-Za-z0-9_.-]+")
 DEFAULT_MAX_ATTACHMENT_SIZE_MB = 250
@@ -34,9 +34,12 @@ DEVICE_METADATA_BLOCKED_KEY_PARTS = ("token", "secret", "authorization", "passwo
 DUPLICATE_RUNTIME_TABLES = (
     "agents",
     "conversations",
+    "sessions",
     "conversation_runtime_links",
+    "session_runtime_links",
     "message_events",
     "conversation_messages",
+    "session_messages",
     "automations",
 )
 CORE_OWNED_TABLES = (
@@ -48,11 +51,11 @@ CORE_OWNED_TABLES = (
     "attachments",
     "message_attachments",
     "projects",
-    "project_conversations",
-    "conversation_read_state",
+    "project_sessions",
+    "session_read_state",
 )
-CONVERSATION_READ_STATES = {"read", "unread"}
-MAX_CONVERSATION_READ_STATE_IDS = 500
+SESSION_READ_STATES = {"read", "unread"}
+MAX_SESSION_READ_STATE_IDS = 500
 
 logger = logging.getLogger(__name__)
 
@@ -104,6 +107,93 @@ def loads(value: str | None, fallback: Any = None) -> Any:
         return {} if fallback is None else fallback
 
 
+def sqlite_table_names(connection: sqlite3.Connection) -> set[str]:
+    rows = connection.execute(
+        "select name from sqlite_master where type = 'table' and name not like 'sqlite_%'"
+    ).fetchall()
+    return {str(row["name"]) for row in rows}
+
+
+def sqlite_column_names(connection: sqlite3.Connection, table: str) -> set[str]:
+    rows = connection.execute(f"pragma table_info({quote_identifier(table)})").fetchall()
+    return {str(row["name"]) for row in rows}
+
+
+def quote_identifier(value: str) -> str:
+    return '"' + value.replace('"', '""') + '"'
+
+
+def migrate_legacy_session_schema(connection: sqlite3.Connection) -> None:
+    tables = sqlite_table_names(connection)
+    connection.executescript(
+        """
+        drop index if exists idx_attachments_conversation;
+        drop index if exists idx_project_conversations_project_updated;
+        drop index if exists idx_project_conversations_conversation;
+        drop index if exists idx_conversation_read_state_state;
+        """
+    )
+
+    if "project_conversations" in tables:
+        if "project_sessions" not in tables:
+            connection.execute("alter table project_conversations rename to project_sessions")
+            tables.remove("project_conversations")
+            tables.add("project_sessions")
+        else:
+            connection.execute(
+                """
+                insert or ignore into project_sessions(
+                  project_id, session_id, agent_id, runtime_id, runtime_profile,
+                  external_session_id, external_chat_id, created_at, updated_at, metadata_json
+                )
+                select project_id, conversation_id, agent_id, runtime_id, runtime_profile,
+                  external_session_id, external_chat_id, created_at, updated_at, metadata_json
+                from project_conversations
+                """
+            )
+            connection.execute("drop table project_conversations")
+            tables.remove("project_conversations")
+
+    if "project_sessions" in tables:
+        columns = sqlite_column_names(connection, "project_sessions")
+        if "conversation_id" in columns and "session_id" not in columns:
+            connection.execute("alter table project_sessions rename column conversation_id to session_id")
+
+    if "conversation_read_state" in tables:
+        if "session_read_state" not in tables:
+            connection.execute("alter table conversation_read_state rename to session_read_state")
+            tables.remove("conversation_read_state")
+            tables.add("session_read_state")
+        else:
+            connection.execute(
+                """
+                insert or replace into session_read_state(
+                  session_id, state, created_at, updated_at, metadata_json
+                )
+                select conversation_id, state, created_at, updated_at, metadata_json
+                from conversation_read_state
+                """
+            )
+            connection.execute("drop table conversation_read_state")
+            tables.remove("conversation_read_state")
+
+    if "session_read_state" in tables:
+        columns = sqlite_column_names(connection, "session_read_state")
+        if "conversation_id" in columns and "session_id" not in columns:
+            connection.execute("alter table session_read_state rename column conversation_id to session_id")
+
+    if "attachments" in tables:
+        columns = sqlite_column_names(connection, "attachments")
+        if "conversation_id" in columns and "session_id" not in columns:
+            connection.execute("alter table attachments rename column conversation_id to session_id")
+        elif "conversation_id" in columns and "session_id" in columns:
+            connection.execute("update attachments set session_id = coalesce(session_id, conversation_id)")
+            try:
+                connection.execute("alter table attachments drop column conversation_id")
+            except sqlite3.Error as exc:
+                logger.warning("Could not drop legacy attachments.conversation_id column.", exc_info=exc)
+
+
 def stable_hash(*parts: str, length: int = 18) -> str:
     return hashlib.sha256("|".join(parts).encode("utf-8")).hexdigest()[:length]
 
@@ -117,12 +207,12 @@ def agent_id_for_profile(runtime_id: str, profile: str) -> str:
     return f"agent_{stable_hash(runtime_id, profile, length=10)}_{safe_profile}"
 
 
-def conversation_id_for_runtime(runtime_id: str, profile: str, external_id: str) -> str:
-    return f"conv_{stable_hash(runtime_id, profile, external_id, length=22)}"
+def session_id_for_runtime(runtime_id: str, profile: str, external_id: str) -> str:
+    return f"session_{stable_hash(runtime_id, profile, external_id, length=22)}"
 
 
-def chat_id_for_conversation(conversation_id: str) -> str:
-    return f"core-{conversation_id}"
+def chat_id_for_session(session_id: str) -> str:
+    return f"core-{session_id}"
 
 
 def clamp_int(value: Any, *, default: int, minimum: int, maximum: int) -> int:
@@ -170,6 +260,7 @@ class CoreStore:
 
     def _initialize(self, *, auto_migrate: bool) -> None:
         with self.connect() as connection:
+            migrate_legacy_session_schema(connection)
             connection.executescript(
                 """
                 create table if not exists schema_meta (
@@ -230,7 +321,7 @@ class CoreStore:
                   owner_device_id text,
                   runtime_id text not null,
                   profile text not null,
-                  conversation_id text,
+                  session_id text,
                   message_id text,
                   name text not null,
                   mime_type text not null,
@@ -245,8 +336,8 @@ class CoreStore:
                   metadata_json text not null
                 );
 
-                create index if not exists idx_attachments_conversation
-                  on attachments(runtime_id, profile, conversation_id);
+                create index if not exists idx_attachments_session
+                  on attachments(runtime_id, profile, session_id);
 
                 create index if not exists idx_attachments_message
                   on attachments(runtime_id, profile, message_id);
@@ -277,9 +368,9 @@ class CoreStore:
                   metadata_json text not null
                 );
 
-                create table if not exists project_conversations (
+                create table if not exists project_sessions (
                   project_id text not null,
-                  conversation_id text not null,
+                  session_id text not null,
                   agent_id text not null,
                   runtime_id text not null,
                   runtime_profile text not null,
@@ -288,26 +379,26 @@ class CoreStore:
                   created_at integer not null,
                   updated_at integer not null,
                   metadata_json text not null,
-                  primary key (project_id, conversation_id),
+                  primary key (project_id, session_id),
                   foreign key (project_id) references projects(id) on delete cascade
                 );
 
-                create index if not exists idx_project_conversations_project_updated
-                  on project_conversations(project_id, updated_at desc);
+                create index if not exists idx_project_sessions_project_updated
+                  on project_sessions(project_id, updated_at desc);
 
-                create index if not exists idx_project_conversations_conversation
-                  on project_conversations(conversation_id);
+                create index if not exists idx_project_sessions_session
+                  on project_sessions(session_id);
 
-                create table if not exists conversation_read_state (
-                  conversation_id text primary key,
+                create table if not exists session_read_state (
+                  session_id text primary key,
                   state text not null,
                   created_at integer not null,
                   updated_at integer not null,
                   metadata_json text not null
                 );
 
-                create index if not exists idx_conversation_read_state_state
-                  on conversation_read_state(state, updated_at desc);
+                create index if not exists idx_session_read_state_state
+                  on session_read_state(state, updated_at desc);
                 """
             )
         if auto_migrate:
@@ -481,50 +572,50 @@ class CoreStore:
             )
         return self.get_project(project_id)
 
-    def link_project_conversation(
+    def link_project_session(
         self,
         project_id: str,
-        conversation: dict[str, Any],
+        session: dict[str, Any],
         *,
         metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         if not self.get_project(project_id):
             raise ValueError("Project was not found.")
-        conversation_id = str(conversation.get("id") or "").strip()
-        if not conversation_id:
+        session_id = str(session.get("id") or "").strip()
+        if not session_id:
             raise ValueError("Session id is required.")
         timestamp = now()
-        runtime_id = str(conversation.get("runtimeId") or DEFAULT_RUNTIME_ID)
-        runtime_profile = str(conversation.get("runtimeProfile") or "default")
-        external_session_id = str(conversation.get("externalSessionId") or "")
-        external_chat_id = str(conversation.get("externalChatId") or "")
+        runtime_id = str(session.get("runtimeId") or DEFAULT_RUNTIME_ID)
+        runtime_profile = str(session.get("runtimeProfile") or "default")
+        external_session_id = str(session.get("externalSessionId") or "")
+        external_chat_id = str(session.get("externalChatId") or "")
         with self.connect() as connection:
             existing = connection.execute(
                 """
-                select created_at from project_conversations
-                where project_id = ? and conversation_id = ?
+                select created_at from project_sessions
+                where project_id = ? and session_id = ?
                 """,
-                (project_id, conversation_id),
+                (project_id, session_id),
             ).fetchone()
             if external_chat_id:
                 connection.execute(
                     """
-                    delete from project_conversations
+                    delete from project_sessions
                     where project_id = ?
                       and runtime_id = ?
                       and runtime_profile = ?
                       and external_chat_id = ?
-                      and conversation_id <> ?
+                      and session_id <> ?
                     """,
-                    (project_id, runtime_id, runtime_profile, external_chat_id, conversation_id),
+                    (project_id, runtime_id, runtime_profile, external_chat_id, session_id),
                 )
             connection.execute(
                 """
-                insert into project_conversations(
-                  project_id, conversation_id, agent_id, runtime_id, runtime_profile,
+                insert into project_sessions(
+                  project_id, session_id, agent_id, runtime_id, runtime_profile,
                   external_session_id, external_chat_id, created_at, updated_at, metadata_json
                 ) values(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                on conflict(project_id, conversation_id) do update set
+                on conflict(project_id, session_id) do update set
                   agent_id = excluded.agent_id,
                   runtime_id = excluded.runtime_id,
                   runtime_profile = excluded.runtime_profile,
@@ -535,8 +626,8 @@ class CoreStore:
                 """,
                 (
                     project_id,
-                    conversation_id,
-                    str(conversation.get("agentId") or ""),
+                    session_id,
+                    str(session.get("agentId") or ""),
                     runtime_id,
                     runtime_profile,
                     external_session_id,
@@ -546,83 +637,83 @@ class CoreStore:
                     dumps(metadata or {}),
                 ),
             )
-        link = self.project_conversation_link(project_id, conversation_id)
+        link = self.project_session_link(project_id, session_id)
         if not link:
-            raise ValueError("Project conversation link could not be stored.")
+            raise ValueError("Project session link could not be stored.")
         return link
 
-    def unlink_project_conversation(self, project_id: str, conversation_id: str) -> None:
+    def unlink_project_session(self, project_id: str, session_id: str) -> None:
         with self.connect() as connection:
             connection.execute(
-                "delete from project_conversations where project_id = ? and conversation_id = ?",
-                (project_id, conversation_id),
+                "delete from project_sessions where project_id = ? and session_id = ?",
+                (project_id, session_id),
             )
 
-    def list_project_conversation_links(self, project_id: str) -> list[dict[str, Any]]:
+    def list_project_session_links(self, project_id: str) -> list[dict[str, Any]]:
         with self.connect() as connection:
             rows = connection.execute(
                 """
-                select * from project_conversations
+                select * from project_sessions
                 where project_id = ?
-                order by updated_at desc, conversation_id
+                order by updated_at desc, session_id
                 """,
                 (project_id,),
             ).fetchall()
-        return [project_conversation_link_from_row(row) for row in rows]
+        return [project_session_link_from_row(row) for row in rows]
 
-    def project_conversation_link(self, project_id: str, conversation_id: str) -> dict[str, Any] | None:
+    def project_session_link(self, project_id: str, session_id: str) -> dict[str, Any] | None:
         with self.connect() as connection:
             row = connection.execute(
                 """
-                select * from project_conversations
-                where project_id = ? and conversation_id = ?
+                select * from project_sessions
+                where project_id = ? and session_id = ?
                 """,
-                (project_id, conversation_id),
+                (project_id, session_id),
             ).fetchone()
-        return project_conversation_link_from_row(row) if row else None
+        return project_session_link_from_row(row) if row else None
 
-    def project_for_conversation(self, conversation_id: str) -> dict[str, Any] | None:
+    def project_for_session(self, session_id: str) -> dict[str, Any] | None:
         with self.connect() as connection:
             row = connection.execute(
                 """
                 select p.* from projects p
-                join project_conversations pc on pc.project_id = p.id
-                where pc.conversation_id = ? and p.archived_at is null
+                join project_sessions pc on pc.project_id = p.id
+                where pc.session_id = ? and p.archived_at is null
                 order by pc.updated_at desc
                 limit 1
                 """,
-                (conversation_id,),
+                (session_id,),
             ).fetchone()
         return project_from_row(row) if row else None
 
-    def upsert_conversation_read_state(
+    def upsert_session_read_state(
         self,
-        conversation_id: str,
+        session_id: str,
         state: str,
         *,
         metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        clean_id = conversation_id.strip()
+        clean_id = session_id.strip()
         clean_state = state.strip().lower()
         if not clean_id:
             raise ValueError("Session id is required.")
-        if clean_state not in CONVERSATION_READ_STATES:
+        if clean_state not in SESSION_READ_STATES:
             raise ValueError("Session read state must be read or unread.")
         timestamp = now()
         with self.connect() as connection:
             existing = connection.execute(
                 """
-                select created_at from conversation_read_state
-                where conversation_id = ?
+                select created_at from session_read_state
+                where session_id = ?
                 """,
                 (clean_id,),
             ).fetchone()
             connection.execute(
                 """
-                insert into conversation_read_state(
-                  conversation_id, state, created_at, updated_at, metadata_json
+                insert into session_read_state(
+                  session_id, state, created_at, updated_at, metadata_json
                 ) values(?, ?, ?, ?, ?)
-                on conflict(conversation_id) do update set
+                on conflict(session_id) do update set
                   state = excluded.state,
                   updated_at = excluded.updated_at,
                   metadata_json = excluded.metadata_json
@@ -635,59 +726,59 @@ class CoreStore:
                     dumps(metadata or {}),
                 ),
             )
-        read_state = self.conversation_read_state(clean_id)
+        read_state = self.session_read_state(clean_id)
         if not read_state:
             raise ValueError("Session read state could not be stored.")
         return read_state
 
-    def conversation_read_state(self, conversation_id: str) -> dict[str, Any] | None:
+    def session_read_state(self, session_id: str) -> dict[str, Any] | None:
         with self.connect() as connection:
             row = connection.execute(
-                "select * from conversation_read_state where conversation_id = ?",
-                (conversation_id,),
+                "select * from session_read_state where session_id = ?",
+                (session_id,),
             ).fetchone()
-        return conversation_read_state_from_row(row) if row else None
+        return session_read_state_from_row(row) if row else None
 
-    def conversation_read_states(self, conversation_ids: list[str]) -> dict[str, dict[str, Any]]:
-        clean_ids = sorted({conversation_id for conversation_id in conversation_ids if conversation_id})
+    def session_read_states(self, session_ids: list[str]) -> dict[str, dict[str, Any]]:
+        clean_ids = sorted({session_id for session_id in session_ids if session_id})
         if not clean_ids:
             return {}
-        if len(clean_ids) > MAX_CONVERSATION_READ_STATE_IDS:
+        if len(clean_ids) > MAX_SESSION_READ_STATE_IDS:
             raise ValueError(
-                f"At most {MAX_CONVERSATION_READ_STATE_IDS} conversation read states may be requested at once."
+                f"At most {MAX_SESSION_READ_STATE_IDS} session read states may be requested at once."
             )
         with self.connect() as connection:
             rows = connection.execute(
                 f"""
-                select * from conversation_read_state
-                where conversation_id in ({', '.join('?' for _ in clean_ids)})
+                select * from session_read_state
+                where session_id in ({', '.join('?' for _ in clean_ids)})
                 """,
                 clean_ids,
             ).fetchall()
         return {
-            state["conversationId"]: state
-            for state in (conversation_read_state_from_row(row) for row in rows)
+            state["sessionId"]: state
+            for state in (session_read_state_from_row(row) for row in rows)
         }
 
-    def delete_conversation_overlays(
+    def delete_session_overlays(
         self,
         *,
-        conversation_id: str,
+        session_id: str,
         runtime_id: str,
         profile: str,
         chat_id: str = "",
     ) -> None:
-        clean_id = conversation_id.strip()
+        clean_id = session_id.strip()
         clean_chat_id = chat_id.strip()
         timestamp = now()
         with self.connect() as connection:
-            connection.execute("delete from project_conversations where conversation_id = ?", (clean_id,))
-            connection.execute("delete from conversation_read_state where conversation_id = ?", (clean_id,))
+            connection.execute("delete from project_sessions where session_id = ?", (clean_id,))
+            connection.execute("delete from session_read_state where session_id = ?", (clean_id,))
             connection.execute(
                 """
                 update attachments
                 set deleted_at = coalesce(deleted_at, ?), updated_at = ?
-                where runtime_id = ? and profile = ? and conversation_id = ? and deleted_at is null
+                where runtime_id = ? and profile = ? and session_id = ? and deleted_at is null
                 """,
                 (timestamp, timestamp, runtime_id, profile, clean_id),
             )
@@ -874,7 +965,7 @@ class CoreStore:
         size_bytes: int,
         sha256: str,
         owner_device_id: str = "",
-        conversation_id: str = "",
+        session_id: str = "",
         message_id: str = "",
         metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
@@ -898,7 +989,7 @@ class CoreStore:
             connection.execute(
                 """
                 insert into attachments(
-                  id, owner_device_id, runtime_id, profile, conversation_id, message_id,
+                  id, owner_device_id, runtime_id, profile, session_id, message_id,
                   name, mime_type, kind, size_bytes, sha256, storage_kind, storage_path,
                   created_at, updated_at, deleted_at, metadata_json
                 ) values(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, null, ?)
@@ -908,7 +999,7 @@ class CoreStore:
                     owner_device_id or "",
                     runtime_id,
                     profile,
-                    conversation_id or None,
+                    session_id or None,
                     message_id or None,
                     name.strip() or "attachment",
                     normalized_mime,
@@ -933,7 +1024,7 @@ class CoreStore:
         source_path: Path,
         runtime_id: str,
         profile: str,
-        conversation_id: str,
+        session_id: str,
         message_id: str,
         name: str = "",
         kind: str = "",
@@ -968,7 +1059,7 @@ class CoreStore:
                 source_path=temp_path,
                 runtime_id=runtime_id,
                 profile=profile,
-                conversation_id=conversation_id,
+                session_id=session_id,
                 message_id=message_id,
                 name=filename,
                 mime_type=normalized_mime,
@@ -1018,7 +1109,7 @@ class CoreStore:
         *,
         runtime_id: str,
         profile: str,
-        conversation_id: str,
+        session_id: str,
         chat_id: str,
         message_id: str,
         refs: list[Any],
@@ -1043,17 +1134,17 @@ class CoreStore:
                 ).fetchone()
                 if not row:
                     raise ValueError("Attachment was not found for this profile.")
-                if row["conversation_id"] and str(row["conversation_id"]) != conversation_id:
-                    raise ValueError("Attachment belongs to a different conversation.")
+                if row["session_id"] and str(row["session_id"]) != session_id:
+                    raise ValueError("Attachment belongs to a different session.")
                 connection.execute(
                     """
                     update attachments
-                    set conversation_id = coalesce(conversation_id, ?),
+                    set session_id = coalesce(session_id, ?),
                         message_id = coalesce(message_id, ?),
                         updated_at = ?
                     where id = ?
                     """,
-                    (conversation_id, message_id, timestamp, attachment_id),
+                    (session_id, message_id, timestamp, attachment_id),
                 )
                 connection.execute(
                     """
@@ -1279,9 +1370,9 @@ def device_from_row(row: sqlite3.Row) -> dict[str, Any]:
     }
 
 
-def conversation_read_state_from_row(row: sqlite3.Row) -> dict[str, Any]:
+def session_read_state_from_row(row: sqlite3.Row) -> dict[str, Any]:
     return {
-        "conversationId": str(row["conversation_id"]),
+        "sessionId": str(row["session_id"]),
         "state": str(row["state"]),
         "createdAt": int(row["created_at"]),
         "updatedAt": int(row["updated_at"]),
@@ -1330,7 +1421,7 @@ def attachment_from_row(row: sqlite3.Row, *, include_storage: bool = False) -> d
         "id": str(row["id"]),
         "runtimeId": str(row["runtime_id"]),
         "profile": str(row["profile"]),
-        "conversationId": str(row["conversation_id"] or ""),
+        "sessionId": str(row["session_id"] or ""),
         "messageId": str(row["message_id"] or ""),
         "name": str(row["name"]),
         "kind": str(row["kind"]),
@@ -1400,10 +1491,10 @@ def project_from_row(row: sqlite3.Row) -> dict[str, Any]:
     }
 
 
-def project_conversation_link_from_row(row: sqlite3.Row) -> dict[str, Any]:
+def project_session_link_from_row(row: sqlite3.Row) -> dict[str, Any]:
     return {
         "projectId": str(row["project_id"]),
-        "conversationId": str(row["conversation_id"]),
+        "sessionId": str(row["session_id"]),
         "agentId": str(row["agent_id"]),
         "runtimeId": str(row["runtime_id"]),
         "runtimeProfile": str(row["runtime_profile"]),
@@ -1415,10 +1506,10 @@ def project_conversation_link_from_row(row: sqlite3.Row) -> dict[str, Any]:
     }
 
 
-def core_message_from_hermes(message: ConversationMessage) -> dict[str, Any]:
+def core_message_from_hermes(message: SessionMessage) -> dict[str, Any]:
     return {
         "id": message.id,
-        "conversationId": message.sessionId,
+        "sessionId": message.sessionId,
         "role": message.role,
         "content": message.content,
         "status": "completed",
@@ -1459,29 +1550,29 @@ def agent_from_profile_summary(runtime: dict[str, Any], profile: ProfileSummary,
     }
 
 
-def conversation_from_runtime_summary(agent: dict[str, Any], conversation: ConversationSummary) -> dict[str, Any]:
+def session_from_runtime_summary(agent: dict[str, Any], session: SessionSummary) -> dict[str, Any]:
     runtime_id = str(agent["runtimeId"])
     profile = str(agent["runtimeProfile"])
-    external_session_id = conversation.id
-    external_chat_id = conversation.chatId or str((conversation.origin or {}).get("chat_id") or "")
+    external_session_id = session.id
+    external_chat_id = session.chatId or str((session.origin or {}).get("chat_id") or "")
     external_id = external_session_id or external_chat_id
-    timestamp = int(conversation.lastActiveAt or conversation.endedAt or conversation.startedAt or now())
-    created_at = int(conversation.startedAt or timestamp)
+    timestamp = int(session.lastActiveAt or session.endedAt or session.startedAt or now())
+    created_at = int(session.startedAt or timestamp)
     metadata = {
-        "source": conversation.source,
-        "model": conversation.model,
-        "preview": conversation.preview,
-        "messageCount": conversation.messageCount,
-        "startedAt": conversation.startedAt,
-        "endedAt": conversation.endedAt,
-        "lastActiveAt": conversation.lastActiveAt,
+        "source": session.source,
+        "model": session.model,
+        "preview": session.preview,
+        "messageCount": session.messageCount,
+        "startedAt": session.startedAt,
+        "endedAt": session.endedAt,
+        "lastActiveAt": session.lastActiveAt,
         "runtimeProfile": profile,
     }
     return {
-        "id": conversation_id_for_runtime(runtime_id, profile, external_id),
+        "id": session_id_for_runtime(runtime_id, profile, external_id),
         "agentId": str(agent["id"]),
-        "title": conversation.title or conversation.preview or "Untitled session",
-        "summary": conversation.preview or "",
+        "title": session.title or session.preview or "Untitled session",
+        "summary": session.preview or "",
         "createdAt": created_at,
         "updatedAt": timestamp,
         "archivedAt": None,
@@ -1491,11 +1582,11 @@ def conversation_from_runtime_summary(agent: dict[str, Any], conversation: Conve
         "externalSessionId": external_session_id,
         "externalChatId": external_chat_id,
         "externalThreadId": "",
-        "origin": conversation.origin or {},
+        "origin": session.origin or {},
     }
 
 
-def draft_conversation(
+def draft_session(
     agent: dict[str, Any],
     *,
     title: str,
@@ -1514,7 +1605,7 @@ def draft_conversation(
         **(metadata or {}),
     }
     return {
-        "id": conversation_id_for_runtime(runtime_id, profile, external_id),
+        "id": session_id_for_runtime(runtime_id, profile, external_id),
         "agentId": str(agent["id"]),
         "title": title or "New session",
         "summary": "",

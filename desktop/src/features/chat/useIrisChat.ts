@@ -2,31 +2,31 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { Message, MessageAttachment } from "../../app/types";
 import {
   coreEventToInboxMessage,
-  deleteIrisConversation,
-  getIrisConversationDetail,
-  getIrisConversations,
-  renameIrisConversation,
+  deleteIrisSession,
+  getIrisSessionDetail,
+  getIrisSessions,
+  renameIrisSession,
 } from "../../lib/irisRuntime";
 import {
   agentUICoreEventStreamUrl,
   cancelAgentUICoreMessage,
-  createAgentUICoreConversation,
+  createAgentUICoreSession,
   getAgentUICoreEvents,
   getAgentUICoreAgentForProfile,
   sendAgentUICoreMessage,
-  updateAgentUICoreConversationReadState,
+  updateAgentUICoreSessionReadState,
   type AgentUICoreEvent,
   type CoreMetadata,
 } from "../../lib/agentuiCore";
 import type {
-  HermesConversation,
+  HermesSession,
   HermesInboxMessage,
   HermesModelSelection,
   HermesRuntimeConfig,
 } from "../../types/hermes";
 import { compactText } from "../../shared/strings";
 import { AttachmentUploadError, formatPromptWithAttachments, uploadAttachmentsForSend } from "./chatAttachments";
-import type { PendingProfileConversationSelection, SendMessageOptions } from "./chatTypes";
+import type { PendingProfileSessionSelection, SendMessageOptions } from "./chatTypes";
 import {
   isHiddenDeliveryMetadata,
   stringMetadata,
@@ -38,45 +38,45 @@ import {
   mergeStreamDelivery,
 } from "./chatStreamMerging";
 import {
-  activeConversationReplacements,
+  activeSessionReplacements,
   activeRequestCompletedByHistory,
-  conversationIdsForChatId,
-  conversationTitleFromPrompt,
-  isCoreConversationId,
-  isOptimisticConversation,
-  isOptimisticConversationId,
-  isTransientConversationLoadError,
-  mergeConversationChatIdMap,
-  mergeConversationReadStates,
-  mergeOptimisticConversations,
-  mergeRelatedConversationMessages,
+  sessionIdsForChatId,
+  sessionTitleFromPrompt,
+  isCoreSessionId,
+  isOptimisticSession,
+  isOptimisticSessionId,
+  isTransientSessionLoadError,
+  mergeSessionChatIdMap,
+  mergeSessionReadStates,
+  mergeOptimisticSessions,
+  mergeRelatedSessionMessages,
   migrateActiveRequestId,
-  migrateConversationMessages,
-  migrateConversationValue,
+  migrateSessionMessages,
+  migrateSessionValue,
   migrateModelSelection,
-  optimisticConversationFromPrompt,
-  preserveActiveConversationTitles,
-  preserveLocalConversationProjectMetadata,
+  optimisticSessionFromPrompt,
+  preserveActiveSessionTitles,
+  preserveLocalSessionProjectMetadata,
   preserveLocalScheduledDeliveries,
   removeActiveRequestIds,
-  removeConversationForProfile,
-  removeConversationsForProfile,
-  removeConversationValues,
+  removeSessionForProfile,
+  removeSessionsForProfile,
+  removeSessionValues,
   removeModelSelections,
   removeReadStates,
-  replacementForOptimisticConversation,
-  selectionFromConversation,
-  setConversationMessages,
-  shouldApplyConversationDetailSelection,
+  replacementForOptimisticSession,
+  selectionFromSession,
+  setSessionMessages,
+  shouldApplySessionDetailSelection,
   shouldPreserveLocalMessagesOnEmptyHistory,
-  shouldPreserveProfileConversationSelection,
+  shouldPreserveProfileSessionSelection,
   shouldRetryUnmappedDelivery,
   shouldSendModelSwitch,
-  shouldSkipConversationDetailLoad,
-  updateConversationReadStateForProfiles,
-  upsertConversationForProfile,
-  visibleConversationForSelection,
-} from "./chatConversationState";
+  shouldSkipSessionDetailLoad,
+  updateSessionReadStateForProfiles,
+  upsertSessionForProfile,
+  visibleSessionForSelection,
+} from "./chatSessionState";
 import {
   dedupeInboxDeliveries,
   parseCoreEvent,
@@ -94,21 +94,21 @@ export {
 } from "./chatStreamMerging";
 export { mergeUploadedAttachment } from "./chatAttachments";
 export {
-  activeConversationReplacements,
+  activeSessionReplacements,
   activeRequestCompletedByHistory,
-  isTransientConversationLoadError,
-  mergeConversationChatIdMap,
-  mergeConversationReadStates,
-  preserveActiveConversationTitles,
-  preserveLocalConversationProjectMetadata,
+  isTransientSessionLoadError,
+  mergeSessionChatIdMap,
+  mergeSessionReadStates,
+  preserveActiveSessionTitles,
+  preserveLocalSessionProjectMetadata,
   preserveLocalScheduledDeliveries,
-  shouldApplyConversationDetailSelection,
+  shouldApplySessionDetailSelection,
   shouldPreserveLocalMessagesOnEmptyHistory,
-  shouldPreserveProfileConversationSelection,
+  shouldPreserveProfileSessionSelection,
   shouldRetryUnmappedDelivery,
   shouldSendModelSwitch,
-  shouldSkipConversationDetailLoad,
-} from "./chatConversationState";
+  shouldSkipSessionDetailLoad,
+} from "./chatSessionState";
 export type { SendableAttachment } from "./chatTypes";
 
 type UseIrisChatOptions = {
@@ -125,81 +125,81 @@ const coreDeliveryEventNames = [
 
 export function useAgentUIChat({ profile, runtimeConfig, isChatViewActive = true }: UseIrisChatOptions) {
   const [input, setInput] = useState("");
-  const [messagesByConversation, setMessagesByConversation] = useState<Record<string, Message[]>>({});
-  const [activeRequestIdsByConversation, setActiveRequestIdsByConversation] = useState<Record<string, string>>({});
-  const [conversationReadStates, setConversationReadStates] = useState<Record<string, "read" | "unread">>({});
-  const [conversationsByProfile, setConversationsByProfile] = useState<Record<string, HermesConversation[]>>({});
-  const [conversationsLoadedByProfile, setConversationsLoadedByProfile] = useState<Record<string, boolean>>({});
-  const [selectedConversationId, setSelectedConversationId] = useState<string | null>(null);
-  const [conversationsLoadingByProfile, setConversationsLoadingByProfile] = useState<Record<string, boolean>>({});
+  const [messagesBySession, setMessagesBySession] = useState<Record<string, Message[]>>({});
+  const [activeRequestIdsBySession, setActiveRequestIdsBySession] = useState<Record<string, string>>({});
+  const [sessionReadStates, setSessionReadStates] = useState<Record<string, "read" | "unread">>({});
+  const [sessionsByProfile, setSessionsByProfile] = useState<Record<string, HermesSession[]>>({});
+  const [sessionsLoadedByProfile, setSessionsLoadedByProfile] = useState<Record<string, boolean>>({});
+  const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
+  const [sessionsLoadingByProfile, setSessionsLoadingByProfile] = useState<Record<string, boolean>>({});
   const [historyErrorsByProfile, setHistoryErrorsByProfile] = useState<Record<string, string | null>>({});
   const [historySource, setHistorySource] = useState<string | null>(null);
   const [historySchemaVersion, setHistorySchemaVersion] = useState<number | null>(null);
-  const [conversationChatIdsByConversation, setConversationChatIdsByConversation] = useState<Record<string, string>>({});
-  const [modelSelectionByConversation, setModelSelectionByConversation] = useState<Record<string, HermesModelSelection>>({});
+  const [sessionChatIdsBySession, setSessionChatIdsBySession] = useState<Record<string, string>>({});
+  const [modelSelectionBySession, setModelSelectionBySession] = useState<Record<string, HermesModelSelection>>({});
   const eventCursorsByProfileRef = useRef<Record<string, number>>({});
   const processedInboxEventIdsRef = useRef<Set<string>>(new Set());
   const pendingGatewayDeliveriesRef = useRef<HermesInboxMessage[]>([]);
   const pendingUnmappedDeliveryAttemptsRef = useRef<Record<string, number>>({});
-  const pendingProfileSelectionRef = useRef<PendingProfileConversationSelection | null>(null);
+  const pendingProfileSelectionRef = useRef<PendingProfileSessionSelection | null>(null);
   const coreEventSourceRef = useRef<EventSource | null>(null);
   const activeDetailReconcileAtRef = useRef<Record<string, number>>({});
   const sendInFlightRef = useRef(false);
-  const messagesByConversationRef = useRef(messagesByConversation);
-  const activeRequestIdsByConversationRef = useRef(activeRequestIdsByConversation);
-  const activeConversationTitlesByConversationRef = useRef<Record<string, string>>({});
-  const selectedConversationIdRef = useRef(selectedConversationId);
+  const messagesBySessionRef = useRef(messagesBySession);
+  const activeRequestIdsBySessionRef = useRef(activeRequestIdsBySession);
+  const activeSessionTitlesBySessionRef = useRef<Record<string, string>>({});
+  const selectedSessionIdRef = useRef(selectedSessionId);
   const isChatViewActiveRef = useRef(isChatViewActive);
-  const conversationChatIdsByConversationRef = useRef(conversationChatIdsByConversation);
-  const conversationsByProfileRef = useRef(conversationsByProfile);
-  const conversations = conversationsByProfile[profile] || [];
-  const conversationsLoading = Boolean(conversationsLoadingByProfile[profile]);
+  const sessionChatIdsBySessionRef = useRef(sessionChatIdsBySession);
+  const sessionsByProfileRef = useRef(sessionsByProfile);
+  const sessions = sessionsByProfile[profile] || [];
+  const sessionsLoading = Boolean(sessionsLoadingByProfile[profile]);
   const historyError = historyErrorsByProfile[profile] || null;
-  const visibleConversationId = visibleConversationForSelection(
-    selectedConversationId,
-    conversations,
-    conversationChatIdsByConversation,
-    messagesByConversation,
+  const visibleSessionId = visibleSessionForSelection(
+    selectedSessionId,
+    sessions,
+    sessionChatIdsBySession,
+    messagesBySession,
   );
-  const messages = visibleConversationId ? messagesByConversation[visibleConversationId] || [] : [];
-  const activeRequestId = visibleConversationId
-    ? activeRequestIdsByConversation[visibleConversationId] || null
+  const messages = visibleSessionId ? messagesBySession[visibleSessionId] || [] : [];
+  const activeRequestId = visibleSessionId
+    ? activeRequestIdsBySession[visibleSessionId] || null
     : null;
-  const activeConversationIds = useMemo(
-    () => Object.keys(activeRequestIdsByConversation),
-    [activeRequestIdsByConversation],
+  const activeSessionIds = useMemo(
+    () => Object.keys(activeRequestIdsBySession),
+    [activeRequestIdsBySession],
   );
-  const hasActiveRequest = activeConversationIds.length > 0;
-  const selectedConversation = visibleConversationId
-    ? conversations.find((conversation) => conversation.id === visibleConversationId) || null
+  const hasActiveRequest = activeSessionIds.length > 0;
+  const selectedSession = visibleSessionId
+    ? sessions.find((session) => session.id === visibleSessionId) || null
     : null;
-  const selectedModelSelection = visibleConversationId
-    ? modelSelectionByConversation[visibleConversationId] || selectionFromConversation(selectedConversation)
+  const selectedModelSelection = visibleSessionId
+    ? modelSelectionBySession[visibleSessionId] || selectionFromSession(selectedSession)
     : null;
 
-  messagesByConversationRef.current = messagesByConversation;
-  activeRequestIdsByConversationRef.current = activeRequestIdsByConversation;
-  selectedConversationIdRef.current = selectedConversationId;
+  messagesBySessionRef.current = messagesBySession;
+  activeRequestIdsBySessionRef.current = activeRequestIdsBySession;
+  selectedSessionIdRef.current = selectedSessionId;
   isChatViewActiveRef.current = isChatViewActive;
-  conversationChatIdsByConversationRef.current = conversationChatIdsByConversation;
-  conversationsByProfileRef.current = conversationsByProfile;
+  sessionChatIdsBySessionRef.current = sessionChatIdsBySession;
+  sessionsByProfileRef.current = sessionsByProfile;
 
   useEffect(() => {
-    if (!isChatViewActive || !selectedConversationId) return;
-    markConversationRead(selectedConversationId, { reason: "active-selection" });
-  }, [isChatViewActive, selectedConversationId]);
+    if (!isChatViewActive || !selectedSessionId) return;
+    markSessionRead(selectedSessionId, { reason: "active-selection" });
+  }, [isChatViewActive, selectedSessionId]);
 
   useEffect(() => {
     const pendingSelection = pendingProfileSelectionRef.current;
-    if (shouldPreserveProfileConversationSelection(profile, selectedConversationId, pendingSelection)) {
+    if (shouldPreserveProfileSessionSelection(profile, selectedSessionId, pendingSelection)) {
       pendingProfileSelectionRef.current = null;
       setInput("");
       setHistoryErrorsByProfile((current) => ({ ...current, [profile]: null }));
     } else {
       pendingProfileSelectionRef.current = null;
-      startNewConversation();
+      startNewSession();
     }
-    void refreshConversations();
+    void refreshSessions();
   }, [profile]);
 
   useEffect(() => {
@@ -258,18 +258,18 @@ export function useAgentUIChat({ profile, runtimeConfig, isChatViewActive = true
     if (!prompt && !draftAttachments.length) return false;
     if (sendInFlightRef.current) return false;
     sendInFlightRef.current = true;
-    const previousConversationId = selectedConversationIdRef.current;
+    const previousSessionId = selectedSessionIdRef.current;
     const userMessageId = crypto.randomUUID();
     const assistantId = crypto.randomUUID();
-    const optimisticConversationId = previousConversationId ? "" : `optimistic-${userMessageId}`;
-    let conversationId = previousConversationId || optimisticConversationId;
-    let activeConversationId = conversationId;
+    const optimisticSessionId = previousSessionId ? "" : `optimistic-${userMessageId}`;
+    let sessionId = previousSessionId || optimisticSessionId;
+    let activeSessionId = sessionId;
     let attachments: MessageAttachment[] = [];
     try {
       attachments = await uploadAttachmentsForSend(draftAttachments, {
         profile,
         messageId: userMessageId,
-        conversationId: isCoreConversationId(conversationId) ? conversationId : "",
+        sessionId: isCoreSessionId(sessionId) ? sessionId : "",
         runtimeConfig,
       });
     } catch (error) {
@@ -295,46 +295,46 @@ export function useAgentUIChat({ profile, runtimeConfig, isChatViewActive = true
       content: "Thinking...",
       streaming: true,
     };
-    const activeConversationTitle = conversationTitleFromPrompt(promptWithAttachments);
-    let coreCreatedConversation: HermesConversation | null = null;
-    let linkedFromConversationId = "";
-    let gatewayChatId = previousConversationId ? chatIdForConversation(previousConversationId) : "";
-    if (!conversationId || activeRequestIdsByConversationRef.current[conversationId]) {
+    const activeSessionTitle = sessionTitleFromPrompt(promptWithAttachments);
+    let coreCreatedSession: HermesSession | null = null;
+    let linkedFromSessionId = "";
+    let gatewayChatId = previousSessionId ? chatIdForSession(previousSessionId) : "";
+    if (!sessionId || activeRequestIdsBySessionRef.current[sessionId]) {
       sendInFlightRef.current = false;
       return false;
     }
     const optimisticTimestamp = Math.floor(Date.now() / 1000);
-    setMessagesByConversation((current) => ({
+    setMessagesBySession((current) => ({
       ...current,
-      [activeConversationId]: [
-        ...(current[activeConversationId] || []),
+      [activeSessionId]: [
+        ...(current[activeSessionId] || []),
         userMessage,
         assistantMessage,
       ],
     }));
-    setConversationChatIdsByConversation((current) => ({ ...current, [activeConversationId]: gatewayChatId }));
-    activeRequestIdsByConversationRef.current = {
-      ...activeRequestIdsByConversationRef.current,
-      [activeConversationId]: userMessage.id,
+    setSessionChatIdsBySession((current) => ({ ...current, [activeSessionId]: gatewayChatId }));
+    activeRequestIdsBySessionRef.current = {
+      ...activeRequestIdsBySessionRef.current,
+      [activeSessionId]: userMessage.id,
     };
-    activeConversationTitlesByConversationRef.current = {
-      ...activeConversationTitlesByConversationRef.current,
-      [activeConversationId]: activeConversationTitle,
+    activeSessionTitlesBySessionRef.current = {
+      ...activeSessionTitlesBySessionRef.current,
+      [activeSessionId]: activeSessionTitle,
     };
-    setActiveRequestIdsByConversation((current) => ({
+    setActiveRequestIdsBySession((current) => ({
       ...current,
-      [activeConversationId]: userMessage.id,
+      [activeSessionId]: userMessage.id,
     }));
     setInput("");
-    if (optimisticConversationId) {
-      selectedConversationIdRef.current = optimisticConversationId;
-      setSelectedConversationId(optimisticConversationId);
-      setConversationsByProfile((current) =>
-        upsertConversationForProfile(
+    if (optimisticSessionId) {
+      selectedSessionIdRef.current = optimisticSessionId;
+      setSelectedSessionId(optimisticSessionId);
+      setSessionsByProfile((current) =>
+        upsertSessionForProfile(
           current,
           profile,
-          optimisticConversationFromPrompt(
-            optimisticConversationId,
+          optimisticSessionFromPrompt(
+            optimisticSessionId,
             promptWithAttachments,
             optimisticTimestamp,
             optimisticTimestamp,
@@ -344,22 +344,22 @@ export function useAgentUIChat({ profile, runtimeConfig, isChatViewActive = true
           ),
         ),
       );
-      setConversationsLoadedByProfile((current) => ({ ...current, [profile]: true }));
+      setSessionsLoadedByProfile((current) => ({ ...current, [profile]: true }));
       setHistoryErrorsByProfile((current) => ({ ...current, [profile]: null }));
     }
 
     try {
-      if (!conversationId || !isCoreConversationId(conversationId)) {
-        const previousId = conversationId;
-        const existingCoreConversation = previousId && !isOptimisticConversationId(previousId)
-          ? coreConversationForLegacySelection(previousId, gatewayChatId)
+      if (!sessionId || !isCoreSessionId(sessionId)) {
+        const previousId = sessionId;
+        const existingCoreSession = previousId && !isOptimisticSessionId(previousId)
+          ? coreSessionForLegacySelection(previousId, gatewayChatId)
           : null;
-        const coreConversation = existingCoreConversation ||
-          await createCoreConversationForPrompt(
+        const coreSession = existingCoreSession ||
+          await createCoreSessionForPrompt(
             promptWithAttachments,
             modelSelection?.model || "",
             projectId,
-            previousId && !isOptimisticConversationId(previousId)
+            previousId && !isOptimisticSessionId(previousId)
               ? {
                   externalChatId: gatewayChatId,
                   externalSessionId: previousId,
@@ -367,60 +367,60 @@ export function useAgentUIChat({ profile, runtimeConfig, isChatViewActive = true
                 }
               : undefined,
           );
-        if (!coreConversation) throw new Error("Iris Core session is unavailable. Message was not sent.");
-        coreCreatedConversation = coreConversation;
-        linkedFromConversationId = previousId && previousId !== coreConversation.id ? previousId : "";
-        conversationId = coreConversation.id;
-        activeConversationId = conversationId;
-        gatewayChatId = coreConversation.chatId || gatewayChatId;
-        if (linkedFromConversationId) {
-          selectedConversationIdRef.current = conversationId;
-          setSelectedConversationId(conversationId);
-          setMessagesByConversation((current) =>
-            migrateConversationMessages(current, linkedFromConversationId, conversationId),
+        if (!coreSession) throw new Error("Iris Core session is unavailable. Message was not sent.");
+        coreCreatedSession = coreSession;
+        linkedFromSessionId = previousId && previousId !== coreSession.id ? previousId : "";
+        sessionId = coreSession.id;
+        activeSessionId = sessionId;
+        gatewayChatId = coreSession.chatId || gatewayChatId;
+        if (linkedFromSessionId) {
+          selectedSessionIdRef.current = sessionId;
+          setSelectedSessionId(sessionId);
+          setMessagesBySession((current) =>
+            migrateSessionMessages(current, linkedFromSessionId, sessionId),
           );
-          activeRequestIdsByConversationRef.current = migrateActiveRequestId(
-            activeRequestIdsByConversationRef.current,
-            linkedFromConversationId,
-            conversationId,
+          activeRequestIdsBySessionRef.current = migrateActiveRequestId(
+            activeRequestIdsBySessionRef.current,
+            linkedFromSessionId,
+            sessionId,
           );
-          activeConversationTitlesByConversationRef.current = migrateConversationValue(
-            activeConversationTitlesByConversationRef.current,
-            linkedFromConversationId,
-            conversationId,
+          activeSessionTitlesBySessionRef.current = migrateSessionValue(
+            activeSessionTitlesBySessionRef.current,
+            linkedFromSessionId,
+            sessionId,
           );
-          setActiveRequestIdsByConversation((current) =>
-            migrateActiveRequestId(current, linkedFromConversationId, conversationId),
+          setActiveRequestIdsBySession((current) =>
+            migrateActiveRequestId(current, linkedFromSessionId, sessionId),
           );
-          setConversationChatIdsByConversation((current) => {
-            const next = { ...current, [conversationId]: gatewayChatId };
-            delete next[linkedFromConversationId];
+          setSessionChatIdsBySession((current) => {
+            const next = { ...current, [sessionId]: gatewayChatId };
+            delete next[linkedFromSessionId];
             return next;
           });
-          setModelSelectionByConversation((current) =>
-            migrateModelSelection(current, linkedFromConversationId, conversationId),
+          setModelSelectionBySession((current) =>
+            migrateModelSelection(current, linkedFromSessionId, sessionId),
           );
         }
       }
-      if (coreCreatedConversation) {
-        const localConversation = {
-          ...coreCreatedConversation,
-          lastActiveAt: Math.max(coreCreatedConversation.lastActiveAt || 0, optimisticTimestamp),
-          preview: compactText(promptWithAttachments, 180) || coreCreatedConversation.preview,
-          messageCount: Math.max(coreCreatedConversation.messageCount || 0, 1),
+      if (coreCreatedSession) {
+        const localSession = {
+          ...coreCreatedSession,
+          lastActiveAt: Math.max(coreCreatedSession.lastActiveAt || 0, optimisticTimestamp),
+          preview: compactText(promptWithAttachments, 180) || coreCreatedSession.preview,
+          messageCount: Math.max(coreCreatedSession.messageCount || 0, 1),
         };
-        setConversationsByProfile((current) =>
-          upsertConversationForProfile(
-            removeConversationForProfile(current, profile, linkedFromConversationId),
+        setSessionsByProfile((current) =>
+          upsertSessionForProfile(
+            removeSessionForProfile(current, profile, linkedFromSessionId),
             profile,
-            localConversation,
+            localSession,
           ),
         );
-        setConversationsLoadedByProfile((current) => ({ ...current, [profile]: true }));
+        setSessionsLoadedByProfile((current) => ({ ...current, [profile]: true }));
         setHistoryErrorsByProfile((current) => ({ ...current, [profile]: null }));
       }
       const switchSelection =
-        !previousConversationId && shouldSendModelSwitch(modelSelection, currentModelSelection)
+        !previousSessionId && shouldSendModelSwitch(modelSelection, currentModelSelection)
           ? modelSelection
           : null;
       const coreMetadata: CoreMetadata = {};
@@ -428,7 +428,7 @@ export function useAgentUIChat({ profile, runtimeConfig, isChatViewActive = true
       if (projectId) coreMetadata.projectId = projectId;
       if (switchSelection) coreMetadata.modelSwitch = switchSelection;
       const result = await sendAgentUICoreMessage(
-        conversationId,
+        sessionId,
         {
           text: displayedPrompt,
           attachments: attachmentRefs,
@@ -441,15 +441,15 @@ export function useAgentUIChat({ profile, runtimeConfig, isChatViewActive = true
       if (!result.ok) throw new Error(result.error || "Iris Core did not accept the message.");
       const acceptedChatId = ("runtime" in result ? runtimeChatId(result.runtime) : "") || gatewayChatId;
       if (acceptedChatId) {
-        setConversationChatIdsByConversation((current) => ({ ...current, [conversationId]: acceptedChatId }));
+        setSessionChatIdsBySession((current) => ({ ...current, [sessionId]: acceptedChatId }));
       }
       if (modelSelection) {
-        setModelSelectionByConversation((current) => ({ ...current, [conversationId]: modelSelection }));
+        setModelSelectionBySession((current) => ({ ...current, [sessionId]: modelSelection }));
       }
       window.setTimeout(() => {
         void pollCoreEvents();
-        void refreshConversations({ profileName: profile, silent: true });
-        refreshConversationDetailSoon(conversationId, profile, gatewayChatId);
+        void refreshSessions({ profileName: profile, silent: true });
+        refreshSessionDetailSoon(sessionId, profile, gatewayChatId);
       }, 1200);
       return true;
     } catch (error) {
@@ -457,20 +457,20 @@ export function useAgentUIChat({ profile, runtimeConfig, isChatViewActive = true
         error instanceof Error
           ? error.message
           : "Iris Core session is not available yet.";
-      activeRequestIdsByConversationRef.current = removeActiveRequestIds(
-        activeRequestIdsByConversationRef.current,
-        activeConversationId,
-        conversationId,
+      activeRequestIdsBySessionRef.current = removeActiveRequestIds(
+        activeRequestIdsBySessionRef.current,
+        activeSessionId,
+        sessionId,
       );
-      activeConversationTitlesByConversationRef.current = removeConversationValues(
-        activeConversationTitlesByConversationRef.current,
-        activeConversationId,
-        conversationId,
+      activeSessionTitlesBySessionRef.current = removeSessionValues(
+        activeSessionTitlesBySessionRef.current,
+        activeSessionId,
+        sessionId,
       );
-      setActiveRequestIdsByConversation((current) =>
-        removeActiveRequestIds(current, activeConversationId, conversationId),
+      setActiveRequestIdsBySession((current) =>
+        removeActiveRequestIds(current, activeSessionId, sessionId),
       );
-      updateConversationMessage(activeConversationId, assistantId, (current) => ({
+      updateSessionMessage(activeSessionId, assistantId, (current) => ({
         ...current,
         content: message,
         streaming: false,
@@ -482,304 +482,304 @@ export function useAgentUIChat({ profile, runtimeConfig, isChatViewActive = true
     }
   }
 
-  async function refreshConversations(
+  async function refreshSessions(
     options: {
       silent?: boolean;
       profileName?: string;
-      selectConversationId?: string | null;
+      selectSessionId?: string | null;
       transientRetries?: number;
     } = {},
   ) {
     const targetProfile = options.profileName || profile;
     if (!options.silent) {
-      setConversationsLoadingByProfile((current) => ({ ...current, [targetProfile]: true }));
+      setSessionsLoadingByProfile((current) => ({ ...current, [targetProfile]: true }));
     }
     try {
-      const result = await getIrisConversations(targetProfile, 80, runtimeConfig);
+      const result = await getIrisSessions(targetProfile, 80, runtimeConfig);
       if (targetProfile === profile) {
         setHistorySource(result.source || null);
         setHistorySchemaVersion(result.schemaVersion ?? null);
       }
       if (result.ok) {
-        const currentProfileConversations = conversationsByProfileRef.current[targetProfile] || [];
-        const endpointConversations = preserveActiveConversationTitles(
-          preserveLocalConversationProjectMetadata(result.conversations || [], currentProfileConversations),
-          currentProfileConversations,
-          activeRequestIdsByConversationRef.current,
-          activeConversationTitlesByConversationRef.current,
-          conversationChatIdsByConversationRef.current,
+        const currentProfileSessions = sessionsByProfileRef.current[targetProfile] || [];
+        const endpointSessions = preserveActiveSessionTitles(
+          preserveLocalSessionProjectMetadata(result.sessions || [], currentProfileSessions),
+          currentProfileSessions,
+          activeRequestIdsBySessionRef.current,
+          activeSessionTitlesBySessionRef.current,
+          sessionChatIdsBySessionRef.current,
         );
-        setConversationReadStates((current) =>
-          mergeConversationReadStates(current, endpointConversations),
+        setSessionReadStates((current) =>
+          mergeSessionReadStates(current, endpointSessions),
         );
-        setConversationChatIdsByConversation((current) =>
-          mergeConversationChatIdMap(current, endpointConversations),
+        setSessionChatIdsBySession((current) =>
+          mergeSessionChatIdMap(current, endpointSessions),
         );
-        const currentSelectedConversationId = selectedConversationIdRef.current || selectedConversationId;
-        const selectedChatId = currentSelectedConversationId
-          ? conversationChatIdsByConversationRef.current[currentSelectedConversationId] ||
-            conversationChatIdsByConversation[currentSelectedConversationId]
+        const currentSelectedSessionId = selectedSessionIdRef.current || selectedSessionId;
+        const selectedChatId = currentSelectedSessionId
+          ? sessionChatIdsBySessionRef.current[currentSelectedSessionId] ||
+            sessionChatIdsBySession[currentSelectedSessionId]
           : "";
-        const selectedReplacement = currentSelectedConversationId
-          ? replacementForOptimisticConversation(
-              currentSelectedConversationId,
-              endpointConversations,
-              currentProfileConversations,
+        const selectedReplacement = currentSelectedSessionId
+          ? replacementForOptimisticSession(
+              currentSelectedSessionId,
+              endpointSessions,
+              currentProfileSessions,
               selectedChatId,
             )
           : null;
         if (
-          currentSelectedConversationId &&
-          isOptimisticConversationId(currentSelectedConversationId) &&
+          currentSelectedSessionId &&
+          isOptimisticSessionId(currentSelectedSessionId) &&
           selectedReplacement
         ) {
-          selectedConversationIdRef.current = selectedReplacement.id;
-          setSelectedConversationId(selectedReplacement.id);
-          setMessagesByConversation((current) =>
-            migrateConversationMessages(current, currentSelectedConversationId, selectedReplacement.id),
+          selectedSessionIdRef.current = selectedReplacement.id;
+          setSelectedSessionId(selectedReplacement.id);
+          setMessagesBySession((current) =>
+            migrateSessionMessages(current, currentSelectedSessionId, selectedReplacement.id),
           );
-          setModelSelectionByConversation((current) =>
-            migrateModelSelection(current, currentSelectedConversationId, selectedReplacement.id),
+          setModelSelectionBySession((current) =>
+            migrateModelSelection(current, currentSelectedSessionId, selectedReplacement.id),
           );
-          activeRequestIdsByConversationRef.current = migrateActiveRequestId(
-            activeRequestIdsByConversationRef.current,
-            currentSelectedConversationId,
+          activeRequestIdsBySessionRef.current = migrateActiveRequestId(
+            activeRequestIdsBySessionRef.current,
+            currentSelectedSessionId,
             selectedReplacement.id,
           );
-          activeConversationTitlesByConversationRef.current = migrateConversationValue(
-            activeConversationTitlesByConversationRef.current,
-            currentSelectedConversationId,
+          activeSessionTitlesBySessionRef.current = migrateSessionValue(
+            activeSessionTitlesBySessionRef.current,
+            currentSelectedSessionId,
             selectedReplacement.id,
           );
-          setActiveRequestIdsByConversation((current) =>
-            migrateActiveRequestId(current, currentSelectedConversationId, selectedReplacement.id),
+          setActiveRequestIdsBySession((current) =>
+            migrateActiveRequestId(current, currentSelectedSessionId, selectedReplacement.id),
           );
-          setConversationChatIdsByConversation((current) => ({
+          setSessionChatIdsBySession((current) => ({
             ...current,
             [selectedReplacement.id]: selectedReplacement.chatId || selectedChatId,
           }));
         }
-        const activeReplacements = activeConversationReplacements(
-          activeRequestIdsByConversationRef.current,
-          endpointConversations,
-          currentProfileConversations,
-          conversationChatIdsByConversationRef.current,
+        const activeReplacements = activeSessionReplacements(
+          activeRequestIdsBySessionRef.current,
+          endpointSessions,
+          currentProfileSessions,
+          sessionChatIdsBySessionRef.current,
         );
         if (activeReplacements.length) {
           for (const replacement of activeReplacements) {
-            if (selectedConversationIdRef.current === replacement.fromId) {
-              selectedConversationIdRef.current = replacement.to.id;
-              setSelectedConversationId(replacement.to.id);
+            if (selectedSessionIdRef.current === replacement.fromId) {
+              selectedSessionIdRef.current = replacement.to.id;
+              setSelectedSessionId(replacement.to.id);
             }
-            setMessagesByConversation((current) =>
-              migrateConversationMessages(current, replacement.fromId, replacement.to.id),
+            setMessagesBySession((current) =>
+              migrateSessionMessages(current, replacement.fromId, replacement.to.id),
             );
-            setModelSelectionByConversation((current) =>
+            setModelSelectionBySession((current) =>
               migrateModelSelection(current, replacement.fromId, replacement.to.id),
             );
-            activeRequestIdsByConversationRef.current = migrateActiveRequestId(
-              activeRequestIdsByConversationRef.current,
+            activeRequestIdsBySessionRef.current = migrateActiveRequestId(
+              activeRequestIdsBySessionRef.current,
               replacement.fromId,
               replacement.to.id,
             );
-            activeConversationTitlesByConversationRef.current = migrateConversationValue(
-              activeConversationTitlesByConversationRef.current,
+            activeSessionTitlesBySessionRef.current = migrateSessionValue(
+              activeSessionTitlesBySessionRef.current,
               replacement.fromId,
               replacement.to.id,
             );
-            setActiveRequestIdsByConversation((current) =>
+            setActiveRequestIdsBySession((current) =>
               migrateActiveRequestId(current, replacement.fromId, replacement.to.id),
             );
-            setConversationChatIdsByConversation((current) => ({
+            setSessionChatIdsBySession((current) => ({
               ...current,
               [replacement.to.id]: replacement.to.chatId || replacement.chatId,
             }));
           }
         }
-        setConversationsByProfile((current) => ({
+        setSessionsByProfile((current) => ({
           ...current,
-          [targetProfile]: mergeOptimisticConversations(
+          [targetProfile]: mergeOptimisticSessions(
             current[targetProfile] || [],
-            endpointConversations,
+            endpointSessions,
           ),
         }));
-        if (options.selectConversationId && targetProfile === profile) {
-          const hasSelectedConversation = result.conversations.some(
-            (conversation) => conversation.id === options.selectConversationId,
+        if (options.selectSessionId && targetProfile === profile) {
+          const hasSelectedSession = result.sessions.some(
+            (session) => session.id === options.selectSessionId,
           );
-          if (hasSelectedConversation) setSelectedConversationId(options.selectConversationId);
+          if (hasSelectedSession) setSelectedSessionId(options.selectSessionId);
         }
         setHistoryErrorsByProfile((current) => ({ ...current, [targetProfile]: result.warning || null }));
-        setConversationsLoadedByProfile((current) => ({ ...current, [targetProfile]: true }));
+        setSessionsLoadedByProfile((current) => ({ ...current, [targetProfile]: true }));
       } else {
-        if (isTransientConversationLoadError(result.error) && (options.transientRetries ?? 3) > 0) {
-          scheduleConversationRetry(targetProfile, options.selectConversationId, options.transientRetries ?? 3);
+        if (isTransientSessionLoadError(result.error) && (options.transientRetries ?? 3) > 0) {
+          scheduleSessionRetry(targetProfile, options.selectSessionId, options.transientRetries ?? 3);
           return;
         }
-        if (isTransientConversationLoadError(result.error)) {
+        if (isTransientSessionLoadError(result.error)) {
           setHistoryErrorsByProfile((current) => ({ ...current, [targetProfile]: null }));
           return;
         }
-        setConversationsByProfile((current) => ({ ...current, [targetProfile]: [] }));
+        setSessionsByProfile((current) => ({ ...current, [targetProfile]: [] }));
         setHistoryErrorsByProfile((current) => ({
           ...current,
           [targetProfile]: result.error || "Could not load Hermes sessions.",
         }));
-        setConversationsLoadedByProfile((current) => ({ ...current, [targetProfile]: true }));
+        setSessionsLoadedByProfile((current) => ({ ...current, [targetProfile]: true }));
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : "Could not load Hermes sessions.";
-      if (isTransientConversationLoadError(message) && (options.transientRetries ?? 3) > 0) {
-        scheduleConversationRetry(targetProfile, options.selectConversationId, options.transientRetries ?? 3);
+      if (isTransientSessionLoadError(message) && (options.transientRetries ?? 3) > 0) {
+        scheduleSessionRetry(targetProfile, options.selectSessionId, options.transientRetries ?? 3);
         return;
       }
-      if (isTransientConversationLoadError(message)) {
+      if (isTransientSessionLoadError(message)) {
         setHistoryErrorsByProfile((current) => ({ ...current, [targetProfile]: null }));
         return;
       }
-      setConversationsByProfile((current) => ({ ...current, [targetProfile]: [] }));
+      setSessionsByProfile((current) => ({ ...current, [targetProfile]: [] }));
       setHistoryErrorsByProfile((current) => ({
         ...current,
         [targetProfile]: message,
       }));
-      setConversationsLoadedByProfile((current) => ({ ...current, [targetProfile]: true }));
+      setSessionsLoadedByProfile((current) => ({ ...current, [targetProfile]: true }));
     } finally {
       if (!options.silent) {
-        setConversationsLoadingByProfile((current) => ({ ...current, [targetProfile]: false }));
+        setSessionsLoadingByProfile((current) => ({ ...current, [targetProfile]: false }));
       }
     }
   }
 
-  async function loadConversation(conversationId: string, profileName = profile) {
-    if (!conversationId) return;
+  async function loadSession(sessionId: string, profileName = profile) {
+    if (!sessionId) return;
     pendingProfileSelectionRef.current =
-      profileName !== profile ? { profile: profileName, conversationId } : null;
-    setSelectedConversationId(conversationId);
-    markConversationRead(conversationId, { reason: "conversation-opened" });
+      profileName !== profile ? { profile: profileName, sessionId } : null;
+    setSelectedSessionId(sessionId);
+    markSessionRead(sessionId, { reason: "session-opened" });
     setInput("");
-    if (shouldSkipConversationDetailLoad(conversationId, activeRequestIdsByConversation)) {
+    if (shouldSkipSessionDetailLoad(sessionId, activeRequestIdsBySession)) {
       setHistoryErrorsByProfile((current) => ({ ...current, [profileName]: null }));
       return;
     }
-    await refreshConversationDetail(conversationId, profileName, { select: true });
+    await refreshSessionDetail(sessionId, profileName, { select: true });
   }
 
-  async function renameConversation(profileName: string, conversationId: string, title: string) {
+  async function renameSession(profileName: string, sessionId: string, title: string) {
     const cleanTitle = title.trim();
     if (!cleanTitle) return "Enter a session name.";
-    const result = await renameIrisConversation(profileName, conversationId, cleanTitle, runtimeConfig);
-    if (!result.ok || !result.conversation) {
+    const result = await renameIrisSession(profileName, sessionId, cleanTitle, runtimeConfig);
+    if (!result.ok || !result.session) {
       return result.error || "Could not rename this session.";
     }
-    setConversationsByProfile((current) =>
-      upsertConversationForProfile(current, profileName, result.conversation),
+    setSessionsByProfile((current) =>
+      upsertSessionForProfile(current, profileName, result.session),
     );
     setHistoryErrorsByProfile((current) => ({ ...current, [profileName]: null }));
     return "Session renamed.";
   }
 
-  async function deleteConversation(profileName: string, conversationId: string) {
-    if (!conversationId) return "Session was not found.";
-    if (activeRequestIdsByConversationRef.current[conversationId]) {
+  async function deleteSession(profileName: string, sessionId: string) {
+    if (!sessionId) return "Session was not found.";
+    if (activeRequestIdsBySessionRef.current[sessionId]) {
       return "Wait for the active response to finish before deleting this session.";
     }
-    const result = await deleteIrisConversation(profileName, conversationId, runtimeConfig);
+    const result = await deleteIrisSession(profileName, sessionId, runtimeConfig);
     if (!result.ok) {
       return result.error || "Could not delete this session.";
     }
-    const chatId = latestChatIdForConversation(conversationId, profileName);
-    const relatedConversationIds = conversationIdsForChatId(
+    const chatId = latestChatIdForSession(sessionId, profileName);
+    const relatedSessionIds = sessionIdsForChatId(
       chatId,
-      conversationId,
-      conversationChatIdsByConversationRef.current,
+      sessionId,
+      sessionChatIdsBySessionRef.current,
     );
-    const idsToRemove = [conversationId, ...relatedConversationIds];
-    setConversationsByProfile((current) =>
-      removeConversationsForProfile(current, profileName, idsToRemove),
+    const idsToRemove = [sessionId, ...relatedSessionIds];
+    setSessionsByProfile((current) =>
+      removeSessionsForProfile(current, profileName, idsToRemove),
     );
-    setMessagesByConversation((current) => removeConversationValues(current, ...idsToRemove));
-    setConversationChatIdsByConversation((current) => removeConversationValues(current, ...idsToRemove));
-    setModelSelectionByConversation((current) => removeModelSelections(current, ...idsToRemove));
-    setConversationReadStates((current) => removeReadStates(current, ...idsToRemove));
-    activeRequestIdsByConversationRef.current = removeActiveRequestIds(
-      activeRequestIdsByConversationRef.current,
+    setMessagesBySession((current) => removeSessionValues(current, ...idsToRemove));
+    setSessionChatIdsBySession((current) => removeSessionValues(current, ...idsToRemove));
+    setModelSelectionBySession((current) => removeModelSelections(current, ...idsToRemove));
+    setSessionReadStates((current) => removeReadStates(current, ...idsToRemove));
+    activeRequestIdsBySessionRef.current = removeActiveRequestIds(
+      activeRequestIdsBySessionRef.current,
       ...idsToRemove,
     );
-    activeConversationTitlesByConversationRef.current = removeConversationValues(
-      activeConversationTitlesByConversationRef.current,
+    activeSessionTitlesBySessionRef.current = removeSessionValues(
+      activeSessionTitlesBySessionRef.current,
       ...idsToRemove,
     );
-    setActiveRequestIdsByConversation((current) =>
+    setActiveRequestIdsBySession((current) =>
       removeActiveRequestIds(current, ...idsToRemove),
     );
-    if (selectedConversationIdRef.current && idsToRemove.includes(selectedConversationIdRef.current)) {
-      startNewConversation(profileName);
+    if (selectedSessionIdRef.current && idsToRemove.includes(selectedSessionIdRef.current)) {
+      startNewSession(profileName);
     }
     setHistoryErrorsByProfile((current) => ({ ...current, [profileName]: null }));
     return "Session deleted.";
   }
 
-  async function refreshConversationDetail(
-    conversationId: string,
+  async function refreshSessionDetail(
+    sessionId: string,
     profileName = profile,
     options: { silent?: boolean; select?: boolean; reconcileActive?: boolean } = {},
   ) {
-    if (!conversationId) return false;
+    if (!sessionId) return false;
     if (
-      isOptimisticConversationId(conversationId) ||
-      (activeRequestIdsByConversationRef.current[conversationId] && !options.reconcileActive)
+      isOptimisticSessionId(sessionId) ||
+      (activeRequestIdsBySessionRef.current[sessionId] && !options.reconcileActive)
     ) {
       setHistoryErrorsByProfile((current) => ({ ...current, [profileName]: null }));
       return false;
     }
     if (!options.silent) {
-      setConversationsLoadingByProfile((current) => ({ ...current, [profileName]: true }));
+      setSessionsLoadingByProfile((current) => ({ ...current, [profileName]: true }));
     }
     try {
-      const result = await getIrisConversationDetail(profileName, conversationId, runtimeConfig);
+      const result = await getIrisSessionDetail(profileName, sessionId, runtimeConfig);
       if (profileName === profile) {
         setHistorySource(result.source || null);
         setHistorySchemaVersion(result.schemaVersion ?? null);
       }
-      if (!result.ok || !result.conversation) {
+      if (!result.ok || !result.session) {
         setHistoryErrorsByProfile((current) => ({
           ...current,
           [profileName]: result.error || "Could not load this session.",
         }));
         return false;
       }
-      const loadedConversation = result.conversation;
-      const selectedId = selectedConversationIdRef.current;
-      const selectedChatId = selectedId ? latestChatIdForConversation(selectedId, profileName) : "";
-      const selectionStillTargetsThisLoad = shouldApplyConversationDetailSelection(
+      const loadedSession = result.session;
+      const selectedId = selectedSessionIdRef.current;
+      const selectedChatId = selectedId ? latestChatIdForSession(selectedId, profileName) : "";
+      const selectionStillTargetsThisLoad = shouldApplySessionDetailSelection(
         selectedId,
         selectedChatId,
-        conversationId,
-        loadedConversation,
+        sessionId,
+        loadedSession,
       );
       const shouldUpdateSelection =
         selectionStillTargetsThisLoad &&
         (options.select ||
-          selectedId === conversationId ||
-          selectedId === loadedConversation.id ||
-          Boolean(loadedConversation.chatId && selectedChatId === loadedConversation.chatId));
+          selectedId === sessionId ||
+          selectedId === loadedSession.id ||
+          Boolean(loadedSession.chatId && selectedChatId === loadedSession.chatId));
       if (shouldUpdateSelection) {
-        setSelectedConversationId(loadedConversation.id);
+        setSelectedSessionId(loadedSession.id);
       }
-      if (loadedConversation.chatId) {
-        setConversationChatIdsByConversation((current) => ({
+      if (loadedSession.chatId) {
+        setSessionChatIdsBySession((current) => ({
           ...current,
-          [loadedConversation.id]: loadedConversation.chatId || "",
+          [loadedSession.id]: loadedSession.chatId || "",
         }));
       }
       const activeRequestId =
-        activeRequestIdsByConversationRef.current[loadedConversation.id] ||
-        activeRequestIdsByConversationRef.current[conversationId] ||
+        activeRequestIdsBySessionRef.current[loadedSession.id] ||
+        activeRequestIdsBySessionRef.current[sessionId] ||
         "";
       const canReconcileActive = activeRequestCompletedByHistory(result.messages, activeRequestId);
       if (!activeRequestId || canReconcileActive) {
-        setMessagesByConversation((current) => {
-          const localMessages = current[loadedConversation.id] || [];
+        setMessagesBySession((current) => {
+          const localMessages = current[loadedSession.id] || [];
           if (shouldPreserveLocalMessagesOnEmptyHistory(localMessages, result.messages)) {
             return current;
           }
@@ -789,30 +789,30 @@ export function useAgentUIChat({ profile, runtimeConfig, isChatViewActive = true
           );
           return {
             ...current,
-            [loadedConversation.id]: historyMessages,
+            [loadedSession.id]: historyMessages,
           };
         });
       }
       if (canReconcileActive) {
-        const relatedConversationIds = conversationIdsForChatId(
-          loadedConversation.chatId || "",
-          loadedConversation.id,
-          conversationChatIdsByConversationRef.current,
+        const relatedSessionIds = sessionIdsForChatId(
+          loadedSession.chatId || "",
+          loadedSession.id,
+          sessionChatIdsBySessionRef.current,
         );
-        activeRequestIdsByConversationRef.current = removeActiveRequestIds(
-          activeRequestIdsByConversationRef.current,
-          conversationId,
-          loadedConversation.id,
-          ...relatedConversationIds,
+        activeRequestIdsBySessionRef.current = removeActiveRequestIds(
+          activeRequestIdsBySessionRef.current,
+          sessionId,
+          loadedSession.id,
+          ...relatedSessionIds,
         );
-        activeConversationTitlesByConversationRef.current = removeConversationValues(
-          activeConversationTitlesByConversationRef.current,
-          conversationId,
-          loadedConversation.id,
-          ...relatedConversationIds,
+        activeSessionTitlesBySessionRef.current = removeSessionValues(
+          activeSessionTitlesBySessionRef.current,
+          sessionId,
+          loadedSession.id,
+          ...relatedSessionIds,
         );
-        setActiveRequestIdsByConversation((current) =>
-          removeActiveRequestIds(current, conversationId, loadedConversation.id, ...relatedConversationIds),
+        setActiveRequestIdsBySession((current) =>
+          removeActiveRequestIds(current, sessionId, loadedSession.id, ...relatedSessionIds),
         );
       }
       setHistoryErrorsByProfile((current) => ({ ...current, [profileName]: result.warning || null }));
@@ -825,29 +825,29 @@ export function useAgentUIChat({ profile, runtimeConfig, isChatViewActive = true
       return false;
     } finally {
       if (!options.silent) {
-        setConversationsLoadingByProfile((current) => ({ ...current, [profileName]: false }));
+        setSessionsLoadingByProfile((current) => ({ ...current, [profileName]: false }));
       }
     }
   }
 
-  function refreshConversationDetailSoon(conversationId: string, profileName = profile, chatId = "") {
+  function refreshSessionDetailSoon(sessionId: string, profileName = profile, chatId = "") {
     window.setTimeout(() => {
-      const targetConversationId = latestRealConversationIdForChatId(chatId, profileName) ||
-        (isOptimisticConversationId(conversationId) ? "" : conversationId);
-      if (targetConversationId) {
-        void refreshConversationDetail(targetConversationId, profileName, { silent: true });
+      const targetSessionId = latestRealSessionIdForChatId(chatId, profileName) ||
+        (isOptimisticSessionId(sessionId) ? "" : sessionId);
+      if (targetSessionId) {
+        void refreshSessionDetail(targetSessionId, profileName, { silent: true });
       }
     }, 600);
   }
 
-  function startNewConversation(profileName = profile) {
+  function startNewSession(profileName = profile) {
     pendingProfileSelectionRef.current = null;
-    setSelectedConversationId(null);
+    setSelectedSessionId(null);
     setInput("");
     setHistoryErrorsByProfile((current) => ({ ...current, [profileName]: null }));
   }
 
-  async function createCoreConversationForPrompt(
+  async function createCoreSessionForPrompt(
     promptText: string,
     model = "",
     projectId: string | null = null,
@@ -860,10 +860,10 @@ export function useAgentUIChat({ profile, runtimeConfig, isChatViewActive = true
     try {
       const agentResult = await getAgentUICoreAgentForProfile(profile, runtimeConfig);
       if (!agentResult.ok || !agentResult.agent) return null;
-      const created = await createAgentUICoreConversation(
+      const created = await createAgentUICoreSession(
         {
           agentId: agentResult.agent.id,
-          title: conversationTitleFromPrompt(promptText),
+          title: sessionTitleFromPrompt(promptText),
           externalChatId: link?.externalChatId,
           externalSessionId: link?.externalSessionId,
           projectId,
@@ -875,46 +875,46 @@ export function useAgentUIChat({ profile, runtimeConfig, isChatViewActive = true
         },
         runtimeConfig,
       );
-      if (!created.ok || !created.conversation) return null;
+      if (!created.ok || !created.session) return null;
       return {
-        id: created.conversation.id,
+        id: created.session.id,
         source: "agentui-core",
         model,
-        title: created.conversation.title,
+        title: created.session.title,
         preview: compactText(promptText, 180),
-        chatId: created.conversation.externalChatId,
-        origin: created.conversation.origin || {},
-        metadata: created.conversation.metadata || {},
-        startedAt: created.conversation.createdAt,
+        chatId: created.session.externalChatId,
+        origin: created.session.origin || {},
+        metadata: created.session.metadata || {},
+        startedAt: created.session.createdAt,
         endedAt: null,
-        lastActiveAt: created.conversation.updatedAt,
+        lastActiveAt: created.session.updatedAt,
         messageCount: 1,
-      } satisfies HermesConversation;
+      } satisfies HermesSession;
     } catch {
       return null;
     }
   }
 
-  function coreConversationForLegacySelection(conversationId: string, chatId = "") {
-    if (!conversationId || isCoreConversationId(conversationId)) return null;
+  function coreSessionForLegacySelection(sessionId: string, chatId = "") {
+    if (!sessionId || isCoreSessionId(sessionId)) return null;
     if (chatId) {
-      const byChatId = conversations.find(
-        (conversation) => isCoreConversationId(conversation.id) && conversation.chatId === chatId,
+      const byChatId = sessions.find(
+        (session) => isCoreSessionId(session.id) && session.chatId === chatId,
       );
       if (byChatId) return byChatId;
     }
     return null;
   }
 
-  function scheduleConversationRetry(
+  function scheduleSessionRetry(
     targetProfile: string,
-    selectConversationId: string | null | undefined,
+    selectSessionId: string | null | undefined,
     remainingRetries: number,
   ) {
     window.setTimeout(() => {
-      void refreshConversations({
+      void refreshSessions({
         profileName: targetProfile,
-        selectConversationId,
+        selectSessionId,
         silent: true,
         transientRetries: remainingRetries - 1,
       });
@@ -922,18 +922,18 @@ export function useAgentUIChat({ profile, runtimeConfig, isChatViewActive = true
   }
 
   async function cancelMessage() {
-    if (!selectedConversationId || !activeRequestId) return;
-    const conversationId = selectedConversationId;
-    if (isCoreConversationId(conversationId)) await cancelAgentUICoreMessage(conversationId, runtimeConfig);
-    activeRequestIdsByConversationRef.current = removeActiveRequestIds(
-      activeRequestIdsByConversationRef.current,
-      conversationId,
+    if (!selectedSessionId || !activeRequestId) return;
+    const sessionId = selectedSessionId;
+    if (isCoreSessionId(sessionId)) await cancelAgentUICoreMessage(sessionId, runtimeConfig);
+    activeRequestIdsBySessionRef.current = removeActiveRequestIds(
+      activeRequestIdsBySessionRef.current,
+      sessionId,
     );
-    activeConversationTitlesByConversationRef.current = removeConversationValues(
-      activeConversationTitlesByConversationRef.current,
-      conversationId,
+    activeSessionTitlesBySessionRef.current = removeSessionValues(
+      activeSessionTitlesBySessionRef.current,
+      sessionId,
     );
-    setActiveRequestIdsByConversation((current) => removeActiveRequestIds(current, conversationId));
+    setActiveRequestIdsBySession((current) => removeActiveRequestIds(current, sessionId));
   }
 
   async function pollCoreEvents() {
@@ -947,7 +947,7 @@ export function useAgentUIChat({ profile, runtimeConfig, isChatViewActive = true
       [profile]: result.cursor || cursor,
     };
     handleCoreEvents(result.events);
-    reconcileActiveConversationDetails();
+    reconcileActiveSessionDetails();
   }
 
   function handleCoreEvents(events: AgentUICoreEvent[]) {
@@ -994,10 +994,10 @@ export function useAgentUIChat({ profile, runtimeConfig, isChatViewActive = true
         stringMetadata(delivery.metadata, "stream_message_id");
       const isStreamDelivery = Boolean(streamMessageId);
       const isFinalStreamDelivery = isStreamDelivery && streamDeliveryFinalized(delivery.metadata);
-      const conversationId =
-        conversationIdForActiveRequest(replyTo) ||
-        conversationIdForChatId(delivery.chatId);
-      if (!conversationId) {
+      const sessionId =
+        sessionIdForActiveRequest(replyTo) ||
+        sessionIdForChatId(delivery.chatId);
+      if (!sessionId) {
         if (markUnmappedDeliveryForRetry(delivery.id)) {
           remaining.push(delivery);
           unmappedDelivery = true;
@@ -1007,14 +1007,14 @@ export function useAgentUIChat({ profile, runtimeConfig, isChatViewActive = true
         }
         continue;
       }
-      const relatedConversationIds = conversationIdsForChatId(
+      const relatedSessionIds = sessionIdsForChatId(
         delivery.chatId,
-        conversationId,
-        conversationChatIdsByConversationRef.current,
+        sessionId,
+        sessionChatIdsBySessionRef.current,
       );
-      const existingBeforeMerge = mergeRelatedConversationMessages(
-        messagesByConversationRef.current,
-        relatedConversationIds,
+      const existingBeforeMerge = mergeRelatedSessionMessages(
+        messagesBySessionRef.current,
+        relatedSessionIds,
       );
       const completesActiveStream = !isStreamDelivery &&
         deliveryCompletesActiveStream(existingBeforeMerge, delivery);
@@ -1027,100 +1027,100 @@ export function useAgentUIChat({ profile, runtimeConfig, isChatViewActive = true
           Array.from(processedInboxEventIdsRef.current).slice(-250),
         );
       }
-      setMessagesByConversation((current) => {
-        const existing = mergeRelatedConversationMessages(
+      setMessagesBySession((current) => {
+        const existing = mergeRelatedSessionMessages(
           current,
-          relatedConversationIds,
+          relatedSessionIds,
         );
         if (!isStreamDelivery && existing.some((message) => message.id === delivery.id)) return current;
         const nextMessages = isStreamDelivery
           ? mergeStreamDelivery(existing, delivery, streamMessageId, isFinalStreamDelivery)
           : mergeCompletedDelivery(existing, delivery, replyTo);
-        return setConversationMessages(current, relatedConversationIds, conversationId, nextMessages);
+        return setSessionMessages(current, relatedSessionIds, sessionId, nextMessages);
       });
       if (replyTo && (!isStreamDelivery || isFinalStreamDelivery)) {
-        activeRequestIdsByConversationRef.current = removeActiveRequestIds(
-          activeRequestIdsByConversationRef.current,
-          ...relatedConversationIds,
+        activeRequestIdsBySessionRef.current = removeActiveRequestIds(
+          activeRequestIdsBySessionRef.current,
+          ...relatedSessionIds,
         );
-        activeConversationTitlesByConversationRef.current = removeConversationValues(
-          activeConversationTitlesByConversationRef.current,
-          ...relatedConversationIds,
+        activeSessionTitlesBySessionRef.current = removeSessionValues(
+          activeSessionTitlesBySessionRef.current,
+          ...relatedSessionIds,
         );
-        setActiveRequestIdsByConversation((current) =>
-          removeActiveRequestIds(current, ...relatedConversationIds),
+        setActiveRequestIdsBySession((current) =>
+          removeActiveRequestIds(current, ...relatedSessionIds),
         );
       } else if (isFinalStreamDelivery || completesActiveStream) {
-        activeRequestIdsByConversationRef.current = removeActiveRequestIds(
-          activeRequestIdsByConversationRef.current,
-          ...relatedConversationIds,
+        activeRequestIdsBySessionRef.current = removeActiveRequestIds(
+          activeRequestIdsBySessionRef.current,
+          ...relatedSessionIds,
         );
-        activeConversationTitlesByConversationRef.current = removeConversationValues(
-          activeConversationTitlesByConversationRef.current,
-          ...relatedConversationIds,
+        activeSessionTitlesBySessionRef.current = removeSessionValues(
+          activeSessionTitlesBySessionRef.current,
+          ...relatedSessionIds,
         );
-        setActiveRequestIdsByConversation((current) =>
-          removeActiveRequestIds(current, ...relatedConversationIds),
+        setActiveRequestIdsBySession((current) =>
+          removeActiveRequestIds(current, ...relatedSessionIds),
         );
       }
       if (!isStreamDelivery || isFinalStreamDelivery) {
-        markDeliveredConversationReadState(relatedConversationIds, delivery.cursor);
-        refreshConversationDetailSoon(conversationId, profile, delivery.chatId);
+        markDeliveredSessionReadState(relatedSessionIds, delivery.cursor);
+        refreshSessionDetailSoon(sessionId, profile, delivery.chatId);
       }
     }
 
     pendingGatewayDeliveriesRef.current = remaining.slice(-100);
     if (handledDelivery || unmappedDelivery) {
-      void refreshConversations({ profileName: profile, silent: true });
+      void refreshSessions({ profileName: profile, silent: true });
     }
   }
 
-  function reconcileActiveConversationDetails() {
+  function reconcileActiveSessionDetails() {
     const nowMs = Date.now();
-    for (const conversationId of Object.keys(activeRequestIdsByConversationRef.current)) {
-      if (isOptimisticConversationId(conversationId)) continue;
-      if (nowMs - (activeDetailReconcileAtRef.current[conversationId] || 0) < 1500) continue;
+    for (const sessionId of Object.keys(activeRequestIdsBySessionRef.current)) {
+      if (isOptimisticSessionId(sessionId)) continue;
+      if (nowMs - (activeDetailReconcileAtRef.current[sessionId] || 0) < 1500) continue;
       activeDetailReconcileAtRef.current = {
         ...activeDetailReconcileAtRef.current,
-        [conversationId]: nowMs,
+        [sessionId]: nowMs,
       };
-      void refreshConversationDetail(conversationId, profile, { silent: true, reconcileActive: true });
+      void refreshSessionDetail(sessionId, profile, { silent: true, reconcileActive: true });
     }
   }
 
-  function chatIdForConversation(conversationId: string | null | undefined) {
-    if (!conversationId) return "";
+  function chatIdForSession(sessionId: string | null | undefined) {
+    if (!sessionId) return "";
     return (
-      conversationChatIdsByConversation[conversationId] ||
-      conversations.find((conversation) => conversation.id === conversationId)?.chatId ||
+      sessionChatIdsBySession[sessionId] ||
+      sessions.find((session) => session.id === sessionId)?.chatId ||
       ""
     );
   }
 
-  function conversationIdForChatId(chatId: string) {
+  function sessionIdForChatId(chatId: string) {
     if (!chatId) return "";
-    const selectedId = selectedConversationIdRef.current;
-    if (selectedId && latestChatIdForConversation(selectedId) === chatId) {
+    const selectedId = selectedSessionIdRef.current;
+    if (selectedId && latestChatIdForSession(selectedId) === chatId) {
       return selectedId;
     }
-    const profileConversations = conversationsByProfileRef.current[profile] || [];
-    const realConversation = profileConversations.find(
-      (conversation) => !isOptimisticConversation(conversation) && conversation.chatId === chatId,
+    const profileSessions = sessionsByProfileRef.current[profile] || [];
+    const realSession = profileSessions.find(
+      (session) => !isOptimisticSession(session) && session.chatId === chatId,
     );
-    if (realConversation) return realConversation.id;
-    for (const [conversationId, mappedChatId] of Object.entries(conversationChatIdsByConversationRef.current)) {
-      if (mappedChatId === chatId && !isOptimisticConversationId(conversationId)) return conversationId;
+    if (realSession) return realSession.id;
+    for (const [sessionId, mappedChatId] of Object.entries(sessionChatIdsBySessionRef.current)) {
+      if (mappedChatId === chatId && !isOptimisticSessionId(sessionId)) return sessionId;
     }
-    for (const [conversationId, mappedChatId] of Object.entries(conversationChatIdsByConversationRef.current)) {
-      if (mappedChatId === chatId) return conversationId;
+    for (const [sessionId, mappedChatId] of Object.entries(sessionChatIdsBySessionRef.current)) {
+      if (mappedChatId === chatId) return sessionId;
     }
-    return profileConversations.find((conversation) => conversation.chatId === chatId)?.id || "";
+    return profileSessions.find((session) => session.chatId === chatId)?.id || "";
   }
 
-  function conversationIdForActiveRequest(requestId: string) {
+  function sessionIdForActiveRequest(requestId: string) {
     if (!requestId) return "";
-    for (const [conversationId, activeId] of Object.entries(activeRequestIdsByConversationRef.current)) {
-      if (activeId === requestId) return conversationId;
+    for (const [sessionId, activeId] of Object.entries(activeRequestIdsBySessionRef.current)) {
+      if (activeId === requestId) return sessionId;
     }
     return "";
   }
@@ -1135,95 +1135,95 @@ export function useAgentUIChat({ profile, runtimeConfig, isChatViewActive = true
     return true;
   }
 
-  function latestChatIdForConversation(conversationId: string, profileName = profile) {
+  function latestChatIdForSession(sessionId: string, profileName = profile) {
     return (
-      conversationChatIdsByConversationRef.current[conversationId] ||
-      (conversationsByProfileRef.current[profileName] || [])
-        .find((conversation) => conversation.id === conversationId)?.chatId ||
+      sessionChatIdsBySessionRef.current[sessionId] ||
+      (sessionsByProfileRef.current[profileName] || [])
+        .find((session) => session.id === sessionId)?.chatId ||
       ""
     );
   }
 
-  function latestRealConversationIdForChatId(chatId: string, profileName = profile) {
+  function latestRealSessionIdForChatId(chatId: string, profileName = profile) {
     if (!chatId) return "";
-    const realConversation = (conversationsByProfileRef.current[profileName] || []).find(
-      (conversation) => !isOptimisticConversation(conversation) && conversation.chatId === chatId,
+    const realSession = (sessionsByProfileRef.current[profileName] || []).find(
+      (session) => !isOptimisticSession(session) && session.chatId === chatId,
     );
-    if (realConversation) return realConversation.id;
-    for (const [conversationId, mappedChatId] of Object.entries(conversationChatIdsByConversationRef.current)) {
-      if (mappedChatId === chatId && !isOptimisticConversationId(conversationId)) return conversationId;
+    if (realSession) return realSession.id;
+    for (const [sessionId, mappedChatId] of Object.entries(sessionChatIdsBySessionRef.current)) {
+      if (mappedChatId === chatId && !isOptimisticSessionId(sessionId)) return sessionId;
     }
     return "";
   }
 
-  function updateConversationMessage(
-    conversationId: string,
+  function updateSessionMessage(
+    sessionId: string,
     messageId: string,
     updater: (message: Message) => Message,
   ) {
-    setMessagesByConversation((current) => ({
+    setMessagesBySession((current) => ({
       ...current,
-      [conversationId]: (current[conversationId] || []).map((message) =>
+      [sessionId]: (current[sessionId] || []).map((message) =>
         message.id === messageId ? updater(message) : message,
       ),
     }));
   }
 
-  function markDeliveredConversationReadState(conversationIds: string[], eventCursor: number) {
-    const selectedId = selectedConversationIdRef.current;
-    const visible = Boolean(isChatViewActiveRef.current && selectedId && conversationIds.includes(selectedId));
+  function markDeliveredSessionReadState(sessionIds: string[], eventCursor: number) {
+    const selectedId = selectedSessionIdRef.current;
+    const visible = Boolean(isChatViewActiveRef.current && selectedId && sessionIds.includes(selectedId));
     const state = visible ? "read" : "unread";
-    for (const conversationId of conversationIds) {
-      markConversationReadState(conversationId, state, {
+    for (const sessionId of sessionIds) {
+      markSessionReadState(sessionId, state, {
         reason: visible ? "active-delivery" : "background-delivery",
         eventCursor,
       });
     }
   }
 
-  function markConversationRead(conversationId: string, metadata: CoreMetadata = {}) {
-    markConversationReadState(conversationId, "read", metadata);
+  function markSessionRead(sessionId: string, metadata: CoreMetadata = {}) {
+    markSessionReadState(sessionId, "read", metadata);
   }
 
-  function markConversationReadState(
-    conversationId: string,
+  function markSessionReadState(
+    sessionId: string,
     state: "read" | "unread",
     metadata: CoreMetadata = {},
   ) {
-    if (!isCoreConversationId(conversationId)) return;
-    setConversationReadStates((current) => ({ ...current, [conversationId]: state }));
-    setConversationsByProfile((current) =>
-      updateConversationReadStateForProfiles(current, conversationId, state),
+    if (!isCoreSessionId(sessionId)) return;
+    setSessionReadStates((current) => ({ ...current, [sessionId]: state }));
+    setSessionsByProfile((current) =>
+      updateSessionReadStateForProfiles(current, sessionId, state),
     );
-    void updateAgentUICoreConversationReadState(conversationId, state, runtimeConfig, metadata);
+    void updateAgentUICoreSessionReadState(sessionId, state, runtimeConfig, metadata);
   }
 
   return {
     activeRequestId,
-    activeConversationIds,
+    activeSessionIds,
     cancelMessage,
-    conversations,
-    conversationsByProfile,
-    conversationReadStates,
-    conversationsLoadedByProfile,
-    conversationsLoading,
-    conversationsLoadingByProfile,
+    sessions,
+    sessionsByProfile,
+    sessionReadStates,
+    sessionsLoadedByProfile,
+    sessionsLoading,
+    sessionsLoadingByProfile,
     historyError,
     historyErrorsByProfile,
     historySchemaVersion,
     historySource,
     input,
-    deleteConversation,
-    loadConversation,
+    deleteSession,
+    loadSession,
     messages,
-    renameConversation,
+    renameSession,
     selectedModelSelection,
     requestActive: Boolean(activeRequestId),
-    refreshConversations,
-    selectedConversationId,
+    refreshSessions,
+    selectedSessionId,
     sendMessage,
     setInput,
-    startNewConversation,
+    startNewSession,
   };
 }
 

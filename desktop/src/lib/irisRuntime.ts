@@ -6,14 +6,14 @@ import {
   createAgentUICoreAgent,
   createAgentUICoreAgentSkill,
   deleteAgentUICoreAgent,
-  deleteAgentUICoreConversation,
+  deleteAgentUICoreSession,
   getAgentUICoreAgentForProfile,
   getAgentUICoreAgentMemory,
   getAgentUICoreAgentSkill,
   getAgentUICoreAgentSkills,
-  getAgentUICoreConversation,
-  getAgentUICoreConversationMessages,
-  getAgentUICoreConversations,
+  getAgentUICoreSession,
+  getAgentUICoreSessionMessages,
+  getAgentUICoreSessions,
   getAgentUICoreEvents,
   getAgentUICoreModels,
   getAgentUICoreSlashCommands,
@@ -22,18 +22,18 @@ import {
   resetAgentUICoreAgentMemory,
   saveAgentUICoreAgentMemory,
   saveAgentUICoreAgentSkill,
-  updateAgentUICoreConversation,
+  updateAgentUICoreSession,
 } from "./agentuiCore";
 import {
-  coreConversationToLegacy,
+  coreSessionToLegacy,
   coreEventToInboxMessage,
   coreMessageToLegacy,
 } from "./coreLegacyCompat";
 import type {
   HermesMemory,
   HermesModelCatalog,
-  HermesConversationDetail,
-  HermesConversationsResult,
+  HermesSessionDetail,
+  HermesSessionsResult,
   HermesRuntimeConfig,
   HermesSkillDetail,
   HermesSkills,
@@ -159,41 +159,41 @@ export async function saveIrisSkill(payload: {
   return result.ok ? result : { ...result, profile: agentResult.agent.runtimeProfile, skill: emptySkillDetail(agentResult.agent.runtimeProfile) };
 }
 
-export async function getIrisConversations(
+export async function getIrisSessions(
   profile?: string,
   limit = 80,
   runtime?: HermesRuntimeConfig,
-): Promise<HermesConversationsResult> {
+): Promise<HermesSessionsResult> {
   const targetProfile = profile || "default";
   try {
     const agentResult = await getAgentUICoreAgentForProfile(targetProfile, runtime);
     if (!agentResult.ok || !agentResult.agent) {
-      return emptyConversations(
+      return emptySessions(
         targetProfile,
         agentResultError(agentResult, "Could not resolve Iris agent."),
         runtime,
       );
     }
-    const result = await getAgentUICoreConversations(agentResult.agent.id, limit, runtime);
+    const result = await getAgentUICoreSessions(agentResult.agent.id, limit, runtime);
     if (!result.ok) {
-      return emptyConversations(
+      return emptySessions(
         agentResult.agent.runtimeProfile,
-        result.error || "Could not load conversations from Iris Core.",
+        result.error || "Could not load sessions from Iris Core.",
         runtime,
       );
     }
     return {
       ok: true,
       profile: agentResult.agent.runtimeProfile,
-      path: `${runtime?.coreApiUrl || "http://127.0.0.1:8765"}/v1/conversations`,
+      path: `${runtime?.coreApiUrl || "http://127.0.0.1:8765"}/v1/sessions`,
       source: "hermes-management" as const,
       schemaVersion: null,
-      conversations: result.conversations.map(coreConversationToLegacy),
+      sessions: result.sessions.map(coreSessionToLegacy),
     };
   } catch (error) {
-    return emptyConversations(
+    return emptySessions(
       targetProfile,
-      error instanceof Error ? error.message : "Could not load conversations from Iris Core.",
+      error instanceof Error ? error.message : "Could not load sessions from Iris Core.",
       runtime,
     );
   }
@@ -258,125 +258,125 @@ export async function completeIrisSlashCommand(
   }
 }
 
-export async function getIrisConversationDetail(
+export async function getIrisSessionDetail(
   profile: string | undefined,
-  conversationId: string,
+  sessionId: string,
   runtime?: HermesRuntimeConfig,
 ) {
-  if (!conversationId.startsWith("conv_")) {
-    return emptyConversationDetail(
+  if (!sessionId.startsWith("session_")) {
+    return emptySessionDetail(
       profile || "default",
-      conversationId,
-      "Legacy conversation history is no longer loaded directly. Start a follow-up to link it through Iris Core.",
+      sessionId,
+      "Legacy session history is no longer loaded directly. Start a follow-up to link it through Iris Core.",
       runtime,
     );
   }
   try {
-    const [conversationResult, messagesResult] = await Promise.all([
-      getAgentUICoreConversation(conversationId, runtime),
-      getAgentUICoreConversationMessages(conversationId, runtime),
+    const [sessionResult, messagesResult] = await Promise.all([
+      getAgentUICoreSession(sessionId, runtime),
+      getAgentUICoreSessionMessages(sessionId, runtime),
     ]);
-    if (!conversationResult.ok || !messagesResult.ok) {
-      return emptyConversationDetail(
+    if (!sessionResult.ok || !messagesResult.ok) {
+      return emptySessionDetail(
         profile || "default",
-        conversationId,
-        conversationResult.error || messagesResult.error || "Could not load this session from Iris Core.",
+        sessionId,
+        sessionResult.error || messagesResult.error || "Could not load this session from Iris Core.",
         runtime,
       );
     }
     return {
       ok: true,
-      profile: conversationResult.conversation.runtimeProfile || profile || "default",
-      path: `${runtime?.coreApiUrl || "http://127.0.0.1:8765"}/v1/conversations/${conversationId}`,
+      profile: sessionResult.session.runtimeProfile || profile || "default",
+      path: `${runtime?.coreApiUrl || "http://127.0.0.1:8765"}/v1/sessions/${sessionId}`,
       source: "hermes-management" as const,
       schemaVersion: null,
-      conversation: coreConversationToLegacy(conversationResult.conversation),
-      messages: messagesResult.messages.map((message) => coreMessageToLegacy(message, conversationId)),
+      session: coreSessionToLegacy(sessionResult.session),
+      messages: messagesResult.messages.map((message) => coreMessageToLegacy(message, sessionId)),
       warning: messagesResult.warning,
       error: undefined,
     };
   } catch (error) {
-    return emptyConversationDetail(
+    return emptySessionDetail(
       profile || "default",
-      conversationId,
+      sessionId,
       error instanceof Error ? error.message : "Could not load this session from Iris Core.",
       runtime,
     );
   }
 }
 
-export async function renameIrisConversation(
+export async function renameIrisSession(
   _profile: string | undefined,
-  conversationId: string,
+  sessionId: string,
   title: string,
   runtime?: HermesRuntimeConfig,
 ) {
   const cleanTitle = title.trim();
   if (!cleanTitle) {
-    return { ok: false, conversation: null, error: "Session title is required." };
+    return { ok: false, session: null, error: "Session title is required." };
   }
-  if (!conversationId.startsWith("conv_")) {
+  if (!sessionId.startsWith("session_")) {
     return {
       ok: false,
-      conversation: null,
-      error: "Legacy conversation titles cannot be renamed until they are linked through Iris Core.",
+      session: null,
+      error: "Legacy session titles cannot be renamed until they are linked through Iris Core.",
     };
   }
   try {
-    const result = await updateAgentUICoreConversation(conversationId, { title: cleanTitle }, runtime);
-    if (!result.ok || !result.conversation) {
+    const result = await updateAgentUICoreSession(sessionId, { title: cleanTitle }, runtime);
+    if (!result.ok || !result.session) {
       return {
         ok: false,
-        conversation: null,
+        session: null,
         error: result.error || "Could not rename this session through Iris Core.",
       };
     }
     return {
       ok: true,
-      conversation: coreConversationToLegacy(result.conversation),
+      session: coreSessionToLegacy(result.session),
       error: undefined,
     };
   } catch (error) {
     return {
       ok: false,
-      conversation: null,
+      session: null,
       error: error instanceof Error ? error.message : "Could not rename this session through Iris Core.",
     };
   }
 }
 
-export async function deleteIrisConversation(
+export async function deleteIrisSession(
   _profile: string | undefined,
-  conversationId: string,
+  sessionId: string,
   runtime?: HermesRuntimeConfig,
 ) {
-  if (!conversationId.startsWith("conv_")) {
+  if (!sessionId.startsWith("session_")) {
     return {
       ok: false,
-      conversationId,
-      error: "Legacy conversations cannot be deleted until they are linked through Iris Core.",
+      sessionId,
+      error: "Legacy sessions cannot be deleted until they are linked through Iris Core.",
     };
   }
   try {
-    const result = await deleteAgentUICoreConversation(conversationId, runtime);
+    const result = await deleteAgentUICoreSession(sessionId, runtime);
     if (!result.ok) {
       return {
         ok: false,
-        conversationId,
-        error: conversationDeleteErrorMessage(result.error),
+        sessionId,
+        error: sessionDeleteErrorMessage(result.error),
       };
     }
-    return { ok: true, conversationId: result.conversationId || conversationId, error: undefined };
+    return { ok: true, sessionId: result.sessionId || sessionId, error: undefined };
   } catch (error) {
     return {
       ok: false,
-      conversationId,
+      sessionId,
       error: error instanceof Error ? error.message : "Could not delete this session.",
     };
   }
 }
 
-function conversationDeleteErrorMessage(error: string | undefined) {
+function sessionDeleteErrorMessage(error: string | undefined) {
   if ((error || "").toLowerCase().includes("method not allowed")) {
     return "Iris Core needs to be restarted before sessions can be deleted.";
   }
@@ -541,31 +541,31 @@ function profileActionResult(result: { ok: boolean; agent?: { runtimeProfile: st
     : { ok: false, profile: "", error: result.error || "Agent operation failed." };
 }
 
-function emptyConversations(profile: string, error: string, runtime?: HermesRuntimeConfig): HermesConversationsResult {
+function emptySessions(profile: string, error: string, runtime?: HermesRuntimeConfig): HermesSessionsResult {
   return {
     ok: false,
     profile,
-    path: `${runtime?.coreApiUrl || "http://127.0.0.1:8765"}/v1/conversations`,
+    path: `${runtime?.coreApiUrl || "http://127.0.0.1:8765"}/v1/sessions`,
     source: "hermes-management",
     schemaVersion: null,
-    conversations: [],
+    sessions: [],
     error,
   };
 }
 
-function emptyConversationDetail(
+function emptySessionDetail(
   profile: string,
-  conversationId: string,
+  sessionId: string,
   error: string,
   runtime?: HermesRuntimeConfig,
-): HermesConversationDetail {
+): HermesSessionDetail {
   return {
     ok: false,
     profile,
-    path: `${runtime?.coreApiUrl || "http://127.0.0.1:8765"}/v1/conversations/${conversationId}`,
+    path: `${runtime?.coreApiUrl || "http://127.0.0.1:8765"}/v1/sessions/${sessionId}`,
     source: "hermes-management",
     schemaVersion: null,
-    conversation: null,
+    session: null,
     messages: [],
     error,
   };
