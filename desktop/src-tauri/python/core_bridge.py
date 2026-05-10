@@ -11,6 +11,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import traceback
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -52,6 +53,7 @@ def main() -> None:
     try:
         emit(handler(payload))
     except Exception as exc:
+        traceback.print_exc(file=sys.stderr)
         emit_error(str(exc))
 
 

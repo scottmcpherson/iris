@@ -2,18 +2,10 @@
 
 from __future__ import annotations
 
-import json
 import logging
-import os
-import re
 import time
 import asyncio
-import urllib.error
-import urllib.parse
-import urllib.request
 import uuid
-import mimetypes
-from pathlib import Path
 from typing import Any, Dict, Optional
 
 try:
@@ -23,24 +15,63 @@ except ImportError:
     web = None  # type: ignore[assignment]
     AIOHTTP_AVAILABLE = False
 
+try:
+    from adapter_config import (
+        DEFAULT_INBOUND_HOST,
+        current_profile_name,
+        default_inbound_port,
+        env_value,
+        normalize_base_url,
+        safe_int,
+        safe_text,
+        sync_env_alias,
+    )
+    from attachments import (
+        inbound_payload_and_files,
+        message_type_for_attachments,
+        normalized_inbound_attachments,
+    )
+    from discovery import (
+        discover_slash_commands,
+        filter_slash_command_rows,
+        normalize_model_provider,
+    )
+    from http_client import AIOHTTP_AVAILABLE as HTTP_CLIENT_AVAILABLE, IrisCoreHttpClient
+    from routes import register_inbound_routes
+except ImportError:
+    from .adapter_config import (
+        DEFAULT_INBOUND_HOST,
+        current_profile_name,
+        default_inbound_port,
+        env_value,
+        normalize_base_url,
+        safe_int,
+        safe_text,
+        sync_env_alias,
+    )
+    from .attachments import (
+        inbound_payload_and_files,
+        message_type_for_attachments,
+        normalized_inbound_attachments,
+    )
+    from .discovery import (
+        discover_slash_commands,
+        filter_slash_command_rows,
+        normalize_model_provider,
+    )
+    from .http_client import AIOHTTP_AVAILABLE as HTTP_CLIENT_AVAILABLE, IrisCoreHttpClient
+    from .routes import register_inbound_routes
+
 from gateway.config import Platform
 from gateway.platforms.base import (
     BasePlatformAdapter,
     MessageEvent,
-    MessageType,
     SendResult,
-    cache_audio_from_bytes,
-    cache_document_from_bytes,
-    cache_image_from_bytes,
-    cache_video_from_bytes,
 )
 from gateway.session import SessionSource
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_INBOUND_HOST = "127.0.0.1"
-DEFAULT_INBOUND_PORT = 8766
-API_TO_AGENTUI_PORT_OFFSET = 124
 MAX_INBOUND_BYTES = 250 * 1024 * 1024
 
 
@@ -94,7 +125,7 @@ class IrisPlatformAdapter(BasePlatformAdapter):
                 retryable=False,
             )
             return False
-        result = self._request("GET", "/v1/inbox/health")
+        result = await self._request("GET", "/v1/inbox/health")
         if not result.get("ok"):
             self._set_fatal_error(
                 "health_failed",
@@ -164,7 +195,7 @@ class IrisPlatformAdapter(BasePlatformAdapter):
                 "deliveredAt": int(time.time()),
             },
         }
-        result = self._request("POST", "/v1/runtime-deliveries/hermes", body)
+        result = await self._request("POST", "/v1/runtime-deliveries/hermes", body)
         if not result.get("ok"):
             return SendResult(
                 success=False,
@@ -207,7 +238,7 @@ class IrisPlatformAdapter(BasePlatformAdapter):
                 "deliveredAt": int(time.time()),
             },
         }
-        result = self._request("POST", "/v1/runtime-deliveries/hermes", body)
+        result = await self._request("POST", "/v1/runtime-deliveries/hermes", body)
         if not result.get("ok"):
             return SendResult(
                 success=False,
@@ -231,11 +262,7 @@ class IrisPlatformAdapter(BasePlatformAdapter):
         if self._runner is not None:
             return
         app = web.Application(client_max_size=MAX_INBOUND_BYTES)  # type: ignore[union-attr]
-        app.router.add_get("/health", self._inbound_health)
-        app.router.add_get("/iris/models", self._inbound_models)
-        app.router.add_get("/iris/slash-commands", self._inbound_slash_commands)
-        app.router.add_post("/iris/slash-complete", self._inbound_slash_complete)
-        app.router.add_post("/iris/messages", self._inbound_message)
+        register_inbound_routes(app, self)
         self._runner = web.AppRunner(app)  # type: ignore[union-attr]
         await self._runner.setup()
         self._site = web.TCPSite(self._runner, self.inbound_host, self.inbound_port)  # type: ignore[union-attr]
@@ -452,42 +479,19 @@ class IrisPlatformAdapter(BasePlatformAdapter):
         prefix = "Bearer "
         return bool(self.token and header.startswith(prefix) and header[len(prefix):].strip() == self.token)
 
-    def _request(self, method: str, path: str, body: dict[str, Any] | None = None) -> dict[str, Any]:
-        url = f"{self.base_url}{path}"
-        data = json.dumps(body).encode("utf-8") if body is not None else None
-        headers = {
-            "Accept": "application/json",
-            "Authorization": f"Bearer {self.token}",
-        }
-        if data is not None:
-            headers["Content-Type"] = "application/json"
-        request = urllib.request.Request(url, data=data, headers=headers, method=method)
-        try:
-            with urllib.request.urlopen(request, timeout=8) as response:
-                text = response.read().decode("utf-8", errors="replace")
-        except urllib.error.HTTPError as exc:
-            text = exc.read().decode("utf-8", errors="replace")
-            return {"ok": False, "status": exc.code, "error": api_error(text) or f"HTTP {exc.code}"}
-        except Exception as exc:
-            return {"ok": False, "error": str(exc), "retryable": True}
-
-        try:
-            parsed = json.loads(text) if text else {}
-        except json.JSONDecodeError as exc:
-            return {"ok": False, "error": f"Invalid Iris JSON: {exc}"}
-        if not isinstance(parsed, dict):
-            return {"ok": False, "error": "Iris returned a non-object JSON response"}
-        return parsed if parsed.get("ok") is False else {**parsed, "ok": True}
+    async def _request(self, method: str, path: str, body: dict[str, Any] | None = None) -> dict[str, Any]:
+        client = IrisCoreHttpClient(base_url=self.base_url, token=self.token)
+        return await client.request(method, path, body)
 
 
 def check_requirements() -> bool:
-    return bool(AIOHTTP_AVAILABLE and env_value("IRIS_BASE_URL", "AGENTUI_BASE_URL") and env_value("IRIS_TOKEN", "AGENTUI_TOKEN"))
+    return bool(HTTP_CLIENT_AVAILABLE and env_value("IRIS_BASE_URL", "AGENTUI_BASE_URL") and env_value("IRIS_TOKEN", "AGENTUI_TOKEN"))
 
 
 def validate_config(config) -> bool:
     extra = getattr(config, "extra", {}) or {}
     return bool(
-        AIOHTTP_AVAILABLE
+        HTTP_CLIENT_AVAILABLE
         and
         normalize_base_url(env_value("IRIS_BASE_URL", "AGENTUI_BASE_URL") or extra.get("base_url"))
         and str(env_value("IRIS_TOKEN", "AGENTUI_TOKEN") or extra.get("token") or "").strip()
@@ -521,497 +525,6 @@ def register(ctx) -> None:
             "delivery output direct and readable."
         ),
     )
-
-
-def env_value(*names: str) -> str:
-    for name in names:
-        value = os.getenv(name)
-        if value:
-            return value
-    return ""
-
-
-def sync_env_alias(preferred: str, legacy: str) -> None:
-    if os.getenv(preferred) and not os.getenv(legacy):
-        os.environ[legacy] = os.getenv(preferred, "")
-
-
-def normalize_base_url(value: object) -> str:
-    raw = str(value or "").strip().rstrip("/")
-    if not raw:
-        return ""
-    parsed = urllib.parse.urlparse(raw)
-    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-        return ""
-    return raw
-
-
-def safe_int(value: object, default: int) -> int:
-    try:
-        parsed = int(str(value or "").strip())
-    except (TypeError, ValueError):
-        return default
-    return parsed if 0 < parsed < 65536 else default
-
-
-def clamp_int(value: object, default: int, minimum: int, maximum: int) -> int:
-    try:
-        parsed = int(str(value or "").strip())
-    except (TypeError, ValueError):
-        parsed = default
-    return min(max(parsed, minimum), maximum)
-
-
-def normalize_model_provider(row: Dict[str, Any]) -> Dict[str, Any]:
-    models_value = row.get("models")
-    models = [str(item) for item in models_value if str(item).strip()] if isinstance(models_value, list) else []
-    slug = str(row.get("slug") or row.get("provider") or row.get("id") or "").strip()
-    return {
-        "slug": slug,
-        "name": str(row.get("name") or row.get("label") or slug or "Provider").strip(),
-        "isCurrent": bool(row.get("isCurrent", row.get("is_current", False))),
-        "isUserDefined": bool(row.get("isUserDefined", row.get("is_user_defined", False))),
-        "models": models,
-        "totalModels": clamp_int(row.get("totalModels") or row.get("total_models"), len(models), 0, 100_000),
-        "source": str(row.get("source") or "").strip(),
-    }
-
-
-def discover_slash_commands(profile: str) -> Dict[str, Any]:
-    warnings: list[str] = []
-    commands: list[Dict[str, Any]] = []
-    config = load_gateway_config(warnings)
-
-    try:
-        commands.extend(discover_builtin_commands(config))
-    except Exception as exc:
-        logger.exception("[Iris] built-in slash command discovery failed")
-        warnings.append(f"Built-in command discovery failed: {exc}")
-
-    try:
-        commands.extend(discover_quick_commands(config))
-    except Exception as exc:
-        logger.exception("[Iris] quick command discovery failed")
-        warnings.append(f"Quick command discovery failed: {exc}")
-
-    try:
-        commands.extend(discover_plugin_commands(config))
-    except Exception as exc:
-        logger.exception("[Iris] plugin slash command discovery failed")
-        warnings.append(f"Plugin command discovery failed: {exc}")
-
-    try:
-        commands.extend(discover_skill_commands(config))
-    except Exception as exc:
-        logger.exception("[Iris] skill slash command discovery failed")
-        warnings.append(f"Skill command discovery failed: {exc}")
-
-    normalized = dedupe_command_rows(commands)
-    ok = bool(normalized or len(warnings) < 4)
-    return {
-        "ok": ok,
-        "profile": profile,
-        "generatedAt": int(time.time()),
-        "commands": normalized,
-        **({"warning": "; ".join(warnings)} if warnings else {}),
-        **({"error": "; ".join(warnings) or "Slash command discovery failed."} if not ok else {}),
-    }
-
-
-def load_gateway_config(warnings: list[str]) -> Dict[str, Any]:
-    try:
-        from gateway.run import _load_gateway_config
-
-        loaded = _load_gateway_config() or {}
-        return loaded if isinstance(loaded, dict) else {}
-    except Exception as exc:
-        warnings.append(f"Gateway config unavailable: {exc}")
-        return {}
-
-
-def discover_builtin_commands(config: Dict[str, Any]) -> list[Dict[str, Any]]:
-    from hermes_cli.commands import COMMAND_REGISTRY
-
-    rows = command_registry_rows(COMMAND_REGISTRY)
-    return [
-        normalize_slash_row(row, source="hermes", category=command_category(row, "Commands"))
-        for row in rows
-        if command_available(row, config)
-    ]
-
-
-def discover_quick_commands(config: Dict[str, Any]) -> list[Dict[str, Any]]:
-    quick_commands = config.get("quick_commands") or config.get("quickCommands")
-    rows: list[Dict[str, Any]] = []
-    if isinstance(quick_commands, dict):
-        for name, value in quick_commands.items():
-            description = ""
-            text = ""
-            if isinstance(value, dict):
-                description = str(value.get("description") or value.get("prompt") or "").strip()
-                text = str(value.get("command") or value.get("text") or name).strip()
-            else:
-                description = str(value or "").strip()
-                text = str(name or "").strip()
-            rows.append(
-                normalize_slash_row(
-                    {
-                        "name": name,
-                        "text": text,
-                        "description": description,
-                    },
-                    source="quick-command",
-                    category="User commands",
-                )
-            )
-    elif isinstance(quick_commands, list):
-        for item in quick_commands:
-            rows.append(normalize_slash_row(item, source="quick-command", category="User commands"))
-    return rows
-
-
-def discover_plugin_commands(config: Dict[str, Any]) -> list[Dict[str, Any]]:
-    try:
-        from hermes_cli.plugins import get_plugin_commands
-    except Exception:
-        return []
-
-    try:
-        raw = get_plugin_commands(config)
-    except TypeError:
-        raw = get_plugin_commands()
-    return [
-        normalize_slash_row(row, source="plugin", category="Plugins")
-        for row in command_registry_rows(raw)
-        if command_available(row, config)
-    ]
-
-
-def discover_skill_commands(config: Dict[str, Any]) -> list[Dict[str, Any]]:
-    try:
-        from agent.skill_commands import scan_skill_commands
-    except Exception:
-        return []
-
-    try:
-        raw = scan_skill_commands(config)
-    except TypeError:
-        try:
-            raw = scan_skill_commands()
-        except TypeError:
-            raw = []
-    return [
-        normalize_slash_row(row, source="skill", category="Skills")
-        for row in command_registry_rows(raw)
-    ]
-
-
-def command_registry_rows(value: Any) -> list[Any]:
-    if isinstance(value, dict):
-        return [
-            {**object_dict(command), "name": name}
-            if not isinstance(command, dict) or not command.get("name")
-            else command
-            for name, command in value.items()
-        ]
-    if isinstance(value, (list, tuple, set)):
-        return list(value)
-    return [value] if value else []
-
-
-def object_dict(value: Any) -> Dict[str, Any]:
-    if isinstance(value, dict):
-        return value
-    data: Dict[str, Any] = {}
-    for key in (
-        "id",
-        "name",
-        "text",
-        "label",
-        "description",
-        "help",
-        "category",
-        "aliases",
-        "args_hint",
-        "argsHint",
-        "subcommands",
-        "sub_commands",
-        "requires_argument",
-        "requiresArgument",
-        "cli_only",
-        "config_key",
-        "enabled",
-    ):
-        if hasattr(value, key):
-            data[key] = getattr(value, key)
-    return data
-
-
-def normalize_slash_row(value: Any, *, source: str, category: str) -> Dict[str, Any]:
-    row = object_dict(value)
-    name = str(row.get("name") or row.get("command") or row.get("slug") or row.get("id") or "").strip().lstrip("/")
-    text = str(row.get("text") or row.get("label") or name).strip()
-    if text and not text.startswith("/"):
-        text = f"/{text}"
-    if not name:
-        name = text.lstrip("/")
-    args_hint = str(row.get("argsHint") or row.get("args_hint") or "").strip()
-    clean_source = source if source in {"hermes", "skill", "quick-command", "plugin"} else "hermes"
-    return {
-        "id": str(row.get("id") or f"{clean_source}:{name}").strip(),
-        "name": name,
-        "text": text or f"/{name}",
-        "label": str(row.get("label") or text or f"/{name}").strip(),
-        "description": str(row.get("description") or row.get("help") or skill_description_fallback(name, clean_source)).strip(),
-        "category": str(row.get("category") or category).strip(),
-        "source": clean_source,
-        "aliases": string_values(row.get("aliases")),
-        "argsHint": args_hint,
-        "subcommands": string_values(row.get("subcommands") or row.get("sub_commands")),
-        "requiresArgument": bool(row.get("requiresArgument", row.get("requires_argument", args_hint.startswith("<")))),
-    }
-
-
-def command_available(value: Any, config: Dict[str, Any]) -> bool:
-    row = object_dict(value)
-    if bool(row.get("cli_only")):
-        return False
-    enabled = row.get("enabled")
-    if enabled is False:
-        return False
-    config_key = str(row.get("config_key") or row.get("requires_config") or "").strip()
-    if config_key and not config.get(config_key):
-        return False
-    return True
-
-
-def command_category(value: Any, fallback: str) -> str:
-    row = object_dict(value)
-    return str(row.get("category") or fallback).strip() or fallback
-
-
-def skill_description_fallback(name: str, source: str) -> str:
-    if source == "skill":
-        return f"Invoke the {name} skill"
-    return ""
-
-
-def string_values(value: Any) -> list[str]:
-    if isinstance(value, (list, tuple, set)):
-        return [str(item).strip().lstrip("/") for item in value if str(item).strip()]
-    if isinstance(value, str) and value.strip():
-        return [item.strip().lstrip("/") for item in re.split(r"[, ]+", value) if item.strip()]
-    return []
-
-
-def dedupe_command_rows(commands: list[Dict[str, Any]]) -> list[Dict[str, Any]]:
-    by_text: dict[str, Dict[str, Any]] = {}
-    for command in commands:
-        text = str(command.get("text") or "").strip()
-        name = str(command.get("name") or "").strip()
-        if not text or not name:
-            continue
-        key = text.lower()
-        if key not in by_text:
-            by_text[key] = command
-    return sorted(by_text.values(), key=lambda row: str(row.get("text") or ""))
-
-
-def filter_slash_command_rows(commands: list[Any], query: str) -> list[Dict[str, Any]]:
-    needle = query.strip().lower()
-    rows = [command for command in commands if isinstance(command, dict)]
-    if not needle:
-        return rows[:30]
-    scored = [
-        (score_slash_command_row(command, needle), command)
-        for command in rows
-    ]
-    return [
-        command
-        for score, command in sorted(scored, key=lambda item: (-item[0], str(item[1].get("text") or "")))
-        if score > 0
-    ][:30]
-
-
-def score_slash_command_row(command: Dict[str, Any], needle: str) -> int:
-    name = str(command.get("name") or "").lower()
-    text = str(command.get("text") or "").lower()
-    aliases = [str(alias).lower() for alias in command.get("aliases", []) if str(alias).strip()]
-    haystack = " ".join(
-        str(command.get(key) or "")
-        for key in ("description", "category", "source")
-    ).lower()
-    if name == needle or text == f"/{needle}":
-        return 1000
-    if name.startswith(needle):
-        return 900 - len(name)
-    if text.startswith(f"/{needle}"):
-        return 850 - len(text)
-    if any(alias == needle for alias in aliases):
-        return 820
-    if any(alias.startswith(needle) for alias in aliases):
-        return 760
-    if needle in name:
-        return 560
-    if any(needle in alias for alias in aliases):
-        return 500
-    if needle in haystack:
-        return 120
-    return 0
-
-
-def default_inbound_port() -> int:
-    api_port = safe_int(os.getenv("API_SERVER_PORT"), 0)
-    if api_port:
-        return api_port + API_TO_AGENTUI_PORT_OFFSET
-    return DEFAULT_INBOUND_PORT
-
-
-def current_profile_name() -> str:
-    home = Path(os.getenv("HERMES_HOME") or Path.home() / ".hermes").expanduser()
-    if home.parent.name == "profiles" and home.name:
-        return home.name
-    return "default"
-
-
-def safe_text(value: object, default: str, limit: int) -> str:
-    text = str(value or default or "").strip()
-    if not text:
-        return default
-    return text[:limit]
-
-
-async def inbound_payload_and_files(request) -> tuple[dict[str, object], dict[str, dict[str, object]]]:
-    content_type = str(getattr(request, "content_type", "") or "").lower()
-    if content_type.startswith("multipart/"):
-        reader = await request.multipart()
-        payload: dict[str, object] | None = None
-        uploaded_files: dict[str, dict[str, object]] = {}
-        async for part in reader:
-            if part.name == "payload":
-                payload_text = await part.text()
-                parsed = json.loads(payload_text)
-                if isinstance(parsed, dict):
-                    payload = parsed
-                continue
-            if not part.name:
-                continue
-            uploaded_files[part.name] = {
-                "filename": part.filename or "",
-                "mimeType": str(part.headers.get("Content-Type") or ""),
-                "bytes": await part.read(decode=False),
-            }
-        return payload or {}, uploaded_files
-    return await request.json(), {}
-
-
-def normalized_inbound_attachments(
-    value: object,
-    uploaded_files: dict[str, dict[str, object]] | None = None,
-) -> list[dict[str, str]]:
-    if not isinstance(value, list):
-        return []
-    attachments: list[dict[str, str]] = []
-    uploaded_files = uploaded_files or {}
-    for item in value:
-        if not isinstance(item, dict):
-            continue
-        field = str(item.get("field") or "").strip()
-        uploaded_file = uploaded_files.get(field) if field else None
-        path = ""
-        name = str(item.get("name") or "").strip()
-        kind = str(item.get("kind") or "").strip().lower()
-        mime_type = normalize_inbound_mime_type(
-            kind,
-            str(item.get("mimeType") or item.get("mediaType") or "").strip().lower(),
-            name,
-        )
-        if uploaded_file is not None:
-            file_bytes = uploaded_file.get("bytes")
-            if isinstance(file_bytes, bytearray):
-                file_bytes = bytes(file_bytes)
-            if not isinstance(file_bytes, bytes) or len(file_bytes) == 0:
-                raise ValueError(f"Attachment file part '{field}' is empty or missing")
-            name = name or str(uploaded_file.get("filename") or "attachment").strip()
-            mime_type = normalize_inbound_mime_type(
-                kind,
-                mime_type or str(uploaded_file.get("mimeType") or ""),
-                name,
-            )
-            path = cache_inbound_attachment(file_bytes, name, kind, mime_type)
-        else:
-            continue
-        attachments.append({
-            "path": path,
-            "name": name or Path(path).name or "attachment",
-            "kind": kind,
-            "mimeType": mime_type or "application/octet-stream",
-        })
-    return attachments
-
-
-def cache_inbound_attachment(file_bytes: bytes, name: str, kind: str, mime_type: str) -> str:
-    ext = attachment_extension(name, mime_type, kind)
-    if kind == "audio" or mime_type.startswith("audio/"):
-        return cache_audio_from_bytes(file_bytes, ext=ext or ".webm")
-    if kind == "image" or mime_type.startswith("image/"):
-        return cache_image_from_bytes(file_bytes, ext=ext or ".png")
-    if kind == "video" or mime_type.startswith("video/"):
-        return cache_video_from_bytes(file_bytes, ext=ext or ".mp4")
-    filename = name or f"attachment{ext or '.bin'}"
-    return cache_document_from_bytes(file_bytes, filename)
-
-
-def attachment_extension(name: str, mime_type: str, kind: str) -> str:
-    suffix = Path(name or "").suffix.lower()
-    if suffix:
-        return suffix
-    guessed = mimetypes.guess_extension(mime_type or "")
-    if guessed:
-        return guessed
-    if kind == "audio":
-        return ".webm"
-    if kind == "image":
-        return ".png"
-    if kind == "video":
-        return ".mp4"
-    return ".bin"
-
-
-def normalize_inbound_mime_type(kind: str, mime_type: str, name: str) -> str:
-    normalized = (mime_type or "").strip().lower()
-    if kind == "audio" and (not normalized or normalized == "video/webm"):
-        return "audio/webm"
-    if normalized:
-        return normalized
-    guessed = mimetypes.guess_type(name)[0]
-    if guessed:
-        return guessed
-    return mime_type_for_kind(kind)
-
-
-def mime_type_for_kind(kind: str) -> str:
-    if kind == "audio":
-        return "audio/webm"
-    if kind == "image":
-        return "image/png"
-    if kind == "video":
-        return "video/mp4"
-    if kind in {"document", "code"}:
-        return "text/plain"
-    return "application/octet-stream"
-
-
-def message_type_for_attachments(attachments: list[dict[str, str]]) -> MessageType:
-    if not attachments:
-        return MessageType.TEXT
-    if any(attachment["kind"] == "audio" or attachment["mimeType"].startswith("audio/") for attachment in attachments):
-        return MessageType.VOICE
-    if any(attachment["kind"] == "image" or attachment["mimeType"].startswith("image/") for attachment in attachments):
-        return MessageType.PHOTO
-    if any(attachment["kind"] == "video" or attachment["mimeType"].startswith("video/") for attachment in attachments):
-        return MessageType.VIDEO
-    return MessageType.DOCUMENT
 
 
 def bind_source_to_existing_session(adapter: IrisPlatformAdapter, source: SessionSource, session_id: str) -> str:
@@ -1052,13 +565,3 @@ def project_channel_prompt(metadata: Dict[str, Any]) -> str:
         f"Project: {project_name}\n\n"
         f"{prompt}"
     )
-
-
-def api_error(text: str) -> str:
-    try:
-        parsed = json.loads(text)
-    except json.JSONDecodeError:
-        return text.strip()
-    if isinstance(parsed, dict):
-        return str(parsed.get("error") or parsed.get("detail") or "").strip()
-    return text.strip()

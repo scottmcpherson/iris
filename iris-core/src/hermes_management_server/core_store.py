@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import mimetypes
 import os
 import re
@@ -14,6 +15,11 @@ import time
 from pathlib import Path
 from typing import Any
 
+from .attachment_types import (
+    is_allowed_attachment_mime,
+    normalize_attachment_kind,
+    normalize_attachment_mime_type,
+)
 from .models import ConversationMessage, ConversationSummary, ProfileSummary
 
 
@@ -23,42 +29,8 @@ PROFILE_SLUG_RE = re.compile(r"[^A-Za-z0-9_.-]+")
 DEFAULT_MAX_ATTACHMENT_SIZE_MB = 250
 MAX_ATTACHMENT_SIZE_BYTES = DEFAULT_MAX_ATTACHMENT_SIZE_MB * 1024 * 1024
 MAX_ATTACHMENTS_PER_MESSAGE = 8
-ATTACHMENT_KINDS = {"image", "document", "audio", "video", "archive", "code", "file"}
-DOCUMENT_ATTACHMENT_MIME_TYPES = {
-    "application/pdf",
-    "application/msword",
-    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-    "application/vnd.ms-excel",
-    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    "application/vnd.ms-powerpoint",
-    "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-    "application/vnd.oasis.opendocument.text",
-    "application/vnd.oasis.opendocument.spreadsheet",
-    "application/vnd.oasis.opendocument.presentation",
-    "application/rtf",
-    "application/json",
-    "application/xml",
-    "application/epub+zip",
-    "text/csv",
-    "text/html",
-}
-CODE_ATTACHMENT_MIME_TYPES = {
-    "application/javascript",
-    "application/typescript",
-    "application/toml",
-    "application/x-yaml",
-    "application/yaml",
-    "text/markdown",
-}
-ARCHIVE_ATTACHMENT_MIME_TYPES = {
-    "application/zip",
-    "application/x-tar",
-    "application/gzip",
-    "application/x-gzip",
-    "application/x-7z-compressed",
-    "application/vnd.rar",
-    "application/x-rar-compressed",
-}
+SQLITE_BUSY_TIMEOUT_MS = 5000
+DEVICE_METADATA_BLOCKED_KEY_PARTS = ("token", "secret", "authorization", "password")
 DUPLICATE_RUNTIME_TABLES = (
     "agents",
     "conversations",
@@ -80,6 +52,9 @@ CORE_OWNED_TABLES = (
     "conversation_read_state",
 )
 CONVERSATION_READ_STATES = {"read", "unread"}
+MAX_CONVERSATION_READ_STATE_IDS = 500
+
+logger = logging.getLogger(__name__)
 
 
 def default_core_store_path() -> Path:
@@ -124,7 +99,8 @@ def loads(value: str | None, fallback: Any = None) -> Any:
         return {} if fallback is None else fallback
     try:
         return json.loads(value)
-    except json.JSONDecodeError:
+    except json.JSONDecodeError as exc:
+        logger.warning("Invalid JSON payload in Core store; using fallback.", exc_info=exc)
         return {} if fallback is None else fallback
 
 
@@ -184,9 +160,12 @@ class CoreStore:
         self._initialize(auto_migrate=auto_migrate)
 
     def connect(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(self.path)
+        connection = sqlite3.connect(self.path, timeout=SQLITE_BUSY_TIMEOUT_MS / 1000)
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA foreign_keys = ON")
+        connection.execute(f"PRAGMA busy_timeout = {SQLITE_BUSY_TIMEOUT_MS}")
+        connection.execute("PRAGMA journal_mode = WAL")
+        connection.execute("PRAGMA synchronous = NORMAL")
         return connection
 
     def _initialize(self, *, auto_migrate: bool) -> None:
@@ -673,6 +652,10 @@ class CoreStore:
         clean_ids = sorted({conversation_id for conversation_id in conversation_ids if conversation_id})
         if not clean_ids:
             return {}
+        if len(clean_ids) > MAX_CONVERSATION_READ_STATE_IDS:
+            raise ValueError(
+                f"At most {MAX_CONVERSATION_READ_STATE_IDS} conversation read states may be requested at once."
+            )
         with self.connect() as connection:
             rows = connection.execute(
                 f"""
@@ -1138,6 +1121,9 @@ class CoreStore:
     ) -> dict[str, Any]:
         timestamp = now()
         device_id = random_id("dev")
+        clean_name = safe_device_text(name, "Iris device", 120)
+        clean_kind = safe_device_text(kind, "desktop", 40)
+        clean_metadata = sanitize_device_metadata(metadata or {})
         with self.connect() as connection:
             connection.execute(
                 """
@@ -1147,11 +1133,11 @@ class CoreStore:
                 """,
                 (
                     device_id,
-                    name.strip() or "Iris device",
-                    kind.strip() or "desktop",
+                    clean_name,
+                    clean_kind,
                     token_hash,
                     timestamp,
-                    dumps(metadata or {}),
+                    dumps(clean_metadata),
                 ),
             )
         return self.get_device(device_id) or {}
@@ -1241,6 +1227,46 @@ def runtime_from_row(row: sqlite3.Row) -> dict[str, Any]:
     }
 
 
+def safe_device_text(value: str, default: str, limit: int) -> str:
+    text = str(value or default).strip()
+    return (text or default)[:limit]
+
+
+def sanitize_device_metadata(value: dict[str, Any], *, depth: int = 0) -> dict[str, Any]:
+    if not isinstance(value, dict) or depth >= 3:
+        return {}
+    sanitized: dict[str, Any] = {}
+    for key, item in list(value.items())[:50]:
+        clean_key = str(key or "").strip()[:120]
+        if not clean_key or device_metadata_key_is_sensitive(clean_key):
+            continue
+        clean_value = sanitize_device_metadata_value(item, depth=depth + 1)
+        if clean_value is not None:
+            sanitized[clean_key] = clean_value
+    return sanitized
+
+
+def sanitize_device_metadata_value(value: Any, *, depth: int) -> Any:
+    if value is None or isinstance(value, (bool, int, float)):
+        return value
+    if isinstance(value, str):
+        return value[:2000]
+    if isinstance(value, list):
+        return [
+            item
+            for item in (sanitize_device_metadata_value(item, depth=depth + 1) for item in value[:50])
+            if item is not None
+        ]
+    if isinstance(value, dict):
+        return sanitize_device_metadata(value, depth=depth)
+    return str(value)[:2000]
+
+
+def device_metadata_key_is_sensitive(key: str) -> bool:
+    normalized = key.lower().replace("_", "").replace("-", "")
+    return any(part in normalized for part in DEVICE_METADATA_BLOCKED_KEY_PARTS)
+
+
 def device_from_row(row: sqlite3.Row) -> dict[str, Any]:
     return {
         "id": str(row["id"]),
@@ -1261,46 +1287,6 @@ def conversation_read_state_from_row(row: sqlite3.Row) -> dict[str, Any]:
         "updatedAt": int(row["updated_at"]),
         "metadata": loads(row["metadata_json"]),
     }
-
-
-def normalize_attachment_mime_type(value: str) -> str:
-    mime_type = str(value or "").split(";", 1)[0].strip().lower()
-    if mime_type == "image/jpg":
-        return "image/jpeg"
-    return mime_type or "application/octet-stream"
-
-
-def is_allowed_attachment_mime(mime_type: str) -> bool:
-    normalized = normalize_attachment_mime_type(mime_type)
-    if normalized == "application/octet-stream":
-        return True
-    if normalized.startswith(("image/", "audio/", "video/", "text/")):
-        return True
-    return normalized in (
-        DOCUMENT_ATTACHMENT_MIME_TYPES
-        | CODE_ATTACHMENT_MIME_TYPES
-        | ARCHIVE_ATTACHMENT_MIME_TYPES
-    )
-
-
-def normalize_attachment_kind(kind: str, mime_type: str) -> str:
-    value = str(kind or "").strip().lower()
-    if value in ATTACHMENT_KINDS:
-        return value
-    normalized_mime = normalize_attachment_mime_type(mime_type)
-    if normalized_mime.startswith("image/"):
-        return "image"
-    if normalized_mime.startswith("audio/"):
-        return "audio"
-    if normalized_mime.startswith("video/"):
-        return "video"
-    if normalized_mime.startswith("text/") or normalized_mime in CODE_ATTACHMENT_MIME_TYPES:
-        return "code"
-    if normalized_mime in DOCUMENT_ATTACHMENT_MIME_TYPES:
-        return "document"
-    if normalized_mime in ARCHIVE_ATTACHMENT_MIME_TYPES:
-        return "archive"
-    return "file"
 
 
 def message_content_hash_candidates(content: str) -> set[str]:

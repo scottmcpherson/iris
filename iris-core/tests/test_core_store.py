@@ -3,6 +3,8 @@ from __future__ import annotations
 import hashlib
 import sqlite3
 
+import pytest
+
 from hermes_management_server.core_store import CoreStore, is_allowed_attachment_mime
 
 
@@ -32,6 +34,19 @@ def test_core_store_creates_only_core_owned_schema(tmp_path):
         "project_conversations",
         "conversation_read_state",
     }
+
+
+def test_core_store_connections_use_lock_tolerant_sqlite_pragmas(tmp_path):
+    store = CoreStore(tmp_path / "core.sqlite3")
+
+    with store.connect() as connection:
+        busy_timeout = connection.execute("PRAGMA busy_timeout").fetchone()[0]
+        journal_mode = connection.execute("PRAGMA journal_mode").fetchone()[0]
+        synchronous = connection.execute("PRAGMA synchronous").fetchone()[0]
+
+    assert busy_timeout == 5000
+    assert journal_mode == "wal"
+    assert synchronous == 1
 
 
 def test_source_of_truth_migration_drops_duplicate_tables_and_preserves_core_data(tmp_path):
@@ -154,6 +169,13 @@ def test_core_store_conversation_read_state_is_shared_by_conversation(tmp_path):
     assert unread["metadata"]["eventCursor"] == 12
     assert read["state"] == "read"
     assert store.conversation_read_states(["conv_1"])["conv_1"]["state"] == "read"
+
+
+def test_core_store_rejects_unbounded_conversation_read_state_queries(tmp_path):
+    store = CoreStore(tmp_path / "core.sqlite3")
+
+    with pytest.raises(ValueError, match="At most 500"):
+        store.conversation_read_states([f"conv_{index}" for index in range(501)])
 
 
 def test_core_store_accepts_general_attachment_mime_types(tmp_path):

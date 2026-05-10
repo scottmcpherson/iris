@@ -25,6 +25,11 @@ bearer_scheme = HTTPBearer(auto_error=False)
 
 
 def device_token_hash(token: str) -> str:
+    digest = hashlib.sha256(f"iris-core-device-token:v1:{token}".encode("utf-8")).hexdigest()
+    return f"v1:{digest}"
+
+
+def legacy_device_token_hash(token: str) -> str:
     return hashlib.sha256(f"agentui-core-device:{token}".encode("utf-8")).hexdigest()
 
 
@@ -82,6 +87,8 @@ def active_device_for_credentials(
     if core_store is None:
         return None
     device = core_store.active_device_for_token_hash(device_token_hash(credentials.credentials))
+    if not device:
+        device = core_store.active_device_for_token_hash(legacy_device_token_hash(credentials.credentials))
     if device:
         core_store.touch_device(device["id"])
     return device

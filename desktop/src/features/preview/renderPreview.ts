@@ -1,5 +1,5 @@
 import type { PreviewMode } from "../../app/types";
-import babelRuntime from "virtual:preview-runtime/babel";
+import * as Babel from "@babel/standalone";
 import mermaidRuntime from "virtual:preview-runtime/mermaid";
 import reactDomRuntime from "virtual:preview-runtime/react-dom";
 import reactRuntime from "virtual:preview-runtime/react";
@@ -31,30 +31,45 @@ function renderHtmlPreviewDocument(source: string, artifactId: string) {
 }
 
 function renderReactPreviewDocument(source: string, artifactId: string) {
-  return htmlDocument(
-    `<div id="root"></div>
-    <script>${escapeScript(reactRuntime)}</script>
-    <script>${escapeScript(reactDomRuntime)}</script>
-    <script>${escapeScript(babelRuntime)}</script>
-    <script>
+  const compiled = compileReactPreviewSource(source);
+  const runPreview = compiled.ok
+    ? `
       ${runtimeErrorBridge(artifactId)}
-      const source = ${safeJson(source)};
       try {
-        const compiled = Babel.transform(source, {
-          filename: "HermesPreview.jsx",
-          presets: [["react", { runtime: "classic" }]],
-        }).code;
-        const execute = new Function("React", "ReactDOM", compiled + "\\n//# sourceURL=HermesPreview.jsx");
-        execute(window.React, window.ReactDOM);
+        ${compiled.code}
         window.__hermesPreviewReady();
       } catch (error) {
         window.__hermesPreviewError(error);
       }
-    </script>`,
+    `
+    : `
+      ${runtimeErrorBridge(artifactId)}
+      window.__hermesPreviewError(${safeJson(compiled.error)});
+    `;
+  return htmlDocument(
+    `<div id="root"></div>
+    <script>${escapeScript(reactRuntime)}</script>
+    <script>${escapeScript(reactDomRuntime)}</script>
+    <script>${escapeScript(runPreview)}</script>`,
     artifactId,
     `${previewBaseCss}${reactCss}`,
     false,
   );
+}
+
+function compileReactPreviewSource(source: string): { ok: true; code: string } | { ok: false; error: string } {
+  try {
+    const result = Babel.transform(source, {
+      filename: "IrisPreview.jsx",
+      presets: [["react", { runtime: "classic" }]],
+    });
+    return { ok: true, code: `${result.code || ""}\n//# sourceURL=IrisPreview.jsx` };
+  } catch (error) {
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
 }
 
 function renderMermaidPreviewDocument(source: string, artifactId: string) {

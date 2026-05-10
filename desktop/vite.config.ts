@@ -14,7 +14,6 @@ function packageFile(packageName: string, relativePath: string) {
 }
 
 const previewRuntimes: Record<string, string> = {
-  "virtual:preview-runtime/babel": packageFile("@babel/standalone", "babel.min.js"),
   "virtual:preview-runtime/mermaid": packageFile("mermaid", "dist/mermaid.min.js"),
   "virtual:preview-runtime/react": packageFile("react", "umd/react.development.js"),
   "virtual:preview-runtime/react-dom": packageFile("react-dom", "umd/react-dom.development.js"),

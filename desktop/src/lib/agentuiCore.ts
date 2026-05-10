@@ -1,5 +1,10 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { HermesRuntimeConfig } from "../types/hermes";
+import type {
+  HermesConversationMessage,
+  HermesModelProvider,
+  HermesModelSelection,
+  HermesRuntimeConfig,
+} from "../types/hermes";
 import type {
   HermesMemory,
   HermesMemorySaveResult,
@@ -12,6 +17,87 @@ import { coreAttachmentUrl, coreBaseUrl, coreRequest, type CoreResponse } from "
 import type { AttachmentKind } from "../app/types";
 import { attachmentKindFromMime } from "../shared/files";
 
+type CorePrimitive = string | number | boolean | null;
+type CoreJsonValue = CorePrimitive | CoreJsonValue[] | { [key: string]: CoreJsonValue };
+export type CoreMetadata = { [key: string]: CoreJsonValue };
+
+type CoreEndpointProbe = {
+  ok: boolean;
+  url?: string;
+  error?: string;
+};
+
+type CoreRuntimeProbe = {
+  gateway: CoreEndpointProbe;
+  management: CoreEndpointProbe;
+  agentuiAdapter: CoreEndpointProbe;
+};
+
+type CoreRuntimeRow = {
+  id?: string;
+  kind?: string;
+  name?: string;
+  enabled?: boolean;
+  lastProbe?: CoreRuntimeProbe;
+  last_probe?: CoreRuntimeProbe;
+};
+
+type CoreStatusResponse = {
+  ok?: boolean;
+  error?: string;
+};
+
+type CoreHealthResponse = CoreStatusResponse & {
+  status?: string;
+};
+
+export type CoreMessageAttachmentRef = {
+  id: string;
+};
+
+export type CoreRuntimeResult = {
+  ok?: boolean;
+  accepted?: boolean;
+  chatId?: string;
+  messageId?: string;
+  error?: string;
+};
+
+export type AgentUICoreSendMessageResult = {
+  conversationId: string;
+  messageId: string;
+  accepted: boolean;
+  eventCursor: number;
+  duplicate?: boolean;
+  runtime?: CoreRuntimeResult;
+};
+
+export type AgentUICoreModelCatalog = {
+  profile: string;
+  current: HermesModelSelection | null;
+  providers: HermesModelProvider[];
+  generatedAt: number;
+  url?: string;
+  status?: number;
+};
+
+export type AgentUICoreSlashCommandCatalog = {
+  commands?: Array<{
+    id?: string;
+    name?: string;
+    text?: string;
+    label?: string;
+    description?: string;
+    category?: string;
+    source?: string;
+    aliases?: string[];
+    argsHint?: string;
+    subcommands?: string[];
+    requiresArgument?: boolean;
+  }>;
+  warning?: string;
+};
+
 export type AgentUICoreAgent = {
   id: string;
   runtimeId: string;
@@ -19,7 +105,7 @@ export type AgentUICoreAgent = {
   displayName: string;
   runtimeProfile: string;
   isDefault: boolean;
-  metadata?: Record<string, unknown>;
+  metadata?: CoreMetadata;
 };
 
 export type AgentUICoreConversation = {
@@ -29,12 +115,12 @@ export type AgentUICoreConversation = {
   summary: string;
   createdAt: number;
   updatedAt: number;
-  metadata?: Record<string, unknown>;
+  metadata?: CoreMetadata;
   runtimeId: string;
   runtimeProfile: string;
   externalSessionId: string;
   externalChatId: string;
-  origin?: Record<string, unknown>;
+  origin?: CoreMetadata;
   readState?: AgentUICoreConversationReadState;
 };
 
@@ -43,7 +129,7 @@ export type AgentUICoreConversationReadState = {
   state: "read" | "unread";
   createdAt: number | null;
   updatedAt: number | null;
-  metadata?: Record<string, unknown>;
+  metadata?: CoreMetadata;
 };
 
 export type IrisProject = {
@@ -55,18 +141,13 @@ export type IrisProject = {
   createdAt: number;
   updatedAt: number;
   archivedAt: number | null;
-  metadata?: Record<string, unknown>;
+  metadata?: CoreMetadata;
 };
 
-export type AgentUICoreMessage = {
-  id: string;
-  conversationId: string;
-  role: "system" | "user" | "assistant" | "tool";
-  content: string;
-  status: "pending" | "streaming" | "completed" | "error";
-  createdAt: number;
-  updatedAt: number;
-  metadata?: Record<string, unknown>;
+export type AgentUICoreMessage = HermesConversationMessage & {
+  conversationId?: string;
+  createdAt?: number;
+  updatedAt?: number;
 };
 
 export type AgentUICoreEvent = {
@@ -81,7 +162,7 @@ export type AgentUICoreEvent = {
   parentEventId: string;
   externalMessageId: string;
   createdAt: number;
-  metadata: Record<string, unknown>;
+  metadata: CoreMetadata;
 };
 
 export type AgentUICoreAutomation = {
@@ -98,7 +179,7 @@ export type AgentUICoreAutomation = {
   updatedAt: number;
   lastRunAt: number | null;
   nextRunAt: number | null;
-  metadata: Record<string, unknown>;
+  metadata: CoreMetadata;
 };
 
 export type AgentUICoreAttachment = {
@@ -119,10 +200,10 @@ export async function getAgentUICoreAgents(runtime?: HermesRuntimeConfig) {
 
 export async function getAgentUICoreStatus(runtime?: HermesRuntimeConfig) {
   const [health, status, agents, runtimes] = await Promise.all([
-    coreRequest<Record<string, unknown>>(runtime, "GET", "/health"),
-    coreRequest<Record<string, unknown>>(runtime, "GET", "/status"),
+    coreRequest<CoreHealthResponse>(runtime, "GET", "/health"),
+    coreRequest<CoreStatusResponse>(runtime, "GET", "/status"),
     getAgentUICoreAgents(runtime),
-    coreRequest<{ runtimes: Array<Record<string, unknown>> }>(runtime, "GET", "/runtimes"),
+    coreRequest<{ runtimes: CoreRuntimeRow[] }>(runtime, "GET", "/runtimes"),
   ]);
   const ok = Boolean(health.ok || status.ok || agents.ok);
   const agentRows = agents.ok ? agents.agents : [];
@@ -152,7 +233,7 @@ export async function getAgentUICoreStatus(runtime?: HermesRuntimeConfig) {
     managementStatus: coreStatus,
     runtimeStatus: probe,
     error: ok ? null : health.error || status.error || agents.error || "Could not reach Iris Core.",
-  } as HermesStatus & { runtimeStatus?: Record<string, unknown> };
+  } as HermesStatus & { runtimeStatus?: CoreRuntimeProbe };
 }
 
 export async function getAgentUICoreAgentForProfile(profile = "default", runtime?: HermesRuntimeConfig) {
@@ -240,7 +321,7 @@ export async function saveAgentUICoreAgentSkill(
 }
 
 export async function createAgentUICoreAgent(
-  payload: { name: string; runtimeId?: string; metadata?: Record<string, unknown> },
+  payload: { name: string; runtimeId?: string; metadata?: CoreMetadata },
   runtime?: HermesRuntimeConfig,
 ) {
   return coreRequest<{ agent: AgentUICoreAgent }>(runtime, "POST", "/agents", payload);
@@ -248,7 +329,7 @@ export async function createAgentUICoreAgent(
 
 export async function cloneAgentUICoreAgent(
   agentId: string,
-  payload: { name: string; metadata?: Record<string, unknown> },
+  payload: { name: string; metadata?: CoreMetadata },
   runtime?: HermesRuntimeConfig,
 ) {
   return coreRequest<{ agent: AgentUICoreAgent }>(
@@ -298,7 +379,7 @@ export async function createIrisProject(
     name: string;
     defaultAgentId: string;
     systemPrompt?: string;
-    metadata?: Record<string, unknown>;
+    metadata?: CoreMetadata;
   },
   runtime?: HermesRuntimeConfig,
 ) {
@@ -311,7 +392,7 @@ export async function updateIrisProject(
     name?: string;
     defaultAgentId?: string;
     systemPrompt?: string;
-    metadata?: Record<string, unknown>;
+    metadata?: CoreMetadata;
   },
   runtime?: HermesRuntimeConfig,
 ) {
@@ -369,7 +450,7 @@ export async function createAgentUICoreConversation(
     externalChatId?: string;
     externalSessionId?: string;
     projectId?: string | null;
-    metadata?: Record<string, unknown>;
+    metadata?: CoreMetadata;
   },
   runtime?: HermesRuntimeConfig,
 ) {
@@ -391,7 +472,7 @@ export async function getAgentUICoreConversation(
 
 export async function updateAgentUICoreConversation(
   conversationId: string,
-  payload: { title?: string; metadata?: Record<string, unknown> },
+  payload: { title?: string; metadata?: CoreMetadata },
   runtime?: HermesRuntimeConfig,
 ) {
   return coreRequest<{ conversation: AgentUICoreConversation }>(
@@ -417,7 +498,7 @@ export async function updateAgentUICoreConversationReadState(
   conversationId: string,
   state: "read" | "unread",
   runtime?: HermesRuntimeConfig,
-  metadata: Record<string, unknown> = {},
+  metadata: CoreMetadata = {},
 ) {
   return coreRequest<{ readState: AgentUICoreConversationReadState }>(
     runtime,
@@ -452,20 +533,14 @@ export async function sendAgentUICoreMessage(
   conversationId: string,
   payload: {
     text: string;
-    attachments?: unknown[];
-    model?: Record<string, unknown> | null;
+    attachments?: CoreMessageAttachmentRef[];
+    model?: HermesModelSelection | null;
     clientMessageId?: string;
-    metadata?: Record<string, unknown>;
+    metadata?: CoreMetadata;
   },
   runtime?: HermesRuntimeConfig,
 ) {
-  return coreRequest<{
-    conversationId: string;
-    messageId: string;
-    accepted: boolean;
-    eventCursor: number;
-    runtime?: Record<string, unknown>;
-  }>(
+  return coreRequest<AgentUICoreSendMessageResult>(
     runtime,
     "POST",
     `/conversations/${encodeURIComponent(conversationId)}/messages`,
@@ -485,7 +560,7 @@ export async function uploadAgentUICoreAttachment(
     conversationId?: string;
     messageId?: string;
     runtimeId?: string;
-    metadata?: Record<string, unknown>;
+    metadata?: CoreMetadata;
   },
   runtime?: HermesRuntimeConfig,
 ) {
@@ -621,12 +696,10 @@ function coreAgentToHermesProfile(agent: AgentUICoreAgent) {
   };
 }
 
-function firstRuntimeProbe(runtimes: Array<Record<string, unknown>>) {
+function firstRuntimeProbe(runtimes: CoreRuntimeRow[]) {
   const runtime = runtimes[0] || {};
   const probe = runtime.lastProbe || runtime.last_probe;
-  if (probe && typeof probe === "object" && !Array.isArray(probe)) {
-    return probe as Record<string, { ok: boolean }>;
-  }
+  if (probe) return probe;
   return {
     gateway: { ok: false },
     management: { ok: false },
@@ -634,7 +707,7 @@ function firstRuntimeProbe(runtimes: Array<Record<string, unknown>>) {
   };
 }
 
-function endpointFromResponse(response: CoreResponse<Record<string, unknown>>, url: string) {
+function endpointFromResponse(response: CoreResponse<CoreStatusResponse | CoreHealthResponse>, url: string) {
   return {
     ok: Boolean(response.ok),
     url,
@@ -655,7 +728,7 @@ function nullableNumberMetadata(value: unknown) {
 }
 
 export async function cancelAgentUICoreMessage(conversationId: string, runtime?: HermesRuntimeConfig) {
-  return coreRequest<{ conversationId: string; runtime?: Record<string, unknown> }>(
+  return coreRequest<{ conversationId: string; runtime?: CoreRuntimeResult }>(
     runtime,
     "POST",
     `/conversations/${encodeURIComponent(conversationId)}/cancel`,
@@ -686,11 +759,11 @@ export function agentUICoreEventStreamUrl(
 }
 
 export async function getAgentUICoreModels(agentId: string, runtime?: HermesRuntimeConfig) {
-  return coreRequest<Record<string, unknown>>(runtime, "GET", `/agents/${encodeURIComponent(agentId)}/models`);
+  return coreRequest<AgentUICoreModelCatalog>(runtime, "GET", `/agents/${encodeURIComponent(agentId)}/models`);
 }
 
 export async function getAgentUICoreSlashCommands(agentId: string, runtime?: HermesRuntimeConfig) {
-  return coreRequest<Record<string, unknown>>(runtime, "GET", `/agents/${encodeURIComponent(agentId)}/slash-commands`);
+  return coreRequest<AgentUICoreSlashCommandCatalog>(runtime, "GET", `/agents/${encodeURIComponent(agentId)}/slash-commands`);
 }
 
 export async function completeAgentUICoreSlashCommand(
@@ -698,7 +771,7 @@ export async function completeAgentUICoreSlashCommand(
   text: string,
   runtime?: HermesRuntimeConfig,
 ) {
-  return coreRequest<Record<string, unknown>>(
+  return coreRequest<AgentUICoreSlashCommandCatalog>(
     runtime,
     "POST",
     `/agents/${encodeURIComponent(agentId)}/slash-complete`,
@@ -720,11 +793,11 @@ export async function createAgentUICoreAutomation(
     repeat?: number | null;
     deliver?: string;
     deliverToConversationId?: string;
-    metadata?: Record<string, unknown>;
+    metadata?: CoreMetadata;
   },
   runtime?: HermesRuntimeConfig,
 ) {
-  return coreRequest<{ automation: AgentUICoreAutomation; runtime?: Record<string, unknown> }>(
+  return coreRequest<{ automation: AgentUICoreAutomation; runtime?: CoreRuntimeResult }>(
     runtime,
     "POST",
     "/automations",
@@ -742,11 +815,11 @@ export async function updateAgentUICoreAutomation(
     deliver?: string;
     deliverToConversationId?: string;
     status?: string;
-    metadata?: Record<string, unknown>;
+    metadata?: CoreMetadata;
   },
   runtime?: HermesRuntimeConfig,
 ) {
-  return coreRequest<{ automation: AgentUICoreAutomation; runtime?: Record<string, unknown> }>(
+  return coreRequest<{ automation: AgentUICoreAutomation; runtime?: CoreRuntimeResult }>(
     runtime,
     "PATCH",
     `/automations/${encodeURIComponent(automationId)}`,
@@ -755,7 +828,7 @@ export async function updateAgentUICoreAutomation(
 }
 
 export async function deleteAgentUICoreAutomation(automationId: string, runtime?: HermesRuntimeConfig) {
-  return coreRequest<{ automationId: string; runtime?: Record<string, unknown> }>(
+  return coreRequest<{ automationId: string; runtime?: CoreRuntimeResult }>(
     runtime,
     "DELETE",
     `/automations/${encodeURIComponent(automationId)}`,
@@ -763,7 +836,7 @@ export async function deleteAgentUICoreAutomation(automationId: string, runtime?
 }
 
 export async function pauseAgentUICoreAutomation(automationId: string, runtime?: HermesRuntimeConfig) {
-  return coreRequest<{ automation: AgentUICoreAutomation; runtime?: Record<string, unknown> }>(
+  return coreRequest<{ automation: AgentUICoreAutomation; runtime?: CoreRuntimeResult }>(
     runtime,
     "POST",
     `/automations/${encodeURIComponent(automationId)}/pause`,
@@ -772,7 +845,7 @@ export async function pauseAgentUICoreAutomation(automationId: string, runtime?:
 }
 
 export async function resumeAgentUICoreAutomation(automationId: string, runtime?: HermesRuntimeConfig) {
-  return coreRequest<{ automation: AgentUICoreAutomation; runtime?: Record<string, unknown> }>(
+  return coreRequest<{ automation: AgentUICoreAutomation; runtime?: CoreRuntimeResult }>(
     runtime,
     "POST",
     `/automations/${encodeURIComponent(automationId)}/resume`,
@@ -781,7 +854,7 @@ export async function resumeAgentUICoreAutomation(automationId: string, runtime?
 }
 
 export async function runAgentUICoreAutomation(automationId: string, runtime?: HermesRuntimeConfig) {
-  return coreRequest<{ automation: AgentUICoreAutomation; runtime?: Record<string, unknown> }>(
+  return coreRequest<{ automation: AgentUICoreAutomation; runtime?: CoreRuntimeResult }>(
     runtime,
     "POST",
     `/automations/${encodeURIComponent(automationId)}/run`,

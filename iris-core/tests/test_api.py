@@ -3,10 +3,11 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+from concurrent.futures import ThreadPoolExecutor
 
 from fastapi.testclient import TestClient
 
-from hermes_management_server.main import Settings, coalesce_core_messages, create_app
+from hermes_management_server.main import LiveDeliveryBus, Settings, coalesce_core_messages, create_app
 from hermes_management_server.runtime_adapters import hermes as hermes_adapter
 
 PNG_BYTES = (
@@ -78,6 +79,34 @@ def create_core_history_db(path, *, session_id, title, user_text, assistant_text
     )
     connection.commit()
     connection.close()
+
+
+def test_live_delivery_bus_assigns_unique_cursors_under_concurrent_publish():
+    bus = LiveDeliveryBus(max_events=2000)
+
+    def publish(index):
+        return bus.publish({
+            "conversationId": "conv_1",
+            "agentId": "agent_1",
+            "content": f"message {index}",
+        })
+
+    with ThreadPoolExecutor(max_workers=16) as executor:
+        events = list(executor.map(publish, range(300)))
+
+    cursors = [event["cursor"] for event in events]
+    assert len(cursors) == len(set(cursors))
+    assert sorted(cursors) == list(range(1, 301))
+
+
+def test_live_delivery_bus_deduplicates_event_ids_under_concurrent_publish():
+    bus = LiveDeliveryBus(max_events=2000)
+
+    with ThreadPoolExecutor(max_workers=16) as executor:
+        events = list(executor.map(lambda _: bus.publish({"id": "evt_shared", "content": "same"}), range(100)))
+
+    assert {event["cursor"] for event in events} == {1}
+    assert [event["id"] for event in bus.list_events()] == ["evt_shared"]
 
 
 def test_health_and_status(tmp_path):
@@ -1609,6 +1638,104 @@ def test_core_send_dedupes_replayed_client_message_ids(tmp_path, monkeypatch):
     assert len(seen) == 1
 
 
+def test_core_send_dedupes_replayed_idempotency_header_without_client_message_id(tmp_path, monkeypatch):
+    root = tmp_path / ".hermes"
+    root.mkdir()
+    (root / ".env").write_text("AGENTUI_TOKEN=agentui-local-test\n", encoding="utf-8")
+    seen = []
+
+    def fake_http_json(url, *, method, token, body):
+        seen.append({"url": url, "method": method, "token": token, "body": body})
+        return {
+            "ok": True,
+            "status": 202,
+            "url": url,
+            "json": {
+                "ok": True,
+                "accepted": True,
+                "profile": body["profile"],
+                "chatId": body["chatId"],
+                "messageId": body["messageId"],
+            },
+        }
+
+    monkeypatch.setattr(hermes_adapter, "http_json", fake_http_json)
+    client = make_client(root)
+    agent = client.get("/v1/agents").json()["agents"][0]
+    conversation = client.post(
+        "/v1/conversations",
+        json={"agentId": agent["id"], "title": "Core send"},
+    ).json()["conversation"]
+
+    first = client.post(
+        f"/v1/conversations/{conversation['id']}/messages",
+        headers={"Idempotency-Key": "send-once-1"},
+        json={"text": "Reply once from header key"},
+    )
+    replay = client.post(
+        f"/v1/conversations/{conversation['id']}/messages",
+        headers={"Idempotency-Key": "send-once-1"},
+        json={"text": "Reply once from header key"},
+    )
+
+    assert first.status_code == 200
+    assert replay.status_code == 200
+    assert replay.json()["duplicate"] is True
+    assert replay.json()["messageId"] == first.json()["messageId"]
+    assert len(seen) == 1
+    assert seen[0]["body"]["metadata"]["idempotencyKey"] == "send-once-1"
+
+
+def test_core_send_retries_after_failed_runtime_send_with_same_idempotency_key(tmp_path, monkeypatch):
+    root = tmp_path / ".hermes"
+    root.mkdir()
+    (root / ".env").write_text("AGENTUI_TOKEN=agentui-local-test\n", encoding="utf-8")
+    seen = []
+
+    def fake_http_json(url, *, method, token, body):
+        seen.append({"url": url, "method": method, "token": token, "body": body})
+        if len(seen) == 1:
+            return {
+                "ok": True,
+                "status": 202,
+                "url": url,
+                "json": {"ok": False, "error": "gateway unavailable"},
+            }
+        return {
+            "ok": True,
+            "status": 202,
+            "url": url,
+            "json": {
+                "ok": True,
+                "accepted": True,
+                "profile": body["profile"],
+                "chatId": body["chatId"],
+                "messageId": body["messageId"],
+            },
+        }
+
+    monkeypatch.setattr(hermes_adapter, "http_json", fake_http_json)
+    client = make_client(root)
+    agent = client.get("/v1/agents").json()["agents"][0]
+    conversation = client.post(
+        "/v1/conversations",
+        json={"agentId": agent["id"], "title": "Core send"},
+    ).json()["conversation"]
+    payload = {"text": "Try until accepted", "clientMessageId": "client-message-retry"}
+
+    failed = client.post(f"/v1/conversations/{conversation['id']}/messages", json=payload)
+    retry = client.post(f"/v1/conversations/{conversation['id']}/messages", json=payload)
+    duplicate = client.post(f"/v1/conversations/{conversation['id']}/messages", json=payload)
+
+    assert failed.status_code == 200
+    assert failed.json()["accepted"] is False
+    assert retry.status_code == 200
+    assert retry.json()["accepted"] is True
+    assert duplicate.status_code == 200
+    assert duplicate.json()["duplicate"] is True
+    assert len(seen) == 2
+
+
 def test_core_send_persists_top_level_attachments_as_message_metadata(tmp_path, monkeypatch):
     root = tmp_path / ".hermes"
     root.mkdir(parents=True)
@@ -1828,6 +1955,82 @@ def test_core_upload_rejects_empty_and_oversized_files_with_limit(tmp_path, monk
     assert empty.json()["error"] == "Attachment file is empty."
     assert oversized.status_code == 413
     assert oversized.json()["error"] == "Attachment exceeds the 1 MB limit."
+
+
+def test_core_send_rejects_invalid_attachment_references_before_runtime_send(tmp_path, monkeypatch):
+    client = make_client(tmp_path / ".hermes")
+    agent = client.get("/v1/agents").json()["agents"][0]
+    conversation = client.post(
+        "/v1/conversations",
+        json={"agentId": agent["id"], "title": "Attachment validation"},
+    ).json()["conversation"]
+    seen = []
+
+    def fake_http_json(url, *, method, token, body):
+        seen.append({"url": url, "method": method, "token": token, "body": body})
+        return {"ok": True, "status": 202, "url": url, "json": {"ok": True}}
+
+    monkeypatch.setattr(hermes_adapter, "http_json", fake_http_json)
+
+    missing_id = client.post(
+        f"/v1/conversations/{conversation['id']}/messages",
+        json={"text": "Bad attachment", "attachments": [{"id": ""}]},
+    )
+    too_many = client.post(
+        f"/v1/conversations/{conversation['id']}/messages",
+        json={
+            "text": "Too many attachments",
+            "attachments": [{"id": f"att_missing_{index}"} for index in range(9)],
+        },
+    )
+
+    assert missing_id.status_code == 400
+    assert missing_id.json()["error"] == "Attachment id is required."
+    assert too_many.status_code == 400
+    assert too_many.json()["error"] == "Messages may include at most 8 attachments."
+    assert seen == []
+
+
+def test_core_send_rejects_attachment_bound_to_different_conversation(tmp_path, monkeypatch):
+    client = make_client(tmp_path / ".hermes")
+    agent = client.get("/v1/agents").json()["agents"][0]
+    first_conversation = client.post(
+        "/v1/conversations",
+        json={"agentId": agent["id"], "title": "First attachment owner"},
+    ).json()["conversation"]
+    second_conversation = client.post(
+        "/v1/conversations",
+        json={"agentId": agent["id"], "title": "Second attachment owner"},
+    ).json()["conversation"]
+    upload = client.post(
+        "/v1/attachments",
+        data={
+            "profile": agent["runtimeProfile"],
+            "runtimeId": agent["runtimeId"],
+            "conversationId": first_conversation["id"],
+        },
+        files={"file": ("report.pdf", b"%PDF-1.7\npdf-bytes", "application/pdf")},
+    )
+    seen = []
+
+    def fake_http_json(url, *, method, token, body):
+        seen.append({"url": url, "method": method, "token": token, "body": body})
+        return {"ok": True, "status": 202, "url": url, "json": {"ok": True}}
+
+    monkeypatch.setattr(hermes_adapter, "http_json", fake_http_json)
+
+    sent = client.post(
+        f"/v1/conversations/{second_conversation['id']}/messages",
+        json={
+            "text": "Use an attachment from another conversation",
+            "attachments": [{"id": upload.json()["attachment"]["id"]}],
+        },
+    )
+
+    assert upload.status_code == 200
+    assert sent.status_code == 400
+    assert sent.json()["error"] == "Attachment belongs to a different conversation."
+    assert seen == []
 
 
 def test_core_rejects_unknown_agent_filters(tmp_path):

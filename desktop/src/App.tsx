@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { isTauri } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import "./App.css";
@@ -56,6 +56,7 @@ function App() {
     loadPreviewArtifacts(),
   );
   const [activeArtifactId, setActiveArtifactId] = useState(() => previewArtifacts[0]?.id || "");
+  const appCommandHandlerRef = useRef<(payload: string) => void>(() => {});
 
   const iris = useIrisRuntime();
   const chat = useAgentUIChat({
@@ -101,20 +102,21 @@ function App() {
 
   useEffect(() => {
     if (!isTauri()) return;
+    let disposed = false;
+    let disposeListener: (() => void) | null = null;
     const unlisten = listen<string>("iris://app-command", (event) => {
-      if (event.payload === "refresh") void refreshWithNotice();
-      if (event.payload === "show" || event.payload === "command-menu") setCommandMenuOpen(true);
-      if (event.payload === "new-chat") {
-        setCommandMenuOpen(false);
-        window.dispatchEvent(new CustomEvent("iris://new-conversation"));
+      appCommandHandlerRef.current(event.payload);
+    }).then((dispose) => {
+      if (disposed) {
+        dispose();
+        return;
       }
-      if (event.payload === "search") {
-        setCommandMenuOpen(false);
-        window.dispatchEvent(new CustomEvent("iris://open-conversation-search"));
-      }
+      disposeListener = dispose;
     });
     return () => {
-      void unlisten?.then((dispose: () => void) => dispose());
+      disposed = true;
+      disposeListener?.();
+      void unlisten;
     };
   }, []);
 
@@ -235,6 +237,19 @@ function App() {
     ],
     [activeView, previewOpen],
   );
+
+  appCommandHandlerRef.current = (payload: string) => {
+    if (payload === "refresh") void refreshWithNotice();
+    if (payload === "show" || payload === "command-menu") setCommandMenuOpen(true);
+    if (payload === "new-chat") {
+      setCommandMenuOpen(false);
+      window.dispatchEvent(new CustomEvent("iris://new-conversation"));
+    }
+    if (payload === "search") {
+      setCommandMenuOpen(false);
+      window.dispatchEvent(new CustomEvent("iris://open-conversation-search"));
+    }
+  };
 
   return (
     <>

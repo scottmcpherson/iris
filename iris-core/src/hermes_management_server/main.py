@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import hashlib
 import json
-import mimetypes
+import logging
 import os
 import re
 import secrets
+import threading
 import time
 import urllib.parse
 from collections import deque
@@ -18,27 +18,34 @@ from pathlib import Path
 from typing import Any
 
 import uvicorn
-from fastapi import Depends, FastAPI, File, Form, Query, Request, UploadFile
+from fastapi import Depends, FastAPI, Query, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse, Response
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from .attachment_helpers import safe_attachment_name
+from .attachment_routes import register_attachment_routes
+from .attachment_types import (
+    attachment_kind,
+    attachment_mime_type,
+)
 from .core_store import (
     DEFAULT_RUNTIME_ID,
     CoreStore,
-    attachment_size_limit_label,
     chat_id_for_conversation,
     clamp_int,
     client_attachment_payload,
     draft_conversation,
-    max_attachment_size_bytes,
-    normalize_attachment_kind,
-    normalize_attachment_mime_type,
     now,
     random_id,
     stable_hash,
+)
+from .message_coalescer import (
+    coalesce_core_messages,
+    has_stream_message_id,
+    merge_client_attachments,
+    prepare_assistant_delivery_event,
 )
 from .models import (
     AgentCreateRequest,
@@ -77,6 +84,10 @@ DEFAULT_CORS_ORIGINS = (
     "http://localhost:1420",
     "http://127.0.0.1:1420",
 )
+DEFAULT_RUNTIME_THREAD_LIMIT = 16
+DEFAULT_RUNTIME_CALL_TIMEOUT_SECONDS = 30
+
+logger = logging.getLogger(__name__)
 
 
 class LiveDeliveryBus:
@@ -85,32 +96,34 @@ class LiveDeliveryBus:
         self.ttl_seconds = ttl_seconds
         self._events: deque[dict[str, Any]] = deque(maxlen=max_events)
         self._cursor = 0
+        self._lock = threading.RLock()
 
     def publish(self, event: dict[str, Any]) -> dict[str, Any]:
-        event_id = str(event.get("id") or "")
-        if event_id:
-            existing = next((row for row in self._events if row["id"] == event_id), None)
-            if existing:
-                return existing
-        self._cursor += 1
-        payload = {
-            "cursor": self._cursor,
-            "id": event_id or random_id("evt"),
-            "conversationId": str(event.get("conversationId") or ""),
-            "agentId": str(event.get("agentId") or ""),
-            "runtimeId": str(event.get("runtimeId") or ""),
-            "type": str(event.get("type") or "message.assistant.completed"),
-            "role": str(event.get("role") or ""),
-            "content": str(event.get("content") or ""),
-            "parentEventId": str(event.get("parentEventId") or ""),
-            "externalMessageId": str(event.get("externalMessageId") or ""),
-            "idempotencyKey": str(event.get("idempotencyKey") or ""),
-            "createdAt": int(event.get("createdAt") or now()),
-            "metadata": event.get("metadata") if isinstance(event.get("metadata"), dict) else {},
-        }
-        self._events.append(payload)
-        self.prune()
-        return payload
+        with self._lock:
+            event_id = str(event.get("id") or "")
+            if event_id:
+                existing = next((row for row in self._events if row["id"] == event_id), None)
+                if existing:
+                    return existing
+            self._cursor += 1
+            payload = {
+                "cursor": self._cursor,
+                "id": event_id or random_id("evt"),
+                "conversationId": str(event.get("conversationId") or ""),
+                "agentId": str(event.get("agentId") or ""),
+                "runtimeId": str(event.get("runtimeId") or ""),
+                "type": str(event.get("type") or "message.assistant.completed"),
+                "role": str(event.get("role") or ""),
+                "content": str(event.get("content") or ""),
+                "parentEventId": str(event.get("parentEventId") or ""),
+                "externalMessageId": str(event.get("externalMessageId") or ""),
+                "idempotencyKey": str(event.get("idempotencyKey") or ""),
+                "createdAt": int(event.get("createdAt") or now()),
+                "metadata": event.get("metadata") if isinstance(event.get("metadata"), dict) else {},
+            }
+            self._events.append(payload)
+            self.prune()
+            return payload
 
     def list_events(
         self,
@@ -120,30 +133,33 @@ class LiveDeliveryBus:
         conversation_id: str = "",
         agent_id: str = "",
     ) -> list[dict[str, Any]]:
-        self.prune()
-        rows = [
-            event
-            for event in self._events
-            if event["cursor"] > after
-            and (not conversation_id or event["conversationId"] == conversation_id)
-            and (not agent_id or event["agentId"] == agent_id)
-        ]
-        return rows[:limit]
+        with self._lock:
+            self.prune()
+            rows = [
+                event
+                for event in self._events
+                if event["cursor"] > after
+                and (not conversation_id or event["conversationId"] == conversation_id)
+                and (not agent_id or event["agentId"] == agent_id)
+            ]
+            return rows[:limit]
 
     def latest_cursor(self, *, conversation_id: str = "", agent_id: str = "") -> int:
-        self.prune()
-        for event in reversed(self._events):
-            if conversation_id and event["conversationId"] != conversation_id:
-                continue
-            if agent_id and event["agentId"] != agent_id:
-                continue
-            return int(event["cursor"])
-        return self._cursor
+        with self._lock:
+            self.prune()
+            for event in reversed(self._events):
+                if conversation_id and event["conversationId"] != conversation_id:
+                    continue
+                if agent_id and event["agentId"] != agent_id:
+                    continue
+                return int(event["cursor"])
+            return self._cursor
 
     def prune(self) -> None:
-        cutoff = int(time.time()) - self.ttl_seconds
-        while self._events and int(self._events[0].get("createdAt") or 0) < cutoff:
-            self._events.popleft()
+        with self._lock:
+            cutoff = int(time.time()) - self.ttl_seconds
+            while self._events and int(self._events[0].get("createdAt") or 0) < cutoff:
+                self._events.popleft()
 
 
 @dataclass(frozen=True)
@@ -195,6 +211,15 @@ def parse_cors_origins(value: str | None) -> tuple[str, ...]:
     return tuple(origin.strip() for origin in value.split(",") if origin.strip())
 
 
+async def run_runtime_call(app: FastAPI, func, *args, timeout: int = DEFAULT_RUNTIME_CALL_TIMEOUT_SECONDS, **kwargs):
+    semaphore: asyncio.Semaphore = app.state.runtime_call_semaphore
+    async with semaphore:
+        try:
+            return await asyncio.wait_for(asyncio.to_thread(func, *args, **kwargs), timeout=timeout)
+        except asyncio.TimeoutError as exc:
+            raise ManagementError("Runtime request timed out.", status_code=504) from exc
+
+
 def agentui_platform_token(hermes_home: os.PathLike[str] | str) -> str:
     return (
         os.environ.get("IRIS_TOKEN", "").strip()
@@ -241,131 +266,6 @@ def model_switch_command(value: Any) -> str:
         return ""
     provider = str(value.get("provider") or "").strip()
     return f"/model {model}{f' --provider {provider}' if provider else ''}"
-
-
-def safe_attachment_name(value: str) -> str:
-    name = Path(value or "attachment").name.strip()
-    return name or "attachment"
-
-
-def attachment_mime_type(*, filename: str, content_type: str, head: bytes) -> str:
-    lower_head = head[:512].lstrip().lower()
-    if head.startswith(b"\x89PNG\r\n\x1a\n"):
-        return "image/png"
-    if head.startswith(b"\xff\xd8\xff"):
-        return "image/jpeg"
-    if head.startswith(b"GIF87a") or head.startswith(b"GIF89a"):
-        return "image/gif"
-    if head.startswith(b"%PDF-"):
-        return "application/pdf"
-    if head.startswith(b"RIFF") and len(head) >= 12 and head[8:12] == b"WEBP":
-        return "image/webp"
-    if head.startswith(b"RIFF") and len(head) >= 12 and head[8:12] == b"WAVE":
-        return "audio/wav"
-    if head.startswith(b"fLaC"):
-        return "audio/flac"
-    if head.startswith(b"ID3"):
-        return "audio/mpeg"
-    if head.startswith(b"\x1f\x8b"):
-        return "application/gzip"
-    if head.startswith(b"PK\x03\x04") or head.startswith(b"PK\x05\x06") or head.startswith(b"PK\x07\x08"):
-        return office_or_zip_mime_type(filename)
-    if head.startswith(b"7z\xbc\xaf\x27\x1c"):
-        return "application/x-7z-compressed"
-    if head.startswith(b"Rar!\x1a\x07"):
-        return "application/vnd.rar"
-    if len(head) >= 12 and head[4:8] == b"ftyp":
-        major_brand = head[8:12]
-        if major_brand in {b"qt  "}:
-            return "video/quicktime"
-        if major_brand in {b"heic", b"heix", b"hevc", b"hevx"}:
-            return "image/heic"
-        if major_brand in {b"heif", b"mif1"}:
-            return "image/heif"
-        if major_brand in {b"avif", b"avis"}:
-            return "image/avif"
-        return "video/mp4"
-    if lower_head.startswith(b"<svg") or (lower_head.startswith(b"<?xml") and b"<svg" in lower_head):
-        return "image/svg+xml"
-    normalized_content_type = normalize_attachment_mime_type(content_type or "")
-    if normalized_content_type and normalized_content_type != "application/octet-stream":
-        return normalized_content_type
-    guessed = mimetypes.guess_type(filename)[0] or ""
-    return normalize_attachment_mime_type(guessed or normalized_content_type or "application/octet-stream")
-
-
-def office_or_zip_mime_type(filename: str) -> str:
-    extension = Path(filename).suffix.lower().lstrip(".")
-    return {
-        "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        "pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-        "epub": "application/epub+zip",
-    }.get(extension, "application/zip")
-
-
-def attachment_kind(mime_type: str, filename: str = "", hint: str = "") -> str:
-    extension = Path(filename).suffix.lower().lstrip(".")
-    extension_kinds = {
-        "pdf": "document",
-        "doc": "document",
-        "docx": "document",
-        "xls": "document",
-        "xlsx": "document",
-        "ppt": "document",
-        "pptx": "document",
-        "odt": "document",
-        "ods": "document",
-        "odp": "document",
-        "rtf": "document",
-        "csv": "document",
-        "epub": "document",
-        "html": "document",
-        "htm": "document",
-        "json": "document",
-        "xml": "document",
-        "md": "code",
-        "markdown": "code",
-        "yaml": "code",
-        "yml": "code",
-        "toml": "code",
-        "js": "code",
-        "jsx": "code",
-        "ts": "code",
-        "tsx": "code",
-        "py": "code",
-        "rb": "code",
-        "go": "code",
-        "rs": "code",
-        "mp3": "audio",
-        "wav": "audio",
-        "m4a": "audio",
-        "aac": "audio",
-        "ogg": "audio",
-        "flac": "audio",
-        "mp4": "video",
-        "mov": "video",
-        "webm": "video",
-        "zip": "archive",
-        "tar": "archive",
-        "gz": "archive",
-        "tgz": "archive",
-        "7z": "archive",
-        "rar": "archive",
-    }
-    return normalize_attachment_kind(hint or extension_kinds.get(extension, ""), mime_type)
-
-
-def parse_attachment_metadata(value: str) -> dict[str, Any]:
-    if not value.strip():
-        return {}
-    try:
-        parsed = json.loads(value)
-    except json.JSONDecodeError as exc:
-        raise ManagementError(f"Attachment metadata must be valid JSON: {exc}", status_code=400) from exc
-    if not isinstance(parsed, dict):
-        raise ManagementError("Attachment metadata must be a JSON object.", status_code=400)
-    return parsed
 
 
 def normalize_attachment_refs(refs: list[Any]) -> list[dict[str, Any]]:
@@ -566,21 +466,6 @@ def ingest_generated_file_attachments(
     return strip_generated_file_markers(content, imported), next_metadata
 
 
-def merge_client_attachments(existing: Any, additions: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    merged: list[dict[str, Any]] = []
-    seen: set[str] = set()
-    for item in list(existing if isinstance(existing, list) else []) + additions:
-        if not isinstance(item, dict):
-            continue
-        key = str(item.get("id") or item.get("sha256") or item.get("downloadUrl") or "")
-        if key and key in seen:
-            continue
-        if key:
-            seen.add(key)
-        merged.append(item)
-    return merged
-
-
 def generated_file_import_payloads(attachments: list[dict[str, Any]]) -> list[dict[str, Any]]:
     payloads: list[dict[str, Any]] = []
     for attachment in attachments:
@@ -746,9 +631,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     app.state.runtime_registry.ensure_default_runtime()
     app.state.live_delivery_bus = LiveDeliveryBus()
+    app.state.runtime_call_semaphore = asyncio.Semaphore(
+        clamp_int(
+            os.environ.get("IRIS_RUNTIME_THREAD_LIMIT"),
+            default=DEFAULT_RUNTIME_THREAD_LIMIT,
+            minimum=1,
+            maximum=128,
+        )
+    )
     app.state.active_conversations = {}
     app.state.active_conversations_by_chat = {}
-    app.state.accepted_client_messages = set()
+    app.state.accepted_client_messages = {}
     app.state.inbox_acknowledged_at = {}
     if app_settings.cors_origins:
         app.add_middleware(
@@ -773,7 +666,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return JSONResponse(status_code=422, content={"ok": False, "error": str(exc)})
 
     @app.exception_handler(Exception)
-    async def unexpected_error_handler(_request, _exc: Exception) -> JSONResponse:
+    async def unexpected_error_handler(request: Request, exc: Exception) -> JSONResponse:
+        logger.exception("Unhandled Iris Core error on %s %s", request.method, request.url.path, exc_info=exc)
         return JSONResponse(status_code=500, content={"ok": False, "error": "Internal server error."})
 
     require_auth = make_auth_dependency()
@@ -799,108 +693,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "core": core_store.health(),
         }
 
-    @app.post("/v1/attachments")
-    async def core_create_attachment(
-        request: Request,
-        file: UploadFile = File(...),
-        conversationId: str = Form(""),
-        messageId: str = Form(""),
-        runtimeId: str = Form(DEFAULT_RUNTIME_ID),
-        profile: str = Form("default"),
-        kind: str = Form(""),
-        mimeType: str = Form(""),
-        metadata: str = Form(""),
-        _auth: None = Depends(require_auth),
-    ) -> dict[str, Any]:
-        filename = safe_attachment_name(file.filename or "attachment")
-        metadata_payload = parse_attachment_metadata(metadata)
-        temp_path = core_store.tmp_attachment_path()
-        hasher = hashlib.sha256()
-        size = 0
-        head = b""
-        try:
-            with temp_path.open("wb") as handle:
-                while True:
-                    chunk = await file.read(1024 * 1024)
-                    if not chunk:
-                        break
-                    if not head:
-                        head = chunk[:512]
-                    size += len(chunk)
-                    if size > max_attachment_size_bytes():
-                        raise ManagementError(
-                            f"Attachment exceeds the {attachment_size_limit_label()} limit.",
-                            status_code=413,
-                        )
-                    hasher.update(chunk)
-                    handle.write(chunk)
-            if size <= 0:
-                raise ManagementError("Attachment file is empty.", status_code=400)
-            mime_type = attachment_mime_type(
-                filename=filename,
-                content_type=mimeType or file.content_type or "",
-                head=head,
-            )
-            try:
-                attachment = core_store.create_attachment(
-                    source_path=temp_path,
-                    runtime_id=runtimeId or DEFAULT_RUNTIME_ID,
-                    profile=profile or "default",
-                    conversation_id=conversationId,
-                    message_id=messageId,
-                    owner_device_id=str(getattr(getattr(request, "state", None), "agentui_device", {}).get("id", "")),
-                    name=filename,
-                    mime_type=mime_type,
-                    kind=attachment_kind(mime_type, filename, kind),
-                    size_bytes=size,
-                    sha256=hasher.hexdigest(),
-                    metadata=metadata_payload,
-                )
-            except ValueError as exc:
-                raise ManagementError(str(exc), status_code=400) from exc
-        finally:
-            temp_path.unlink(missing_ok=True)
-            await file.close()
-        return {"ok": True, "attachment": client_attachment_payload(attachment)}
-
-    @app.get("/v1/attachments/{attachment_id}/content")
-    async def core_attachment_content(attachment_id: str, _auth: None = Depends(require_auth)) -> FileResponse:
-        attachment = core_store.get_attachment(attachment_id, include_storage=True)
-        if not attachment:
-            raise ManagementError("Attachment was not found.", status_code=404)
-        try:
-            path = core_store.attachment_content_path(attachment_id)
-        except ValueError as exc:
-            raise ManagementError(str(exc), status_code=404) from exc
-        return FileResponse(
-            path,
-            media_type=str(attachment.get("mimeType") or "application/octet-stream"),
-            filename=str(attachment.get("name") or "attachment"),
-            headers={"ETag": f"\"{attachment.get('sha256') or ''}\""},
-        )
-
-    @app.get("/v1/attachments/{attachment_id}/preview")
-    async def core_attachment_preview(attachment_id: str, _auth: None = Depends(require_auth)) -> Response:
-        attachment = core_store.get_attachment(attachment_id, include_storage=True)
-        if not attachment:
-            raise ManagementError("Attachment was not found.", status_code=404)
-        if not str(attachment.get("mimeType") or "").startswith("image/"):
-            return JSONResponse(
-                status_code=415,
-                content={"ok": False, "error": "Preview is only available for image attachments."},
-            )
-        try:
-            path = core_store.attachment_content_path(attachment_id)
-        except ValueError as exc:
-            raise ManagementError(str(exc), status_code=404) from exc
-        return FileResponse(
-            path,
-            media_type=str(attachment.get("mimeType") or "application/octet-stream"),
-            headers={
-                "Content-Disposition": f"inline; filename=\"{safe_attachment_name(str(attachment.get('name') or 'preview'))}\"",
-                "ETag": f"\"{attachment.get('sha256') or ''}\"",
-            },
-        )
+    register_attachment_routes(app, require_auth)
 
     @app.get("/v1/devices")
     async def core_devices(_auth: None = Depends(require_auth)) -> dict[str, Any]:
@@ -1039,7 +832,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         agent = next((row for row in app.state.runtime_registry.agents() if row["runtimeId"] == runtime_id and row["isDefault"]), None)
         if agent:
             profile = agent["runtimeProfile"]
-        probe = await asyncio.to_thread(app.state.runtime_registry.probe, runtime_id, profile=profile)
+        probe = await run_runtime_call(app, app.state.runtime_registry.probe, runtime_id, profile=profile)
         return {"ok": True, "runtime": runtime, "probe": probe}
 
     @app.get("/v1/agents")
@@ -1060,7 +853,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     ) -> dict[str, Any]:
         runtime_id = request.runtimeId or DEFAULT_RUNTIME_ID
         adapter = app.state.runtime_registry.adapter_for_runtime(runtime_id)
-        agent = await asyncio.to_thread(adapter.create_agent, request.name, request.metadata)
+        agent = await run_runtime_call(app, adapter.create_agent, request.name, request.metadata)
         return {"ok": True, "agent": agent}
 
     @app.post("/v1/agents/{agent_id}/clone")
@@ -1073,7 +866,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if not agent:
             raise ManagementError("Agent was not found.", status_code=404)
         adapter = app.state.runtime_registry.adapter_for_runtime(agent["runtimeId"])
-        cloned = await asyncio.to_thread(adapter.clone_agent, agent, request.name)
+        cloned = await run_runtime_call(app, adapter.clone_agent, agent, request.name)
         return {"ok": True, "agent": cloned}
 
     @app.patch("/v1/agents/{agent_id}")
@@ -1086,7 +879,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if not agent:
             raise ManagementError("Agent was not found.", status_code=404)
         adapter = app.state.runtime_registry.adapter_for_runtime(agent["runtimeId"])
-        renamed = await asyncio.to_thread(adapter.rename_agent, agent, request.name)
+        renamed = await run_runtime_call(app, adapter.rename_agent, agent, request.name)
         return {"ok": True, "agent": renamed}
 
     @app.delete("/v1/agents/{agent_id}")
@@ -1095,7 +888,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if not agent:
             raise ManagementError("Agent was not found.", status_code=404)
         adapter = app.state.runtime_registry.adapter_for_runtime(agent["runtimeId"])
-        next_agent = await asyncio.to_thread(adapter.delete_agent, agent)
+        next_agent = await run_runtime_call(app, adapter.delete_agent, agent)
         return {"ok": True, "agent": next_agent}
 
     @app.post("/v1/agents/{agent_id}/activate")
@@ -1104,7 +897,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if not agent:
             raise ManagementError("Agent was not found.", status_code=404)
         adapter = app.state.runtime_registry.adapter_for_runtime(agent["runtimeId"])
-        activated = await asyncio.to_thread(adapter.activate_agent, agent)
+        activated = await run_runtime_call(app, adapter.activate_agent, agent)
         return {"ok": True, "agent": activated}
 
     @app.get("/v1/agents/{agent_id}/memory")
@@ -1113,7 +906,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if not agent:
             raise ManagementError("Agent was not found.", status_code=404)
         adapter = app.state.runtime_registry.adapter_for_runtime(agent["runtimeId"])
-        return await asyncio.to_thread(adapter.agent_memory, agent)
+        return await run_runtime_call(app, adapter.agent_memory, agent)
 
     @app.put("/v1/agents/{agent_id}/memory/{file}")
     async def core_save_agent_memory(
@@ -1126,7 +919,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if not agent:
             raise ManagementError("Agent was not found.", status_code=404)
         adapter = app.state.runtime_registry.adapter_for_runtime(agent["runtimeId"])
-        memory = await asyncio.to_thread(
+        memory = await run_runtime_call(app, 
             adapter.save_agent_memory,
             agent,
             file,
@@ -1148,7 +941,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if not agent:
             raise ManagementError("Agent was not found.", status_code=404)
         adapter = app.state.runtime_registry.adapter_for_runtime(agent["runtimeId"])
-        memory = await asyncio.to_thread(adapter.reset_agent_memory, agent, file)
+        memory = await run_runtime_call(app, adapter.reset_agent_memory, agent, file)
         return {"ok": True, "profile": memory["profile"], "memory": memory}
 
     @app.get("/v1/agents/{agent_id}/skills")
@@ -1157,7 +950,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if not agent:
             raise ManagementError("Agent was not found.", status_code=404)
         adapter = app.state.runtime_registry.adapter_for_runtime(agent["runtimeId"])
-        return await asyncio.to_thread(adapter.list_agent_skills, agent)
+        return await run_runtime_call(app, adapter.list_agent_skills, agent)
 
     @app.get("/v1/agents/{agent_id}/skills/{skill_id}")
     async def core_agent_skill_detail(
@@ -1169,7 +962,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if not agent:
             raise ManagementError("Agent was not found.", status_code=404)
         adapter = app.state.runtime_registry.adapter_for_runtime(agent["runtimeId"])
-        return await asyncio.to_thread(adapter.get_agent_skill, agent, skill_id)
+        return await run_runtime_call(app, adapter.get_agent_skill, agent, skill_id)
 
     @app.post("/v1/agents/{agent_id}/skills")
     async def core_create_agent_skill(
@@ -1181,7 +974,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if not agent:
             raise ManagementError("Agent was not found.", status_code=404)
         adapter = app.state.runtime_registry.adapter_for_runtime(agent["runtimeId"])
-        return await asyncio.to_thread(adapter.create_agent_skill, agent, dump_model(request))
+        return await run_runtime_call(app, adapter.create_agent_skill, agent, dump_model(request))
 
     @app.put("/v1/agents/{agent_id}/skills/{skill_id}")
     async def core_save_agent_skill(
@@ -1194,7 +987,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if not agent:
             raise ManagementError("Agent was not found.", status_code=404)
         adapter = app.state.runtime_registry.adapter_for_runtime(agent["runtimeId"])
-        return await asyncio.to_thread(adapter.save_agent_skill, agent, skill_id, dump_model(request))
+        return await run_runtime_call(app, adapter.save_agent_skill, agent, skill_id, dump_model(request))
 
     @app.get("/v1/projects")
     async def core_projects(
@@ -1315,7 +1108,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         conversations: list[dict[str, Any]] = []
         for item in [row for row in agents if row]:
             adapter = app.state.runtime_registry.adapter_for_runtime(item["runtimeId"])
-            conversations.extend(await asyncio.to_thread(adapter.list_conversations, item, limit))
+            conversations.extend(await run_runtime_call(app, adapter.list_conversations, item, limit))
         conversations.sort(key=lambda row: int(row.get("updatedAt") or 0), reverse=True)
         conversations = with_read_states(app, conversations)
         return {
@@ -1386,7 +1179,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if not title:
             raise ManagementError("Session title is required.", status_code=400)
         adapter = app.state.runtime_registry.adapter_for_runtime(conversation["runtimeId"])
-        updated = await asyncio.to_thread(
+        updated = await run_runtime_call(app, 
             adapter.rename_conversation,
             conversation_agent(app, conversation),
             conversation,
@@ -1405,7 +1198,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise ManagementError("Session was not found.", status_code=404)
         agent = conversation_agent(app, conversation)
         adapter = app.state.runtime_registry.adapter_for_runtime(conversation["runtimeId"])
-        deleted = await asyncio.to_thread(adapter.delete_conversation, agent, conversation)
+        deleted = await run_runtime_call(app, adapter.delete_conversation, agent, conversation)
         app.state.core_store.delete_conversation_overlays(
             conversation_id=conversation_id,
             runtime_id=str(conversation.get("runtimeId") or agent["runtimeId"]),
@@ -1464,7 +1257,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise ManagementError("Session was not found.", status_code=404)
         adapter = app.state.runtime_registry.adapter_for_runtime(conversation["runtimeId"])
         try:
-            messages, warning = await asyncio.to_thread(
+            messages, warning = await run_runtime_call(app, 
                 adapter.get_conversation_messages,
                 conversation_agent(app, conversation),
                 conversation.get("externalSessionId") or "",
@@ -1497,16 +1290,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         attachment_refs = normalize_attachment_refs(request.attachments)
         if not text and not attachment_refs:
             raise ManagementError("Message text is required.", status_code=400)
-        message_id = request.clientMessageId or random_id("msg")
         idempotency_key = http_request.headers.get("Idempotency-Key") or request.clientMessageId
-        accepted_key = (conversation_id, message_id)
-        if accepted_key in app.state.accepted_client_messages:
+        message_id = request.clientMessageId or random_id("msg")
+        accepted_key = (conversation_id, idempotency_key or message_id)
+        accepted_message = app.state.accepted_client_messages.get(accepted_key)
+        if accepted_message:
             return {
                 "ok": True,
                 "conversationId": conversation_id,
-                "messageId": message_id,
+                "messageId": accepted_message["messageId"],
                 "accepted": True,
-                "eventCursor": app.state.live_delivery_bus.latest_cursor(agent_id=agent["id"]),
+                "eventCursor": accepted_message["eventCursor"],
                 "duplicate": True,
             }
         adapter = app.state.runtime_registry.adapter_for_runtime(agent["runtimeId"])
@@ -1542,7 +1336,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 })
         switch_command = model_switch_command(request.metadata.get("modelSwitch"))
         if switch_command:
-            switch_result = await asyncio.to_thread(
+            switch_result = await run_runtime_call(app, 
                 adapter.send_message,
                 profile=agent["runtimeProfile"],
                 chat_id=chat_id,
@@ -1582,7 +1376,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     "eventCursor": error_event["cursor"],
                     "error": switch_result.get("error") or "Hermes gateway did not accept the model switch.",
                 }
-        result = await asyncio.to_thread(
+        result = await run_runtime_call(app, 
             adapter.send_message,
             profile=agent["runtimeProfile"],
             chat_id=chat_id,
@@ -1640,13 +1434,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 **({"attachments": client_attachments} if client_attachments else {}),
             },
         )
-        app.state.accepted_client_messages.add(accepted_key)
+        event_cursor = app.state.live_delivery_bus.latest_cursor(agent_id=agent["id"])
+        app.state.accepted_client_messages[accepted_key] = {
+            "messageId": message_id,
+            "eventCursor": event_cursor,
+        }
         return {
             "ok": True,
             "conversationId": conversation_id,
             "messageId": message_id,
             "accepted": True,
-            "eventCursor": app.state.live_delivery_bus.latest_cursor(agent_id=agent["id"]),
+            "eventCursor": event_cursor,
             "runtime": result,
         }
 
@@ -1659,7 +1457,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if not agent:
             raise ManagementError("Agent was not found.", status_code=404)
         adapter = app.state.runtime_registry.adapter_for_runtime(agent["runtimeId"])
-        result = await asyncio.to_thread(
+        result = await run_runtime_call(app, 
             adapter.send_message,
             profile=agent["runtimeProfile"],
             chat_id=conversation["externalChatId"] or chat_id_for_conversation(conversation_id),
@@ -1835,7 +1633,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     ) -> dict[str, Any]:
         if agentId and not app.state.runtime_registry.agent(agentId):
             raise ManagementError("Agent was not found.", status_code=404)
-        automations = await asyncio.to_thread(list_runtime_automations, app, agentId)
+        automations = await run_runtime_call(app, list_runtime_automations, app, agentId)
         limit = clamp_int(limit, default=200, minimum=1, maximum=500)
         return {
             "ok": True,
@@ -1852,7 +1650,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise ManagementError("Agent was not found.", status_code=404)
         payload = automation_create_payload(app, agent, dump_model(request))
         adapter = app.state.runtime_registry.adapter_for_runtime(agent["runtimeId"])
-        result = await asyncio.to_thread(adapter.create_automation, payload)
+        result = await run_runtime_call(app, adapter.create_automation, payload)
         if not result.get("ok"):
             return {
                 "ok": False,
@@ -1891,7 +1689,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         result: dict[str, Any] = {"ok": True}
         if automation["externalJobId"]:
             adapter = app.state.runtime_registry.adapter_for_runtime(automation["runtimeId"])
-            result = await asyncio.to_thread(
+            result = await run_runtime_call(app, 
                 adapter.update_automation,
                 automation["externalJobId"],
                 automation_update_payload(updates),
@@ -1910,22 +1708,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         result: dict[str, Any] = {"ok": True}
         if automation["externalJobId"]:
             adapter = app.state.runtime_registry.adapter_for_runtime(automation["runtimeId"])
-            result = await asyncio.to_thread(adapter.delete_automation, automation["externalJobId"])
+            result = await run_runtime_call(app, adapter.delete_automation, automation["externalJobId"])
             if not result.get("ok") and "not found" not in str(result.get("error") or "").lower():
                 return {"ok": False, "error": result.get("error") or "Could not delete Hermes job.", "runtime": result}
         return {"ok": True, "automationId": automation_id, "runtime": result}
 
     @app.post("/v1/automations/{automation_id}/pause")
     async def core_pause_automation(automation_id: str, _auth: None = Depends(require_auth)) -> dict[str, Any]:
-        return await asyncio.to_thread(control_core_automation, app, automation_id, "pause", "paused")
+        return await run_runtime_call(app, control_core_automation, app, automation_id, "pause", "paused")
 
     @app.post("/v1/automations/{automation_id}/resume")
     async def core_resume_automation(automation_id: str, _auth: None = Depends(require_auth)) -> dict[str, Any]:
-        return await asyncio.to_thread(control_core_automation, app, automation_id, "resume", "active")
+        return await run_runtime_call(app, control_core_automation, app, automation_id, "resume", "active")
 
     @app.post("/v1/automations/{automation_id}/run")
     async def core_run_automation(automation_id: str, _auth: None = Depends(require_auth)) -> dict[str, Any]:
-        return await asyncio.to_thread(control_core_automation, app, automation_id, "run", None)
+        return await run_runtime_call(app, control_core_automation, app, automation_id, "run", None)
 
     @app.get("/v1/agents/{agent_id}/models")
     async def core_agent_models(agent_id: str, _auth: None = Depends(require_auth)) -> dict[str, Any]:
@@ -1933,7 +1731,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if not agent:
             raise ManagementError("Agent was not found.", status_code=404)
         adapter = app.state.runtime_registry.adapter_for_runtime(agent["runtimeId"])
-        return await asyncio.to_thread(adapter.models, agent["runtimeProfile"])
+        return await run_runtime_call(app, adapter.models, agent["runtimeProfile"])
 
     @app.get("/v1/agents/{agent_id}/slash-commands")
     async def core_agent_slash_commands(agent_id: str, _auth: None = Depends(require_auth)) -> dict[str, Any]:
@@ -1941,7 +1739,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if not agent:
             raise ManagementError("Agent was not found.", status_code=404)
         adapter = app.state.runtime_registry.adapter_for_runtime(agent["runtimeId"])
-        return await asyncio.to_thread(adapter.slash_commands, agent["runtimeProfile"])
+        return await run_runtime_call(app, adapter.slash_commands, agent["runtimeProfile"])
 
     @app.post("/v1/agents/{agent_id}/slash-complete")
     async def core_agent_slash_complete(
@@ -1954,7 +1752,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise ManagementError("Agent was not found.", status_code=404)
         body = await request.json()
         adapter = app.state.runtime_registry.adapter_for_runtime(agent["runtimeId"])
-        return await asyncio.to_thread(
+        return await run_runtime_call(app, 
             adapter.slash_complete,
             agent["runtimeProfile"],
             text=str(body.get("text") or ""),
@@ -2580,317 +2378,6 @@ def sse_event(event: dict[str, Any]) -> str:
         f"id: {event['cursor']}\n"
         f"data: {json_dumps(event)}\n\n"
     )
-
-
-def prepare_assistant_delivery_event(
-    messages: list[dict[str, Any]],
-    *,
-    content: str,
-    metadata: dict[str, Any],
-    stream_message_id: str,
-    has_stream_id: bool,
-    reply_to: str,
-    status: str,
-) -> tuple[str, dict[str, Any], bool]:
-    if has_stream_id:
-        existing = message_by_id(messages, stream_message_id)
-        if not existing:
-            return content, metadata, False
-        existing_content = str(existing.get("content") or "")
-        existing_status = str(existing.get("status") or "")
-        if existing_status == "completed" and status == "streaming":
-            return existing_content, metadata, True
-        if status == "streaming":
-            merged = merged_stream_snapshot_content(existing_content, content)
-            return merged, metadata, same_normalized_content(merged, existing_content)
-        merged = merged_completed_stream_content(existing_content, content)
-        merged_metadata = merged_completion_metadata(existing, metadata, reply_to=reply_to)
-        if existing_status == "completed" and same_normalized_content(merged, existing_content):
-            return existing_content, merged_metadata, True
-        return merged, merged_metadata, False
-
-    if status != "completed":
-        return content, metadata, False
-
-    fallback = stream_fallback_completion(messages, reply_to=reply_to, content=content)
-    if fallback:
-        return (
-            str(fallback["content"]),
-            finalized_stream_metadata(
-                metadata,
-                existing_metadata=fallback["metadata"],
-                stream_message_id=str(fallback["streamMessageId"]),
-                reply_to=reply_to or str(fallback.get("replyTo") or ""),
-            ),
-            False,
-        )
-
-    existing = last_mergeable_assistant_message(messages, reply_to=reply_to, content=content)
-    if not existing:
-        return content, metadata, False
-    existing_content = str(existing.get("content") or "")
-    merged = merged_completed_stream_content(existing_content, content)
-    merged_metadata = merged_completion_metadata(existing, metadata, reply_to=reply_to)
-    if str(existing.get("status") or "") == "completed" and same_normalized_content(merged, existing_content):
-        return existing_content, merged_metadata, True
-    return merged, merged_metadata, False
-
-
-def has_stream_message_id(metadata: dict[str, Any]) -> bool:
-    return bool(metadata.get("streamMessageId") or metadata.get("stream_message_id"))
-
-
-def stream_fallback_completion(
-    messages: list[dict[str, Any]],
-    *,
-    reply_to: str,
-    content: str,
-) -> dict[str, Any] | None:
-    existing = None
-    metadata: dict[str, Any] = {}
-    for message in reversed(messages):
-        if message.get("role") != "assistant" or message.get("status") != "streaming":
-            continue
-        metadata = message.get("metadata") if isinstance(message.get("metadata"), dict) else {}
-        stream_message_id = str(metadata.get("streamMessageId") or metadata.get("stream_message_id") or "")
-        if stream_message_id:
-            existing = message
-            break
-    if not existing or not stream_message_id:
-        return None
-    inferred_reply_to = reply_to or str(metadata.get("replyTo") or "") or last_user_message_id(messages)
-    return {
-        "content": merged_completed_stream_content(str(existing.get("content") or ""), content),
-        "messageId": str(existing.get("id") or stream_message_id),
-        "metadata": metadata,
-        "replyTo": inferred_reply_to,
-        "streamMessageId": stream_message_id,
-    }
-
-
-def finalized_stream_metadata(
-    metadata: dict[str, Any],
-    *,
-    existing_metadata: dict[str, Any],
-    stream_message_id: str,
-    reply_to: str,
-) -> dict[str, Any]:
-    merged = {**existing_metadata, **metadata}
-    attachments = merged_metadata_attachments(existing_metadata, metadata)
-    if attachments:
-        merged["attachments"] = attachments
-    merged["streamMessageId"] = stream_message_id
-    merged["streaming"] = False
-    merged["finalize"] = True
-    if reply_to:
-        merged["replyTo"] = reply_to
-    return merged
-
-
-def merged_completion_metadata(existing: dict[str, Any], metadata: dict[str, Any], *, reply_to: str) -> dict[str, Any]:
-    existing_metadata = existing.get("metadata") if isinstance(existing.get("metadata"), dict) else {}
-    stream_message_id = str(existing_metadata.get("streamMessageId") or existing_metadata.get("stream_message_id") or "")
-    if not stream_message_id:
-        merged = {**existing_metadata, **metadata}
-        attachments = merged_metadata_attachments(existing_metadata, metadata)
-        if attachments:
-            merged["attachments"] = attachments
-        return merged
-    return finalized_stream_metadata(
-        metadata,
-        existing_metadata=existing_metadata,
-        stream_message_id=stream_message_id,
-        reply_to=reply_to or str(existing_metadata.get("replyTo") or ""),
-    )
-
-
-def merged_metadata_attachments(left: dict[str, Any], right: dict[str, Any]) -> list[dict[str, Any]]:
-    return merge_client_attachments(left.get("attachments"), [
-        item for item in right.get("attachments", []) if isinstance(item, dict)
-    ] if isinstance(right.get("attachments"), list) else [])
-
-
-def last_user_message_id(messages: list[dict[str, Any]]) -> str:
-    for message in reversed(messages):
-        if message.get("role") == "user":
-            return str(message.get("id") or "")
-    return ""
-
-
-def message_by_id(messages: list[dict[str, Any]], message_id: str) -> dict[str, Any] | None:
-    for message in messages:
-        if message["id"] == message_id:
-            return message
-    return None
-
-
-def coalesce_core_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    coalesced: list[dict[str, Any]] = []
-    for message in messages:
-        if message["role"] == "assistant" and coalesced:
-            previous = coalesced[-1]
-            if (
-                previous["role"] == "assistant"
-                and equivalent_message_content(
-                    str(previous.get("content") or ""),
-                    str(message.get("content") or ""),
-                )
-                and is_gateway_replay_pair(previous, message)
-            ):
-                if message.get("status") == "completed" and previous.get("status") != "completed":
-                    metadata = merged_completion_metadata(previous, message.get("metadata") if isinstance(message.get("metadata"), dict) else {}, reply_to="")
-                    coalesced[-1] = {
-                        **previous,
-                        "status": "completed",
-                        "updatedAt": message.get("updatedAt") or previous.get("updatedAt"),
-                        "metadata": metadata,
-                    }
-                else:
-                    metadata = merged_completion_metadata(previous, message.get("metadata") if isinstance(message.get("metadata"), dict) else {}, reply_to="")
-                    if metadata.get("attachments"):
-                        coalesced[-1] = {**previous, "metadata": metadata}
-                continue
-        coalesced.append(message)
-    return coalesced
-
-
-def is_gateway_replay_pair(left: dict[str, Any], right: dict[str, Any]) -> bool:
-    left_metadata = left.get("metadata") if isinstance(left.get("metadata"), dict) else {}
-    right_metadata = right.get("metadata") if isinstance(right.get("metadata"), dict) else {}
-    left_source = str(left_metadata.get("source") or "")
-    right_source = str(right_metadata.get("source") or "")
-    if not left_source.startswith("hermes-gateway") or not right_source.startswith("hermes-gateway"):
-        return False
-    return bool(
-        left_metadata.get("streamMessageId")
-        or right_metadata.get("streamMessageId")
-        or (
-            left_metadata.get("replyTo")
-            and left_metadata.get("replyTo") == right_metadata.get("replyTo")
-        )
-    )
-
-
-def last_mergeable_assistant_message(
-    messages: list[dict[str, Any]],
-    *,
-    reply_to: str,
-    content: str,
-) -> dict[str, Any] | None:
-    normalized_content = normalize_message_content(content)
-    reply_scope_exists = bool(reply_to and any(
-        message.get("role") == "user" and str(message.get("id") or "") == reply_to
-        for message in messages
-    ))
-    for message in reversed(messages):
-        if message["role"] == "user":
-            if reply_scope_exists and str(message.get("id") or "") == reply_to:
-                continue
-            break
-        if message["role"] != "assistant":
-            continue
-        metadata = message.get("metadata") if isinstance(message.get("metadata"), dict) else {}
-        reply_matches = bool(reply_to and metadata.get("replyTo") == reply_to)
-        unscoped_stream_message = bool((not reply_to or not reply_scope_exists) and metadata.get("streamMessageId"))
-        if message["status"] == "streaming":
-            return message
-        if (
-            normalized_content
-            and equivalent_message_content(str(message.get("content") or ""), normalized_content)
-            and (reply_matches or unscoped_stream_message)
-        ):
-            return message
-        if is_post_stream_attachment(content) and (reply_matches or unscoped_stream_message):
-            return message
-    return None
-
-
-def normalize_message_content(content: str) -> str:
-    return "\n".join(line.rstrip() for line in content.strip().splitlines())
-
-
-def same_normalized_content(left: str, right: str) -> bool:
-    return normalize_message_content(left) == normalize_message_content(right)
-
-
-def equivalent_message_content(left: str, right: str) -> bool:
-    return compact_message_content(left) == compact_message_content(right)
-
-
-def compact_message_content(content: str) -> str:
-    return re.sub(r"\s+([,.;:!?])", r"\1", " ".join(normalize_message_content(content).split()))
-
-
-def is_post_stream_attachment(content: str) -> bool:
-    stripped = content.strip()
-    return bool(
-        stripped.startswith("Media:")
-        or stripped.startswith("Image:")
-        or stripped.startswith("File:")
-        or stripped.startswith("🖼️ Image:")
-        or stripped.startswith("📎 File:")
-    )
-
-
-def append_message_content(content: str, addition: str) -> str:
-    left = content.rstrip()
-    right = addition.strip()
-    if not left:
-        return right
-    if not right or right in left or equivalent_message_content(left, right):
-        return left
-    if re.match(r"^[,.;:!?)]", right):
-        return f"{left}{right}"
-    if not re.search(r"[.!?:;)]$", left) and re.match(r"^[a-z]", right):
-        return f"{left} {right}"
-    return f"{left}\n\n{right}"
-
-
-def merged_completed_stream_content(existing: str, delivery: str) -> str:
-    existing_content = existing.rstrip()
-    delivery_content = delivery.strip()
-    if not existing_content:
-        return delivery_content
-    if not delivery_content:
-        return existing_content
-    compact_existing = compact_message_content(existing_content)
-    compact_delivery = compact_message_content(delivery_content)
-    if compact_existing == compact_delivery:
-        return delivery_content
-    if compact_delivery.startswith(compact_existing):
-        return delivery_content
-    if compact_existing.startswith(compact_delivery) or compact_delivery in compact_existing:
-        return existing_content
-    overlapped = overlapping_message_content(existing_content, delivery_content)
-    if overlapped:
-        return overlapped
-    return append_message_content(existing_content, delivery_content)
-
-
-def merged_stream_snapshot_content(existing: str, delivery: str) -> str:
-    existing_content = existing.rstrip()
-    delivery_content = delivery.strip()
-    if not existing_content:
-        return delivery_content
-    if not delivery_content:
-        return existing_content
-    compact_existing = compact_message_content(existing_content)
-    compact_delivery = compact_message_content(delivery_content)
-    if compact_delivery.startswith(compact_existing):
-        return delivery_content
-    if compact_existing.startswith(compact_delivery):
-        return existing_content
-    return delivery_content if len(compact_delivery) >= len(compact_existing) else existing_content
-
-
-def overlapping_message_content(existing: str, delivery: str) -> str:
-    max_overlap = min(len(existing), len(delivery))
-    for length in range(max_overlap, 11, -1):
-        prefix = delivery[:length]
-        index = existing.rfind(prefix)
-        if index != -1:
-            return f"{existing[:index]}{delivery}"
-    return ""
 
 
 def dump_model(model):

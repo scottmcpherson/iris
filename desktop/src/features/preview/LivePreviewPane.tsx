@@ -41,6 +41,15 @@ export function LivePreviewPane({
   }>({ status: "idle", message: "Rendering preview..." });
 
   const sandbox = useMemo(() => buildSandbox(artifact.permissions), [artifact.permissions]);
+  const [previewUrl, setPreviewUrl] = useState("");
+
+  useEffect(() => {
+    const url = URL.createObjectURL(new Blob([document], { type: "text/html" }));
+    setPreviewUrl(url);
+    return () => {
+      URL.revokeObjectURL(url);
+    };
+  }, [document]);
 
   useEffect(() => {
     if (!artifact.permissions.scripts && (artifact.mode === "react" || artifact.mode === "diagram")) {
@@ -180,7 +189,7 @@ export function LivePreviewPane({
           key={`${artifact.id}-${artifact.updatedAt}-${sandbox}`}
           title="Iris live preview"
           sandbox={sandbox}
-          srcDoc={document}
+          src={previewUrl || "about:blank"}
         />
         {runtimeState.status === "error" || runtimeState.status === "blocked" ? (
           <div className="preview-error-overlay">

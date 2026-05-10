@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import mimetypes
 import os
 import time
 import urllib.error
@@ -13,6 +12,7 @@ import uuid
 from pathlib import Path
 from typing import Any
 
+from ..attachment_types import normalized_runtime_mime_type
 from ..core_store import (
     DEFAULT_RUNTIME_ID,
     CoreStore,
@@ -42,12 +42,11 @@ def agentui_multipart_attachments(attachments: Any) -> list[dict[str, Any]]:
         if not storage_path:
             continue
         name = str(item.get("name") or "attachment").strip()
-        mime_type = str(item.get("mimeType") or item.get("kind") or "file").strip()
         rows.append({
             "id": str(item.get("id") or ""),
             "name": name,
             "kind": str(item.get("kind") or ""),
-            "mimeType": mime_type,
+            "mimeType": normalized_runtime_mime_type(item),
             "size": item.get("size") if isinstance(item.get("size"), int) else -1,
             "sha256": str(item.get("sha256") or ""),
             "path": storage_path,
@@ -65,26 +64,6 @@ def agentui_payload_attachment(attachment: dict[str, Any], field: str) -> dict[s
         "size": attachment.get("size") if isinstance(attachment.get("size"), int) else -1,
         **({"sha256": attachment["sha256"]} if attachment.get("sha256") else {}),
     }
-
-
-def normalized_runtime_mime_type(attachment: dict[str, Any]) -> str:
-    mime_type = str(attachment.get("mimeType") or "").strip().lower()
-    kind = str(attachment.get("kind") or "").strip().lower()
-    name = str(attachment.get("name") or "")
-    if kind == "audio" and (not mime_type or mime_type == "video/webm"):
-        return "audio/webm"
-    if mime_type:
-        return mime_type
-    guessed = mimetypes.guess_type(name)[0]
-    if guessed:
-        return guessed
-    if kind == "audio":
-        return "audio/webm"
-    if kind == "image":
-        return "image/png"
-    if kind == "video":
-        return "video/mp4"
-    return "application/octet-stream"
 
 
 def local_runtime_config(*, management_url: str | None = None) -> dict[str, Any]:

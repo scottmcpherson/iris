@@ -126,7 +126,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![core_bridge])
         .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .unwrap_or_else(|err| eprintln!("Iris desktop exited with an unrecoverable Tauri error: {err}"));
 }
 
 fn install_app_menu(app: &mut tauri::App) -> tauri::Result<()> {

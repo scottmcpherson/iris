@@ -348,7 +348,7 @@ function AudioAttachmentPlayer({
           onClick={seek}
         >
           {audioWaveformBars.map((height, index) => (
-            <span key={index} style={{ "--bar-scale": height } as CSSProperties} />
+            <span key={`audio-waveform-bar-${index}`} style={{ "--bar-scale": height } as CSSProperties} />
           ))}
         </button>
         <span className="message-audio-time">{error || (loading ? "Loading..." : formatAudioPlaybackTime(displayTime))}</span>

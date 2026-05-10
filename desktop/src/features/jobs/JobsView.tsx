@@ -165,7 +165,7 @@ export function JobsView({
     <div className="jobs-view">
       <header className="jobs-header agent-list-header">
         <div>
-          <h1>Scheduled automations</h1>
+          <h1>Automations</h1>
         </div>
         <div className="jobs-header-actions">
           <button

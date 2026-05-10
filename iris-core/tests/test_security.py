@@ -38,7 +38,15 @@ def test_device_pairing_token_auth_and_revocation(tmp_path):
 
     paired = client.post(
         "/v1/devices/pair",
-        json={"name": "Scott's MacBook", "kind": "desktop", "metadata": {"tailnet": "test"}},
+        json={
+            "name": "Scott's MacBook",
+            "kind": "desktop",
+            "metadata": {
+                "tailnet": "test",
+                "tokenHash": "must-not-persist",
+                "nested": {"accessToken": "also-blocked", "label": "ok"},
+            },
+        },
         headers=admin_headers,
     )
     payload = paired.json()
@@ -50,6 +58,10 @@ def test_device_pairing_token_auth_and_revocation(tmp_path):
     assert payload["tokenShownOnce"] is True
     assert "tokenHash" not in payload["device"]
     assert payload["device"]["name"] == "Scott's MacBook"
+    assert payload["device"]["metadata"] == {"nested": {"label": "ok"}, "tailnet": "test"}
+    with app.state.core_store.connect() as connection:
+        stored = connection.execute("select token_hash from devices where id = ?", (device_id,)).fetchone()
+    assert stored["token_hash"].startswith("v1:")
 
     device_headers = {"Authorization": f"Bearer {token}"}
     health = client.get("/v1/health", headers=device_headers)

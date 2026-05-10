@@ -1,0 +1,164 @@
+.profile-context-menu {
+  position: fixed;
+  z-index: 60;
+  width: 166px;
+  padding: 5px;
+  border: 1px solid rgba(255, 255, 255, 0.11);
+  border-radius: 8px;
+  background: rgba(20, 23, 30, 0.98);
+  box-shadow: 0 16px 36px rgba(0, 0, 0, 0.38);
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.profile-context-menu button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 30px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 6px;
+  color: #d7dde8;
+  background: transparent;
+  font-size: 12px;
+  text-align: left;
+}
+
+.profile-context-menu-header {
+  padding: 5px 8px 6px;
+  color: #8e96a5;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0;
+}
+
+.profile-context-menu button:hover {
+  color: #fffaf1;
+  background: rgba(255, 255, 255, 0.085);
+}
+
+.profile-context-menu button[aria-checked="true"] {
+  color: #fffaf1;
+}
+
+.profile-context-menu button:disabled {
+  color: #6f7784;
+  cursor: default;
+}
+
+.profile-context-menu button:disabled:hover {
+  background: transparent;
+}
+
+.profile-context-menu button.danger-menu-item:not(:disabled) {
+  color: #f0b6aa;
+}
+
+.profile-context-menu button.confirm-menu-item:not(:disabled) {
+  color: #ffd2c7;
+  background: rgba(220, 78, 52, 0.18);
+}
+
+.profile-context-menu button.confirm-menu-item:not(:disabled):hover {
+  background: rgba(220, 78, 52, 0.26);
+}
+
+.profile-action-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgba(5, 6, 9, 0.62);
+  backdrop-filter: blur(16px);
+}
+
+.profile-action-modal form {
+  display: grid;
+  gap: 16px;
+  width: min(360px, calc(100vw - 40px));
+  padding: 20px;
+  border: 1px solid rgba(255, 255, 255, 0.11);
+  border-radius: 10px;
+  background: rgba(19, 22, 29, 0.98);
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.42);
+}
+
+.profile-action-modal h2,
+.profile-action-modal p {
+  margin: 0;
+}
+
+.profile-action-modal h2 {
+  margin-top: 4px;
+  color: #fffaf1;
+  font-size: 18px;
+}
+
+.profile-action-modal label {
+  display: grid;
+  gap: 7px;
+}
+
+.profile-action-modal label span {
+  color: #9ba3b2;
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.profile-action-modal input,
+.profile-action-modal select {
+  width: 100%;
+  height: 38px;
+  border: 1px solid rgba(255, 255, 255, 0.095);
+  border-radius: 8px;
+  outline: none;
+  padding: 0 11px;
+  color: #f4efe5;
+  background: rgba(255, 255, 255, 0.055);
+}
+
+.profile-action-modal input:focus,
+.profile-action-modal select:focus {
+  border-color: rgba(142, 215, 255, 0.36);
+  box-shadow: 0 0 0 3px rgba(142, 215, 255, 0.09);
+}
+
+.project-action-modal form {
+  width: min(560px, calc(100vw - 40px));
+}
+
+.project-prompt-editor {
+  display: grid;
+  gap: 7px;
+  min-height: 220px;
+}
+
+.project-prompt-editor > span {
+  color: #9ba3b2;
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.project-prompt-editor .code-editor-wrap {
+  min-height: 190px;
+  border: 1px solid rgba(255, 255, 255, 0.075);
+  border-radius: 10px;
+  overflow: hidden;
+  background: rgba(0, 0, 0, 0.18);
+}
+
+.profile-action-error {
+  color: #f1b4a5;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.profile-action-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}

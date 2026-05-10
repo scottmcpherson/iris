@@ -29,23 +29,21 @@ import { navItems, viewTitle } from "../app/navigation";
 import { loadJsonValue, saveJsonValue, storageKeys } from "../app/storage";
 import type { ProfileActionHandler, View } from "../app/types";
 import { offlineProfile } from "../app/offlineProfile";
-import { CodeEditor } from "../shared/CodeEditor";
 import type { AgentUICoreAgent, IrisProject } from "../lib/agentuiCore";
 import type { HermesConversation, HermesProfile, HermesStatus } from "../types/hermes";
+import {
+  ConversationActionDialog,
+  ProfileActionDialog,
+  ProjectActionDialog,
+  type ConversationDialog,
+  type ProfileDialog,
+  type ProjectDialog,
+} from "./AppShellDialogs";
 
 const SIDEBAR_AUTO_COLLAPSE_WIDTH = 1500;
 const SIDEBAR_STANDARD_WIDTH = 252;
 const SIDEBAR_COLLAPSED_WIDTH = 0;
 const SIDEBAR_MAX_WIDTH = 440;
-
-type ProfileDialog =
-  | { action: "create"; name: string }
-  | { action: "clone"; source: string; name: string }
-  | { action: "delete"; source: string; name: string };
-
-type ProjectDialog =
-  | { action: "create"; name: string; defaultAgentId: string; systemPrompt: string }
-  | { action: "edit"; projectId: string; name: string; defaultAgentId: string; systemPrompt: string };
 
 type ProfileMenu = {
   profile: string;
@@ -67,12 +65,6 @@ type ConversationMenu = {
   left: number;
 };
 
-type ConversationDialog = {
-  conversation: HermesConversation;
-  profileName: string;
-  name: string;
-};
-
 type ConversationSearchItem = {
   conversation: HermesConversation;
   profileName: string;
@@ -88,7 +80,7 @@ type SidebarOrganizationMenu = {
   left: number;
 };
 
-type SidebarSectionId = "projects" | "chats" | "agents";
+type SidebarSectionId = "pinned" | "projects" | "chats" | "agents";
 
 type AppShellProps = {
   activeView: View;
@@ -233,6 +225,7 @@ export function AppShell({
   const projectsSectionCollapsed = Boolean(collapsedSidebarSections.projects);
   const chatsSectionCollapsed = Boolean(collapsedSidebarSections.chats);
   const agentsSectionCollapsed = Boolean(collapsedSidebarSections.agents);
+  const pinnedSectionCollapsed = Boolean(collapsedSidebarSections.pinned);
 
   useEffect(() => {
     sidebarCollapsedRef.current = sidebarCollapsed;
@@ -656,18 +649,20 @@ export function AppShell({
           {pinnedConversationItems.length ? (
             <div className="sidebar-section pinned-tree">
               <div className="profile-tree-header">
-                <p className="sidebar-label">Pinned</p>
+                {renderSidebarSectionToggle("pinned", "Pinned", pinnedSectionCollapsed)}
               </div>
-              <div className="pinned-list">
-                {pinnedConversationItems.map((item) =>
-                  renderConversationRow(item.profileName, item.conversation, {
-                    pinnedSection: true,
-                    rightLabel: timeLabel(item.conversation.lastActiveAt),
-                    pinKey: item.pinKey,
-                    onSelect: item.select,
-                  }),
-                )}
-              </div>
+              {!pinnedSectionCollapsed ? (
+                <div className="pinned-list" id="sidebar-pinned-section">
+                  {pinnedConversationItems.map((item) =>
+                    renderConversationRow(item.profileName, item.conversation, {
+                      pinnedSection: true,
+                      rightLabel: timeLabel(item.conversation.lastActiveAt),
+                      pinKey: item.pinKey,
+                      onSelect: item.select,
+                    }),
+                  )}
+                </div>
+              ) : null}
             </div>
           ) : null}
 
@@ -952,9 +947,37 @@ export function AppShell({
       {projectMenu ? renderProjectMenu() : null}
       {sidebarOrganizationMenu ? renderSidebarOrganizationMenu() : null}
       {conversationMenu ? renderConversationMenu() : null}
-      {profileDialog ? renderProfileDialog() : null}
-      {projectDialog ? renderProjectDialog() : null}
-      {conversationDialog ? renderConversationDialog() : null}
+      {profileDialog ? (
+        <ProfileActionDialog
+          dialog={profileDialog}
+          busy={profileActionBusy}
+          error={profileActionError}
+          onCancel={closeProfileDialog}
+          onChange={setProfileDialog}
+          onSubmit={submitProfileDialog}
+        />
+      ) : null}
+      {projectDialog ? (
+        <ProjectActionDialog
+          dialog={projectDialog}
+          busy={projectActionBusy}
+          error={projectActionError}
+          projectAgents={projectAgents}
+          onCancel={closeProjectDialog}
+          onChange={setProjectDialog}
+          onSubmit={submitProjectDialog}
+        />
+      ) : null}
+      {conversationDialog ? (
+        <ConversationActionDialog
+          dialog={conversationDialog}
+          busy={conversationActionBusy}
+          error={conversationActionError}
+          onCancel={closeConversationDialog}
+          onChange={setConversationDialog}
+          onSubmit={submitConversationDialog}
+        />
+      ) : null}
     </div>
   );
 
@@ -1782,106 +1805,6 @@ export function AppShell({
     }
   }
 
-  function renderProjectDialog() {
-    const dialog = projectDialog;
-    if (!dialog) return null;
-    const isCreate = dialog.action === "create";
-    const submitDisabled =
-      projectActionBusy ||
-      !dialog.name.trim() ||
-      !dialog.defaultAgentId;
-    const agentOptions = projectAgentOptions(projectAgents, dialog.defaultAgentId);
-
-    return (
-      <div className="profile-action-modal project-action-modal" role="dialog" aria-modal="true" aria-labelledby="project-action-title">
-        <form onSubmit={submitProjectDialog}>
-          <div>
-            <p className="eyebrow">{isCreate ? "Project management" : "Project"}</p>
-            <h2 id="project-action-title">{isCreate ? "New project" : "Edit project"}</h2>
-          </div>
-          <label>
-            <span>Project name</span>
-            <input
-              autoFocus
-              value={dialog.name}
-              placeholder="new-project"
-              onChange={(event) => setProjectDialog({ ...dialog, name: event.target.value })}
-            />
-          </label>
-          <label>
-            <span>Default agent</span>
-            <select
-              value={dialog.defaultAgentId}
-              onChange={(event) => setProjectDialog({ ...dialog, defaultAgentId: event.target.value })}
-            >
-              {agentOptions.map((agent) => (
-                <option key={agent.id} value={agent.id}>
-                  {agent.displayName || agent.runtimeProfile || agent.id}
-                </option>
-              ))}
-            </select>
-          </label>
-          <div className="project-prompt-editor">
-            <span>System prompt</span>
-            <CodeEditor
-              value={dialog.systemPrompt}
-              onChange={(value) => setProjectDialog({ ...dialog, systemPrompt: value })}
-              metadata={[
-                { label: "lines", value: `${dialog.systemPrompt.split("\n").length} lines` },
-                { label: "scope", value: "project only" },
-              ]}
-            />
-          </div>
-          {projectActionError ? <p className="profile-action-error">{projectActionError}</p> : null}
-          <div className="profile-action-modal-actions">
-            <button type="button" className="small-button settings-button" onClick={closeProjectDialog}>
-              Cancel
-            </button>
-            <button type="submit" className="small-button settings-button" disabled={submitDisabled}>
-              {projectActionBusy ? "Working..." : isCreate ? "Create" : "Save"}
-            </button>
-          </div>
-        </form>
-      </div>
-    );
-  }
-
-  function renderConversationDialog() {
-    const dialog = conversationDialog;
-    if (!dialog) return null;
-    const inputValue = dialog.name;
-    const submitDisabled = conversationActionBusy || !inputValue.trim();
-
-    return (
-      <div className="profile-action-modal" role="dialog" aria-modal="true" aria-labelledby="conversation-action-title">
-        <form onSubmit={submitConversationDialog}>
-          <div>
-            <p className="eyebrow">Session</p>
-            <h2 id="conversation-action-title">Rename session</h2>
-          </div>
-          <label>
-            <span>Session name</span>
-            <input
-              autoFocus
-              value={inputValue}
-              placeholder="Session name"
-              onChange={(event) => setConversationDialog({ ...dialog, name: event.target.value })}
-            />
-          </label>
-          {conversationActionError ? <p className="profile-action-error">{conversationActionError}</p> : null}
-          <div className="profile-action-modal-actions">
-            <button type="button" className="small-button settings-button" onClick={closeConversationDialog}>
-              Cancel
-            </button>
-            <button type="submit" className="small-button settings-button" disabled={submitDisabled}>
-              {conversationActionBusy ? "Working..." : "Rename"}
-            </button>
-          </div>
-        </form>
-      </div>
-    );
-  }
-
   async function submitProfileDialog(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!profileDialog || profileActionBusy) return;
@@ -1913,57 +1836,6 @@ export function AppShell({
     setProfileDialog(null);
   }
 
-  function renderProfileDialog() {
-    const dialog = profileDialog;
-    if (!dialog) return null;
-    const isDelete = dialog.action === "delete";
-    const isClone = dialog.action === "clone";
-    const source = "source" in dialog ? dialog.source : "";
-    const title = isDelete
-      ? `Delete ${source}`
-      : isClone
-        ? `Duplicate ${source}`
-        : "New agent";
-    const label = isDelete ? "Confirm agent name" : "Agent name";
-    const submitLabel = isDelete ? "Delete" : isClone ? "Duplicate" : "Create";
-    const inputValue = dialog.name;
-    const submitDisabled =
-      profileActionBusy ||
-      (isDelete ? inputValue.trim() !== source : !inputValue.trim());
-
-    return (
-      <div className="profile-action-modal" role="dialog" aria-modal="true" aria-labelledby="profile-action-title">
-        <form onSubmit={submitProfileDialog}>
-          <div>
-            <p className="eyebrow">{isDelete ? "Agent deletion" : "Agent management"}</p>
-            <h2 id="profile-action-title">{title}</h2>
-          </div>
-          <label>
-            <span>{label}</span>
-            <input
-              autoFocus
-              value={inputValue}
-              placeholder={isDelete ? source : "agent-name"}
-              onChange={(event) => setProfileDialog({ ...dialog, name: event.target.value })}
-            />
-          </label>
-          {profileActionError ? <p className="profile-action-error">{profileActionError}</p> : null}
-          <div className="profile-action-modal-actions">
-            <button type="button" className="small-button settings-button" onClick={closeProfileDialog}>
-              Cancel
-            </button>
-            <button
-              type="submit"
-              className={isDelete ? "small-button settings-button danger" : "small-button settings-button"}
-              disabled={submitDisabled}
-            >
-              {profileActionBusy ? "Working..." : submitLabel}
-            </button>
-          </div>
-        </form>
-      </div>
-    );
-  }
 }
 
 function nextProfileName(base: string, profiles: HermesProfile[]) {
@@ -1984,21 +1856,6 @@ function nextProjectName(base: string, projects: IrisProject[]) {
     if (!names.has(candidate)) return candidate;
   }
   return `${base}-${Date.now()}`;
-}
-
-function projectAgentOptions(agents: AgentUICoreAgent[], selectedAgentId: string) {
-  if (!selectedAgentId || agents.some((agent) => agent.id === selectedAgentId)) return agents;
-  return [
-    {
-      id: selectedAgentId,
-      runtimeId: "",
-      runtimeKind: "",
-      displayName: selectedAgentId,
-      runtimeProfile: selectedAgentId,
-      isDefault: false,
-    },
-    ...agents,
-  ];
 }
 
 function clamp(value: number, minimum: number, maximum: number) {
@@ -2024,8 +1881,11 @@ function loadCollapsedSessionProfiles() {
 
 function loadCollapsedSidebarSections(): Record<SidebarSectionId, boolean> {
   const parsed = loadJsonValue<Record<string, unknown>>(storageKeys.collapsedSidebarSections, {});
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return { projects: false, chats: false, agents: false };
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return { pinned: false, projects: false, chats: false, agents: false };
+  }
   return {
+    pinned: Boolean(parsed.pinned),
     projects: Boolean(parsed.projects),
     chats: Boolean(parsed.chats),
     agents: Boolean(parsed.agents),

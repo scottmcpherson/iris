@@ -225,10 +225,15 @@ describe("AppShell pinned conversations", () => {
     const looseChat = conversationFixture({ id: "conv_loose", title: "Loose chat" });
 
     vi.stubGlobal("localStorage", {
-      getItem: (key: string) =>
-        key === storageKeys.collapsedSidebarSections
-          ? JSON.stringify({ projects: true, chats: true, agents: true })
-          : null,
+      getItem: (key: string) => {
+        if (key === storageKeys.collapsedSidebarSections) {
+          return JSON.stringify({ pinned: true, projects: true, chats: true, agents: true });
+        }
+        if (key === storageKeys.pinnedConversations) {
+          return JSON.stringify({ [`project:${project.id}:${projectChat.id}`]: true });
+        }
+        return null;
+      },
       setItem: vi.fn(),
     });
 
@@ -282,6 +287,8 @@ describe("AppShell pinned conversations", () => {
       }),
     );
 
+    expect(html).toContain('aria-expanded="false" aria-controls="sidebar-pinned-section"');
+    expect(html).toContain('<span class="sidebar-label">Pinned</span>');
     expect(html).toContain('aria-expanded="false" aria-controls="sidebar-projects-section"');
     expect(html).toContain('aria-expanded="false" aria-controls="sidebar-chats-section"');
     expect(html).not.toContain("Pirate");

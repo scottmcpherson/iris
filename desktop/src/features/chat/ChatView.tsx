@@ -1012,7 +1012,7 @@ function DictationWaveform({
       <div className="composer-recording-waveform" style={waveformStyle} aria-hidden="true">
         {Array.from({ length: DICTATION_WAVEFORM_BAR_COUNT }, (_, index) => (
           <span
-            key={index}
+            key={`dictation-waveform-bar-${index}`}
             style={{
               "--bar-index": index,
               "--bar-level": audioLevels[index] ?? 0,
