@@ -1752,7 +1752,7 @@ button:disabled {
 }
 
 .sidebar-session-status.unread {
-  justify-content: center;
+  justify-content: flex-end;
 }
 
 .sidebar-session-status.unread i {
@@ -2376,32 +2376,32 @@ button:disabled {
 
 .tool-progress-list {
   display: grid;
-  gap: 8px;
+  gap: 4px;
   min-width: 0;
   max-width: 100%;
-  margin-top: 10px;
+  margin-top: 6px;
 }
 
 .tool-progress-item {
   display: grid;
-  gap: 7px;
+  gap: 5px;
   min-width: 0;
   max-width: 100%;
-  color: #aeb5c1;
+  color: #7f8794;
 }
 
 .tool-progress-summary {
   display: flex;
   align-items: center;
-  gap: 9px;
+  gap: 6px;
   min-width: 0;
   width: 100%;
   max-width: 100%;
-  min-height: 30px;
+  min-height: 22px;
   overflow: hidden;
-  color: #8f98a8;
-  font-size: 13px;
-  line-height: 1.35;
+  color: #7f8794;
+  font-size: 11.5px;
+  line-height: 1.25;
 }
 
 .tool-progress-item > summary.tool-progress-summary {
@@ -2415,24 +2415,22 @@ button:disabled {
 }
 
 .tool-progress-item > summary.tool-progress-summary:hover .tool-progress-title {
-  color: #c5ccd8;
+  color: #a6afbd;
 }
 
 .tool-progress-icon {
   display: inline-grid;
   flex: 0 0 auto;
   place-items: center;
-  width: 20px;
-  height: 20px;
-  color: #a3a5aa;
+  width: 16px;
+  height: 16px;
+  color: #68717f;
 }
 
 .tool-progress-item.running .tool-progress-icon svg {
   animation: tool-pulse 1.1s ease-in-out infinite;
 }
 
-.tool-progress-item.running .tool-progress-title,
-.tool-progress-item.running .tool-progress-status,
 .thinking-shimmer {
   color: transparent;
   background:
@@ -2456,37 +2454,30 @@ button:disabled {
   min-width: 0;
   max-width: 100%;
   overflow: hidden;
-  color: #b7beca;
-  font-weight: 650;
+  color: #858e9d;
+  font-weight: 520;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.tool-progress-status {
-  flex: 0 0 auto;
-  color: #747e8c;
-  font-size: 12px;
-}
-
 .tool-progress-chevron {
   flex: 0 0 auto;
-  color: #737d8d;
+  color: #5f6876;
   transition: transform 150ms ease, color 150ms ease;
 }
 
 .tool-progress-item[open] .tool-progress-chevron {
   transform: rotate(180deg);
-  color: #9ca6b6;
+  color: #8791a1;
 }
 
-.tool-progress-item.completed .tool-progress-icon,
-.tool-progress-item.completed .tool-progress-status {
-  color: #88c59a;
+.tool-progress-item.completed .tool-progress-icon {
+  color: #6f9b7d;
 }
 
 .tool-progress-item.error .tool-progress-icon,
-.tool-progress-item.error .tool-progress-status {
-  color: #d18a82;
+.tool-progress-item.error .tool-progress-title {
+  color: #b57b75;
 }
 
 .thinking-shimmer {
@@ -2500,17 +2491,17 @@ button:disabled {
 .tool-progress-detail {
   overflow: auto;
   box-sizing: border-box;
-  width: min(calc(100% - 29px), 720px);
+  width: min(calc(100% - 22px), 720px);
   min-width: 0;
   max-width: 100%;
   max-height: 260px;
-  margin: 4px 0 0 29px;
-  padding: 12px;
+  margin: 2px 0 0 22px;
+  padding: 10px;
   border-radius: 8px;
-  color: #d8dce5;
-  background: rgba(255, 255, 255, 0.055);
+  color: #c5cad4;
+  background: rgba(255, 255, 255, 0.04);
   font-family: "SF Mono", ui-monospace, Menlo, Consolas, monospace;
-  font-size: 12px;
+  font-size: 11.5px;
   line-height: 1.55;
   white-space: pre-wrap;
 }

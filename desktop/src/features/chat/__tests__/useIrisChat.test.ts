@@ -365,6 +365,125 @@ describe("Iris chat inbox merging", () => {
     ]);
   });
 
+  it("normalizes live tool metadata into stream tool events", () => {
+    const existing: Message[] = [
+      { id: "user-1", role: "user", content: "Run a command" },
+      { id: "assistant-1", role: "assistant", content: "Thinking...", streaming: true },
+    ];
+
+    const merged = mergeStreamDelivery(
+      existing,
+      inboxMessage({
+        id: "stream-1:tool:1",
+        content: "",
+        metadata: {
+          toolCalls: [
+            {
+              id: "call-1",
+              call_id: "call-1",
+              type: "function",
+              function: {
+                name: "terminal",
+                arguments: '{"command":"sleep 5 && echo \\"hello\\""}',
+              },
+            },
+          ],
+        },
+      }),
+      "stream-1",
+      false,
+    );
+
+    expect(merged[1]).toMatchObject({
+      id: "stream-1",
+      role: "assistant",
+      content: "",
+      streaming: true,
+      streamMessageId: "stream-1",
+      streamEvents: [
+        {
+          id: "call-1",
+          callId: "call-1",
+          toolName: "terminal",
+          label: 'terminal: sleep 5 && echo "hello"',
+          status: "running",
+          arguments: '{"command":"sleep 5 && echo \\"hello\\""}',
+        },
+      ],
+    });
+  });
+
+  it("does not infer live tool events from assistant text without metadata", () => {
+    const existing: Message[] = [
+      { id: "user-1", role: "user", content: "Run a command" },
+      { id: "assistant-1", role: "assistant", content: "Thinking...", streaming: true },
+    ];
+
+    const merged = mergeStreamDelivery(
+      existing,
+      inboxMessage({ id: "stream-1:tool:1", content: '💻 terminal: "sleep 5 && echo \\"hello\\""' }),
+      "stream-1",
+      false,
+    );
+
+    expect(merged[1]).toMatchObject({
+      id: "stream-1",
+      role: "assistant",
+      content: '💻 terminal: "sleep 5 && echo \\"hello\\""',
+      streaming: true,
+      streamMessageId: "stream-1",
+    });
+    expect(merged[1].streamEvents).toBeUndefined();
+  });
+
+  it("keeps live metadata tool events when the stream completes with assistant content", () => {
+    const streamed = mergeStreamDelivery(
+      [
+        { id: "user-1", role: "user", content: "Run a command" },
+        { id: "assistant-1", role: "assistant", content: "Thinking...", streaming: true },
+      ],
+      inboxMessage({
+        id: "stream-1:tool:1",
+        content: "",
+        metadata: {
+          toolCalls: [
+            {
+              id: "call-1",
+              call_id: "call-1",
+              type: "function",
+              function: {
+                name: "terminal",
+                arguments: '{"command":"sleep 5 && echo \\"hello\\""}',
+              },
+            },
+          ],
+        },
+      }),
+      "stream-1",
+      false,
+    );
+
+    const completed = mergeStreamDelivery(
+      streamed,
+      inboxMessage({ id: "stream-1:edit:1", content: "Ahoy — command completed:\n\nhello" }),
+      "stream-1",
+      true,
+    );
+
+    expect(completed[1]).toMatchObject({
+      id: "stream-1",
+      content: "Ahoy — command completed:\n\nhello",
+      streaming: false,
+      streamEvents: [
+        {
+          toolName: "terminal",
+          label: 'terminal: sleep 5 && echo "hello"',
+          status: "completed",
+        },
+      ],
+    });
+  });
+
   it("updates an existing streamed assistant bubble instead of appending duplicates", () => {
     const existing: Message[] = [
       { id: "user-1", role: "user", content: "Write a long answer" },

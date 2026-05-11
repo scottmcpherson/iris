@@ -1,5 +1,9 @@
 import type { AttachmentKind, Message, MessageAttachment } from "../../app/types";
 import type { HermesInboxMessage } from "../../types/hermes";
+import {
+  mergeStreamToolEvent,
+  streamToolEventsFromMetadata,
+} from "./toolEvents";
 
 const attachmentKinds = new Set<AttachmentKind>(["image", "document", "audio", "video", "archive", "code", "file"]);
 
@@ -11,17 +15,23 @@ export function mergeStreamDelivery(
 ) {
   const deliveryAttachments = attachmentsFromDelivery(delivery);
   const content = contentWithoutRenderedAttachmentMarkers(delivery.content, deliveryAttachments, delivery.metadata);
+  const liveToolEvents = streamToolEventsFromMetadata(delivery.metadata, delivery.id);
+  const messageContent = liveToolEvents.length && !content.trim() ? "" : content;
   const streaming = !finalized;
-  const updateMessage = (message: Message): Message => ({
-    ...message,
-    id: message.id || streamMessageId,
-    streamMessageId,
-    content: finalized && deliveryAttachments.length && content.trim()
-      ? content
-      : mergedStreamSnapshotContent(message.content, content),
-    attachments: mergeMessageAttachments(message.attachments, deliveryAttachments),
-    streaming,
-  });
+  const updateMessage = (message: Message): Message => {
+    const streamEvents = streamEventsForUpdate(message, liveToolEvents, finalized);
+    return {
+      ...message,
+      id: message.id || streamMessageId,
+      streamMessageId,
+      content: finalized && deliveryAttachments.length && messageContent.trim()
+        ? messageContent
+        : mergedStreamSnapshotContent(message.content, messageContent),
+      attachments: mergeMessageAttachments(message.attachments, deliveryAttachments),
+      streaming,
+      ...(streamEvents?.length ? { streamEvents } : {}),
+    };
+  };
   const streamIndex = existing.findIndex(
     (message) => message.streamMessageId === streamMessageId || message.id === streamMessageId,
   );
@@ -35,10 +45,11 @@ export function mergeStreamDelivery(
   const assistantMessage: Message = {
     id: streamMessageId,
     role: "assistant",
-    content,
+    content: messageContent,
     streaming,
     streamMessageId,
     attachments: deliveryAttachments.length ? deliveryAttachments : undefined,
+    ...(liveToolEvents.length ? { streamEvents: liveToolEvents } : {}),
   };
   if (placeholderIndex !== -1) {
     return coalescePostStreamAttachments(existing.map((message, index) => (index === placeholderIndex ? assistantMessage : message)));
@@ -116,20 +127,41 @@ function completedStreamingMessage(
   deliveryAttachments: MessageAttachment[],
 ): Message {
   if (!message.streamMessageId) {
+    const streamEvents = completedStreamEvents(message);
     return {
       ...message,
       id: delivery.id,
       content: deliveryContent,
       attachments: mergeMessageAttachments(message.attachments, deliveryAttachments),
       streaming: false,
+      ...(streamEvents?.length ? { streamEvents } : {}),
     };
   }
+  const streamEvents = completedStreamEvents(message);
   return {
     ...message,
     content: mergedCompletedStreamContent(message.content, deliveryContent),
     attachments: mergeMessageAttachments(message.attachments, deliveryAttachments),
     streaming: false,
+    ...(streamEvents?.length ? { streamEvents } : {}),
   };
+}
+
+function streamEventsForUpdate(message: Message, liveToolEvents: ReturnType<typeof streamToolEventsFromMetadata>, finalized: boolean) {
+  if (liveToolEvents.length) {
+    return liveToolEvents.reduce(
+      (current, event) => mergeStreamToolEvent(current, event),
+      message.streamEvents || [],
+    );
+  }
+  return finalized ? completedStreamEvents(message) : message.streamEvents;
+}
+
+function completedStreamEvents(message: Message) {
+  if (!message.streamEvents?.length) return message.streamEvents;
+  return message.streamEvents.map((event) =>
+    event.status === "running" ? { ...event, status: "completed" as const } : event
+  );
 }
 
 function lastStreamingAssistantIndex(messages: Message[]) {

@@ -835,7 +835,7 @@ export function useAgentUIChat({ profile, runtimeConfig, isChatViewActive = true
       const targetSessionId = latestRealSessionIdForChatId(chatId, profileName) ||
         (isOptimisticSessionId(sessionId) ? "" : sessionId);
       if (targetSessionId) {
-        void refreshSessionDetail(targetSessionId, profileName, { silent: true });
+        void refreshSessionDetail(targetSessionId, profileName, { silent: true, reconcileActive: true });
       }
     }, 600);
   }

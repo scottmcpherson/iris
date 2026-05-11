@@ -25,19 +25,7 @@ export function streamToolEventFromHistoryCall(
   toolCall: HermesHistoryToolCall,
   index: number,
 ): HermesStreamToolEvent {
-  const functionCall = toolCall.function || {};
-  const toolName = stringValue(functionCall.name) || stringValue(toolCall.name) || "tool";
-  const argumentsText = stringValue(functionCall.arguments) || stringValue(toolCall.arguments);
-  const callId = stringValue(toolCall.call_id) || stringValue(toolCall.id) || `${message.id}-call-${index}`;
-
-  return {
-    id: callId,
-    callId,
-    toolName,
-    label: toolLabel(toolName, parseJsonObject(argumentsText.trim()), { terminalPrefix: true }),
-    status: "running",
-    arguments: argumentsText || undefined,
-  };
+  return streamToolEventFromCall(toolCall, `${message.id}-call-${index}`);
 }
 
 export function mergeStreamToolEvent(
@@ -74,6 +62,27 @@ export function streamToolEventFromLegacyContent(content: string): HermesStreamT
   };
 }
 
+export function streamToolEventsFromMetadata(metadata: Record<string, unknown>, id: string): HermesStreamToolEvent[] {
+  const toolCalls = metadataToolCalls(metadata);
+  if (toolCalls.length) {
+    return toolCalls.map((toolCall, index) => streamToolEventFromCall(toolCall, `${id}-call-${index}`));
+  }
+  const toolName = stringValue(metadata.toolName || metadata.tool_name || metadata.tool);
+  if (!toolName) return [];
+  const callId = stringValue(metadata.toolCallId || metadata.tool_call_id || metadata.call_id) || id;
+  const argumentsText = stringValue(metadata.arguments || metadata.toolArguments || metadata.tool_arguments);
+  return [
+    {
+      id: callId,
+      callId,
+      toolName,
+      label: toolLabel(toolName, parseJsonObject(argumentsText.trim()), { terminalPrefix: true }),
+      status: "running",
+      arguments: argumentsText || undefined,
+    },
+  ];
+}
+
 export function toolStatusLabel(status: HermesStreamToolEvent["status"]) {
   if (status === "completed") return "Done";
   if (status === "error") return "Error";
@@ -100,6 +109,29 @@ function prettyToolText(value: string) {
 function historyToolName(message: HermesSessionMessage, data: Record<string, unknown> | null) {
   if (message.toolName) return message.toolName;
   return legacyToolName(data);
+}
+
+function streamToolEventFromCall(toolCall: HermesHistoryToolCall, fallbackCallId: string): HermesStreamToolEvent {
+  const functionCall = toolCall.function || {};
+  const toolName = stringValue(functionCall.name) || stringValue(toolCall.name) || "tool";
+  const argumentsText = stringValue(functionCall.arguments) || stringValue(toolCall.arguments);
+  const callId = stringValue(toolCall.call_id) || stringValue(toolCall.id) || fallbackCallId;
+
+  return {
+    id: callId,
+    callId,
+    toolName,
+    label: toolLabel(toolName, parseJsonObject(argumentsText.trim()), { terminalPrefix: true }),
+    status: "running",
+    arguments: argumentsText || undefined,
+  };
+}
+
+function metadataToolCalls(metadata: Record<string, unknown>): HermesHistoryToolCall[] {
+  const value = metadata.toolCalls || metadata.tool_calls;
+  return Array.isArray(value)
+    ? value.filter((item): item is HermesHistoryToolCall => Boolean(item && typeof item === "object" && !Array.isArray(item)))
+    : [];
 }
 
 function legacyToolName(data: Record<string, unknown> | null) {

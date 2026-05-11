@@ -25,7 +25,12 @@ import { NotificationCenter } from "./features/polish/NotificationCenter";
 import { OnboardingOverlay } from "./features/polish/OnboardingOverlay";
 import { AppShell } from "./layout/AppShell";
 import { loadBooleanValue, saveBooleanValue, storageKeys } from "./app/storage";
-import { isProjectSession, mergeProjectSessionsForSidebar } from "./app/projectSessions";
+import {
+  isProjectSession,
+  mergeProjectSessionsForSidebar,
+  mergeProjectSessionReadStatesForSidebar,
+  projectSessionMembership,
+} from "./app/projectSessions";
 
 function App() {
   const [activeView, setActiveView] = useState<View>("chat");
@@ -111,25 +116,34 @@ function App() {
     () => new Map(projects.agents.map((agent) => [agent.id, agent])),
     [projects.agents],
   );
-  const projectedSessionIds = useMemo(() => {
-    const ids = new Set<string>();
-    for (const sessions of Object.values(projects.sessionsByProject)) {
-      for (const session of sessions) ids.add(session.id);
-    }
-    return ids;
-  }, [projects.sessionsByProject]);
+  const projectSessionIdsToPreserve = useMemo(
+    () => new Set([chat.selectedSessionId, ...chat.activeSessionIds].filter(Boolean) as string[]),
+    [chat.activeSessionIds, chat.selectedSessionId],
+  );
   const sidebarSessionsByProject = useMemo(
     () =>
       mergeProjectSessionsForSidebar(
         projects.projects.map((project) => project.id),
         projects.sessionsByProject,
         chat.sessions,
+        { preserveProjectSessionIds: projectSessionIdsToPreserve },
       ),
-    [chat.sessions, projects.sessionsByProject, projects.projects],
+    [chat.sessions, projectSessionIdsToPreserve, projects.sessionsByProject, projects.projects],
+  );
+  const projectedSessions = useMemo(
+    () => projectSessionMembership(sidebarSessionsByProject),
+    [sidebarSessionsByProject],
   );
   const unprojectedSessions = useMemo(
-    () => chat.sessions.filter((session) => !isProjectSession(session, projectedSessionIds)),
-    [chat.sessions, projectedSessionIds],
+    () =>
+      chat.sessions.filter((session) =>
+        !isProjectSession(session, projectedSessions.ids, projectedSessions.chatIds),
+      ),
+    [chat.sessions, projectedSessions],
+  );
+  const sidebarSessionReadStates = useMemo(
+    () => mergeProjectSessionReadStatesForSidebar(chat.sessionReadStates, sidebarSessionsByProject),
+    [chat.sessionReadStates, sidebarSessionsByProject],
   );
 
   function openDeliveryChat(delivery: HermesInboxMessage) {
@@ -227,7 +241,7 @@ function App() {
         coreApiUrl={iris.runtimeConfig.coreApiUrl}
         sessions={chat.sessions}
         sessionsByProfile={chat.sessionsByProfile}
-        sessionReadStates={chat.sessionReadStates}
+        sessionReadStates={sidebarSessionReadStates}
         projects={projects.projects}
         projectAgents={projects.agents}
         sessionsByProject={sidebarSessionsByProject}
