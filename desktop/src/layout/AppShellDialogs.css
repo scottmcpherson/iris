@@ -1,4 +1,11 @@
-.profile-context-menu {
+.sidebar-context-menu-dismiss-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 59;
+  background: transparent;
+}
+
+.sidebar-context-menu {
   position: fixed;
   z-index: 60;
   width: 166px;
@@ -11,7 +18,7 @@
   -webkit-user-select: none;
 }
 
-.profile-context-menu button {
+.sidebar-context-menu button {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -26,7 +33,7 @@
   text-align: left;
 }
 
-.profile-context-menu-header {
+.sidebar-context-menu-header {
   padding: 5px 8px 6px;
   color: #8e96a5;
   font-size: 11px;
@@ -34,34 +41,34 @@
   letter-spacing: 0;
 }
 
-.profile-context-menu button:hover {
+.sidebar-context-menu button:hover {
   color: #fffaf1;
   background: rgba(255, 255, 255, 0.085);
 }
 
-.profile-context-menu button[aria-checked="true"] {
+.sidebar-context-menu button[aria-checked="true"] {
   color: #fffaf1;
 }
 
-.profile-context-menu button:disabled {
+.sidebar-context-menu button:disabled {
   color: #6f7784;
   cursor: default;
 }
 
-.profile-context-menu button:disabled:hover {
+.sidebar-context-menu button:disabled:hover {
   background: transparent;
 }
 
-.profile-context-menu button.danger-menu-item:not(:disabled) {
+.sidebar-context-menu button.danger-menu-item:not(:disabled) {
   color: #f0b6aa;
 }
 
-.profile-context-menu button.confirm-menu-item:not(:disabled) {
+.sidebar-context-menu button.confirm-menu-item:not(:disabled) {
   color: #ffd2c7;
   background: rgba(220, 78, 52, 0.18);
 }
 
-.profile-context-menu button.confirm-menu-item:not(:disabled):hover {
+.sidebar-context-menu button.confirm-menu-item:not(:disabled):hover {
   background: rgba(220, 78, 52, 0.26);
 }
 

@@ -1650,6 +1650,7 @@ button:disabled {
 }
 
 .sidebar-session-row:hover,
+.sidebar-session-row.context-target,
 .sidebar-session-row:has(.sidebar-session:focus-visible),
 .sidebar-session-row:has(.sidebar-session-pin:focus-visible) {
   background: var(--sidebar-row-hover);

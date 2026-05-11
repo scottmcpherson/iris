@@ -4,7 +4,6 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   AppShell,
   buildSessionSearchItems,
-  shouldCloseSessionMenuForPointerTarget,
   unpinnedProfileSessions,
 } from "../AppShell";
 import { storageKeys } from "../../app/storage";
@@ -395,19 +394,6 @@ describe("AppShell pinned sessions", () => {
       "Pirate / default",
       "Sessions / default",
     ]);
-  });
-
-  it("closes the session context menu when another session row is clicked", () => {
-    const sessionRowTarget = {
-      closest: (selector: string) => (selector === ".session-context-menu" ? null : {}),
-    } as unknown as Element;
-    const menuTarget = {
-      closest: (selector: string) => (selector === ".session-context-menu" ? {} : null),
-    } as unknown as Element;
-
-    expect(shouldCloseSessionMenuForPointerTarget(sessionRowTarget)).toBe(true);
-    expect(shouldCloseSessionMenuForPointerTarget(menuTarget)).toBe(false);
-    expect(shouldCloseSessionMenuForPointerTarget(null)).toBe(true);
   });
 });
 

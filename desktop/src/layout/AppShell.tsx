@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
-import type { CSSProperties, FormEvent, PointerEvent as ReactPointerEvent, ReactNode } from "react";
+import type { CSSProperties, FormEvent, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent, ReactNode } from "react";
 import {
   AlertCircle,
   Check,
@@ -37,6 +37,11 @@ import {
   type ProfileDialog,
   type ProjectDialog,
 } from "./AppShellDialogs";
+import {
+  SidebarContextMenu,
+  SidebarContextMenuHeader,
+  SidebarContextMenuItem,
+} from "./SidebarContextMenu";
 
 const SIDEBAR_AUTO_COLLAPSE_WIDTH = 1500;
 const SIDEBAR_STANDARD_WIDTH = 252;
@@ -334,11 +339,6 @@ export function AppShell({
   useEffect(() => {
     if (!sidebarOrganizationMenu) return undefined;
 
-    const closeMenu = (event: PointerEvent) => {
-      const target = event.target instanceof Element ? event.target : null;
-      if (target?.closest(".sidebar-organization-trigger, .sidebar-organization-menu")) return;
-      setSidebarOrganizationMenu(null);
-    };
     const closeOnEscape = (event: KeyboardEvent) => {
       if (event.key === "Escape") setSidebarOrganizationMenu(null);
     };
@@ -346,12 +346,10 @@ export function AppShell({
       setSidebarOrganizationMenu(null);
     };
 
-    window.addEventListener("pointerdown", closeMenu);
     window.addEventListener("keydown", closeOnEscape);
     window.addEventListener("resize", closeOnLayoutChange);
     window.addEventListener("scroll", closeOnLayoutChange, true);
     return () => {
-      window.removeEventListener("pointerdown", closeMenu);
       window.removeEventListener("keydown", closeOnEscape);
       window.removeEventListener("resize", closeOnLayoutChange);
       window.removeEventListener("scroll", closeOnLayoutChange, true);
@@ -361,11 +359,6 @@ export function AppShell({
   useEffect(() => {
     if (!profileMenu) return undefined;
 
-    const closeMenu = (event: PointerEvent) => {
-      const target = event.target instanceof Element ? event.target : null;
-      if (target?.closest(".profile-menu-wrap, .profile-context-menu")) return;
-      setProfileMenu(null);
-    };
     const closeOnEscape = (event: KeyboardEvent) => {
       if (event.key === "Escape") setProfileMenu(null);
     };
@@ -373,12 +366,10 @@ export function AppShell({
       setProfileMenu(null);
     };
 
-    window.addEventListener("pointerdown", closeMenu);
     window.addEventListener("keydown", closeOnEscape);
     window.addEventListener("resize", closeOnLayoutChange);
     window.addEventListener("scroll", closeOnLayoutChange, true);
     return () => {
-      window.removeEventListener("pointerdown", closeMenu);
       window.removeEventListener("keydown", closeOnEscape);
       window.removeEventListener("resize", closeOnLayoutChange);
       window.removeEventListener("scroll", closeOnLayoutChange, true);
@@ -388,11 +379,6 @@ export function AppShell({
   useEffect(() => {
     if (!projectMenu) return undefined;
 
-    const closeMenu = (event: PointerEvent) => {
-      const target = event.target instanceof Element ? event.target : null;
-      if (target?.closest(".project-menu-wrap, .profile-context-menu")) return;
-      setProjectMenu(null);
-    };
     const closeOnEscape = (event: KeyboardEvent) => {
       if (event.key === "Escape") setProjectMenu(null);
     };
@@ -400,12 +386,10 @@ export function AppShell({
       setProjectMenu(null);
     };
 
-    window.addEventListener("pointerdown", closeMenu);
     window.addEventListener("keydown", closeOnEscape);
     window.addEventListener("resize", closeOnLayoutChange);
     window.addEventListener("scroll", closeOnLayoutChange, true);
     return () => {
-      window.removeEventListener("pointerdown", closeMenu);
       window.removeEventListener("keydown", closeOnEscape);
       window.removeEventListener("resize", closeOnLayoutChange);
       window.removeEventListener("scroll", closeOnLayoutChange, true);
@@ -416,11 +400,6 @@ export function AppShell({
     if (!sessionMenu) return undefined;
     setConfirmDeleteSessionKey("");
 
-    const closeMenu = (event: PointerEvent) => {
-      const target = event.target instanceof Element ? event.target : null;
-      if (!shouldCloseSessionMenuForPointerTarget(target)) return;
-      setSessionMenu(null);
-    };
     const closeOnEscape = (event: KeyboardEvent) => {
       if (event.key === "Escape") setSessionMenu(null);
     };
@@ -428,12 +407,10 @@ export function AppShell({
       setSessionMenu(null);
     };
 
-    window.addEventListener("pointerdown", closeMenu);
     window.addEventListener("keydown", closeOnEscape);
     window.addEventListener("resize", closeOnLayoutChange);
     window.addEventListener("scroll", closeOnLayoutChange, true);
     return () => {
-      window.removeEventListener("pointerdown", closeMenu);
       window.removeEventListener("keydown", closeOnEscape);
       window.removeEventListener("resize", closeOnLayoutChange);
       window.removeEventListener("scroll", closeOnLayoutChange, true);
@@ -529,7 +506,7 @@ export function AppShell({
       >
         {sidebarCollapsed ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}
       </button>
-      <aside className="sidebar">
+      <aside className="sidebar" onClickCapture={dismissSidebarContextMenuFromSidebarClick}>
         <div className="window-drag-zone" data-tauri-drag-region />
         <div className="brand-block">
           <div className="brand-mark">
@@ -1042,9 +1019,11 @@ export function AppShell({
     const pinKey = options.pinKey || agentSessionPinKey(profileName, session.id);
     const pinned = isSessionPinned(pinKey);
     const rightLabel = options.rightLabel || timeLabel(session.lastActiveAt);
+    const contextTarget = sessionMenu?.pinKey === pinKey;
     const rowClassName = [
       "sidebar-session-row",
       selected ? "active" : "",
+      contextTarget ? "context-target" : "",
       running ? "running" : "",
       pinned ? "pinned" : "",
       options.pinnedSection ? "pinned-section-row" : "",
@@ -1395,6 +1374,25 @@ export function AppShell({
     setSidebarOrganizationMenu(null);
   }
 
+  function hasSidebarContextMenuOpen() {
+    return Boolean(profileMenu || projectMenu || sidebarOrganizationMenu || sessionMenu);
+  }
+
+  function closeSidebarContextMenus() {
+    setProfileMenu(null);
+    setProjectMenu(null);
+    setSidebarOrganizationMenu(null);
+    setSessionMenu(null);
+    resetConfirmDeleteSession();
+  }
+
+  function dismissSidebarContextMenuFromSidebarClick(event: ReactMouseEvent<HTMLElement>) {
+    if (!hasSidebarContextMenuOpen()) return;
+    event.preventDefault();
+    event.stopPropagation();
+    closeSidebarContextMenus();
+  }
+
   function openProjectMenu(projectId: string, clientX: number, clientY: number) {
     const menuWidth = 166;
     const menuHeight = 44;
@@ -1464,14 +1462,12 @@ export function AppShell({
     if (!profile) return null;
 
     return (
-      <div
-        className="profile-context-menu"
-        role="menu"
-        style={{ top: profileMenu.top, left: profileMenu.left }}
+      <SidebarContextMenu
+        top={profileMenu.top}
+        left={profileMenu.left}
+        onDismiss={closeSidebarContextMenus}
       >
-        <button
-          type="button"
-          role="menuitem"
+        <SidebarContextMenuItem
           onClick={() => {
             setProfileMenu(null);
             onEditProfile(profile.name);
@@ -1479,10 +1475,8 @@ export function AppShell({
         >
           <Pencil size={14} />
           Edit profile
-        </button>
-        <button
-          type="button"
-          role="menuitem"
+        </SidebarContextMenuItem>
+        <SidebarContextMenuItem
           onClick={() => {
             setProfileMenu(null);
             openProfileCloneDialog(profile.name);
@@ -1490,10 +1484,8 @@ export function AppShell({
         >
           <Copy size={14} />
           Duplicate
-        </button>
-        <button
-          type="button"
-          role="menuitem"
+        </SidebarContextMenuItem>
+        <SidebarContextMenuItem
           className="danger-menu-item"
           disabled={profile.name === "default"}
           title={profile.name === "default" ? "The default agent cannot be deleted" : undefined}
@@ -1504,8 +1496,8 @@ export function AppShell({
         >
           <Trash2 size={14} />
           Delete
-        </button>
-      </div>
+        </SidebarContextMenuItem>
+      </SidebarContextMenu>
     );
   }
 
@@ -1515,14 +1507,12 @@ export function AppShell({
     if (!project) return null;
 
     return (
-      <div
-        className="profile-context-menu"
-        role="menu"
-        style={{ top: projectMenu.top, left: projectMenu.left }}
+      <SidebarContextMenu
+        top={projectMenu.top}
+        left={projectMenu.left}
+        onDismiss={closeSidebarContextMenus}
       >
-        <button
-          type="button"
-          role="menuitem"
+        <SidebarContextMenuItem
           onClick={() => {
             setProjectMenu(null);
             setProjectActionError("");
@@ -1537,8 +1527,8 @@ export function AppShell({
         >
           <Pencil size={14} />
           Edit
-        </button>
-      </div>
+        </SidebarContextMenuItem>
+      </SidebarContextMenu>
     );
   }
 
@@ -1549,15 +1539,15 @@ export function AppShell({
     ];
 
     return (
-      <div
-        className="profile-context-menu sidebar-organization-menu"
-        role="menu"
-        style={{ top: sidebarOrganizationMenu?.top ?? 0, left: sidebarOrganizationMenu?.left ?? 0 }}
+      <SidebarContextMenu
+        className="sidebar-organization-menu"
+        top={sidebarOrganizationMenu?.top ?? 0}
+        left={sidebarOrganizationMenu?.left ?? 0}
+        onDismiss={closeSidebarContextMenus}
       >
-        <div className="profile-context-menu-header" role="presentation">Organize</div>
+        <SidebarContextMenuHeader>Organize</SidebarContextMenuHeader>
         {options.map((option) => (
-          <button
-            type="button"
+          <SidebarContextMenuItem
             key={option.value}
             role="menuitemradio"
             aria-checked={sidebarOrganization === option.value}
@@ -1565,9 +1555,9 @@ export function AppShell({
           >
             <Check size={14} style={{ opacity: sidebarOrganization === option.value ? 1 : 0 }} />
             {option.label}
-          </button>
+          </SidebarContextMenuItem>
         ))}
-      </div>
+      </SidebarContextMenu>
     );
   }
 
@@ -1579,16 +1569,15 @@ export function AppShell({
       sessionActionBusy || activeSessionIds.includes(sessionMenu.session.id);
 
     return (
-      <div
-        className="profile-context-menu session-context-menu"
-        role="menu"
-        style={{ top: sessionMenu.top, left: sessionMenu.left }}
+      <SidebarContextMenu
+        className="session-context-menu"
+        top={sessionMenu.top}
+        left={sessionMenu.left}
+        onDismiss={closeSidebarContextMenus}
         onMouseLeave={resetConfirmDeleteSession}
         onPointerLeave={resetConfirmDeleteSession}
       >
-        <button
-          type="button"
-          role="menuitem"
+        <SidebarContextMenuItem
           onMouseEnter={resetConfirmDeleteSession}
           onPointerEnter={resetConfirmDeleteSession}
           onClick={() => {
@@ -1598,10 +1587,8 @@ export function AppShell({
         >
           <Pin size={14} />
           {pinned ? "Unpin" : "Pin"}
-        </button>
-        <button
-          type="button"
-          role="menuitem"
+        </SidebarContextMenuItem>
+        <SidebarContextMenuItem
           onMouseEnter={resetConfirmDeleteSession}
           onPointerEnter={resetConfirmDeleteSession}
           onClick={() => {
@@ -1612,10 +1599,8 @@ export function AppShell({
         >
           <Pencil size={14} />
           Rename
-        </button>
-        <button
-          type="button"
-          role="menuitem"
+        </SidebarContextMenuItem>
+        <SidebarContextMenuItem
           className={deleteArmed ? "danger-menu-item confirm-menu-item" : "danger-menu-item"}
           disabled={deleteDisabled}
           title={activeSessionIds.includes(sessionMenu.session.id) ? "Wait for the active response to finish before deleting" : undefined}
@@ -1633,8 +1618,8 @@ export function AppShell({
         >
           <Trash2 size={14} />
           {sessionActionBusy ? "Deleting..." : deleteArmed ? "Confirm delete" : "Delete"}
-        </button>
-      </div>
+        </SidebarContextMenuItem>
+      </SidebarContextMenu>
     );
   }
 
@@ -1954,10 +1939,6 @@ export function unpinnedProfileSessions<T extends { id: string }>(
     !pinnedSessions[agentSessionPinKey(profileName, session.id)] &&
     !pinnedSessions[legacySessionPinKey(profileName, session.id)],
   );
-}
-
-export function shouldCloseSessionMenuForPointerTarget(target: Element | null) {
-  return !target?.closest(".session-context-menu");
 }
 
 function unpinnedScopedSessions<T extends { id: string }>(
