@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import ctypes
 import json
 import os
 import re
@@ -232,6 +233,8 @@ def gateway_running(directory: Path) -> bool:
         return False
     if pid <= 0:
         return False
+    if is_windows():
+        return windows_pid_running(pid)
     try:
         os.kill(pid, 0)
         return True
@@ -239,6 +242,34 @@ def gateway_running(directory: Path) -> bool:
         return True
     except OSError:
         return False
+
+
+def is_windows() -> bool:
+    return os.name == "nt"
+
+
+def windows_pid_running(pid: int) -> bool:
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.OpenProcess.argtypes = [ctypes.c_ulong, ctypes.c_int, ctypes.c_ulong]
+    kernel32.OpenProcess.restype = ctypes.c_void_p
+    kernel32.GetExitCodeProcess.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_ulong)]
+    kernel32.GetExitCodeProcess.restype = ctypes.c_int
+    kernel32.CloseHandle.argtypes = [ctypes.c_void_p]
+    kernel32.CloseHandle.restype = ctypes.c_int
+
+    process_query_limited_information = 0x1000
+    still_active = 259
+    handle = kernel32.OpenProcess(process_query_limited_information, False, pid)
+    if not handle:
+        access_denied = 5
+        return ctypes.get_last_error() == access_denied
+    try:
+        exit_code = ctypes.c_ulong()
+        if not kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code)):
+            return True
+        return exit_code.value == still_active
+    finally:
+        kernel32.CloseHandle(handle)
 
 
 def encode_skill_id(relative_path: Path) -> str:

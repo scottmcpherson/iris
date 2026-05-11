@@ -4,10 +4,12 @@ import base64
 
 import pytest
 
+from hermes_management_server.runtime_adapters import hermes_store
 from hermes_management_server.runtime_adapters.hermes_store import (
     HermesStore,
     decode_skill_id,
     encode_skill_id,
+    gateway_running,
     skill_entrypoint_paths,
     normalize_hermes_home,
     validate_profile_name,
@@ -46,6 +48,22 @@ def test_profile_discovery_reads_summary(tmp_path):
     assert profiles["work"].model == "gpt-5.4"
     assert profiles["work"].skillCount == 1
     assert profiles["default"].memoryBytes == len("default memory")
+
+
+def test_gateway_running_uses_windows_process_probe_without_signal(tmp_path, monkeypatch):
+    root = tmp_path / ".hermes"
+    root.mkdir()
+    (root / "gateway.pid").write_text('{"pid": 12345, "kind": "hermes-gateway"}', encoding="utf-8")
+
+    monkeypatch.setattr(hermes_store, "is_windows", lambda: True)
+    monkeypatch.setattr(hermes_store, "windows_pid_running", lambda pid: pid == 12345)
+
+    def fail_if_called(_pid, _signal):
+        raise AssertionError("os.kill must not be used as a Windows PID probe")
+
+    monkeypatch.setattr(hermes_store.os, "kill", fail_if_called)
+
+    assert gateway_running(root) is True
 
 
 def test_memory_reads_memory_and_user_files(tmp_path):
