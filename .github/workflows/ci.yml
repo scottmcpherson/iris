@@ -37,7 +37,7 @@ jobs:
 
       - run: npm ci
 
-      - run: npm run sidecar:setup
+      - run: npm run core:setup
 
       - run: npm run check
 
