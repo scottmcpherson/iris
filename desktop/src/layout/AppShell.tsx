@@ -43,10 +43,12 @@ import {
   SidebarContextMenuItem,
 } from "./SidebarContextMenu";
 
-const SIDEBAR_AUTO_COLLAPSE_WIDTH = 1500;
+export const SIDEBAR_AUTO_COLLAPSE_WIDTH = 820;
 const SIDEBAR_STANDARD_WIDTH = 252;
 const SIDEBAR_COLLAPSED_WIDTH = 0;
 const SIDEBAR_MAX_WIDTH = 440;
+
+type SidebarWidthBand = "compact" | "regular";
 
 type ProfileMenu = {
   profile: string;
@@ -244,23 +246,17 @@ export function AppShell({
     const handleResize = () => {
       const nextBand = widthBandForWindow();
       const previousBand = sidebarWidthBandRef.current;
+      const resizeDecision = sidebarResponsiveResizeDecision({
+        previousBand,
+        nextBand,
+        sidebarCollapsed: sidebarCollapsedRef.current,
+        expandedBeforeResponsiveCollapse: expandedBeforeResponsiveCollapseRef.current,
+      });
 
-      if (previousBand === "regular" && nextBand === "compact") {
-        expandedBeforeResponsiveCollapseRef.current = !sidebarCollapsedRef.current;
-      }
+      expandedBeforeResponsiveCollapseRef.current = resizeDecision.expandedBeforeResponsiveCollapse;
 
-      if (nextBand === "compact") {
-        setSidebarCollapsedWithTransition(true);
-        sidebarWidthBandRef.current = nextBand;
-        return;
-      }
-
-      if (
-        previousBand === "compact" &&
-        nextBand === "regular" &&
-        expandedBeforeResponsiveCollapseRef.current
-      ) {
-        setSidebarCollapsedWithTransition(false);
+      if (resizeDecision.nextCollapsed !== null) {
+        setSidebarCollapsedWithTransition(resizeDecision.nextCollapsed);
       }
 
       sidebarWidthBandRef.current = nextBand;
@@ -1974,9 +1970,40 @@ function saveSidebarOrganization(value: SidebarOrganization) {
   saveJsonValue(storageKeys.sidebarOrganization, value);
 }
 
-function widthBandForWindow() {
+export function widthBandForWindow(): SidebarWidthBand {
   if (typeof window === "undefined") return "regular";
   return window.innerWidth <= SIDEBAR_AUTO_COLLAPSE_WIDTH ? "compact" : "regular";
+}
+
+export function sidebarResponsiveResizeDecision({
+  previousBand,
+  nextBand,
+  sidebarCollapsed,
+  expandedBeforeResponsiveCollapse,
+}: {
+  previousBand: SidebarWidthBand;
+  nextBand: SidebarWidthBand;
+  sidebarCollapsed: boolean;
+  expandedBeforeResponsiveCollapse: boolean;
+}) {
+  if (previousBand === "regular" && nextBand === "compact") {
+    return {
+      nextCollapsed: true,
+      expandedBeforeResponsiveCollapse: !sidebarCollapsed,
+    };
+  }
+
+  if (previousBand === "compact" && nextBand === "regular" && expandedBeforeResponsiveCollapse) {
+    return {
+      nextCollapsed: false,
+      expandedBeforeResponsiveCollapse,
+    };
+  }
+
+  return {
+    nextCollapsed: null,
+    expandedBeforeResponsiveCollapse,
+  };
 }
 
 function timeLabel(value: number | null) {

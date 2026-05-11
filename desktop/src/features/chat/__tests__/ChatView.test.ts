@@ -51,3 +51,14 @@ describe("shouldRenderMessageBody", () => {
     expect(shouldRenderMessageBody({ id: "message-2", role: "assistant", content: "", streaming: true })).toBe(true);
   });
 });
+
+describe("composer responsive layout", () => {
+  it("keeps the model selector available at narrow widths", async () => {
+    // @ts-expect-error The desktop tsconfig intentionally omits Node types, but Vitest runs in Node.
+    const { readFileSync } = await import("node:fs");
+    const appCss = readFileSync(new URL("../../../App.css", import.meta.url), "utf8") as string;
+
+    expect(appCss).not.toMatch(/\.composer-model-menu-wrap\s*{[^}]*display:\s*none/i);
+    expect(appCss).toMatch(/\.composer-model-menu-wrap\s*{[^}]*display:\s*inline-flex/i);
+  });
+});

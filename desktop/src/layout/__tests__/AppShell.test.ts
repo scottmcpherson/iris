@@ -3,8 +3,11 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   AppShell,
+  SIDEBAR_AUTO_COLLAPSE_WIDTH,
   buildSessionSearchItems,
+  sidebarResponsiveResizeDecision,
   unpinnedProfileSessions,
+  widthBandForWindow,
 } from "../AppShell";
 import { storageKeys } from "../../app/storage";
 import type { AgentUICoreAgent, IrisProject } from "../../lib/agentuiCore";
@@ -394,6 +397,44 @@ describe("AppShell pinned sessions", () => {
       "Pirate / default",
       "Sessions / default",
     ]);
+  });
+});
+
+describe("AppShell responsive sidebar", () => {
+  it("only auto-collapses the sidebar at the 820px breakpoint", () => {
+    expect(SIDEBAR_AUTO_COLLAPSE_WIDTH).toBe(820);
+
+    vi.stubGlobal("window", { innerWidth: 821 });
+    expect(widthBandForWindow()).toBe("regular");
+
+    vi.stubGlobal("window", { innerWidth: 820 });
+    expect(widthBandForWindow()).toBe("compact");
+  });
+
+  it("does not re-collapse a manually opened sidebar while resizing within compact widths", () => {
+    expect(
+      sidebarResponsiveResizeDecision({
+        previousBand: "regular",
+        nextBand: "compact",
+        sidebarCollapsed: false,
+        expandedBeforeResponsiveCollapse: true,
+      }),
+    ).toEqual({
+      nextCollapsed: true,
+      expandedBeforeResponsiveCollapse: true,
+    });
+
+    expect(
+      sidebarResponsiveResizeDecision({
+        previousBand: "compact",
+        nextBand: "compact",
+        sidebarCollapsed: false,
+        expandedBeforeResponsiveCollapse: true,
+      }),
+    ).toEqual({
+      nextCollapsed: null,
+      expandedBeforeResponsiveCollapse: true,
+    });
   });
 });
 

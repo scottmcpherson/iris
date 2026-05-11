@@ -173,5 +173,14 @@ if (withCore) {
 if (webOnly) {
   run("desktop", npm, ["--workspace", "desktop", "run", "dev"], { env: devEnv });
 } else {
-  run("desktop", npm, ["--workspace", "desktop", "run", "tauri", "dev"], { env: devEnv });
+  run("desktop", npm, [
+    "--workspace",
+    "desktop",
+    "run",
+    "tauri",
+    "dev",
+    "--",
+    "--config",
+    "src-tauri/tauri.dev.conf.json",
+  ], { env: devEnv });
 }
