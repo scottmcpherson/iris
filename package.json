@@ -10,7 +10,7 @@
     "bootstrap": "npm install && npm run core:setup",
     "core:setup": "node scripts/setup-iris-core.mjs",
     "core:dev": "iris-core/.venv/bin/iris-core --host 127.0.0.1 --port 8765",
-    "core:test": "iris-core/.venv/bin/python -m pytest iris-core",
+    "core:test": "node scripts/test-iris-core.mjs",
     "iris:platform:install": "node scripts/install-iris-platform.mjs",
     "iris:hermes:install": "node scripts/install-iris-platform.mjs",
     "dev": "node scripts/dev.mjs",

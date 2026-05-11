@@ -9,6 +9,7 @@ import logging
 import os
 import re
 import secrets
+import tempfile
 import threading
 import time
 import urllib.parse
@@ -2723,7 +2724,11 @@ def cli() -> None:
     uvicorn.run(create_app(settings), host=settings.host, port=settings.port)
 
 
-app = create_app(Settings(core_store_path="/private/tmp/iris-core-import.sqlite3"))
+def import_app_core_store_path() -> str:
+    return str(Path(tempfile.gettempdir()) / "iris-core-import.sqlite3")
+
+
+app = create_app(Settings(core_store_path=import_app_core_store_path()))
 
 
 if __name__ == "__main__":
