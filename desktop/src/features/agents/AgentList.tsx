@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import type { FormEvent } from "react";
 import { Bot, Copy, Database, Ellipsis, FolderOpen, Plus, Sparkles, Trash2 } from "lucide-react";
 import type { ProfileActionHandler } from "../../app/types";
+import { SidebarContextMenu, SidebarContextMenuItem } from "../../layout/SidebarContextMenu";
 import { formatBytes } from "../../shared/format";
 import type { HermesProfile } from "../../types/hermes";
 
@@ -22,6 +23,15 @@ type AgentListProps = {
   onProfileAction: ProfileActionHandler;
 };
 
+type AgentListContextMenuProps = {
+  profile: HermesProfile;
+  top: number;
+  left: number;
+  onDismiss: () => void;
+  onDuplicate: () => void;
+  onDelete: () => void;
+};
+
 export function AgentList({ profiles, onOpenAgent, onProfileAction }: AgentListProps) {
   const [menu, setMenu] = useState<AgentListMenu | null>(null);
   const [dialog, setDialog] = useState<AgentListDialog | null>(null);
@@ -31,22 +41,15 @@ export function AgentList({ profiles, onOpenAgent, onProfileAction }: AgentListP
   useEffect(() => {
     if (!menu) return undefined;
 
-    const closeMenu = (event: PointerEvent) => {
-      const target = event.target instanceof Element ? event.target : null;
-      if (target?.closest(".agent-list-menu-trigger, .profile-context-menu")) return;
-      setMenu(null);
-    };
     const closeOnEscape = (event: KeyboardEvent) => {
       if (event.key === "Escape") setMenu(null);
     };
     const closeOnLayoutChange = () => setMenu(null);
 
-    window.addEventListener("pointerdown", closeMenu);
     window.addEventListener("keydown", closeOnEscape);
     window.addEventListener("resize", closeOnLayoutChange);
     window.addEventListener("scroll", closeOnLayoutChange, true);
     return () => {
-      window.removeEventListener("pointerdown", closeMenu);
       window.removeEventListener("keydown", closeOnEscape);
       window.removeEventListener("resize", closeOnLayoutChange);
       window.removeEventListener("scroll", closeOnLayoutChange, true);
@@ -169,27 +172,14 @@ export function AgentList({ profiles, onOpenAgent, onProfileAction }: AgentListP
     if (!profile) return null;
 
     return (
-      <div className="profile-context-menu agent-list-context-menu" role="menu" style={{ top: menu.top, left: menu.left }}>
-        <button
-          type="button"
-          role="menuitem"
-          onClick={() => openCloneDialog(profile.name)}
-        >
-          <Copy size={14} />
-          Duplicate
-        </button>
-        <button
-          type="button"
-          role="menuitem"
-          className="danger-menu-item"
-          disabled={profile.name === "default"}
-          title={profile.name === "default" ? "The default agent cannot be deleted" : undefined}
-          onClick={() => openDeleteDialog(profile.name)}
-        >
-          <Trash2 size={14} />
-          Delete
-        </button>
-      </div>
+      <AgentListContextMenu
+        profile={profile}
+        top={menu.top}
+        left={menu.left}
+        onDismiss={() => setMenu(null)}
+        onDuplicate={() => openCloneDialog(profile.name)}
+        onDelete={() => openDeleteDialog(profile.name)}
+      />
     );
   }
 
@@ -267,6 +257,38 @@ export function AgentList({ profiles, onOpenAgent, onProfileAction }: AgentListP
     }
     setDialog(null);
   }
+}
+
+export function AgentListContextMenu({
+  profile,
+  top,
+  left,
+  onDismiss,
+  onDuplicate,
+  onDelete,
+}: AgentListContextMenuProps) {
+  return (
+    <SidebarContextMenu
+      className="agent-list-context-menu"
+      top={top}
+      left={left}
+      onDismiss={onDismiss}
+    >
+      <SidebarContextMenuItem onClick={onDuplicate}>
+        <Copy size={14} />
+        Duplicate
+      </SidebarContextMenuItem>
+      <SidebarContextMenuItem
+        className="danger-menu-item"
+        disabled={profile.name === "default"}
+        title={profile.name === "default" ? "The default agent cannot be deleted" : undefined}
+        onClick={onDelete}
+      >
+        <Trash2 size={14} />
+        Delete
+      </SidebarContextMenuItem>
+    </SidebarContextMenu>
+  );
 }
 
 function nextProfileName(base: string, profiles: HermesProfile[]) {
