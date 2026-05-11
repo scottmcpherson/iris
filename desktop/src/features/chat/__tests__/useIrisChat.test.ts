@@ -33,6 +33,7 @@ import {
   stripModelSwitchNote,
   toAppMessages,
 } from "../chatHistory";
+import { shouldApplyDeliveryReadState } from "../chatCoreEvents";
 import { mergeUploadedAttachment } from "../chatAttachments";
 import { coreEventToInboxMessage } from "../../../lib/coreLegacyCompat";
 
@@ -106,6 +107,12 @@ describe("Iris chat inbox merging", () => {
     expect(shouldRetryUnmappedDelivery(0)).toBe(true);
     expect(shouldRetryUnmappedDelivery(1)).toBe(true);
     expect(shouldRetryUnmappedDelivery(2)).toBe(false);
+  });
+
+  it("does not let replayed historical deliveries rewrite read state on restart", () => {
+    expect(shouldApplyDeliveryReadState({ createdAt: 10 }, 20)).toBe(false);
+    expect(shouldApplyDeliveryReadState({ createdAt: 20 }, 20)).toBe(true);
+    expect(shouldApplyDeliveryReadState({ createdAt: 21 }, 20)).toBe(true);
   });
 
   it("treats model-switch command replies as hidden even when Hermes drops hidden metadata", () => {

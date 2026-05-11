@@ -13,6 +13,7 @@ import {
   createAgentUICoreSession,
   getAgentUICoreEvents,
   getAgentUICoreAgentForProfile,
+  getAgentUICoreLatestEventCursor,
   sendAgentUICoreMessage,
   updateAgentUICoreSessionReadState,
   type AgentUICoreEvent,
@@ -86,6 +87,7 @@ import {
   dedupeInboxDeliveries,
   parseCoreEvent,
   runtimeChatId,
+  shouldApplyDeliveryReadState,
   streamDeliveryFinalized,
 } from "./chatCoreEvents";
 
@@ -160,6 +162,8 @@ export function useAgentUIChat({
   const [sessionChatIdsBySession, setSessionChatIdsBySession] = useState<Record<string, string>>({});
   const [modelSelectionBySession, setModelSelectionBySession] = useState<Record<string, HermesModelSelection>>({});
   const eventCursorsByProfileRef = useRef<Record<string, number>>({});
+  const eventCursorBootstrapKeysRef = useRef<Record<string, string>>({});
+  const eventConsumerStartedAtRef = useRef(Math.floor(Date.now() / 1000));
   const processedInboxEventIdsRef = useRef<Set<string>>(new Set());
   const pendingGatewayDeliveriesRef = useRef<HermesInboxMessage[]>([]);
   const pendingUnmappedDeliveryAttemptsRef = useRef<Record<string, number>>({});
@@ -240,8 +244,14 @@ export function useAgentUIChat({
     };
 
     void getAgentUICoreAgentForProfile(profile, runtimeConfig)
-      .then((agentResult) => {
+      .then(async (agentResult) => {
         if (closed || !agentResult.ok || !agentResult.agent) {
+          startPollingFallback();
+          return;
+        }
+        const bootstrapped = await bootstrapCoreEventCursor(profile, agentResult.agent.id);
+        if (closed) return;
+        if (!bootstrapped) {
           startPollingFallback();
           return;
         }
@@ -1058,9 +1068,11 @@ export function useAgentUIChat({
   }
 
   async function pollCoreEvents() {
-    const cursor = eventCursorsByProfileRef.current[profile] || 0;
     const agentResult = await getAgentUICoreAgentForProfile(profile, runtimeConfig);
     if (!agentResult.ok || !agentResult.agent) return;
+    const bootstrapped = await bootstrapCoreEventCursor(profile, agentResult.agent.id);
+    if (!bootstrapped) return;
+    const cursor = eventCursorsByProfileRef.current[profile] || 0;
     const result = await getAgentUICoreEvents(cursor, 50, runtimeConfig, agentResult.agent.id);
     if (!result.ok) return;
     eventCursorsByProfileRef.current = {
@@ -1085,6 +1097,23 @@ export function useAgentUIChat({
     };
     handleCoreDeliveries(deliveries);
     reconcileActiveSessionDetails();
+  }
+
+  async function bootstrapCoreEventCursor(profileName: string, agentId: string) {
+    const bootstrapKey = `${runtimeConfig.coreApiUrl || ""}:${agentId}`;
+    if (eventCursorBootstrapKeysRef.current[profileName] === bootstrapKey) return true;
+    const result = await getAgentUICoreLatestEventCursor(runtimeConfig, agentId);
+    if (!result.ok) return false;
+    const latestCursor = result.cursor || 0;
+    eventCursorsByProfileRef.current = {
+      ...eventCursorsByProfileRef.current,
+      [profileName]: Math.max(eventCursorsByProfileRef.current[profileName] || 0, latestCursor),
+    };
+    eventCursorBootstrapKeysRef.current = {
+      ...eventCursorBootstrapKeysRef.current,
+      [profileName]: bootstrapKey,
+    };
+    return true;
   }
 
   function projectIdForSessionId(sessionId: string) {
@@ -1228,7 +1257,9 @@ export function useAgentUIChat({
         }
       }
       if (!isStreamDelivery || isFinalStreamDelivery) {
-        markDeliveredSessionReadState(relatedSessionIds, delivery.cursor);
+        if (shouldApplyDeliveryReadState(delivery, eventConsumerStartedAtRef.current)) {
+          markDeliveredSessionReadState(relatedSessionIds, delivery.cursor);
+        }
         refreshSessionDetailSoon(sessionId, profile, delivery.chatId);
         scheduleSessionTitleResolveSoon(sessionId, delivery.chatId);
       } else {
@@ -1397,10 +1428,10 @@ export function useAgentUIChat({
   function markDeliveredSessionReadState(sessionIds: string[], eventCursor: number) {
     const selectedId = selectedSessionIdRef.current;
     const visible = Boolean(isChatViewActiveRef.current && selectedId && sessionIds.includes(selectedId));
-    const state = visible ? "read" : "unread";
+    if (!visible) return;
     for (const sessionId of sessionIds) {
-      markSessionReadState(sessionId, state, {
-        reason: visible ? "active-delivery" : "background-delivery",
+      markSessionReadState(sessionId, "read", {
+        reason: "active-delivery",
         eventCursor,
       });
     }

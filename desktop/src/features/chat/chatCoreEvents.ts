@@ -30,3 +30,10 @@ export function dedupeInboxDeliveries(deliveries: HermesInboxMessage[]) {
   }
   return Array.from(byId.values()).sort((left, right) => left.cursor - right.cursor);
 }
+
+export function shouldApplyDeliveryReadState(
+  delivery: Pick<HermesInboxMessage, "createdAt">,
+  consumerStartedAt: number,
+) {
+  return !delivery.createdAt || delivery.createdAt >= consumerStartedAt;
+}

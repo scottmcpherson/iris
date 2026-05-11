@@ -751,6 +751,13 @@ export async function getAgentUICoreEvents(
   return coreRequest<{ events: AgentUICoreEvent[]; cursor: number }>(runtime, "GET", `/events?${query}`);
 }
 
+export async function getAgentUICoreLatestEventCursor(
+  runtime?: HermesRuntimeConfig,
+  agentId = "",
+) {
+  return getAgentUICoreEvents(Number.MAX_SAFE_INTEGER, 1, runtime, agentId);
+}
+
 export function agentUICoreEventStreamUrl(
   runtime: HermesRuntimeConfig | undefined,
   after = 0,

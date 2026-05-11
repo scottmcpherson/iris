@@ -9,6 +9,7 @@ import {
   getAgentUICoreAgentSkill,
   getAgentUICoreAgentSkills,
   getAgentUICoreEvents,
+  getAgentUICoreLatestEventCursor,
   getAgentUICoreAttachmentDataUrl,
   renameAgentUICoreAgent,
   resetAgentUICoreAgentMemory,
@@ -61,6 +62,29 @@ describe("agentuiCore", () => {
         runtime: defaultRuntimeConfig,
       },
     });
+  });
+
+  it("probes the latest Core event cursor without replaying persisted events", async () => {
+    const calls: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        calls.push(url);
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ ok: true, events: [], cursor: 80 }),
+        };
+      }),
+    );
+
+    const result = await getAgentUICoreLatestEventCursor(defaultRuntimeConfig, "agent_default");
+
+    expect(result.cursor).toBe(80);
+    const query = new URL(calls[0]).searchParams;
+    expect(query.get("after")).toBe(String(Number.MAX_SAFE_INTEGER));
+    expect(query.get("limit")).toBe("1");
+    expect(query.get("agentId")).toBe("agent_default");
   });
 
   it("sends message POSTs with an idempotency key", async () => {
