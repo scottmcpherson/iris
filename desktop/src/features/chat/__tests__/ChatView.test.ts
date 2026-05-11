@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { chatTranscriptScrollKey, shouldRenderMessageBody, shouldShowChatEmptyState } from "../ChatView";
+import {
+  chatTranscriptScrollKey,
+  composerModelSelection,
+  shouldLockComposerModelSelection,
+  shouldRenderMessageBody,
+  shouldShowChatEmptyState,
+} from "../ChatView";
 
 describe("shouldShowChatEmptyState", () => {
   it("keeps the empty prompt for a brand-new chat", () => {
@@ -60,5 +66,22 @@ describe("composer responsive layout", () => {
 
     expect(appCss).not.toMatch(/\.composer-model-menu-wrap\s*{[^}]*display:\s*none/i);
     expect(appCss).toMatch(/\.composer-model-menu-wrap\s*{[^}]*display:\s*inline-flex/i);
+  });
+});
+
+describe("composer model selection", () => {
+  it("keeps the model selector available for idle existing sessions", () => {
+    expect(shouldLockComposerModelSelection(false)).toBe(false);
+    expect(shouldLockComposerModelSelection(true)).toBe(true);
+  });
+
+  it("starts existing sessions from their locked model until a session draft is selected", () => {
+    const profileDraft = { provider: "openai-codex", model: "gpt-5.5" };
+    const sessionModel = { provider: "openai-codex", model: "gpt-5.4" };
+    const sessionDraft = { provider: "openai-codex", model: "gpt-5.4-mini" };
+
+    expect(composerModelSelection(false, profileDraft, sessionModel)).toEqual(sessionModel);
+    expect(composerModelSelection(false, profileDraft, sessionModel, sessionDraft)).toEqual(sessionDraft);
+    expect(composerModelSelection(true, profileDraft, sessionModel, sessionDraft)).toEqual(profileDraft);
   });
 });

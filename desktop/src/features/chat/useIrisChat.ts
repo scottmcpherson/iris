@@ -52,6 +52,7 @@ import {
   mergeSessionReadStates,
   mergeOptimisticSessions,
   mergeRelatedSessionMessages,
+  modelSwitchSelectionForSend,
   migrateActiveRequestId,
   migrateSessionMessages,
   migrateSessionValue,
@@ -73,7 +74,6 @@ import {
   shouldPreserveLocalMessagesOnEmptyHistory,
   shouldPreserveProfileSessionSelection,
   shouldRetryUnmappedDelivery,
-  shouldSendModelSwitch,
   shouldSkipSessionDetailLoad,
   scheduleDedupedTimer,
   updateSessionReadStateForProfiles,
@@ -105,6 +105,7 @@ export {
   isTransientSessionLoadError,
   mergeSessionChatIdMap,
   mergeSessionReadStates,
+  modelSwitchSelectionForSend,
   preserveActiveSessionTitles,
   preserveLocalSessionProjectMetadata,
   preserveLocalScheduledDeliveries,
@@ -459,9 +460,7 @@ export function useAgentUIChat({
         setHistoryErrorsByProfile((current) => ({ ...current, [profile]: null }));
       }
       const switchSelection =
-        !previousSessionId && shouldSendModelSwitch(modelSelection, currentModelSelection)
-          ? modelSelection
-          : null;
+        modelSwitchSelectionForSend(modelSelection, currentModelSelection);
       const coreMetadata: CoreMetadata = {};
       if (gatewayChatId) coreMetadata.chatId = gatewayChatId;
       if (projectId) coreMetadata.projectId = projectId;

@@ -15,7 +15,15 @@ export function shouldSendModelSwitch(
 ) {
   if (!selected?.model) return false;
   if (!current?.model) return true;
-  return selected.model !== current.model || selected.provider !== current.provider;
+  if (selected.model !== current.model) return true;
+  return Boolean(selected.provider && current.provider && selected.provider !== current.provider);
+}
+
+export function modelSwitchSelectionForSend(
+  selected: HermesModelSelection | null,
+  current: HermesModelSelection | null,
+) {
+  return shouldSendModelSwitch(selected, current) ? selected : null;
 }
 
 export function selectionFromSession(session: HermesSession | null): HermesModelSelection | null {

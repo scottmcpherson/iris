@@ -157,6 +157,7 @@ export function ChatView({
   const [projectMenuOpen, setProjectMenuOpen] = useState(false);
   const [modelMenuOpen, setModelMenuOpen] = useState(false);
   const [modelSearch, setModelSearch] = useState("");
+  const [modelDraftsBySession, setModelDraftsBySession] = useState<Record<string, HermesModelSelection>>({});
   const [activeModelOptionKey, setActiveModelOptionKey] = useState("");
   const [activeSlashIndex, setActiveSlashIndex] = useState(0);
   const [composerSelection, setComposerSelection] = useState({ start: input.length, end: input.length });
@@ -188,12 +189,18 @@ export function ChatView({
   const profileSelectionDisabled = profileSelectionLocked || dictationBusy || !connected || profiles.length < 2;
   const projectSelectionLocked = !newChat || composerBusy;
   const projectSelectionDisabled = projectSelectionLocked || dictationBusy || !connected;
-  const displayedModelSelection = lockedModelSelection || modelSelection;
-  const modelSelectionLocked = !newChat || composerBusy;
+  const sessionModelDraft = selectedSessionId ? modelDraftsBySession[selectedSessionId] : undefined;
+  const displayedModelSelection = composerModelSelection(
+    newChat,
+    modelSelection,
+    lockedModelSelection,
+    sessionModelDraft,
+  );
+  const modelSelectionLocked = shouldLockComposerModelSelection(composerBusy);
   const modelOptionsAvailable = Boolean(modelCatalog?.providers?.some((provider) => provider.models.length));
   const modelSelectionDisabled = modelSelectionLocked || dictationBusy || !connected || modelLoading || !modelOptionsAvailable;
   const modelSelectorTitle = modelSelectionLocked
-    ? "Model is locked for this session"
+    ? "Model is locked while this request is active"
     : modelLoading
       ? "Models are loading"
       : !connected
@@ -552,6 +559,9 @@ export function ChatView({
   function selectModel(selection: HermesModelSelection) {
     setModelMenuOpen(false);
     if (modelSelectionDisabled) return;
+    if (!newChat && selectedSessionId) {
+      setModelDraftsBySession((current) => ({ ...current, [selectedSessionId]: selection }));
+    }
     onModelSelect(selection);
   }
 
@@ -1131,6 +1141,21 @@ export function shouldShowChatEmptyState(selectedSessionId: string | null, rende
 export function chatTranscriptScrollKey(selectedSessionId: string | null, renderedMessageCount: number) {
   if (!selectedSessionId) return "new-chat";
   return `${selectedSessionId}:${renderedMessageCount > 0 ? "ready" : "pending"}`;
+}
+
+export function shouldLockComposerModelSelection(composerBusy: boolean) {
+  return composerBusy;
+}
+
+export function composerModelSelection(
+  newChat: boolean,
+  modelSelection: HermesModelSelection | null,
+  lockedModelSelection: HermesModelSelection | null,
+  sessionModelDraft?: HermesModelSelection,
+) {
+  return newChat
+    ? modelSelection
+    : sessionModelDraft || lockedModelSelection || modelSelection;
 }
 
 function filterModelProviders(providers: HermesModelProvider[], query: string) {

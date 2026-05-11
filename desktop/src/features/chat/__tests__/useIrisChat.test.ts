@@ -6,6 +6,7 @@ import {
   activeRequestCompletedByHistory,
   isTransientSessionLoadError,
   mergeSessionChatIdMap,
+  modelSwitchSelectionForSend,
   preserveLocalScheduledDeliveries,
   preserveLocalSessionProjectMetadata,
   preserveActiveSessionTitles,
@@ -1567,7 +1568,7 @@ describe("Iris chat session loading", () => {
 });
 
 describe("Iris chat model switching", () => {
-  it("sends a model switch only when the selected first-message model differs", () => {
+  it("sends a model switch only when the selected model differs", () => {
     expect(
       shouldSendModelSwitch(
         { provider: "openai-codex", model: "gpt-5.5" },
@@ -1581,6 +1582,23 @@ describe("Iris chat model switching", () => {
       ),
     ).toBe(false);
     expect(shouldSendModelSwitch(null, { provider: "openai-codex", model: "gpt-5.5" })).toBe(false);
+  });
+
+  it("uses a selected model switch for existing-session sends too", () => {
+    const selected = { provider: "openai-codex", model: "gpt-5.4-mini" };
+
+    expect(
+      modelSwitchSelectionForSend(selected, { provider: "openai-codex", model: "gpt-5.5" }),
+    ).toEqual(selected);
+  });
+
+  it("does not force a switch when a session only knows the matching model id", () => {
+    expect(
+      shouldSendModelSwitch(
+        { provider: "", model: "gpt-5.5" },
+        { provider: "openai-codex", model: "gpt-5.5" },
+      ),
+    ).toBe(false);
   });
 
   it("strips Hermes model switch adapter notes from rendered user messages", () => {
