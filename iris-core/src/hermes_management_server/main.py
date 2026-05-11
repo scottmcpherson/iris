@@ -2195,10 +2195,85 @@ def linked_project_for_message(
 
 
 def project_sessions(app: FastAPI, project: dict[str, Any]) -> list[dict[str, Any]]:
+    links = app.state.core_store.list_project_session_links(project["id"])
+    resolved_by_link_id: dict[str, dict[str, Any]] = {}
+    grouped_links: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    for link in links:
+        if link.get("externalSessionId") or link.get("externalChatId"):
+            key = (str(link["runtimeId"]), str(link["runtimeProfile"]))
+            grouped_links.setdefault(key, []).append(link)
+            continue
+        session = active_core_session(
+            app,
+            link["sessionId"],
+            runtime_id=link["runtimeId"],
+            runtime_profile=link["runtimeProfile"],
+            external_chat_id=link["externalChatId"],
+        )
+        if session:
+            resolved_by_link_id[link["sessionId"]] = session
+
+    for (runtime_id, runtime_profile), group in grouped_links.items():
+        agent = agent_for_runtime_profile(app, runtime_id, runtime_profile)
+        if not agent:
+            for link in group:
+                session = resolve_project_session(app, link)
+                if session:
+                    resolved_by_link_id[link["sessionId"]] = session
+            continue
+        adapter = app.state.runtime_registry.adapter_for_runtime(runtime_id)
+        batch_lookup = getattr(adapter, "get_sessions_by_external_refs", None)
+        if not callable(batch_lookup):
+            for link in group:
+                session = resolve_project_session(app, link)
+                if session:
+                    resolved_by_link_id[link["sessionId"]] = session
+            continue
+        runtime_sessions = batch_lookup(
+            agent,
+            external_session_ids=[
+                str(link.get("externalSessionId") or "")
+                for link in group
+                if str(link.get("externalSessionId") or "")
+            ],
+            external_chat_ids=[
+                str(link.get("externalChatId") or "")
+                for link in group
+                if str(link.get("externalChatId") or "")
+            ],
+        )
+        sessions_by_external_id = {
+            str(session.get("externalSessionId") or ""): session
+            for session in runtime_sessions
+            if str(session.get("externalSessionId") or "")
+        }
+        sessions_by_chat_id = {
+            str(session.get("externalChatId") or ""): session
+            for session in runtime_sessions
+            if str(session.get("externalChatId") or "")
+        }
+        for link in group:
+            session = sessions_by_external_id.get(str(link.get("externalSessionId") or ""))
+            if not session:
+                session = sessions_by_chat_id.get(str(link.get("externalChatId") or ""))
+            if session:
+                remember_active_session(app, session)
+                resolved_by_link_id[link["sessionId"]] = session
+                continue
+            active = active_core_session(
+                app,
+                link["sessionId"],
+                runtime_id=link["runtimeId"],
+                runtime_profile=link["runtimeProfile"],
+                external_chat_id=link["externalChatId"],
+            )
+            if active:
+                resolved_by_link_id[link["sessionId"]] = active
+
     rows: list[dict[str, Any]] = []
     seen: set[tuple[str, str, str, str]] = set()
-    for link in app.state.core_store.list_project_session_links(project["id"]):
-        session = resolve_project_session(app, link)
+    for link in links:
+        session = resolved_by_link_id.get(link["sessionId"])
         if not session:
             continue
         key = (
@@ -2229,6 +2304,13 @@ def resolve_project_session(app: FastAPI, link: dict[str, Any]) -> dict[str, Any
         if session:
             remember_active_session(app, session)
             return session
+        return active_core_session(
+            app,
+            link["sessionId"],
+            runtime_id=link["runtimeId"],
+            runtime_profile=link["runtimeProfile"],
+            external_chat_id=link["externalChatId"],
+        )
     return resolve_core_session(
         app,
         link["sessionId"],

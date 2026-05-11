@@ -218,18 +218,47 @@ class HermesRuntimeAdapter:
     ) -> dict[str, Any] | None:
         external_id = str(external_id or "").strip()
         chat_id = str(chat_id or "").strip()
-        if external_id:
-            try:
-                detail = self.require_store().session_detail(str(agent["runtimeProfile"]), external_id)
-                return session_from_runtime_summary(agent, detail.session)
-            except ManagementError:
-                pass
+        if external_id or chat_id:
+            sessions = self.get_sessions_by_external_refs(
+                agent,
+                external_session_ids=[external_id] if external_id else [],
+                external_chat_ids=[chat_id] if chat_id else [],
+            )
+            for session in sessions:
+                if external_id and session["externalSessionId"] == external_id:
+                    return session
+            for session in sessions:
+                if chat_id and session["externalChatId"] == chat_id:
+                    return session
+            for session in sessions:
+                if session_id and session["id"] == session_id:
+                    return session
+            return sessions[0] if sessions else None
         for session in self.list_sessions(agent, 200):
             if session_id and session["id"] == session_id:
                 return session
             if chat_id and session["externalChatId"] == chat_id:
                 return session
         return None
+
+    def get_sessions_by_external_refs(
+        self,
+        agent: dict[str, Any],
+        *,
+        external_session_ids: list[str] | set[str] | tuple[str, ...] = (),
+        external_chat_ids: list[str] | set[str] | tuple[str, ...] = (),
+    ) -> list[dict[str, Any]]:
+        profile = str(agent["runtimeProfile"])
+        session_ids = {str(item or "").strip() for item in external_session_ids if str(item or "").strip()}
+        chat_ids = {str(item or "").strip() for item in external_chat_ids if str(item or "").strip()}
+        if not session_ids and not chat_ids:
+            return []
+        summaries = self.require_store().session_summaries(
+            profile,
+            session_ids=session_ids,
+            chat_ids=chat_ids,
+        )
+        return [session_from_runtime_summary(agent, summary) for summary in summaries]
 
     def rename_session(
         self,

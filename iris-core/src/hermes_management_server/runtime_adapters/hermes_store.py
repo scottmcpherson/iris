@@ -21,6 +21,7 @@ from .hermes_sessions import (
     choose_session_table,
     choose_message_table,
     discover_session_detail,
+    discover_session_summaries,
     discover_sessions,
     first_message_link_column,
     inspect_sqlite_schema,
@@ -623,6 +624,16 @@ class HermesStore:
     def session_detail(self, profile: str, session_id: str) -> SessionDetail:
         directory = self.profile_directory(validate_profile_name(profile))
         return discover_session_detail(directory, session_id)
+
+    def session_summaries(
+        self,
+        profile: str,
+        *,
+        session_ids: set[str] | None = None,
+        chat_ids: set[str] | None = None,
+    ) -> list[Any]:
+        directory = self.profile_directory(validate_profile_name(profile))
+        return discover_session_summaries(directory, session_ids=session_ids, chat_ids=chat_ids)
 
     def rename_session(self, profile: str, session_id: str, title: str) -> SessionDetail:
         directory = self.profile_directory(validate_profile_name(profile))

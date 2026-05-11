@@ -104,18 +104,27 @@ export function useIrisProjects(runtimeConfig: HermesRuntimeConfig) {
   }, [refreshProjects]);
 
   useEffect(() => {
-    for (const project of projects) {
-      if (collapsedProjects[project.id]) continue;
-      if (projectSessionsLoaded[project.id]) continue;
-      if (projectSessionsLoading[project.id]) continue;
-      void refreshProjectSessions(project.id);
-    }
+    if (Object.values(projectSessionsLoading).some(Boolean)) return;
+    const nextProject =
+      projects.find(
+        (project) =>
+          project.id === selectedProjectId &&
+          !collapsedProjects[project.id] &&
+          !projectSessionsLoaded[project.id],
+      ) ||
+      projects.find(
+        (project) =>
+          !collapsedProjects[project.id] &&
+          !projectSessionsLoaded[project.id],
+      );
+    if (nextProject) void refreshProjectSessions(nextProject.id);
   }, [
     collapsedProjects,
     projectSessionsLoaded,
     projectSessionsLoading,
     projects,
     refreshProjectSessions,
+    selectedProjectId,
   ]);
 
   async function createProject(payload: CreateProjectPayload) {

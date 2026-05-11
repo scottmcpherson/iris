@@ -607,6 +607,56 @@ def test_project_sessions_deduplicate_stale_draft_links_by_chat_id(tmp_path):
     assert [session["id"] for session in matches] == [real_session["id"]]
 
 
+def test_project_sessions_resolve_chat_links_without_broad_session_scan(tmp_path, monkeypatch):
+    root = tmp_path / ".hermes"
+    create_core_history_db(
+        root / "state.db",
+        session_id="session-real",
+        title="The Lantern on Briar Lane",
+        user_text="write a short story",
+        assistant_text="The lantern at the end of Briar Lane only lit when someone was lost.",
+        chat_id="chat-1",
+    )
+    client = make_client(root)
+    agent = client.get("/v1/agents").json()["agents"][0]
+    project = client.post(
+        "/v1/projects",
+        json={"name": "Pirate", "defaultAgentId": agent["id"]},
+    ).json()["project"]
+
+    with client.app.state.core_store.connect() as connection:
+        connection.execute(
+            """
+            insert into project_sessions(
+              project_id, session_id, agent_id, runtime_id, runtime_profile,
+              external_session_id, external_chat_id, created_at, updated_at, metadata_json
+            ) values(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                project["id"],
+                "session_stale_draft",
+                agent["id"],
+                "runtime_local_hermes",
+                "default",
+                "",
+                "chat-1",
+                1,
+                1,
+                "{}",
+            ),
+        )
+
+    def fail_list_sessions(*_args, **_kwargs):
+        raise AssertionError("project session resolution should not scan the session list")
+
+    monkeypatch.setattr(hermes_adapter.HermesRuntimeAdapter, "list_sessions", fail_list_sessions)
+
+    listed = client.get(f"/v1/projects/{project['id']}/sessions")
+
+    assert listed.status_code == 200
+    assert [session["externalChatId"] for session in listed.json()["sessions"]] == ["chat-1"]
+
+
 def test_session_detail_returns_runtime_title_over_stale_active_cache(tmp_path):
     root = tmp_path / ".hermes"
     create_core_history_db(

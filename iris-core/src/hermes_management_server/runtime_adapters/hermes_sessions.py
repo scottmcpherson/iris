@@ -23,6 +23,7 @@ SQLITE_CANDIDATE_NAMES = (
     "history.db",
 )
 ID_COLUMNS = ("id", "session_id", "session_id", "thread_id")
+CHAT_ID_COLUMNS = ("chat_id", "chatId", "external_chat_id", "conversation_id")
 SOURCE_COLUMNS = ("source", "platform", "client")
 MODEL_COLUMNS = ("model", "model_name", "model_id")
 TITLE_COLUMNS = ("title", "name", "summary")
@@ -131,6 +132,34 @@ def discover_session_detail(profile_root: Path, session_id: str) -> SessionDetai
         return file_result
 
     raise ManagementError("Session was not found.", status_code=404)
+
+
+def discover_session_summaries(
+    profile_root: Path,
+    *,
+    session_ids: set[str] | None = None,
+    chat_ids: set[str] | None = None,
+) -> list[SessionSummary]:
+    normalized_session_ids = {item.strip() for item in (session_ids or set()) if item.strip()}
+    normalized_chat_ids = {item.strip() for item in (chat_ids or set()) if item.strip()}
+    if not normalized_session_ids and not normalized_chat_ids:
+        return []
+
+    for db_path in sqlite_candidates(profile_root):
+        summaries = read_sqlite_session_summaries(
+            db_path,
+            profile_root,
+            session_ids=normalized_session_ids,
+            chat_ids=normalized_chat_ids,
+        )
+        if summaries:
+            return summaries
+
+    return read_session_file_session_summaries(
+        profile_root,
+        session_ids=normalized_session_ids,
+        chat_ids=normalized_chat_ids,
+    )
 
 
 def sqlite_candidates(profile_root: Path) -> list[Path]:
@@ -249,6 +278,85 @@ def read_sqlite_session_detail(
         connection.close()
 
 
+def read_sqlite_session_summaries(
+    db_path: Path,
+    profile_root: Path,
+    *,
+    session_ids: set[str],
+    chat_ids: set[str],
+) -> list[SessionSummary]:
+    try:
+        safe_path = assert_within_profile(db_path, profile_root)
+        connection = sqlite3.connect(f"file:{safe_path.as_posix()}?mode=ro", uri=True)
+    except Exception:
+        return []
+
+    try:
+        connection.row_factory = sqlite3.Row
+        schema = inspect_sqlite_schema(connection)
+        session_table = choose_session_table(schema.tables)
+        if session_table is None:
+            return []
+        session_columns = normalize_columns(schema.tables[session_table])
+        id_column = first_column(session_columns, ID_COLUMNS)
+        if id_column is None:
+            return []
+        chat_column = first_column(session_columns, CHAT_ID_COLUMNS)
+        ids_to_fetch = set(session_ids)
+        if chat_ids:
+            origins = session_origins_by_id(profile_root)
+            ids_to_fetch.update(
+                session_id
+                for session_id, origin in origins.items()
+                if value_as_text(origin.get("chat_id")) in chat_ids
+            )
+
+        rows: list[sqlite3.Row] = []
+        for chunk in chunk_values(sorted(ids_to_fetch)):
+            placeholders = ", ".join("?" for _ in chunk)
+            rows.extend(
+                connection.execute(
+                    f"""
+                    select * from {quote_identifier(session_table)}
+                    where {quote_identifier(id_column)} in ({placeholders})
+                    """,
+                    tuple(chunk),
+                ).fetchall()
+            )
+        if chat_ids and chat_column:
+            for chunk in chunk_values(sorted(chat_ids)):
+                placeholders = ", ".join("?" for _ in chunk)
+                rows.extend(
+                    connection.execute(
+                        f"""
+                        select * from {quote_identifier(session_table)}
+                        where {quote_identifier(chat_column)} in ({placeholders})
+                        """,
+                        tuple(chunk),
+                    ).fetchall()
+                )
+
+        if not rows:
+            return []
+        message_table = choose_message_table(schema.tables, session_table)
+        summaries = normalize_sqlite_session_rows(connection, schema, session_table, message_table, rows)
+        enrich_session_origins(summaries, profile_root)
+        seen: set[str] = set()
+        filtered: list[SessionSummary] = []
+        for summary in summaries:
+            if summary.id in seen:
+                continue
+            if summary.id not in session_ids and value_as_text(summary.chatId) not in chat_ids:
+                continue
+            seen.add(summary.id)
+            filtered.append(summary)
+        return filtered
+    except sqlite3.Error:
+        return []
+    finally:
+        connection.close()
+
+
 def inspect_sqlite_schema(connection: sqlite3.Connection) -> SqliteSchema:
     tables: dict[str, list[str]] = {}
     rows = connection.execute(
@@ -352,35 +460,56 @@ def normalize_sqlite_sessions(
     session_table: str,
     message_table: str | None,
 ) -> list[SessionSummary]:
-    session_columns = normalize_columns(schema.tables[session_table])
     query = f"select * from {quote_identifier(session_table)}"
     rows = connection.execute(query).fetchall()
-    sessions: list[SessionSummary] = []
+    return normalize_sqlite_session_rows(connection, schema, session_table, message_table, rows)
+
+
+def normalize_sqlite_session_rows(
+    connection: sqlite3.Connection,
+    schema: SqliteSchema,
+    session_table: str,
+    message_table: str | None,
+    rows: list[sqlite3.Row],
+) -> list[SessionSummary]:
+    session_columns = normalize_columns(schema.tables[session_table])
+    session_ids: list[str] = []
+    normalized_rows: list[tuple[dict[str, Any], str]] = []
     for row in rows:
         session = dict(row)
         session_id = value_as_text(first_value(session, ID_COLUMNS))
         if not session_id:
             continue
-        messages = read_sqlite_messages(connection, schema, message_table, session_id)
+        normalized_rows.append((session, session_id))
+        session_ids.append(session_id)
+    messages_by_session = read_sqlite_messages_for_sessions(
+        connection,
+        schema,
+        message_table,
+        set(session_ids),
+    )
+    sessions: list[SessionSummary] = []
+    for session, session_id in normalized_rows:
+        messages = messages_by_session.get(session_id, [])
         summary = normalize_session_row(session, session_columns, messages, default_source="sqlite")
         if summary is not None and is_visible_chat_session(summary):
             sessions.append(summary)
     return sessions
 
 
-def read_sqlite_messages(
+def read_sqlite_messages_for_sessions(
     connection: sqlite3.Connection,
     schema: SqliteSchema,
     message_table: str | None,
-    session_id: str,
-) -> list[MessageRow]:
-    if message_table is None:
-        return []
+    session_ids: set[str],
+) -> dict[str, list[MessageRow]]:
+    if message_table is None or not session_ids:
+        return {}
     columns = normalize_columns(schema.tables[message_table])
     link_column = first_message_link_column(columns)
     content_column = first_column(columns, CONTENT_COLUMNS)
     if link_column is None or content_column is None:
-        return []
+        return {}
     role_column = first_column(columns, ROLE_COLUMNS)
     timestamp_column = first_column(columns, MESSAGE_TIME_COLUMNS)
     message_id_column = first_column(columns, MESSAGE_ID_COLUMNS)
@@ -409,31 +538,54 @@ def read_sqlite_messages(
         order_by = f" order by {quote_identifier(timestamp_column)} asc"
     else:
         order_by = ""
-    query = (
-        f"select {', '.join(quote_identifier(column) for column in select_columns)} "
-        f"from {quote_identifier(message_table)} "
-        f"where {quote_identifier(link_column)} = ?"
-        f"{order_by}"
-    )
-    try:
-        rows = connection.execute(query, (session_id,)).fetchall()
-    except sqlite3.Error:
-        return []
-    messages: list[MessageRow] = []
-    for row in rows:
-        item = dict(row)
-        messages.append(
-            MessageRow(
-                role=value_as_text(item.get(role_column or "")),
-                content=content_to_text(item.get(content_column)),
-                timestamp=normalize_timestamp(item.get(timestamp_column or "")),
-                id=value_as_text(item.get(message_id_column or "")),
-                tool_name=value_as_text(item.get(tool_column or "")),
-                tool_call_id=value_as_text(item.get(tool_call_id_column or "")),
-                tool_calls=parse_tool_calls(item.get(tool_calls_column or "")),
-            )
+
+    messages_by_session: dict[str, list[MessageRow]] = {}
+    for chunk in chunk_values(sorted(session_ids)):
+        placeholders = ", ".join("?" for _ in chunk)
+        query = (
+            f"select {', '.join(quote_identifier(column) for column in select_columns)} "
+            f"from {quote_identifier(message_table)} "
+            f"where {quote_identifier(link_column)} in ({placeholders})"
+            f"{order_by}"
         )
-    return messages
+        try:
+            rows = connection.execute(query, tuple(chunk)).fetchall()
+        except sqlite3.Error:
+            continue
+        for row in rows:
+            item = dict(row)
+            session_id = value_as_text(item.get(link_column))
+            messages_by_session.setdefault(session_id, []).append(
+                MessageRow(
+                    role=value_as_text(item.get(role_column or "")),
+                    content=content_to_text(item.get(content_column)),
+                    timestamp=normalize_timestamp(item.get(timestamp_column or "")),
+                    id=value_as_text(item.get(message_id_column or "")),
+                    tool_name=value_as_text(item.get(tool_column or "")),
+                    tool_call_id=value_as_text(item.get(tool_call_id_column or "")),
+                    tool_calls=parse_tool_calls(item.get(tool_calls_column or "")),
+                )
+            )
+    return messages_by_session
+
+
+def read_sqlite_messages(
+    connection: sqlite3.Connection,
+    schema: SqliteSchema,
+    message_table: str | None,
+    session_id: str,
+) -> list[MessageRow]:
+    return read_sqlite_messages_for_sessions(
+        connection,
+        schema,
+        message_table,
+        {session_id},
+    ).get(session_id, [])
+
+
+def chunk_values(values: list[str], size: int = 900) -> list[list[str]]:
+    return [values[index:index + size] for index in range(0, len(values), size)]
+
 
 
 def normalize_session_row(
@@ -576,6 +728,41 @@ def read_session_file_session_detail(profile_root: Path, session_id: str) -> Ses
             messages=session_messages(session_id, messages),
         )
     return None
+
+
+def read_session_file_session_summaries(
+    profile_root: Path,
+    *,
+    session_ids: set[str],
+    chat_ids: set[str],
+) -> list[SessionSummary]:
+    sessions_dir = profile_root / "sessions"
+    try:
+        safe_sessions_dir = assert_within_profile(sessions_dir, profile_root)
+    except ManagementError:
+        return []
+    if not safe_sessions_dir.is_dir():
+        return []
+
+    candidates: list[SessionSummary] = []
+    for path in sorted(safe_sessions_dir.glob("*.json"), key=lambda item: item.name.lower()):
+        try:
+            safe_path = assert_within_profile(path, profile_root)
+            payload = json.loads(safe_path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError, ManagementError):
+            continue
+        if not isinstance(payload, dict):
+            continue
+        summary = normalize_session_file(payload)
+        if summary is None or not is_visible_chat_session(summary):
+            continue
+        candidates.append(summary)
+    enrich_session_origins(candidates, profile_root)
+    return [
+        summary
+        for summary in candidates
+        if summary.id in session_ids or value_as_text(summary.chatId) in chat_ids
+    ]
 
 
 def normalize_session_file(payload: dict[str, Any]) -> SessionSummary | None:
