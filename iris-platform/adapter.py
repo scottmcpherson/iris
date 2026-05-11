@@ -346,7 +346,13 @@ class IrisPlatformAdapter(BasePlatformAdapter):
             "",
             160,
         )
+        resolved_session_id = bound_session_id
         bind_warning = bind_source_to_existing_session(self, source, bound_session_id)
+        if not resolved_session_id:
+            resolved_session_id, reserve_warning = reserve_source_session(self, source)
+            bind_warning = "; ".join(
+                warning for warning in [bind_warning, reserve_warning] if warning
+            )
         event = MessageEvent(
             text=text,
             message_type=message_type_for_attachments(attachments),
@@ -366,7 +372,7 @@ class IrisPlatformAdapter(BasePlatformAdapter):
                 "profile": self.profile,
                 "chatId": chat_id,
                 "messageId": message_id,
-                **({"sessionId": bound_session_id} if bound_session_id else {}),
+                **({"sessionId": resolved_session_id} if resolved_session_id else {}),
                 **({"warning": bind_warning} if bind_warning else {}),
             },
             status=202,
@@ -550,6 +556,22 @@ def bind_source_to_existing_session(adapter: IrisPlatformAdapter, source: Sessio
         )
         return f"Hermes session binding failed: {exc}"
     return ""
+
+
+def reserve_source_session(adapter: IrisPlatformAdapter, source: SessionSource) -> tuple[str, str]:
+    store = getattr(adapter, "_session_store", None)
+    if store is None:
+        return "", "Hermes session store is unavailable; continuing with chat id routing only."
+    try:
+        current = store.get_or_create_session(source)
+        return str(getattr(current, "session_id", "") or ""), ""
+    except Exception as exc:
+        logger.debug(
+            "[Iris] failed to reserve Hermes session for chat %s",
+            source.chat_id,
+            exc_info=True,
+        )
+        return "", f"Hermes session reservation failed: {exc}"
 
 
 def strip_stream_cursor(content: str) -> str:

@@ -44,13 +44,18 @@ function App() {
   const appCommandHandlerRef = useRef<(payload: string) => void>(() => {});
 
   const iris = useIrisRuntime();
+  const projects = useIrisProjects(iris.runtimeConfig);
+  const projectsRef = useRef(projects);
+  projectsRef.current = projects;
   const chat = useAgentUIChat({
     profile: iris.selectedProfile,
     runtimeConfig: iris.runtimeConfig,
     isChatViewActive: activeView === "chat",
+    onSessionMetadataResolved: (_sessionId, projectId) => {
+      if (projectId) void projectsRef.current.refreshProjectSessions(projectId);
+    },
   });
   const jobs = useAgentUIAutomations(iris.runtimeConfig, iris.selectedProfile, activeView === "jobs");
-  const projects = useIrisProjects(iris.runtimeConfig);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {

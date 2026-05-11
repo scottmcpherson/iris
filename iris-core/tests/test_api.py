@@ -607,6 +607,77 @@ def test_project_sessions_deduplicate_stale_draft_links_by_chat_id(tmp_path):
     assert [session["id"] for session in matches] == [real_session["id"]]
 
 
+def test_session_detail_returns_runtime_title_over_stale_active_cache(tmp_path):
+    root = tmp_path / ".hermes"
+    create_core_history_db(
+        root / "state.db",
+        session_id="runtime-session-detail-1",
+        title="Teddy's Harbor Adventure",
+        user_text="write a short 3 paragraph story about a dog named Teddy",
+        assistant_text="Teddy bounded down the dock.",
+        chat_id="chat-detail-stale-cache",
+    )
+    client = make_client(root)
+    agent = client.get("/v1/agents").json()["agents"][0]
+    runtime_session = client.get(f"/v1/sessions?agentId={agent['id']}").json()["sessions"][0]
+    stale_draft = {
+        **runtime_session,
+        "title": "write a short 3 paragraph story about a dog named Teddy",
+        "updatedAt": runtime_session["updatedAt"] - 1,
+        "metadata": {**runtime_session["metadata"], "draft": True},
+    }
+    client.app.state.active_sessions[runtime_session["id"]] = stale_draft
+    client.app.state.active_sessions_by_chat[
+        (runtime_session["runtimeId"], runtime_session["runtimeProfile"], runtime_session["externalChatId"])
+    ] = runtime_session["id"]
+
+    detail = client.get(f"/v1/sessions/{runtime_session['id']}")
+
+    assert detail.status_code == 200
+    assert detail.json()["session"]["title"] == "Teddy's Harbor Adventure"
+    assert client.app.state.active_sessions[runtime_session["id"]]["title"] == "Teddy's Harbor Adventure"
+
+
+def test_project_sessions_refresh_stale_active_draft_title_from_runtime(tmp_path):
+    root = tmp_path / ".hermes"
+    create_core_history_db(
+        root / "state.db",
+        session_id="runtime-session-1",
+        title="Generated Runtime Title",
+        user_text="write a story about the moon",
+        assistant_text="The moon had a secret harbor.",
+        chat_id="chat-title-refresh",
+    )
+    client = make_client(root)
+    agent = client.get("/v1/agents").json()["agents"][0]
+    project = client.post(
+        "/v1/projects",
+        json={"name": "Moon", "defaultAgentId": agent["id"]},
+    ).json()["project"]
+    runtime_session = client.get(f"/v1/sessions?agentId={agent['id']}").json()["sessions"][0]
+    client.post(f"/v1/projects/{project['id']}/sessions", json={"sessionId": runtime_session["id"]})
+    stale_draft = {
+        **runtime_session,
+        "title": "write a story about the moon",
+        "updatedAt": runtime_session["updatedAt"] - 1,
+        "metadata": {
+            **runtime_session["metadata"],
+            "draft": True,
+        },
+    }
+    client.app.state.active_sessions[runtime_session["id"]] = stale_draft
+    client.app.state.active_sessions_by_chat[
+        (runtime_session["runtimeId"], runtime_session["runtimeProfile"], runtime_session["externalChatId"])
+    ] = runtime_session["id"]
+
+    listed = client.get(f"/v1/projects/{project['id']}/sessions")
+
+    assert listed.status_code == 200
+    assert listed.json()["sessions"][0]["id"] == runtime_session["id"]
+    assert listed.json()["sessions"][0]["title"] == "Generated Runtime Title"
+    assert client.app.state.active_sessions[runtime_session["id"]]["title"] == "Generated Runtime Title"
+
+
 def test_core_session_delete_removes_sqlite_session_and_core_overlays(tmp_path):
     root = tmp_path / ".hermes"
     create_core_history_db(
@@ -1582,6 +1653,13 @@ def test_core_send_owns_chat_id_and_uses_env_file_token(tmp_path, monkeypatch):
         },
     )
     refreshed = client.get(f"/v1/sessions/{session['id']}").json()["session"]
+    client_metadata = client.app.state.core_store.client_message_metadata_for_messages(
+        runtime_id=agent["runtimeId"],
+        profile=agent["runtimeProfile"],
+        chat_id=refreshed["externalChatId"],
+        messages=[{"id": "history-user-1", "content": "Reply exactly: core phase 3"}],
+    )
+    stored_user_metadata = next(iter(client_metadata["byContentHash"].values()))
 
     assert sent.status_code == 200
     assert sent.json()["accepted"] is True
@@ -1592,6 +1670,9 @@ def test_core_send_owns_chat_id_and_uses_env_file_token(tmp_path, monkeypatch):
     assert seen[0]["body"]["metadata"]["hidden"] is True
     assert seen[1]["body"]["text"] == "Reply exactly: core phase 3"
     assert seen[1]["body"]["metadata"]["agentuiSessionId"] == session["id"]
+    assert seen[1]["body"]["metadata"]["clientMessageId"] == "client-message-1"
+    assert stored_user_metadata["clientMessageId"] == "client-message-1"
+    assert stored_user_metadata["idempotencyKey"] == "client-message-1"
     assert client.get(f"/v1/sessions/{session['id']}/messages").json()["messages"] == []
 
 
@@ -1636,6 +1717,83 @@ def test_core_send_dedupes_replayed_client_message_ids(tmp_path, monkeypatch):
     assert replay.status_code == 200
     assert replay.json()["duplicate"] is True
     assert len(seen) == 1
+
+
+def test_core_send_returns_and_caches_canonical_session_identity(tmp_path, monkeypatch):
+    root = tmp_path / ".hermes"
+    root.mkdir()
+    (root / ".env").write_text("AGENTUI_TOKEN=agentui-local-test\n", encoding="utf-8")
+    seen = []
+
+    def fake_http_json(url, *, method, token, body):
+        seen.append({"url": url, "method": method, "token": token, "body": body})
+        return {
+            "ok": True,
+            "status": 202,
+            "url": url,
+            "json": {
+                "ok": True,
+                "accepted": True,
+                "profile": body["profile"],
+                "chatId": body["chatId"],
+                "messageId": body["messageId"],
+                "sessionId": "hermes-runtime-session-1",
+            },
+        }
+
+    monkeypatch.setattr(hermes_adapter, "http_json", fake_http_json)
+    client = make_client(root)
+    agent = client.get("/v1/agents").json()["agents"][0]
+    project = client.post(
+        "/v1/projects",
+        json={"name": "Canonical", "defaultAgentId": agent["id"]},
+    ).json()["project"]
+    session = client.post(
+        "/v1/sessions",
+        json={"agentId": agent["id"], "title": "Core send", "projectId": project["id"]},
+    ).json()["session"]
+    payload = {"text": "Reply exactly once", "clientMessageId": "client-message-1"}
+
+    first = client.post(f"/v1/sessions/{session['id']}/messages", json=payload)
+    replay = client.post(f"/v1/sessions/{session['id']}/messages", json=payload)
+    project_sessions = client.get(f"/v1/projects/{project['id']}/sessions").json()["sessions"]
+    delivery = client.post(
+        "/v1/runtime-deliveries/hermes",
+        headers={"Authorization": "Bearer agentui-local-test"},
+        json={
+            "runtimeId": "runtime_local_hermes",
+            "profile": "default",
+            "chatId": session["externalChatId"],
+            "messageId": "assistant-1",
+            "replyTo": "client-message-1",
+            "content": "Done",
+            "metadata": {
+                "externalSessionId": "hermes-runtime-session-1",
+                "streamMessageId": "assistant-1",
+                "streaming": False,
+                "finalize": True,
+            },
+        },
+    )
+
+    assert first.status_code == 200
+    assert replay.status_code == 200
+    assert first.json()["sessionId"] == session["id"]
+    assert first.json()["canonicalSessionId"] == session["id"]
+    assert first.json()["session"]["id"] == session["id"]
+    assert first.json()["session"]["externalChatId"] == session["externalChatId"]
+    assert first.json()["session"]["externalSessionId"] == "hermes-runtime-session-1"
+    assert first.json()["runtime"]["sessionId"] == "hermes-runtime-session-1"
+    assert replay.json()["duplicate"] is True
+    assert replay.json()["sessionId"] == first.json()["sessionId"]
+    assert replay.json()["canonicalSessionId"] == first.json()["canonicalSessionId"]
+    assert replay.json()["session"]["externalSessionId"] == "hermes-runtime-session-1"
+    assert len(seen) == 1
+    assert [item["id"] for item in project_sessions] == [session["id"]]
+    assert project_sessions[0]["externalSessionId"] == "hermes-runtime-session-1"
+    assert delivery.status_code == 200
+    assert delivery.json()["sessionId"] == session["id"]
+    assert delivery.json()["event"]["sessionId"] == session["id"]
 
 
 def test_core_send_dedupes_replayed_idempotency_header_without_client_message_id(tmp_path, monkeypatch):

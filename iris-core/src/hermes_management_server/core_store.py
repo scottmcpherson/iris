@@ -1555,7 +1555,7 @@ def session_from_runtime_summary(agent: dict[str, Any], session: SessionSummary)
     profile = str(agent["runtimeProfile"])
     external_session_id = session.id
     external_chat_id = session.chatId or str((session.origin or {}).get("chat_id") or "")
-    external_id = external_session_id or external_chat_id
+    external_id = external_chat_id or external_session_id
     timestamp = int(session.lastActiveAt or session.endedAt or session.startedAt or now())
     created_at = int(session.startedAt or timestamp)
     metadata = {
@@ -1598,7 +1598,7 @@ def draft_session(
     runtime_id = str(agent["runtimeId"])
     profile = str(agent["runtimeProfile"])
     chat_id = external_chat_id or f"core-{secrets.token_urlsafe(18)}"
-    external_id = external_session_id or chat_id
+    external_id = chat_id or external_session_id
     draft_metadata = {
         "draft": True,
         "createdBy": "iris-core",

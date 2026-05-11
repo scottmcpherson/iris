@@ -1159,9 +1159,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             session_id,
             external_session_id=externalSessionId or "",
             external_chat_id=externalChatId or "",
+            prefer_runtime=True,
         )
         if not session:
             raise ManagementError("Session was not found.", status_code=404)
+        remember_active_session(app, session)
         return {"ok": True, "session": with_read_state(app, session)}
 
     @app.patch("/v1/sessions/{session_id}")
@@ -1295,14 +1297,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         accepted_key = (session_id, idempotency_key or message_id)
         accepted_message = app.state.accepted_client_messages.get(accepted_key)
         if accepted_message:
-            return {
-                "ok": True,
-                "sessionId": session_id,
-                "messageId": accepted_message["messageId"],
-                "accepted": True,
-                "eventCursor": accepted_message["eventCursor"],
-                "duplicate": True,
-            }
+            return {**accepted_message, "duplicate": True}
         adapter = app.state.runtime_registry.adapter_for_runtime(agent["runtimeId"])
         chat_id = session["externalChatId"] or chat_id_for_session(session_id)
         if not session["externalChatId"]:
@@ -1330,6 +1325,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             runtime_metadata.update(project_runtime_metadata(project))
         runtime_metadata.update({
                     "agentuiSessionId": session_id,
+                    "clientMessageId": message_id,
                     "chatId": chat_id,
                     "profile": agent["runtimeProfile"],
                     "idempotencyKey": idempotency_key,
@@ -1413,8 +1409,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "error": result.get("error") or "Hermes gateway did not accept the message.",
             }
         accepted_chat_id = str(result.get("chatId") or chat_id)
+        runtime_session_id = str(result.get("sessionId") or "")
+        session_updates: dict[str, Any] = {}
         if accepted_chat_id != session.get("externalChatId"):
-            session = {**session, "externalChatId": accepted_chat_id}
+            session_updates["externalChatId"] = accepted_chat_id
+        if runtime_session_id and runtime_session_id != session.get("externalSessionId"):
+            session_updates["externalSessionId"] = runtime_session_id
+        if session_updates:
+            session = {**session, **session_updates}
             remember_active_session(app, session)
         if project:
             app.state.core_store.link_project_session(project["id"], session)
@@ -1435,18 +1437,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             },
         )
         event_cursor = app.state.live_delivery_bus.latest_cursor(agent_id=agent["id"])
-        app.state.accepted_client_messages[accepted_key] = {
-            "messageId": message_id,
-            "eventCursor": event_cursor,
-        }
-        return {
+        response_session = with_read_state(app, session)
+        accepted_response = {
             "ok": True,
-            "sessionId": session_id,
+            "sessionId": session["id"],
+            "canonicalSessionId": session["id"],
             "messageId": message_id,
             "accepted": True,
             "eventCursor": event_cursor,
+            "session": response_session,
             "runtime": result,
         }
+        app.state.accepted_client_messages[accepted_key] = accepted_response
+        return accepted_response
 
     @app.post("/v1/sessions/{session_id}/cancel")
     async def core_cancel_message(session_id: str, _auth: None = Depends(require_auth)) -> dict[str, Any]:
@@ -1565,6 +1568,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 metadata={"createdBy": "runtime-delivery"},
             )
             remember_active_session(app, session)
+        delivery_runtime_session_id = str(
+            delivery.metadata.get("externalSessionId")
+            or delivery.metadata.get("hermesSessionId")
+            or delivery.metadata.get("sessionId")
+            or ""
+        )
+        if delivery_runtime_session_id and delivery_runtime_session_id != session.get("externalSessionId"):
+            session = {**session, "externalSessionId": delivery_runtime_session_id}
+            remember_active_session(app, session)
+            project = app.state.core_store.project_for_session(session["id"])
+            if project:
+                app.state.core_store.link_project_session(project["id"], session)
         session_id = session["id"]
         stream_message_id = str(
             delivery.metadata.get("streamMessageId")
@@ -2037,14 +2052,7 @@ def project_sessions(app: FastAPI, project: dict[str, Any]) -> list[dict[str, An
     rows: list[dict[str, Any]] = []
     seen: set[tuple[str, str, str, str]] = set()
     for link in app.state.core_store.list_project_session_links(project["id"]):
-        session = resolve_core_session(
-            app,
-            link["sessionId"],
-            runtime_id=link["runtimeId"],
-            runtime_profile=link["runtimeProfile"],
-            external_session_id=link["externalSessionId"],
-            external_chat_id=link["externalChatId"],
-        )
+        session = resolve_project_session(app, link)
         if not session:
             continue
         key = (
@@ -2059,6 +2067,30 @@ def project_sessions(app: FastAPI, project: dict[str, Any]) -> list[dict[str, An
         rows.append(with_project_metadata(session, project))
     rows.sort(key=lambda row: int(row.get("updatedAt") or 0), reverse=True)
     return rows
+
+
+def resolve_project_session(app: FastAPI, link: dict[str, Any]) -> dict[str, Any] | None:
+    if link.get("externalSessionId") or link.get("externalChatId"):
+        session = resolve_core_session(
+            app,
+            link["sessionId"],
+            runtime_id=link["runtimeId"],
+            runtime_profile=link["runtimeProfile"],
+            external_session_id=link["externalSessionId"],
+            external_chat_id=link["externalChatId"],
+            prefer_runtime=True,
+        )
+        if session:
+            remember_active_session(app, session)
+            return session
+    return resolve_core_session(
+        app,
+        link["sessionId"],
+        runtime_id=link["runtimeId"],
+        runtime_profile=link["runtimeProfile"],
+        external_session_id=link["externalSessionId"],
+        external_chat_id=link["externalChatId"],
+    )
 
 
 def agent_for_runtime_profile(app: FastAPI, runtime_id: str, profile: str) -> dict[str, Any] | None:
@@ -2087,16 +2119,18 @@ def resolve_core_session(
     runtime_profile: str = "",
     external_session_id: str = "",
     external_chat_id: str = "",
+    prefer_runtime: bool = False,
 ) -> dict[str, Any] | None:
-    active = app.state.active_sessions.get(session_id) if session_id else None
-    if active:
-        return active
-    if external_chat_id:
-        mapped_id = app.state.active_sessions_by_chat.get(
-            (runtime_id or DEFAULT_RUNTIME_ID, runtime_profile or "default", external_chat_id)
+    if not prefer_runtime:
+        active = active_core_session(
+            app,
+            session_id,
+            runtime_id=runtime_id,
+            runtime_profile=runtime_profile,
+            external_chat_id=external_chat_id,
         )
-        if mapped_id and mapped_id in app.state.active_sessions:
-            return app.state.active_sessions[mapped_id]
+        if active:
+            return active
 
     agents = app.state.runtime_registry.agents()
     for agent in agents:
@@ -2113,6 +2147,34 @@ def resolve_core_session(
         )
         if session:
             return session
+    if prefer_runtime:
+        return active_core_session(
+            app,
+            session_id,
+            runtime_id=runtime_id,
+            runtime_profile=runtime_profile,
+            external_chat_id=external_chat_id,
+        )
+    return None
+
+
+def active_core_session(
+    app: FastAPI,
+    session_id: str,
+    *,
+    runtime_id: str = "",
+    runtime_profile: str = "",
+    external_chat_id: str = "",
+) -> dict[str, Any] | None:
+    active = app.state.active_sessions.get(session_id) if session_id else None
+    if active:
+        return active
+    if external_chat_id:
+        mapped_id = app.state.active_sessions_by_chat.get(
+            (runtime_id or DEFAULT_RUNTIME_ID, runtime_profile or "default", external_chat_id)
+        )
+        if mapped_id and mapped_id in app.state.active_sessions:
+            return app.state.active_sessions[mapped_id]
     return None
 
 

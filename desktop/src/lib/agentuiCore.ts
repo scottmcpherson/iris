@@ -60,15 +60,19 @@ export type CoreRuntimeResult = {
   accepted?: boolean;
   chatId?: string;
   messageId?: string;
+  sessionId?: string;
+  warning?: string;
   error?: string;
 };
 
 export type AgentUICoreSendMessageResult = {
   sessionId: string;
+  canonicalSessionId?: string;
   messageId: string;
   accepted: boolean;
   eventCursor: number;
   duplicate?: boolean;
+  session?: AgentUICoreSession;
   runtime?: CoreRuntimeResult;
 };
 

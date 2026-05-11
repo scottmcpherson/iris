@@ -74,6 +74,62 @@ export function removeSessionsForProfile(
   return { ...current, [profile]: filtered };
 }
 
+export function sessionMetadataShouldPropagate(title: string | null | undefined) {
+  const normalized = (title || "").trim();
+  if (!normalized) return false;
+  return !isPlaceholderSessionTitle(normalized);
+}
+
+export function scheduleDedupedTimer(options: {
+  key: string;
+  pending: Set<string>;
+  delayMs: number;
+  run: () => Promise<void> | void;
+}) {
+  const { key, pending, delayMs, run } = options;
+  if (!key) return false;
+  if (pending.has(key)) return false;
+  pending.add(key);
+  setTimeout(async () => {
+    try {
+      await run();
+    } catch {
+      // Best-effort scheduler: callers must not crash the scheduler if their
+      // run() throws. The pending key is still cleared in finally.
+    } finally {
+      pending.delete(key);
+    }
+  }, delayMs);
+  return true;
+}
+
+export function upsertSessionMetadataForProfile(
+  current: Record<string, HermesSession[]>,
+  profile: string,
+  loadedSession: HermesSession,
+) {
+  const sessions = current[profile] || [];
+  let matched = false;
+  const updated = sessions.map((session) => {
+    const matches = session.id === loadedSession.id ||
+      (Boolean(loadedSession.chatId) && session.chatId === loadedSession.chatId);
+    if (!matches) return session;
+    matched = true;
+    return {
+      ...session,
+      title: loadedSession.title || session.title,
+      preview: loadedSession.preview || session.preview,
+      lastActiveAt: loadedSession.lastActiveAt ?? session.lastActiveAt,
+      metadata: {
+        ...(session.metadata || {}),
+        ...(loadedSession.metadata || {}),
+      },
+    };
+  });
+  if (!matched) return current;
+  return { ...current, [profile]: updated };
+}
+
 export function mergeOptimisticSessions(
   current: HermesSession[],
   endpointSessions: HermesSession[],
@@ -425,16 +481,29 @@ export function activeRequestCompletedByHistory(
   if (!activeRequestId) return false;
   let sawActiveUser = false;
   return historyMessages.some((message) => {
-    if (message.role === "user" && message.id === activeRequestId) {
+    const metadata = message.metadata || {};
+    if (
+      message.role === "user" &&
+      (message.id === activeRequestId || metadataReferencesRequest(metadata, activeRequestId))
+    ) {
       sawActiveUser = true;
       return false;
     }
     if (message.role !== "assistant" || message.status !== "completed" || !message.content.trim()) return false;
-    const metadata = message.metadata || {};
     if (historyMessageStillStreaming(metadata)) return false;
     const replyTo = stringMetadata(metadata, "replyTo") || stringMetadata(metadata, "reply_to");
-    return replyTo === activeRequestId || sawActiveUser;
+    return replyTo === activeRequestId || metadataReferencesRequest(metadata, activeRequestId) || sawActiveUser;
   });
+}
+
+function metadataReferencesRequest(metadata: Record<string, unknown>, activeRequestId: string) {
+  return [
+    "clientMessageId",
+    "client_message_id",
+    "idempotencyKey",
+    "idempotency_key",
+    "agentuiMessageId",
+  ].some((key) => stringMetadata(metadata, key) === activeRequestId);
 }
 
 function historyMessageStillStreaming(metadata: Record<string, unknown>) {
@@ -508,8 +577,8 @@ export function migrateActiveRequestId(
   return migrateSessionValue(current, fromSessionId, toSessionId);
 }
 
-export function migrateSessionValue(
-  current: Record<string, string>,
+export function migrateSessionValue<T>(
+  current: Record<string, T>,
   fromSessionId: string,
   toSessionId: string,
 ) {

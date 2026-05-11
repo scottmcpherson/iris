@@ -18,6 +18,7 @@ import {
   type AgentUICoreEvent,
   type CoreMetadata,
 } from "../../lib/agentuiCore";
+import { coreSessionToLegacy } from "../../lib/coreLegacyCompat";
 import type {
   HermesSession,
   HermesInboxMessage,
@@ -73,8 +74,11 @@ import {
   shouldRetryUnmappedDelivery,
   shouldSendModelSwitch,
   shouldSkipSessionDetailLoad,
+  scheduleDedupedTimer,
   updateSessionReadStateForProfiles,
   upsertSessionForProfile,
+  upsertSessionMetadataForProfile,
+  sessionMetadataShouldPropagate,
   visibleSessionForSelection,
 } from "./chatSessionState";
 import {
@@ -102,12 +106,15 @@ export {
   preserveActiveSessionTitles,
   preserveLocalSessionProjectMetadata,
   preserveLocalScheduledDeliveries,
+  scheduleDedupedTimer,
+  sessionMetadataShouldPropagate,
   shouldApplySessionDetailSelection,
   shouldPreserveLocalMessagesOnEmptyHistory,
   shouldPreserveProfileSessionSelection,
   shouldRetryUnmappedDelivery,
   shouldSendModelSwitch,
   shouldSkipSessionDetailLoad,
+  upsertSessionMetadataForProfile,
 } from "./chatSessionState";
 export type { SendableAttachment } from "./chatTypes";
 
@@ -115,6 +122,7 @@ type UseIrisChatOptions = {
   profile: string;
   runtimeConfig: HermesRuntimeConfig;
   isChatViewActive?: boolean;
+  onSessionMetadataResolved?: (sessionId: string, projectId: string | null) => void;
 };
 
 const coreDeliveryEventNames = [
@@ -123,7 +131,14 @@ const coreDeliveryEventNames = [
   "message.error",
 ];
 
-export function useAgentUIChat({ profile, runtimeConfig, isChatViewActive = true }: UseIrisChatOptions) {
+export const SESSION_TITLE_RESOLVE_DELAY_MS = 3000;
+
+export function useAgentUIChat({
+  profile,
+  runtimeConfig,
+  isChatViewActive = true,
+  onSessionMetadataResolved,
+}: UseIrisChatOptions) {
   const [input, setInput] = useState("");
   const [messagesBySession, setMessagesBySession] = useState<Record<string, Message[]>>({});
   const [activeRequestIdsBySession, setActiveRequestIdsBySession] = useState<Record<string, string>>({});
@@ -152,6 +167,9 @@ export function useAgentUIChat({ profile, runtimeConfig, isChatViewActive = true
   const isChatViewActiveRef = useRef(isChatViewActive);
   const sessionChatIdsBySessionRef = useRef(sessionChatIdsBySession);
   const sessionsByProfileRef = useRef(sessionsByProfile);
+  const onSessionMetadataResolvedRef = useRef(onSessionMetadataResolved);
+  onSessionMetadataResolvedRef.current = onSessionMetadataResolved;
+  const pendingTitleResolveRef = useRef<Set<string>>(new Set());
   const sessions = sessionsByProfile[profile] || [];
   const sessionsLoading = Boolean(sessionsLoadingByProfile[profile]);
   const historyError = historyErrorsByProfile[profile] || null;
@@ -304,6 +322,7 @@ export function useAgentUIChat({ profile, runtimeConfig, isChatViewActive = true
       return false;
     }
     const optimisticTimestamp = Math.floor(Date.now() / 1000);
+    pendingTitleResolveRef.current.delete(activeSessionId);
     setMessagesBySession((current) => ({
       ...current,
       [activeSessionId]: [
@@ -439,17 +458,70 @@ export function useAgentUIChat({ profile, runtimeConfig, isChatViewActive = true
         runtimeConfig,
       );
       if (!result.ok) throw new Error(result.error || "Iris Core did not accept the message.");
-      const acceptedChatId = ("runtime" in result ? runtimeChatId(result.runtime) : "") || gatewayChatId;
+      const canonicalSessionId = result.canonicalSessionId || result.session?.id || result.sessionId || sessionId;
+      const acceptedChatId = result.session?.externalChatId ||
+        ("runtime" in result ? runtimeChatId(result.runtime) : "") ||
+        gatewayChatId;
+      const acceptedSession = result.session ? coreSessionToLegacy(result.session) : null;
+      if (acceptedSession) {
+        setSessionsByProfile((current) => {
+          const withoutPrevious = canonicalSessionId !== sessionId
+            ? removeSessionForProfile(current, profile, sessionId)
+            : current;
+          return upsertSessionForProfile(withoutPrevious, profile, acceptedSession);
+        });
+      }
+      if (canonicalSessionId !== sessionId) {
+        if (selectedSessionIdRef.current === sessionId) {
+          selectedSessionIdRef.current = canonicalSessionId;
+          setSelectedSessionId(canonicalSessionId);
+        }
+        setMessagesBySession((current) =>
+          migrateSessionMessages(current, sessionId, canonicalSessionId),
+        );
+        activeRequestIdsBySessionRef.current = migrateActiveRequestId(
+          activeRequestIdsBySessionRef.current,
+          sessionId,
+          canonicalSessionId,
+        );
+        activeSessionTitlesBySessionRef.current = migrateSessionValue(
+          activeSessionTitlesBySessionRef.current,
+          sessionId,
+          canonicalSessionId,
+        );
+        setActiveRequestIdsBySession((current) =>
+          migrateActiveRequestId(current, sessionId, canonicalSessionId),
+        );
+        setModelSelectionBySession((current) =>
+          migrateModelSelection(current, sessionId, canonicalSessionId),
+        );
+        setSessionReadStates((current) =>
+          migrateSessionValue(current, sessionId, canonicalSessionId),
+        );
+        setSessionChatIdsBySession((current) => {
+          const migrated = migrateSessionValue(current, sessionId, canonicalSessionId);
+          const next = { ...migrated };
+          if (acceptedChatId) next[canonicalSessionId] = acceptedChatId;
+          sessionChatIdsBySessionRef.current = next;
+          return next;
+        });
+        sessionId = canonicalSessionId;
+        activeSessionId = canonicalSessionId;
+      }
       if (acceptedChatId) {
-        setSessionChatIdsBySession((current) => ({ ...current, [sessionId]: acceptedChatId }));
+        setSessionChatIdsBySession((current) => {
+          const next = { ...current, [canonicalSessionId]: acceptedChatId };
+          sessionChatIdsBySessionRef.current = next;
+          return next;
+        });
       }
       if (modelSelection) {
-        setModelSelectionBySession((current) => ({ ...current, [sessionId]: modelSelection }));
+        setModelSelectionBySession((current) => ({ ...current, [canonicalSessionId]: modelSelection }));
       }
       window.setTimeout(() => {
         void pollCoreEvents();
         void refreshSessions({ profileName: profile, silent: true });
-        refreshSessionDetailSoon(sessionId, profile, gatewayChatId);
+        refreshSessionDetailSoon(canonicalSessionId, profile, acceptedChatId || gatewayChatId);
       }, 1200);
       return true;
     } catch (error) {
@@ -772,6 +844,13 @@ export function useAgentUIChat({ profile, runtimeConfig, isChatViewActive = true
           [loadedSession.id]: loadedSession.chatId || "",
         }));
       }
+      if (sessionMetadataShouldPropagate(loadedSession.title)) {
+        setSessionsByProfile((current) => {
+          const next = upsertSessionMetadataForProfile(current, profileName, loadedSession);
+          sessionsByProfileRef.current = next;
+          return next;
+        });
+      }
       const activeRequestId =
         activeRequestIdsBySessionRef.current[loadedSession.id] ||
         activeRequestIdsBySessionRef.current[sessionId] ||
@@ -828,6 +907,26 @@ export function useAgentUIChat({ profile, runtimeConfig, isChatViewActive = true
         setSessionsLoadingByProfile((current) => ({ ...current, [profileName]: false }));
       }
     }
+  }
+
+  function scheduleSessionTitleResolveSoon(sessionId: string, chatId = "") {
+    if (!sessionId || isOptimisticSessionId(sessionId)) return;
+    scheduleDedupedTimer({
+      key: sessionId,
+      pending: pendingTitleResolveRef.current,
+      delayMs: SESSION_TITLE_RESOLVE_DELAY_MS,
+      run: async () => {
+        const targetSessionId = latestRealSessionIdForChatId(chatId, profile) ||
+          (isOptimisticSessionId(sessionId) ? "" : sessionId);
+        if (!targetSessionId) return;
+        await refreshSessionDetail(targetSessionId, profile, {
+          silent: true,
+          reconcileActive: true,
+        });
+        const projectId = projectIdForSessionId(targetSessionId) || null;
+        onSessionMetadataResolvedRef.current?.(targetSessionId, projectId);
+      },
+    });
   }
 
   function refreshSessionDetailSoon(sessionId: string, profileName = profile, chatId = "") {
@@ -947,7 +1046,6 @@ export function useAgentUIChat({ profile, runtimeConfig, isChatViewActive = true
       [profile]: result.cursor || cursor,
     };
     handleCoreEvents(result.events);
-    reconcileActiveSessionDetails();
   }
 
   function handleCoreEvents(events: AgentUICoreEvent[]) {
@@ -964,6 +1062,21 @@ export function useAgentUIChat({ profile, runtimeConfig, isChatViewActive = true
       [profile]: cursor,
     };
     handleCoreDeliveries(deliveries);
+    reconcileActiveSessionDetails();
+  }
+
+  function projectIdForSessionId(sessionId: string) {
+    const profileSessions = sessionsByProfileRef.current[profile] || [];
+    const matched = profileSessions.find((session) => session.id === sessionId);
+    const metadata = matched?.metadata || {};
+    const direct = typeof metadata.projectId === "string" ? metadata.projectId : "";
+    if (direct) return direct;
+    const project = metadata.project;
+    if (project && typeof project === "object" && !Array.isArray(project)) {
+      const id = (project as Record<string, unknown>).id;
+      if (typeof id === "string") return id;
+    }
+    return "";
   }
 
   function handleCoreDeliveries(newDeliveries: HermesInboxMessage[]) {
@@ -1066,6 +1179,9 @@ export function useAgentUIChat({ profile, runtimeConfig, isChatViewActive = true
       if (!isStreamDelivery || isFinalStreamDelivery) {
         markDeliveredSessionReadState(relatedSessionIds, delivery.cursor);
         refreshSessionDetailSoon(sessionId, profile, delivery.chatId);
+        scheduleSessionTitleResolveSoon(sessionId, delivery.chatId);
+      } else {
+        scheduleActiveStreamReconcile(relatedSessionIds);
       }
     }
 
@@ -1086,6 +1202,13 @@ export function useAgentUIChat({ profile, runtimeConfig, isChatViewActive = true
       };
       void refreshSessionDetail(sessionId, profile, { silent: true, reconcileActive: true });
     }
+  }
+
+  function scheduleActiveStreamReconcile(sessionIds: string[]) {
+    window.setTimeout(() => {
+      if (!sessionIds.some((sessionId) => activeRequestIdsBySessionRef.current[sessionId])) return;
+      reconcileActiveSessionDetails();
+    }, 3500);
   }
 
   function chatIdForSession(sessionId: string | null | undefined) {

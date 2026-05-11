@@ -81,6 +81,58 @@ describe("project session classification", () => {
     expect(merged.project_1).toEqual([localChat]);
   });
 
+  it("updates the normal project row in place when the runtime session id arrives later", () => {
+    const endpointChat = session({
+      id: "session_1",
+      title: "Endpoint title",
+      origin: { externalSessionId: "hermes-session-1" },
+      metadata: { projectId: "project_1" },
+    });
+    const localChat = session({
+      id: "session_1",
+      title: "Local streaming title",
+      metadata: { projectId: "project_1" },
+    });
+
+    const merged = mergeProjectSessionsForSidebar(
+      ["project_1"],
+      { project_1: [endpointChat] },
+      [localChat],
+    );
+
+    expect(merged.project_1).toHaveLength(1);
+    expect(merged.project_1[0]?.id).toBe("session_1");
+    expect(merged.project_1[0]?.origin?.externalSessionId).toBe("hermes-session-1");
+  });
+
+  it("renders the runtime-generated title once both lanes refresh after a session.updated event", () => {
+    const projectChat = session({
+      id: "session_1",
+      title: "Moon story request",
+      chatId: "core-chat-1",
+      metadata: { projectId: "project_1" },
+      lastActiveAt: 20,
+    });
+    const localChat = session({
+      id: "session_1",
+      title: "Moon story request",
+      chatId: "core-chat-1",
+      metadata: { projectId: "project_1" },
+      lastActiveAt: 20,
+    });
+
+    const merged = mergeProjectSessionsForSidebar(
+      ["project_1"],
+      { project_1: [projectChat] },
+      [localChat],
+      { preserveProjectSessionIds: new Set(["session_1"]) },
+    );
+
+    expect(merged.project_1).toHaveLength(1);
+    expect(merged.project_1[0]?.title).toBe("Moon story request");
+    expect(merged.project_1[0]?.id).toBe("session_1");
+  });
+
   it("updates a project row from a refreshed runtime row matched by chat id", () => {
     const staleProjectRow = session({
       id: "session_draft",

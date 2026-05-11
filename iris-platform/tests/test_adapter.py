@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib
 import asyncio
+import json
 import sys
 import types
 from dataclasses import dataclass
@@ -104,6 +105,132 @@ class Config:
         "base_url": "http://127.0.0.1:8765",
         "token": "secret-token",
     }
+
+
+class FakeInboundRequest:
+    headers = {"Authorization": "Bearer secret-token"}
+
+
+@dataclass
+class FakeWebResponse:
+    status: int
+    text: str
+
+
+class FakeWeb:
+    @staticmethod
+    def json_response(body, status=200):
+        return FakeWebResponse(status=status, text=json.dumps(body))
+
+
+@dataclass
+class FakeSession:
+    session_id: str
+    session_key: str = "source-key-1"
+
+
+class FakeSessionStore:
+    def __init__(self, session_id: str = "hermes-session-1"):
+        self.session_id = session_id
+        self.created_sources: list[Any] = []
+        self.switched: list[tuple[str, str]] = []
+
+    def get_or_create_session(self, source):
+        self.created_sources.append(source)
+        return FakeSession(self.session_id)
+
+    def switch_session(self, session_key: str, target_session_id: str):
+        self.switched.append((session_key, target_session_id))
+        return FakeSession(target_session_id, session_key)
+
+
+def call_inbound_message(adapter_module, monkeypatch: pytest.MonkeyPatch, adapter, payload: dict[str, Any]):
+    if not adapter_module.AIOHTTP_AVAILABLE:
+        monkeypatch.setattr(adapter_module, "web", FakeWeb)
+
+    async def fake_payload_and_files(_request):
+        return payload, {}
+
+    async def fake_handle_message(_event):
+        return None
+
+    monkeypatch.setattr(adapter_module, "inbound_payload_and_files", fake_payload_and_files)
+    adapter.handle_message = fake_handle_message
+    response = asyncio.run(adapter._inbound_message(FakeInboundRequest()))
+    return response.status, json.loads(response.text)
+
+
+def test_inbound_message_reserves_and_returns_session_id(monkeypatch: pytest.MonkeyPatch):
+    adapter_module = load_adapter_module(monkeypatch)
+    adapter = adapter_module.IrisPlatformAdapter(Config())
+    store = FakeSessionStore("hermes-session-new")
+    adapter._session_store = store
+
+    status, body = call_inbound_message(
+        adapter_module,
+        monkeypatch,
+        adapter,
+        {
+            "profile": "default",
+            "chatId": "core-chat-1",
+            "chatName": "Core chat",
+            "messageId": "client-message-1",
+            "text": "hello",
+        },
+    )
+
+    assert status == 202
+    assert body["accepted"] is True
+    assert body["chatId"] == "core-chat-1"
+    assert body["messageId"] == "client-message-1"
+    assert body["sessionId"] == "hermes-session-new"
+    assert store.created_sources[0].chat_id == "core-chat-1"
+
+
+def test_inbound_message_returns_bound_legacy_session_id(monkeypatch: pytest.MonkeyPatch):
+    adapter_module = load_adapter_module(monkeypatch)
+    adapter = adapter_module.IrisPlatformAdapter(Config())
+    store = FakeSessionStore("temporary-session")
+    adapter._session_store = store
+
+    status, body = call_inbound_message(
+        adapter_module,
+        monkeypatch,
+        adapter,
+        {
+            "profile": "default",
+            "chatId": "core-chat-1",
+            "sessionId": "legacy-session-1",
+            "messageId": "client-message-1",
+            "text": "hello",
+        },
+    )
+
+    assert status == 202
+    assert body["sessionId"] == "legacy-session-1"
+    assert store.switched == [("source-key-1", "legacy-session-1")]
+
+
+def test_inbound_message_accepts_without_session_store_and_warns(monkeypatch: pytest.MonkeyPatch):
+    adapter_module = load_adapter_module(monkeypatch)
+    adapter = adapter_module.IrisPlatformAdapter(Config())
+
+    status, body = call_inbound_message(
+        adapter_module,
+        monkeypatch,
+        adapter,
+        {
+            "profile": "default",
+            "chatId": "core-chat-1",
+            "messageId": "client-message-1",
+            "text": "hello",
+        },
+    )
+
+    assert status == 202
+    assert body["accepted"] is True
+    assert "sessionId" not in body
+    assert "session store is unavailable" in body["warning"]
 
 
 def test_send_stream_preview_posts_delivery_payload(monkeypatch: pytest.MonkeyPatch):

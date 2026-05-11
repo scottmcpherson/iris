@@ -5,7 +5,14 @@ import sqlite3
 
 import pytest
 
-from hermes_management_server.core_store import CoreStore, is_allowed_attachment_mime
+from hermes_management_server.core_store import (
+    CoreStore,
+    draft_session,
+    session_id_for_runtime,
+    session_from_runtime_summary,
+    is_allowed_attachment_mime,
+)
+from hermes_management_server.models import SessionSummary
 
 
 def test_core_store_creates_only_core_owned_schema(tmp_path):
@@ -236,6 +243,71 @@ def test_core_store_project_crud_and_session_links(tmp_path):
     archived = store.archive_project(project["id"])
     assert archived["archivedAt"] is not None
     assert store.list_projects() == []
+
+
+def test_core_session_summary_prefers_chat_id_for_core_session_identity():
+    agent = {
+        "id": "agent_default",
+        "runtimeId": "runtime_local_hermes",
+        "runtimeProfile": "default",
+    }
+    draft = draft_session(
+        agent,
+        title="Draft chat",
+        external_chat_id="core-chat-1",
+    )
+    persisted = session_from_runtime_summary(
+        agent,
+        SessionSummary(
+            id="hermes-session-1",
+            source="iris",
+            model="gpt-5.5",
+            title="Persisted chat",
+            preview="Hello",
+            chatId="core-chat-1",
+            origin={},
+            startedAt=10,
+            endedAt=None,
+            lastActiveAt=20,
+            messageCount=2,
+        ),
+    )
+
+    assert draft["id"] == persisted["id"]
+    assert persisted["externalSessionId"] == "hermes-session-1"
+    assert persisted["externalChatId"] == "core-chat-1"
+
+
+def test_core_session_summary_falls_back_to_runtime_session_id_without_chat_id():
+    agent = {
+        "id": "agent_default",
+        "runtimeId": "runtime_local_hermes",
+        "runtimeProfile": "default",
+    }
+    persisted = session_from_runtime_summary(
+        agent,
+        SessionSummary(
+            id="legacy-hermes-session-1",
+            source="iris",
+            model="gpt-5.5",
+            title="Legacy chat",
+            preview="Hello",
+            chatId=None,
+            origin={},
+            startedAt=10,
+            endedAt=None,
+            lastActiveAt=20,
+            messageCount=2,
+        ),
+    )
+
+    assert persisted["id"] == session_id_for_runtime(
+        "runtime_local_hermes",
+        "default",
+        "legacy-hermes-session-1",
+    )
+    assert persisted["externalSessionId"] == "legacy-hermes-session-1"
+    assert persisted["externalChatId"] == ""
 
 
 def test_core_store_session_read_state_is_shared_by_session(tmp_path):

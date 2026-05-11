@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Message } from "../../../app/types";
 import type { HermesInboxMessage } from "../../../types/hermes";
 import {
@@ -9,13 +9,17 @@ import {
   preserveLocalScheduledDeliveries,
   preserveLocalSessionProjectMetadata,
   preserveActiveSessionTitles,
+  scheduleDedupedTimer,
+  sessionMetadataShouldPropagate,
   shouldApplySessionDetailSelection,
   shouldPreserveLocalMessagesOnEmptyHistory,
   shouldPreserveProfileSessionSelection,
   shouldRetryUnmappedDelivery,
   shouldSendModelSwitch,
   shouldSkipSessionDetailLoad,
+  upsertSessionMetadataForProfile,
 } from "../useIrisChat";
+import type { HermesSession } from "../../../types/hermes";
 import {
   coalescePostStreamAttachments,
   deliveryCompletesActiveStream,
@@ -1135,6 +1139,31 @@ describe("Iris chat session loading", () => {
     expect(replacements[0].to.id).toBe("session-hermes");
   });
 
+  it("does not need alias replacement when canonical history keeps the draft session id", () => {
+    const replacements = activeSessionReplacements(
+      { "session-core-draft": "user-1" },
+      [
+        {
+          id: "session-core-draft",
+          source: "hermes-management",
+          title: "Hermes title",
+          preview: "",
+          chatId: "core-session-core-draft",
+          origin: { externalSessionId: "hermes-session-1" },
+          startedAt: 1,
+          endedAt: null,
+          lastActiveAt: 2,
+          messageCount: 1,
+          model: "",
+        },
+      ],
+      [],
+      { "session-core-draft": "core-session-core-draft" },
+    );
+
+    expect(replacements).toEqual([]);
+  });
+
   it("keeps an active prompt title when Hermes temporarily returns an untitled session", () => {
     const endpoint = preserveActiveSessionTitles(
       [
@@ -1437,6 +1466,36 @@ describe("Iris chat session detail loading", () => {
     ).toBe(true);
   });
 
+  it("recognizes canonical history when Hermes rewrites the user message id but keeps the client id", () => {
+    expect(
+      activeRequestCompletedByHistory(
+        [
+          {
+            id: "history-user-1",
+            sessionId: "session-1",
+            role: "user",
+            content: "Hello",
+            status: "completed",
+            toolName: "",
+            timestamp: 1,
+            metadata: { idempotencyKey: "client-message-1" },
+          },
+          {
+            id: "assistant-1",
+            sessionId: "session-1",
+            role: "assistant",
+            content: "Done",
+            status: "completed",
+            toolName: "",
+            timestamp: 2,
+            metadata: { streaming: false, finalize: true },
+          },
+        ],
+        "client-message-1",
+      ),
+    ).toBe(true);
+  });
+
   it("recognizes completed stream history after the active user even without reply metadata", () => {
     expect(
       activeRequestCompletedByHistory(
@@ -1544,5 +1603,155 @@ describe("Iris chat session detail loading", () => {
   it("keeps active and optimistic sessions on provisional state", () => {
     expect(shouldSkipSessionDetailLoad("session-1", { "session-1": "request-1" })).toBe(true);
     expect(shouldSkipSessionDetailLoad("optimistic-1", {})).toBe(true);
+  });
+});
+
+function chatSession(overrides: Partial<HermesSession> = {}): HermesSession {
+  return {
+    id: "session_1",
+    source: "agentui-core",
+    model: "",
+    title: "Initial",
+    preview: "",
+    chatId: "core-chat-1",
+    origin: {},
+    startedAt: 1,
+    endedAt: null,
+    lastActiveAt: 1,
+    messageCount: 1,
+    ...overrides,
+  };
+}
+
+describe("session metadata propagation after detail refresh", () => {
+  it("treats real titles as propagatable and placeholders as not", () => {
+    expect(sessionMetadataShouldPropagate("Moon story request")).toBe(true);
+    expect(sessionMetadataShouldPropagate("")).toBe(false);
+    expect(sessionMetadataShouldPropagate(undefined)).toBe(false);
+    expect(sessionMetadataShouldPropagate("Untitled session")).toBe(false);
+    expect(sessionMetadataShouldPropagate("New session")).toBe(false);
+  });
+
+  it("upserts the loaded title and lastActiveAt onto the matching profile session", () => {
+    const stale = chatSession({
+      id: "session_real",
+      title: "write a story about the moon",
+      lastActiveAt: 10,
+    });
+    const fresh = chatSession({
+      id: "session_real",
+      title: "Moon story request",
+      lastActiveAt: 22,
+      preview: "The moon had a secret harbor.",
+    });
+
+    const next = upsertSessionMetadataForProfile(
+      { default: [stale] },
+      "default",
+      fresh,
+    );
+
+    expect(next.default[0].title).toBe("Moon story request");
+    expect(next.default[0].lastActiveAt).toBe(22);
+    expect(next.default[0].preview).toBe("The moon had a secret harbor.");
+    expect(next.default[0].id).toBe("session_real");
+  });
+
+  it("matches by chatId when ids differ across the optimistic-to-real swap", () => {
+    const stale = chatSession({
+      id: "optimistic-1",
+      chatId: "core-chat-1",
+      title: "write a story about the moon",
+    });
+    const fresh = chatSession({
+      id: "session_real",
+      chatId: "core-chat-1",
+      title: "Moon story request",
+    });
+
+    const next = upsertSessionMetadataForProfile(
+      { default: [stale] },
+      "default",
+      fresh,
+    );
+
+    expect(next.default[0].title).toBe("Moon story request");
+    expect(next.default[0].id).toBe("optimistic-1");
+  });
+
+  it("is a no-op when no profile session matches", () => {
+    const stale = chatSession({ id: "session_other", chatId: "core-chat-9" });
+    const current = { default: [stale] };
+    const fresh = chatSession({ id: "session_real", chatId: "core-chat-1" });
+
+    const next = upsertSessionMetadataForProfile(current, "default", fresh);
+
+    expect(next).toBe(current);
+  });
+});
+
+describe("scheduleDedupedTimer", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("runs the callback once after the delay", async () => {
+    const pending = new Set<string>();
+    const run = vi.fn(() => Promise.resolve());
+
+    const scheduled = scheduleDedupedTimer({
+      key: "session_1",
+      pending,
+      delayMs: 3000,
+      run,
+    });
+
+    expect(scheduled).toBe(true);
+    expect(pending.has("session_1")).toBe(true);
+    expect(run).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(3000);
+
+    expect(run).toHaveBeenCalledTimes(1);
+    expect(pending.has("session_1")).toBe(false);
+  });
+
+  it("dedupes back-to-back schedule calls for the same key", () => {
+    const pending = new Set<string>();
+    const run = vi.fn(() => Promise.resolve());
+
+    const first = scheduleDedupedTimer({ key: "session_1", pending, delayMs: 3000, run });
+    const second = scheduleDedupedTimer({ key: "session_1", pending, delayMs: 3000, run });
+
+    expect(first).toBe(true);
+    expect(second).toBe(false);
+    expect(pending.size).toBe(1);
+  });
+
+  it("clears the pending key even if the callback throws", async () => {
+    const pending = new Set<string>();
+    const run = vi.fn(() => {
+      throw new Error("boom");
+    });
+
+    scheduleDedupedTimer({ key: "session_1", pending, delayMs: 3000, run });
+
+    await vi.advanceTimersByTimeAsync(3000).catch(() => {});
+
+    expect(pending.has("session_1")).toBe(false);
+  });
+
+  it("rejects empty keys", () => {
+    const pending = new Set<string>();
+    const run = vi.fn();
+
+    const scheduled = scheduleDedupedTimer({ key: "", pending, delayMs: 3000, run });
+
+    expect(scheduled).toBe(false);
+    expect(pending.size).toBe(0);
   });
 });

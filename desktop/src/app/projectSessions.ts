@@ -136,6 +136,10 @@ function mergeProjectSession(
 
   return {
     ...baseSession,
+    origin: {
+      ...(localSession.origin || {}),
+      ...(projectSession.origin || {}),
+    },
     metadata: {
       ...(localSession.metadata || {}),
       ...(projectSession.metadata || {}),

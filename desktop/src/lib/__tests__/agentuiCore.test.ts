@@ -70,19 +70,46 @@ describe("agentuiCore", () => {
       json: async () => ({
         ok: true,
         sessionId: "session-1",
+        canonicalSessionId: "session-1",
         messageId: "client-message-1",
         accepted: true,
         eventCursor: 3,
+        session: {
+          id: "session-1",
+          agentId: "agent_default",
+          title: "Hello",
+          summary: "",
+          createdAt: 1,
+          updatedAt: 2,
+          metadata: {},
+          runtimeId: "runtime_local_hermes",
+          runtimeProfile: "default",
+          externalSessionId: "hermes-session-1",
+          externalChatId: "core-chat-1",
+          externalThreadId: "",
+          origin: {},
+        },
+        runtime: {
+          ok: true,
+          accepted: true,
+          chatId: "core-chat-1",
+          messageId: "client-message-1",
+          sessionId: "hermes-session-1",
+        },
       }),
     }));
     vi.stubGlobal("fetch", fetch);
 
-    await sendAgentUICoreMessage(
+    const result = await sendAgentUICoreMessage(
       "session-1",
       { text: "hello", clientMessageId: "client-message-1" },
       defaultRuntimeConfig,
     );
 
+    expect(result.canonicalSessionId).toBe("session-1");
+    expect(result.session?.externalChatId).toBe("core-chat-1");
+    expect(result.session?.externalSessionId).toBe("hermes-session-1");
+    expect(result.runtime?.sessionId).toBe("hermes-session-1");
     expect(fetch).toHaveBeenCalledWith(
       expect.stringContaining("/v1/sessions/session-1/messages"),
       expect.objectContaining({
