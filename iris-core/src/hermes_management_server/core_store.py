@@ -937,11 +937,18 @@ class CoreStore:
                 ).fetchall()
         by_message_id: dict[str, dict[str, Any]] = {}
         by_content_hash: dict[str, dict[str, Any]] = {}
+        ambiguous_content_hashes: set[str] = set()
         for row in rows:
             metadata = loads(row["metadata_json"])
-            if isinstance(metadata, dict):
-                by_message_id[str(row["message_id"])] = metadata
-                by_content_hash[str(row["content_hash"])] = metadata
+            if not isinstance(metadata, dict):
+                continue
+            by_message_id[str(row["message_id"])] = metadata
+            content_hash = str(row["content_hash"])
+            if content_hash in by_content_hash:
+                ambiguous_content_hashes.add(content_hash)
+            by_content_hash[content_hash] = metadata
+        for content_hash in ambiguous_content_hashes:
+            by_content_hash.pop(content_hash, None)
         attachment_fallbacks: list[dict[str, Any]] = []
         for row in fallback_rows:
             metadata = loads(row["metadata_json"])

@@ -508,8 +508,15 @@ def persist_assistant_attachment_metadata(
     original_content: str,
     metadata: dict[str, Any],
 ) -> None:
-    if not metadata.get("attachments"):
+    has_attachments = bool(metadata.get("attachments"))
+    reply_to = str(metadata.get("replyTo") or metadata.get("reply_to") or "")
+    if not has_attachments and not reply_to:
         return
+    overlay: dict[str, Any]
+    if has_attachments:
+        overlay = metadata
+    else:
+        overlay = {"replyTo": reply_to}
     message_ids = [message_id]
     if stream_message_id and stream_message_id not in message_ids:
         message_ids.append(stream_message_id)
@@ -525,7 +532,7 @@ def persist_assistant_attachment_metadata(
                 chat_id=chat_id,
                 message_id=key,
                 content=content_value,
-                metadata=metadata,
+                metadata=overlay,
             )
 
 

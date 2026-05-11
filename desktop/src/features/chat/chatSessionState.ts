@@ -465,8 +465,9 @@ export function preserveLocalScheduledDeliveries(
 
 function messagesLikelyRepresentSameTurn(left: Message, right: Message) {
   if (left.id === right.id) return true;
-  return left.role === right.role &&
-    left.content.trim() === right.content.trim() &&
+  if (left.role !== right.role) return false;
+  if (left.clientRequestId && left.clientRequestId === right.clientRequestId) return true;
+  return left.content.trim() === right.content.trim() &&
     attachmentIds(left).join("|") === attachmentIds(right).join("|");
 }
 
@@ -489,10 +490,11 @@ export function activeRequestCompletedByHistory(
       sawActiveUser = true;
       return false;
     }
+    if (!sawActiveUser) return false;
     if (message.role !== "assistant" || message.status !== "completed" || !message.content.trim()) return false;
     if (historyMessageStillStreaming(metadata)) return false;
     const replyTo = stringMetadata(metadata, "replyTo") || stringMetadata(metadata, "reply_to");
-    return replyTo === activeRequestId || metadataReferencesRequest(metadata, activeRequestId) || sawActiveUser;
+    return replyTo === activeRequestId || metadataReferencesRequest(metadata, activeRequestId);
   });
 }
 

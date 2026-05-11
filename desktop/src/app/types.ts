@@ -10,6 +10,7 @@ export type Message = {
   source?: string;
   streaming?: boolean;
   streamMessageId?: string;
+  clientRequestId?: string;
   events?: HermesParsedEvents;
   streamEvents?: HermesStreamToolEvent[];
 };

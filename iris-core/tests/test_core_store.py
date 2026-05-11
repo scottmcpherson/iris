@@ -357,3 +357,54 @@ def test_core_store_accepts_general_attachment_mime_types(tmp_path):
     assert is_allowed_attachment_mime("video/mp4")
     assert is_allowed_attachment_mime("application/zip")
     assert is_allowed_attachment_mime("application/octet-stream")
+
+
+def test_client_message_metadata_overlay_drops_ambiguous_content_hashes(tmp_path):
+    store = CoreStore(tmp_path / "core.sqlite3")
+    runtime_id = "runtime_local_hermes"
+    profile = "default"
+    chat_id = "chat-1"
+    duplicate_content = "write a short 3 paragraph story about AI automation"
+
+    store.upsert_client_message_metadata(
+        runtime_id=runtime_id,
+        profile=profile,
+        chat_id=chat_id,
+        message_id="uuid-a",
+        content=duplicate_content,
+        metadata={"clientMessageId": "uuid-a", "clientContent": duplicate_content},
+    )
+    store.upsert_client_message_metadata(
+        runtime_id=runtime_id,
+        profile=profile,
+        chat_id=chat_id,
+        message_id="uuid-b",
+        content=duplicate_content,
+        metadata={"clientMessageId": "uuid-b", "clientContent": duplicate_content},
+    )
+    store.upsert_client_message_metadata(
+        runtime_id=runtime_id,
+        profile=profile,
+        chat_id=chat_id,
+        message_id="uuid-unique",
+        content="another distinct prompt",
+        metadata={"clientMessageId": "uuid-unique", "clientContent": "another distinct prompt"},
+    )
+
+    overlay = store.client_message_metadata_for_messages(
+        runtime_id=runtime_id,
+        profile=profile,
+        chat_id=chat_id,
+        messages=[
+            {"id": "history-user-1", "role": "user", "content": duplicate_content},
+            {"id": "history-user-2", "role": "user", "content": duplicate_content},
+            {"id": "history-user-3", "role": "user", "content": "another distinct prompt"},
+        ],
+    )
+
+    assert "uuid-a" in overlay["byMessageId"]
+    assert "uuid-b" in overlay["byMessageId"]
+    assert "uuid-unique" in overlay["byMessageId"]
+    by_content_hash = overlay["byContentHash"]
+    assert all(entry.get("clientMessageId") == "uuid-unique" for entry in by_content_hash.values())
+    assert len(by_content_hash) == 1

@@ -1083,6 +1083,136 @@ describe("Iris chat inbox merging", () => {
   });
 });
 
+describe("clientRequestId dedup", () => {
+  it("matches the optimistic assistant placeholder by clientRequestId before streamMessageId is known", () => {
+    const existing: Message[] = [
+      { id: "uuid-user", role: "user", content: "hi", clientRequestId: "uuid-user" },
+      {
+        id: "uuid-asst",
+        role: "assistant",
+        content: "Thinking...",
+        streaming: true,
+        clientRequestId: "uuid-user",
+      },
+    ];
+
+    const merged = mergeStreamDelivery(
+      existing,
+      inboxMessage({ id: "stream-1", content: "Hello", metadata: { replyTo: "uuid-user" } }),
+      "stream-1",
+      false,
+      "uuid-user",
+    );
+
+    expect(merged).toEqual([
+      existing[0],
+      {
+        id: "stream-1",
+        role: "assistant",
+        content: "Hello",
+        streaming: true,
+        streamMessageId: "stream-1",
+        clientRequestId: "uuid-user",
+      },
+    ]);
+  });
+
+  it("does not duplicate when a completed delivery's content differs from the local stream snapshot", () => {
+    const existing: Message[] = [
+      { id: "uuid-user", role: "user", content: "hi", clientRequestId: "uuid-user" },
+      {
+        id: "stream-1",
+        role: "assistant",
+        content: "Hello, w",
+        streaming: true,
+        streamMessageId: "stream-1",
+        clientRequestId: "uuid-user",
+      },
+    ];
+
+    const merged = mergeCompletedDelivery(
+      existing,
+      inboxMessage({
+        id: "delivery-99",
+        content: "Hello, world!",
+        metadata: { replyTo: "uuid-user" },
+      }),
+      "uuid-user",
+      "uuid-user",
+    );
+
+    expect(merged).toHaveLength(2);
+    expect(merged[1]).toMatchObject({
+      role: "assistant",
+      content: "Hello, world!",
+      streaming: false,
+      clientRequestId: "uuid-user",
+    });
+  });
+
+  it("prefers clientRequestId over content equivalence when merging history into local", () => {
+    const local: Message[] = [
+      { id: "uuid-user", role: "user", content: "hi there", clientRequestId: "uuid-user" },
+      {
+        id: "stream-1",
+        role: "assistant",
+        content: "ok",
+        streamMessageId: "stream-1",
+        clientRequestId: "uuid-user",
+      },
+    ];
+    const history: Message[] = [
+      { id: "12345", role: "user", content: "hi", clientRequestId: "uuid-user" },
+      { id: "12346", role: "assistant", content: "ok!", clientRequestId: "uuid-user" },
+    ];
+
+    const merged = mergeMessageLists(local, history);
+
+    expect(merged.map((message) => message.id)).toEqual(["12345", "12346"]);
+  });
+
+  it("falls back to the legacy content heuristic when clientRequestId is absent on both sides", () => {
+    const local: Message[] = [
+      { id: "uuid-user", role: "user", content: "same prompt" },
+    ];
+    const history: Message[] = [
+      { id: "12345", role: "user", content: "same prompt" },
+    ];
+
+    const merged = mergeMessageLists(local, history);
+
+    expect(merged.map((message) => message.id)).toEqual(["12345"]);
+  });
+
+  it("finalizes the orphan streaming assistant when a finalize delta arrives with an unmatched streamMessageId", () => {
+    const existing: Message[] = [
+      { id: "user-1", role: "user", content: "hi" },
+      {
+        id: "stream-a",
+        role: "assistant",
+        content: "partial answer",
+        streaming: true,
+        streamMessageId: "stream-a",
+      },
+    ];
+
+    const merged = mergeStreamDelivery(
+      existing,
+      inboxMessage({ id: "stream-z:edit:1", content: "final answer" }),
+      "stream-z",
+      true,
+    );
+
+    expect(merged).toHaveLength(2);
+    expect(merged[1]).toMatchObject({
+      role: "assistant",
+      streaming: false,
+      streamMessageId: "stream-z",
+    });
+    expect(merged.filter((m) => m.role === "assistant" && m.streaming === true)).toHaveLength(0);
+  });
+});
+
 describe("Iris chat profile selection", () => {
   it("preserves an explicit session selection while switching profiles", () => {
     expect(
@@ -1488,7 +1618,7 @@ describe("Iris chat session detail loading", () => {
             status: "completed",
             toolName: "",
             timestamp: 2,
-            metadata: { streaming: false, finalize: true },
+            metadata: { replyTo: "client-message-1", streaming: false, finalize: true },
           },
         ],
         "client-message-1",
@@ -1496,7 +1626,7 @@ describe("Iris chat session detail loading", () => {
     ).toBe(true);
   });
 
-  it("recognizes completed stream history after the active user even without reply metadata", () => {
+  it("does not reconcile when the completed assistant does not reference the active request", () => {
     expect(
       activeRequestCompletedByHistory(
         [
@@ -1522,7 +1652,7 @@ describe("Iris chat session detail loading", () => {
         ],
         "user-1",
       ),
-    ).toBe(true);
+    ).toBe(false);
   });
 
   it("does not reconcile an active request from streaming-only history", () => {

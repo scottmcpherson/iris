@@ -159,6 +159,7 @@ export function useAgentUIChat({
   const pendingProfileSelectionRef = useRef<PendingProfileSessionSelection | null>(null);
   const coreEventSourceRef = useRef<EventSource | null>(null);
   const activeDetailReconcileAtRef = useRef<Record<string, number>>({});
+  const streamLastDeltaAtRef = useRef<Record<string, number>>({});
   const sendInFlightRef = useRef(false);
   const messagesBySessionRef = useRef(messagesBySession);
   const activeRequestIdsBySessionRef = useRef(activeRequestIdsBySession);
@@ -267,6 +268,50 @@ export function useAgentUIChat({
     };
   }, [runtimeConfig.coreApiUrl, profile, hasActiveRequest]);
 
+  useEffect(() => {
+    if (!hasActiveRequest) return;
+    const STREAM_STALL_MS = 8000;
+    const interval = window.setInterval(() => {
+      const now = Date.now();
+      const activeIds = Object.keys(activeRequestIdsBySessionRef.current);
+      for (const sessionId of activeIds) {
+        const lastDeltaAt = streamLastDeltaAtRef.current[sessionId];
+        if (!lastDeltaAt) continue;
+        if (now - lastDeltaAt < STREAM_STALL_MS) continue;
+        const sessionMessages = messagesBySessionRef.current[sessionId] || [];
+        const hasStreamingContentful = sessionMessages.some(
+          (message) =>
+            message.role === "assistant" &&
+            message.streaming === true &&
+            message.streamMessageId &&
+            (message.content || "").trim().length > 0,
+        );
+        if (!hasStreamingContentful) continue;
+        setMessagesBySession((current) => {
+          const list = current[sessionId];
+          if (!list) return current;
+          const next = list.map((message) =>
+            message.role === "assistant" && message.streaming === true
+              ? { ...message, streaming: false }
+              : message,
+          );
+          return { ...current, [sessionId]: next };
+        });
+        delete streamLastDeltaAtRef.current[sessionId];
+        activeRequestIdsBySessionRef.current = removeActiveRequestIds(
+          activeRequestIdsBySessionRef.current,
+          sessionId,
+        );
+        activeSessionTitlesBySessionRef.current = removeSessionValues(
+          activeSessionTitlesBySessionRef.current,
+          sessionId,
+        );
+        setActiveRequestIdsBySession((current) => removeActiveRequestIds(current, sessionId));
+      }
+    }, 2000);
+    return () => window.clearInterval(interval);
+  }, [hasActiveRequest]);
+
   async function sendMessage(options: SendMessageOptions | MessageAttachment[] = {}) {
     const draftAttachments = Array.isArray(options) ? options : options.attachments || [];
     const modelSelection = Array.isArray(options) ? null : options.modelSelection || null;
@@ -306,12 +351,14 @@ export function useAgentUIChat({
       role: "user",
       content: displayedPrompt,
       attachments,
+      clientRequestId: userMessageId,
     };
     const assistantMessage: Message = {
       id: assistantId,
       role: "assistant",
       content: "Thinking...",
       streaming: true,
+      clientRequestId: userMessageId,
     };
     const activeSessionTitle = sessionTitleFromPrompt(promptWithAttachments);
     let coreCreatedSession: HermesSession | null = null;
@@ -1140,30 +1187,45 @@ export function useAgentUIChat({
           Array.from(processedInboxEventIdsRef.current).slice(-250),
         );
       }
+      if (isStreamDelivery) {
+        streamLastDeltaAtRef.current = {
+          ...streamLastDeltaAtRef.current,
+          [sessionId]: Date.now(),
+        };
+      }
+      let postMergeMessages: Message[] | null = null;
       setMessagesBySession((current) => {
+        const freshRelatedSessionIds = sessionIdsForChatId(
+          delivery.chatId,
+          sessionId,
+          sessionChatIdsBySessionRef.current,
+        );
         const existing = mergeRelatedSessionMessages(
           current,
-          relatedSessionIds,
+          freshRelatedSessionIds,
         );
-        if (!isStreamDelivery && existing.some((message) => message.id === delivery.id)) return current;
+        if (!isStreamDelivery && existing.some((message) => message.id === delivery.id)) {
+          postMergeMessages = existing;
+          return current;
+        }
         const nextMessages = isStreamDelivery
-          ? mergeStreamDelivery(existing, delivery, streamMessageId, isFinalStreamDelivery)
-          : mergeCompletedDelivery(existing, delivery, replyTo);
-        return setSessionMessages(current, relatedSessionIds, sessionId, nextMessages);
+          ? mergeStreamDelivery(existing, delivery, streamMessageId, isFinalStreamDelivery, replyTo)
+          : mergeCompletedDelivery(existing, delivery, replyTo, replyTo);
+        postMergeMessages = nextMessages;
+        return setSessionMessages(current, freshRelatedSessionIds, sessionId, nextMessages);
       });
-      if (replyTo && (!isStreamDelivery || isFinalStreamDelivery)) {
-        activeRequestIdsBySessionRef.current = removeActiveRequestIds(
-          activeRequestIdsBySessionRef.current,
-          ...relatedSessionIds,
-        );
-        activeSessionTitlesBySessionRef.current = removeSessionValues(
-          activeSessionTitlesBySessionRef.current,
-          ...relatedSessionIds,
-        );
-        setActiveRequestIdsBySession((current) =>
-          removeActiveRequestIds(current, ...relatedSessionIds),
-        );
-      } else if (isFinalStreamDelivery || completesActiveStream) {
+      const sessionStillStreaming = postMergeMessages
+        ? (postMergeMessages as Message[]).some(
+            (message) => message.role === "assistant" && message.streaming === true,
+          )
+        : true;
+      const shouldClearActive =
+        (replyTo && (!isStreamDelivery || isFinalStreamDelivery)) ||
+        isFinalStreamDelivery ||
+        completesActiveStream ||
+        (postMergeMessages !== null && !sessionStillStreaming);
+      if (shouldClearActive) {
+        for (const id of relatedSessionIds) delete streamLastDeltaAtRef.current[id];
         activeRequestIdsBySessionRef.current = removeActiveRequestIds(
           activeRequestIdsBySessionRef.current,
           ...relatedSessionIds,

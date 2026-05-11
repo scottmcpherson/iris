@@ -82,12 +82,29 @@ function toAppMessage(message: HermesSessionMessage): Message {
   const displayContent = message.role === "assistant"
     ? contentWithoutRenderedAttachmentMarkers(content, attachments, message.metadata)
     : displayContentForAttachments(content, attachments);
+  const clientRequestId = clientRequestIdFromHistoryMessage(message);
   return {
     id: message.id,
     role: message.role,
     content: message.toolName ? `${message.toolName}\n${content}`.trim() : displayContent,
     attachments: attachments.length ? attachments : undefined,
+    ...(clientRequestId ? { clientRequestId } : {}),
   };
+}
+
+function clientRequestIdFromHistoryMessage(message: HermesSessionMessage) {
+  const metadata = message.metadata || {};
+  if (message.role === "user") {
+    return stringMetadata(metadata, "clientMessageId") ||
+      stringMetadata(metadata, "client_message_id");
+  }
+  if (message.role === "assistant") {
+    return stringMetadata(metadata, "replyTo") ||
+      stringMetadata(metadata, "reply_to") ||
+      stringMetadata(metadata, "clientMessageId") ||
+      stringMetadata(metadata, "client_message_id");
+  }
+  return "";
 }
 
 function displayContentForAttachments(content: string, attachments: MessageAttachment[]) {
