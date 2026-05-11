@@ -21,6 +21,7 @@ try:
         current_profile_name,
         default_inbound_port,
         env_value,
+        clamp_int,
         normalize_base_url,
         safe_int,
         safe_text,
@@ -44,6 +45,7 @@ except ImportError:
         current_profile_name,
         default_inbound_port,
         env_value,
+        clamp_int,
         normalize_base_url,
         safe_int,
         safe_text,
@@ -73,6 +75,8 @@ from gateway.session import SessionSource
 logger = logging.getLogger(__name__)
 
 MAX_INBOUND_BYTES = 250 * 1024 * 1024
+STREAM_STATE_TTL_SECONDS = 60 * 60
+STREAM_STATE_MAX_ENTRIES = 512
 
 
 class IrisPlatformAdapter(BasePlatformAdapter):
@@ -103,6 +107,15 @@ class IrisPlatformAdapter(BasePlatformAdapter):
             or extra.get("default_chat_id")
             or "desktop"
         ).strip()
+        self._stream_last_sent_lengths: dict[str, int] = {}
+        self._stream_last_sent_content: dict[str, str] = {}
+        self._stream_client_request_ids: dict[str, str] = {}
+        self._stream_terminal_sent: set[str] = set()
+        self._stream_state_updated_at: dict[str, float] = {}
+        self._stream_terminal_sent_at: dict[str, float] = {}
+        self._active_client_request_ids_by_chat: dict[str, str] = {}
+        self._active_client_request_id_updated_at: dict[str, float] = {}
+        self._active_streams_by_client_request_id: dict[str, tuple[str, str]] = {}
         self._runner = None
         self._site = None
 
@@ -161,6 +174,11 @@ class IrisPlatformAdapter(BasePlatformAdapter):
             return SendResult(success=False, error="Iris chat id is required")
 
         merged_metadata = dict(metadata or {})
+        client_request_id = self._client_request_id_from_metadata(merged_metadata)
+        if client_request_id:
+            merged_metadata["clientRequestId"] = client_request_id
+            self._active_client_request_ids_by_chat[target] = client_request_id
+            self._active_client_request_id_updated_at[target] = time.time()
         if reply_to:
             merged_metadata["replyTo"] = reply_to
 
@@ -178,6 +196,12 @@ class IrisPlatformAdapter(BasePlatformAdapter):
             merged_metadata["streamMessageId"] = message_id
             merged_metadata["streaming"] = True
             merged_metadata["finalize"] = False
+            merged_metadata["chunkProtocol"] = "v2-delta"
+            merged_metadata["chunkOperation"] = "append"
+            if client_request_id:
+                self._stream_client_request_ids[message_id] = client_request_id
+                self._active_streams_by_client_request_id[client_request_id] = (target, message_id)
+                self._touch_stream_state(message_id)
             if reply_to:
                 merged_metadata["replyTo"] = reply_to
 
@@ -216,6 +240,7 @@ class IrisPlatformAdapter(BasePlatformAdapter):
         content: str,
         *,
         finalize: bool = False,
+        metadata: Optional[Dict[str, Any]] = None,
     ) -> SendResult:
         target = (chat_id or self.default_chat_id).strip()
         stream_message_id = str(message_id or "").strip()
@@ -223,22 +248,71 @@ class IrisPlatformAdapter(BasePlatformAdapter):
             return SendResult(success=False, error="Iris chat id is required")
         if not stream_message_id:
             return SendResult(success=False, error="Iris stream message id is required")
+        self._prune_stream_state()
+        if stream_message_id in self._stream_terminal_sent:
+            return SendResult(success=True, message_id=stream_message_id, raw_response={"ok": True, "duplicateTerminal": True})
 
+        clean_content = strip_stream_cursor(content)
+        last_sent_length = self._stream_last_sent_lengths.get(stream_message_id, 0)
+        last_sent_content = self._stream_last_sent_content.get(stream_message_id, "")
+        chunk_operation = "append"
+        if last_sent_content and clean_content.startswith(last_sent_content):
+            delta = clean_content[last_sent_length:]
+        elif not last_sent_content:
+            delta = clean_content
+        else:
+            logger.warning(
+                "[Iris] stream %s received non-monotonic content; sending replace chunk",
+                stream_message_id,
+            )
+            delta = clean_content
+            chunk_operation = "replace"
+        self._stream_last_sent_lengths[stream_message_id] = len(clean_content)
+        self._stream_last_sent_content[stream_message_id] = clean_content
+        self._touch_stream_state(stream_message_id)
+        delivery_metadata = dict(metadata or {})
+        client_request_id = (
+            self._client_request_id_from_metadata(delivery_metadata)
+            or self._stream_client_request_ids.get(stream_message_id, "")
+            or self._active_client_request_ids_by_chat.get(target, "")
+        )
+        if client_request_id:
+            self._stream_client_request_ids[stream_message_id] = client_request_id
+            self._active_streams_by_client_request_id[client_request_id] = (target, stream_message_id)
+            self._active_client_request_ids_by_chat[target] = client_request_id
+            self._active_client_request_id_updated_at[target] = time.time()
         body = {
             "runtimeId": "runtime_local_hermes",
             "profile": self.profile,
             "chatId": target,
             "messageId": f"{stream_message_id}:edit:{time.time_ns()}",
             "source": "hermes-gateway-stream",
-            "content": strip_stream_cursor(content),
+            "content": delta,
             "metadata": {
+                **delivery_metadata,
                 "streamMessageId": stream_message_id,
+                "chunkProtocol": "v2-delta",
+                "chunkOperation": chunk_operation,
                 "streaming": not finalize,
                 "finalize": bool(finalize),
+                **({"clientRequestId": client_request_id} if client_request_id else {}),
                 "deliveredAt": int(time.time()),
             },
         }
-        result = await self._request("POST", "/v1/runtime-deliveries/hermes", body)
+        try:
+            result = await self._request("POST", "/v1/runtime-deliveries/hermes", body)
+        except Exception as exc:
+            await self._emit_stream_error_delivery(target, stream_message_id, client_request_id, exc)
+            raise
+        if finalize:
+            self._stream_terminal_sent.add(stream_message_id)
+            self._stream_terminal_sent_at[stream_message_id] = time.time()
+            self._clear_stream_state(stream_message_id)
+            if client_request_id:
+                self._active_streams_by_client_request_id.pop(client_request_id, None)
+                if self._active_client_request_ids_by_chat.get(target) == client_request_id:
+                    self._active_client_request_ids_by_chat.pop(target, None)
+                    self._active_client_request_id_updated_at.pop(target, None)
         if not result.get("ok"):
             return SendResult(
                 success=False,
@@ -251,6 +325,112 @@ class IrisPlatformAdapter(BasePlatformAdapter):
             message_id=stream_message_id,
             raw_response=result,
         )
+
+    def _client_request_id_from_metadata(self, metadata: Dict[str, Any]) -> str:
+        return str(
+            metadata.get("clientRequestId")
+            or metadata.get("client_request_id")
+            or metadata.get("clientMessageId")
+            or metadata.get("client_message_id")
+            or ""
+        ).strip()
+
+    def _touch_stream_state(self, stream_message_id: str) -> None:
+        self._stream_state_updated_at[stream_message_id] = time.time()
+
+    def _clear_stream_state(self, stream_message_id: str) -> None:
+        self._stream_last_sent_lengths.pop(stream_message_id, None)
+        self._stream_last_sent_content.pop(stream_message_id, None)
+        client_request_id = self._stream_client_request_ids.pop(stream_message_id, "")
+        self._stream_state_updated_at.pop(stream_message_id, None)
+        if client_request_id:
+            active = self._active_streams_by_client_request_id.get(client_request_id)
+            if active and active[1] == stream_message_id:
+                self._active_streams_by_client_request_id.pop(client_request_id, None)
+
+    def _prune_stream_state(self) -> None:
+        now = time.time()
+        stale_stream_ids = [
+            stream_id
+            for stream_id, updated_at in self._stream_state_updated_at.items()
+            if now - updated_at > STREAM_STATE_TTL_SECONDS
+        ]
+        for stream_id in stale_stream_ids:
+            self._clear_stream_state(stream_id)
+
+        stale_terminal_ids = [
+            stream_id
+            for stream_id, updated_at in self._stream_terminal_sent_at.items()
+            if now - updated_at > STREAM_STATE_TTL_SECONDS
+        ]
+        for stream_id in stale_terminal_ids:
+            self._stream_terminal_sent.discard(stream_id)
+            self._stream_terminal_sent_at.pop(stream_id, None)
+
+        stale_chats = [
+            chat_id
+            for chat_id, updated_at in self._active_client_request_id_updated_at.items()
+            if now - updated_at > STREAM_STATE_TTL_SECONDS
+        ]
+        for chat_id in stale_chats:
+            self._active_client_request_ids_by_chat.pop(chat_id, None)
+            self._active_client_request_id_updated_at.pop(chat_id, None)
+
+        while len(self._stream_state_updated_at) > STREAM_STATE_MAX_ENTRIES:
+            oldest_stream_id = min(self._stream_state_updated_at, key=self._stream_state_updated_at.get)
+            self._clear_stream_state(oldest_stream_id)
+        while len(self._stream_terminal_sent_at) > STREAM_STATE_MAX_ENTRIES:
+            oldest_stream_id = min(self._stream_terminal_sent_at, key=self._stream_terminal_sent_at.get)
+            self._stream_terminal_sent.discard(oldest_stream_id)
+            self._stream_terminal_sent_at.pop(oldest_stream_id, None)
+        while len(self._active_client_request_id_updated_at) > STREAM_STATE_MAX_ENTRIES:
+            oldest_chat_id = min(
+                self._active_client_request_id_updated_at,
+                key=self._active_client_request_id_updated_at.get,
+            )
+            self._active_client_request_ids_by_chat.pop(oldest_chat_id, None)
+            self._active_client_request_id_updated_at.pop(oldest_chat_id, None)
+
+    async def _emit_stream_error_delivery(
+        self,
+        chat_id: str,
+        stream_message_id: str,
+        client_request_id: str,
+        error: Exception,
+    ) -> None:
+        if stream_message_id in self._stream_terminal_sent:
+            return
+        self._stream_terminal_sent.add(stream_message_id)
+        self._stream_terminal_sent_at[stream_message_id] = time.time()
+        body = {
+            "runtimeId": "runtime_local_hermes",
+            "profile": self.profile,
+            "chatId": chat_id,
+            "messageId": f"{stream_message_id}:error:{time.time_ns()}",
+            "source": "hermes-error",
+            "content": "",
+            "metadata": {
+                "streamMessageId": stream_message_id,
+                "chunkProtocol": "v2-delta",
+                "chunkOperation": "append",
+                "streaming": False,
+                "finalize": True,
+                "error": str(error),
+                **({"clientRequestId": client_request_id} if client_request_id else {}),
+                "deliveredAt": int(time.time()),
+            },
+        }
+        try:
+            await self._request("POST", "/v1/runtime-deliveries/hermes", body)
+        except Exception:
+            logger.exception("[Iris] failed to emit terminal stream error for %s", stream_message_id)
+        finally:
+            self._clear_stream_state(stream_message_id)
+            if client_request_id:
+                self._active_streams_by_client_request_id.pop(client_request_id, None)
+                if self._active_client_request_ids_by_chat.get(chat_id) == client_request_id:
+                    self._active_client_request_ids_by_chat.pop(chat_id, None)
+                    self._active_client_request_id_updated_at.pop(chat_id, None)
 
     async def get_chat_info(self, chat_id: str) -> Dict[str, Any]:
         return {"name": chat_id or self.default_chat_id, "type": "iris"}
@@ -330,6 +510,15 @@ class IrisPlatformAdapter(BasePlatformAdapter):
             )
 
         message_id = safe_text(payload.get("messageId") or payload.get("message_id"), str(uuid.uuid4()), 160)
+        client_request_id = (
+            self._client_request_id_from_metadata(metadata)
+            or safe_text(payload.get("clientRequestId") or payload.get("client_request_id"), "", 160)
+            or message_id
+        )
+        if client_request_id:
+            metadata = {**metadata, "clientRequestId": client_request_id}
+            self._active_client_request_ids_by_chat[chat_id] = client_request_id
+            self._active_client_request_id_updated_at[chat_id] = time.time()
         source = SessionSource(
             platform=Platform("iris"),
             chat_id=chat_id,
@@ -363,7 +552,12 @@ class IrisPlatformAdapter(BasePlatformAdapter):
             media_types=[attachment["mimeType"] for attachment in attachments],
             channel_prompt=project_prompt or None,
         )
-        asyncio.create_task(self.handle_message(event))
+        task = asyncio.create_task(self.handle_message(event))
+        task.add_done_callback(
+            lambda done: asyncio.create_task(
+                self._handle_inbound_message_done(done, chat_id, client_request_id)
+            )
+        )
         return web.json_response(  # type: ignore[union-attr]
             {
                 "ok": True,
@@ -377,6 +571,29 @@ class IrisPlatformAdapter(BasePlatformAdapter):
             },
             status=202,
         )
+
+    async def _handle_inbound_message_done(self, task, chat_id: str, client_request_id: str) -> None:
+        try:
+            task.result()
+        except asyncio.CancelledError as exc:
+            await self._emit_active_stream_error(chat_id, client_request_id, exc)
+        except Exception as exc:
+            await self._emit_active_stream_error(chat_id, client_request_id, exc)
+        else:
+            active = self._active_streams_by_client_request_id.get(client_request_id)
+            if active:
+                await self._emit_stream_error_delivery(
+                    active[0] or chat_id,
+                    active[1],
+                    client_request_id,
+                    RuntimeError("Hermes stream ended without a terminal delivery"),
+                )
+
+    async def _emit_active_stream_error(self, chat_id: str, client_request_id: str, error: Exception) -> None:
+        active = self._active_streams_by_client_request_id.get(client_request_id)
+        if not active:
+            return
+        await self._emit_stream_error_delivery(active[0] or chat_id, active[1], client_request_id, error)
 
     async def _inbound_models(self, request):
         if not self._authorized(request):

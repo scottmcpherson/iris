@@ -14,10 +14,19 @@ export function mergeStreamDelivery(
   finalized: boolean,
   clientRequestId = "",
 ) {
+  if (!clientRequestId) {
+    // Cron deliveries are expected to arrive completed; streaming updates must be tied to a user request.
+    console.warn("Dropped assistant stream delivery without clientRequestId.", {
+      deliveryId: delivery.id,
+      streamMessageId,
+    });
+    return existing;
+  }
   const deliveryAttachments = attachmentsFromDelivery(delivery);
   const content = contentWithoutRenderedAttachmentMarkers(delivery.content, deliveryAttachments, delivery.metadata);
   const liveToolEvents = streamToolEventsFromMetadata(delivery.metadata, delivery.id);
   const messageContent = liveToolEvents.length && !content.trim() ? "" : content;
+  const operation = chunkOperation(delivery.metadata);
   const streaming = !finalized;
   const updateMessage = (message: Message): Message => {
     const streamEvents = streamEventsForUpdate(message, liveToolEvents, finalized);
@@ -27,11 +36,9 @@ export function mergeStreamDelivery(
       id: streamMessageId,
       streamMessageId,
       ...(clientRequestId ? { clientRequestId } : {}),
-      content: replacingPlaceholder
+      content: replacingPlaceholder || operation === "replace"
         ? messageContent
-        : finalized && deliveryAttachments.length && messageContent.trim()
-        ? messageContent
-        : mergedStreamSnapshotContent(message.content, messageContent),
+        : appendDeltaContent(message.content, messageContent),
       attachments: replacingPlaceholder
         ? (deliveryAttachments.length ? deliveryAttachments : undefined)
         : mergeMessageAttachments(message.attachments, deliveryAttachments),
@@ -47,22 +54,15 @@ export function mergeStreamDelivery(
   if (clientRequestMatchIndex !== -1) {
     return existing.map((message, index) => (index === clientRequestMatchIndex ? updateMessage(message) : message));
   }
-  const streamIndex = existing.findIndex(
-    (message) => message.streamMessageId === streamMessageId || message.id === streamMessageId,
+  const streamIndex = existing.findIndex((message) =>
+    message.role === "assistant" &&
+    !message.clientRequestId &&
+    (message.streamMessageId === streamMessageId || message.id === streamMessageId)
   );
   if (streamIndex !== -1) {
     return existing.map((message, index) => (index === streamIndex ? updateMessage(message) : message));
   }
 
-  const placeholderIndex = existing.findIndex(
-    (message) => message.role === "assistant" && message.streaming && !message.streamMessageId,
-  );
-  if (placeholderIndex === -1 && finalized) {
-    const orphanIndex = lastStreamingAssistantIndex(existing);
-    if (orphanIndex !== -1) {
-      return existing.map((message, index) => (index === orphanIndex ? updateMessage(message) : message));
-    }
-  }
   const assistantMessage: Message = {
     id: streamMessageId,
     role: "assistant",
@@ -73,9 +73,6 @@ export function mergeStreamDelivery(
     attachments: deliveryAttachments.length ? deliveryAttachments : undefined,
     ...(liveToolEvents.length ? { streamEvents: liveToolEvents } : {}),
   };
-  if (placeholderIndex !== -1) {
-    return coalescePostStreamAttachments(existing.map((message, index) => (index === placeholderIndex ? assistantMessage : message)));
-  }
   return coalescePostStreamAttachments([...existing, assistantMessage]);
 }
 
@@ -87,6 +84,14 @@ export function mergeCompletedDelivery(
 ) {
   const deliveryAttachments = attachmentsFromDelivery(delivery);
   const deliveryContent = contentWithoutRenderedAttachmentMarkers(delivery.content, deliveryAttachments, delivery.metadata);
+  const cronDelivery = delivery.source === "hermes-cron";
+  if (!clientRequestId && !cronDelivery) {
+    console.warn("Dropped completed assistant delivery without clientRequestId.", {
+      deliveryId: delivery.id,
+      replyTo,
+    });
+    return existing;
+  }
   const clientRequestMatchIndex = clientRequestId
     ? existing.findIndex(
         (message) => message.role === "assistant" && message.clientRequestId === clientRequestId,
@@ -96,65 +101,57 @@ export function mergeCompletedDelivery(
     return coalescePostStreamAttachments(
       existing.map((message, index) =>
         index === clientRequestMatchIndex
-          ? completedStreamingMessage(message, delivery, deliveryContent, deliveryAttachments)
-          : message,
+            ? completedStreamingMessage(message, delivery, deliveryContent, deliveryAttachments)
+            : message,
       ),
     );
   }
-  const streamingIndex = lastStreamingAssistantIndex(existing);
-  if (streamingIndex === -1) {
-    const duplicateIndex = duplicateCompletedDeliveryIndex(existing, delivery, replyTo);
-    if (duplicateIndex !== -1) {
-      return coalescePostStreamAttachments(
-        existing.map((message, index) =>
-          index === duplicateIndex
-            ? {
-                ...message,
-                content: mergedCompletedStreamContent(message.content, deliveryContent),
-                attachments: mergeMessageAttachments(message.attachments, deliveryAttachments),
-                streaming: false,
-              }
-            : message,
-        ),
-      );
-    }
+  const assistantMessage: Message = {
+    id: delivery.id,
+    role: "assistant",
+    content: deliveryContent,
+    ...(delivery.source === "hermes-cron" ? { source: delivery.source } : {}),
+    ...(clientRequestId ? { clientRequestId } : {}),
+    streaming: false,
+    attachments: deliveryAttachments.length ? deliveryAttachments : undefined,
+  };
+  return coalescePostStreamAttachments([...existing, assistantMessage]);
+}
 
-    const attachIndex = postStreamAttachmentIndex(existing, delivery);
-    if (attachIndex !== -1) {
-      return coalescePostStreamAttachments(
-        existing.map((message, index) =>
-          index === attachIndex
-            ? {
-                ...message,
-                content: appendMessageContent(message.content, deliveryContent),
-                attachments: mergeMessageAttachments(message.attachments, deliveryAttachments),
-              }
-            : message,
-        ),
-      );
-    }
-
-    const assistantMessage: Message = {
-      id: delivery.id,
-      role: "assistant",
-      content: deliveryContent,
-      ...(delivery.source === "hermes-cron" ? { source: delivery.source } : {}),
-      ...(clientRequestId ? { clientRequestId } : {}),
-      streaming: false,
-      attachments: deliveryAttachments.length ? deliveryAttachments : undefined,
-    };
-    return coalescePostStreamAttachments([
-      ...existing,
-      assistantMessage,
-    ]);
+export function mergeErrorDelivery(
+  existing: Message[],
+  delivery: HermesInboxMessage,
+  clientRequestId = "",
+) {
+  const errorMessage = streamErrorMessage(delivery);
+  if (!clientRequestId) {
+    console.warn("Dropped assistant error delivery without clientRequestId.", { deliveryId: delivery.id });
+    return existing;
   }
-
-  return coalescePostStreamAttachments(
-    existing.map((message, index) =>
-      index === streamingIndex
-        ? completedStreamingMessage(message, delivery, deliveryContent, deliveryAttachments)
-        : message,
-    ),
+  const matchIndex = existing.findIndex(
+    (message) => message.role === "assistant" && message.clientRequestId === clientRequestId,
+  );
+  const errorAssistant: Message = {
+    id: delivery.id,
+    role: "assistant",
+    content: errorMessage,
+    clientRequestId,
+    streaming: false,
+    source: delivery.source,
+  };
+  if (matchIndex === -1) return [...existing, errorAssistant];
+  return existing.map((message, index) =>
+    index === matchIndex
+      ? {
+          ...message,
+          id: message.streamMessageId || message.id,
+          content: message.content && message.content !== "Thinking..."
+            ? `${message.content}\n\n${errorMessage}`
+            : errorMessage,
+          streaming: false,
+          source: delivery.source,
+        }
+      : message,
   );
 }
 
@@ -176,9 +173,12 @@ function completedStreamingMessage(
     };
   }
   const streamEvents = completedStreamEvents(message);
+  const operation = chunkOperation(delivery.metadata);
   return {
     ...message,
-    content: mergedCompletedStreamContent(message.content, deliveryContent),
+    content: operation === "replace"
+      ? deliveryContent
+      : appendDeltaContent(message.content, deliveryContent),
     attachments: mergeMessageAttachments(message.attachments, deliveryAttachments),
     streaming: false,
     ...(streamEvents?.length ? { streamEvents } : {}),
@@ -202,96 +202,36 @@ function completedStreamEvents(message: Message) {
   );
 }
 
-function lastStreamingAssistantIndex(messages: Message[]) {
-  for (let index = messages.length - 1; index >= 0; index -= 1) {
-    const message = messages[index];
-    if (message.role === "assistant" && message.streaming) return index;
-  }
-  return -1;
+function appendDeltaContent(content: string, addition: string) {
+  if (!content) return addition;
+  if (!addition) return content;
+  return `${content}${addition}`;
 }
 
-function postStreamAttachmentIndex(messages: Message[], delivery: HermesInboxMessage) {
-  if (delivery.source !== "hermes-gateway" || (!delivery.content.trim() && !attachmentsFromDelivery(delivery).length)) return -1;
-  if (!isPostStreamAttachmentContent(delivery.content) && !attachmentsFromDelivery(delivery).length) return -1;
-  for (let index = messages.length - 1; index >= 0; index -= 1) {
-    const message = messages[index];
-    if (message.role === "user") return -1;
-    if (message.role === "assistant" && message.streamMessageId) return index;
-  }
-  return -1;
+function chunkOperation(metadata: HermesInboxMessage["metadata"]) {
+  const value = typeof metadata?.chunkOperation === "string"
+    ? metadata.chunkOperation
+    : typeof metadata?.chunk_operation === "string"
+      ? metadata.chunk_operation
+      : "";
+  return value.toLowerCase() === "replace" ? "replace" : "append";
 }
 
-function duplicateCompletedDeliveryIndex(messages: Message[], delivery: HermesInboxMessage, replyTo: string) {
-  const content = normalizeMessageContent(delivery.content);
-  if (!content || isPostStreamAttachmentContent(delivery.content)) return -1;
-  for (let index = messages.length - 1; index >= 0; index -= 1) {
-    const message = messages[index];
-    if (message.role === "user") return -1;
-    if (message.role !== "assistant") continue;
-    const canCoalesce = Boolean(message.streamMessageId || replyTo);
-    if (canCoalesce && equivalentMessageContent(message.content, delivery.content)) return index;
-  }
-  return -1;
-}
-
-function normalizeMessageContent(content: string) {
-  return content.trim().split("\n").map((line) => line.trimEnd()).join("\n");
-}
-
-function equivalentMessageContent(left: string, right: string) {
-  return compactWhitespace(left) === compactWhitespace(right);
-}
-
-function compactWhitespace(content: string) {
-  return normalizeMessageContent(content)
-    .replace(/\s+/g, " ")
-    .replace(/\s+([,.;:!?])/g, "$1")
-    .trim();
-}
-
-function mergedCompletedStreamContent(existing: string, delivery: string) {
-  const existingContent = existing.trimEnd();
-  const deliveryContent = delivery.trim();
-  if (!existingContent) return deliveryContent;
-  if (!deliveryContent) return existingContent;
-  if (compactWhitespace(existingContent) === compactWhitespace(deliveryContent)) return deliveryContent;
-  if (compactWhitespace(deliveryContent).startsWith(compactWhitespace(existingContent))) return deliveryContent;
-  if (compactWhitespace(existingContent).includes(compactWhitespace(deliveryContent))) return existingContent;
-  const overlapped = overlappingMessageContent(existingContent, deliveryContent);
-  if (overlapped) return overlapped;
-  return appendMessageContent(existingContent, deliveryContent);
-}
-
-function mergedStreamSnapshotContent(existing: string, delivery: string) {
-  const existingContent = existing.trimEnd();
-  const deliveryContent = delivery.trim();
-  if (!existingContent) return deliveryContent;
-  if (!deliveryContent) return existingContent;
-  const compactExisting = compactWhitespace(existingContent);
-  const compactDelivery = compactWhitespace(deliveryContent);
-  if (compactDelivery.startsWith(compactExisting)) return deliveryContent;
-  if (compactExisting.startsWith(compactDelivery)) return existingContent;
-  return compactDelivery.length >= compactExisting.length ? deliveryContent : existingContent;
-}
-
-function overlappingMessageContent(existing: string, delivery: string) {
-  const maxOverlap = Math.min(existing.length, delivery.length);
-  for (let length = maxOverlap; length > 11; length -= 1) {
-    const prefix = delivery.slice(0, length);
-    const index = existing.lastIndexOf(prefix);
-    if (index !== -1) return `${existing.slice(0, index)}${delivery}`;
-  }
-  return "";
-}
-
-function appendMessageContent(content: string, addition: string) {
+function appendBlockContent(content: string, addition: string) {
+  // Attachment post-processing joins adjacent generated-file text; stream chunks use appendDeltaContent/chunkOperation.
   const left = content.trimEnd();
   const right = addition.trim();
   if (!left) return right;
-  if (!right || left.includes(right) || equivalentMessageContent(left, right)) return left;
-  if (/^[,.;:!?)]/.test(right)) return `${left}${right}`;
-  if (!/[.!?:;)]$/.test(left) && /^[a-z]/.test(right)) return `${left} ${right}`;
+  if (!right) return left;
   return `${left}\n\n${right}`;
+}
+
+function streamErrorMessage(delivery: HermesInboxMessage) {
+  const metadataError = delivery.metadata?.error;
+  const detail = typeof metadataError === "string" && metadataError.trim()
+    ? metadataError.trim()
+    : delivery.content.trim();
+  return detail ? `Assistant stream failed: ${detail}` : "Assistant stream failed.";
 }
 
 export function coalescePostStreamAttachments(messages: Message[]) {
@@ -303,7 +243,7 @@ export function coalescePostStreamAttachments(messages: Message[]) {
     if (isPostStreamAttachmentMessage(message) && next && next.role === "assistant" && next.streamMessageId) {
       coalesced.push({
         ...next,
-        content: appendMessageContent(next.content, contentWithoutRenderedAttachmentMarkers(message.content, message.attachments)),
+        content: appendBlockContent(next.content, contentWithoutRenderedAttachmentMarkers(message.content, message.attachments)),
         attachments: mergeMessageAttachments(next.attachments, message.attachments),
       });
       index += 1;
@@ -313,7 +253,7 @@ export function coalescePostStreamAttachments(messages: Message[]) {
     if (message.role === "assistant" && message.streamMessageId && next && isPostStreamAttachmentMessage(next)) {
       coalesced.push({
         ...message,
-        content: appendMessageContent(message.content, contentWithoutRenderedAttachmentMarkers(next.content, next.attachments)),
+        content: appendBlockContent(message.content, contentWithoutRenderedAttachmentMarkers(next.content, next.attachments)),
         attachments: mergeMessageAttachments(message.attachments, next.attachments),
       });
       index += 1;
@@ -339,11 +279,9 @@ function isPostStreamAttachmentContent(content: string) {
 }
 
 export function deliveryCompletesActiveStream(messages: Message[], delivery: HermesInboxMessage) {
-  if (delivery.source !== "hermes-gateway" || !delivery.content.trim()) return false;
-  if (isPostStreamAttachmentContent(delivery.content)) return false;
-  return messages.some((message) =>
-    message.role === "assistant" && Boolean(message.streamMessageId) && message.streaming,
-  );
+  const clientRequestId = typeof delivery.metadata?.clientRequestId === "string" ? delivery.metadata.clientRequestId : "";
+  if (!clientRequestId) return false;
+  return messages.some((message) => message.role === "assistant" && message.clientRequestId === clientRequestId);
 }
 
 export function attachmentsFromDelivery(delivery: HermesInboxMessage): MessageAttachment[] {
@@ -449,56 +387,8 @@ export function mergeMessageLists(primary: Message[], secondary: Message[]) {
       byId.add(message.id);
       continue;
     }
-    const duplicateLocalIndex = merged.findIndex((existing) =>
-      shouldReplaceLocalDuplicateMessage(existing, message),
-    );
-    if (duplicateLocalIndex !== -1) {
-      byId.delete(merged[duplicateLocalIndex].id);
-      merged[duplicateLocalIndex] = message;
-      byId.add(message.id);
-      continue;
-    }
     byId.add(message.id);
     merged.push(message);
   }
   return merged;
-}
-
-function shouldReplaceLocalDuplicateMessage(existing: Message, incoming: Message) {
-  if (existing.clientRequestId || incoming.clientRequestId) return false;
-  if (!messagesRenderEquivalently(existing, incoming)) return false;
-  if (isPersistedHistoryMessageId(existing.id) && isPersistedHistoryMessageId(incoming.id)) return false;
-  return isLikelyLocalMessageId(existing.id) || isPersistedHistoryMessageId(incoming.id);
-}
-
-function messagesRenderEquivalently(left: Message, right: Message) {
-  return left.role === right.role &&
-    equivalentMessageContent(left.content, right.content) &&
-    attachmentSignature(left.attachments) === attachmentSignature(right.attachments);
-}
-
-function attachmentSignature(attachments: MessageAttachment[] | undefined) {
-  if (!attachments?.length) return "";
-  return attachments
-    .map((attachment) =>
-      [
-        attachment.kind,
-        attachment.mimeType,
-        attachment.name,
-        attachment.localPath || "",
-        attachment.previewUrl || "",
-        attachment.downloadUrl || "",
-        attachment.size,
-      ].join(":"),
-    )
-    .sort()
-    .join("|");
-}
-
-function isPersistedHistoryMessageId(messageId: string) {
-  return /^\d+$/.test(messageId);
-}
-
-function isLikelyLocalMessageId(messageId: string) {
-  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(messageId);
 }

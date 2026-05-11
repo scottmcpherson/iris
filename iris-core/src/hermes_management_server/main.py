@@ -91,14 +91,17 @@ logger = logging.getLogger(__name__)
 
 
 class LiveDeliveryBus:
-    def __init__(self, *, max_events: int = 500, ttl_seconds: int = 900) -> None:
+    def __init__(self, *, max_events: int = 500, ttl_seconds: int = 900, core_store: CoreStore | None = None) -> None:
         self.max_events = max_events
         self.ttl_seconds = ttl_seconds
+        self.core_store = core_store
         self._events: deque[dict[str, Any]] = deque(maxlen=max_events)
         self._cursor = 0
         self._lock = threading.RLock()
 
     def publish(self, event: dict[str, Any]) -> dict[str, Any]:
+        if self.core_store:
+            return self._publish_sqlite(event)
         with self._lock:
             event_id = str(event.get("id") or "")
             if event_id:
@@ -125,6 +128,60 @@ class LiveDeliveryBus:
             self.prune()
             return payload
 
+    def _event_payload(self, event: dict[str, Any], *, cursor: int) -> dict[str, Any]:
+        return {
+            "cursor": cursor,
+            "id": str(event.get("id") or ""),
+            "sessionId": str(event.get("sessionId") or ""),
+            "agentId": str(event.get("agentId") or ""),
+            "runtimeId": str(event.get("runtimeId") or ""),
+            "type": str(event.get("type") or "message.assistant.completed"),
+            "role": str(event.get("role") or ""),
+            "content": str(event.get("content") or ""),
+            "parentEventId": str(event.get("parentEventId") or ""),
+            "externalMessageId": str(event.get("externalMessageId") or ""),
+            "idempotencyKey": str(event.get("idempotencyKey") or ""),
+            "createdAt": int(event.get("createdAt") or now()),
+            "metadata": event.get("metadata") if isinstance(event.get("metadata"), dict) else {},
+        }
+
+    def _publish_sqlite(self, event: dict[str, Any]) -> dict[str, Any]:
+        event_id = str(event.get("id") or random_id("evt"))
+        with self._lock, self.core_store.connect() as connection:
+            existing = connection.execute(
+                "select * from core_events where id = ?",
+                (event_id,),
+            ).fetchone()
+            if existing:
+                return self._row_to_event(existing)
+            created_at = int(event.get("createdAt") or now())
+            metadata = event.get("metadata") if isinstance(event.get("metadata"), dict) else {}
+            cursor = int(connection.execute(
+                """
+                insert into core_events(
+                  id, session_id, agent_id, runtime_id, type, role, content,
+                  parent_event_id, external_message_id, idempotency_key, created_at, metadata_json
+                )
+                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                returning cursor
+                """,
+                (
+                    event_id,
+                    str(event.get("sessionId") or ""),
+                    str(event.get("agentId") or ""),
+                    str(event.get("runtimeId") or ""),
+                    str(event.get("type") or "message.assistant.completed"),
+                    str(event.get("role") or ""),
+                    str(event.get("content") or ""),
+                    str(event.get("parentEventId") or ""),
+                    str(event.get("externalMessageId") or ""),
+                    str(event.get("idempotencyKey") or ""),
+                    created_at,
+                    json_dumps(metadata),
+                ),
+            ).fetchone()["cursor"])
+            return self._event_payload({**event, "id": event_id, "createdAt": created_at}, cursor=cursor)
+
     def list_events(
         self,
         *,
@@ -133,6 +190,8 @@ class LiveDeliveryBus:
         session_id: str = "",
         agent_id: str = "",
     ) -> list[dict[str, Any]]:
+        if self.core_store:
+            return self._list_events_sqlite(after=after, limit=limit, session_id=session_id, agent_id=agent_id)
         with self._lock:
             self.prune()
             rows = [
@@ -144,7 +203,38 @@ class LiveDeliveryBus:
             ]
             return rows[:limit]
 
+    def _list_events_sqlite(
+        self,
+        *,
+        after: int,
+        limit: int,
+        session_id: str,
+        agent_id: str,
+    ) -> list[dict[str, Any]]:
+        clauses = ["cursor > ?"]
+        values: list[Any] = [after]
+        if session_id:
+            clauses.append("session_id = ?")
+            values.append(session_id)
+        if agent_id:
+            clauses.append("agent_id = ?")
+            values.append(agent_id)
+        values.append(limit)
+        with self._lock, self.core_store.connect() as connection:
+            rows = connection.execute(
+                f"""
+                select * from core_events
+                where {' and '.join(clauses)}
+                order by cursor asc
+                limit ?
+                """,
+                tuple(values),
+            ).fetchall()
+            return [self._row_to_event(row) for row in rows]
+
     def latest_cursor(self, *, session_id: str = "", agent_id: str = "") -> int:
+        if self.core_store:
+            return self._latest_cursor_sqlite(session_id=session_id, agent_id=agent_id)
         with self._lock:
             self.prune()
             for event in reversed(self._events):
@@ -155,11 +245,47 @@ class LiveDeliveryBus:
                 return int(event["cursor"])
             return self._cursor
 
+    def _latest_cursor_sqlite(self, *, session_id: str = "", agent_id: str = "") -> int:
+        clauses: list[str] = []
+        values: list[Any] = []
+        if session_id:
+            clauses.append("session_id = ?")
+            values.append(session_id)
+        if agent_id:
+            clauses.append("agent_id = ?")
+            values.append(agent_id)
+        where = f"where {' and '.join(clauses)}" if clauses else ""
+        with self._lock, self.core_store.connect() as connection:
+            row = connection.execute(
+                f"select max(cursor) as cursor from core_events {where}",
+                tuple(values),
+            ).fetchone()
+            return int(row["cursor"] or 0) if row else 0
+
     def prune(self) -> None:
+        if self.core_store:
+            return
         with self._lock:
             cutoff = int(time.time()) - self.ttl_seconds
             while self._events and int(self._events[0].get("createdAt") or 0) < cutoff:
                 self._events.popleft()
+
+    def _row_to_event(self, row: Any) -> dict[str, Any]:
+        return {
+            "cursor": int(row["cursor"]),
+            "id": str(row["id"] or ""),
+            "sessionId": str(row["session_id"] or ""),
+            "agentId": str(row["agent_id"] or ""),
+            "runtimeId": str(row["runtime_id"] or ""),
+            "type": str(row["type"] or "message.assistant.completed"),
+            "role": str(row["role"] or ""),
+            "content": str(row["content"] or ""),
+            "parentEventId": str(row["parent_event_id"] or ""),
+            "externalMessageId": str(row["external_message_id"] or ""),
+            "idempotencyKey": str(row["idempotency_key"] or ""),
+            "createdAt": int(row["created_at"] or 0),
+            "metadata": json.loads(row["metadata_json"] or "{}"),
+        }
 
 
 @dataclass(frozen=True)
@@ -637,7 +763,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         hermes_api_token=hermes_api_token(hermes_root),
     )
     app.state.runtime_registry.ensure_default_runtime()
-    app.state.live_delivery_bus = LiveDeliveryBus()
+    app.state.live_delivery_bus = LiveDeliveryBus(core_store=core_store)
     app.state.runtime_call_semaphore = asyncio.Semaphore(
         clamp_int(
             os.environ.get("IRIS_RUNTIME_THREAD_LIMIT"),
@@ -1333,6 +1459,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         runtime_metadata.update({
                     "agentuiSessionId": session_id,
                     "clientMessageId": message_id,
+                    "clientRequestId": message_id,
                     "chatId": chat_id,
                     "profile": agent["runtimeProfile"],
                     "idempotencyKey": idempotency_key,
@@ -1595,13 +1722,25 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
         is_streaming = bool(delivery.metadata.get("streaming"))
         is_final = bool(delivery.metadata.get("finalize") or delivery.metadata.get("final"))
-        event_type = "message.assistant.completed" if is_final or not is_streaming else "message.assistant.delta"
+        is_error_delivery = delivery.source == "hermes-error" or bool(delivery.metadata.get("error"))
+        event_type = (
+            "message.assistant.error"
+            if is_error_delivery
+            else "message.assistant.completed" if is_final or not is_streaming else "message.assistant.delta"
+        )
         event_metadata = {
             "profile": delivery.profile,
             "chatId": delivery.chatId,
             "source": delivery.source,
             **delivery.metadata,
         }
+        client_request_id = str(
+            event_metadata.get("clientRequestId")
+            or event_metadata.get("client_request_id")
+            or ""
+        ).strip()
+        if client_request_id:
+            event_metadata["clientRequestId"] = client_request_id
         event_metadata = mark_hidden_model_switch_reply(event_metadata, delivery.replyTo or "")
         if has_stream_message_id(delivery.metadata):
             event_metadata["streamMessageId"] = stream_message_id
@@ -1613,7 +1752,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             chat_id=delivery.chatId,
             session_id=session_id,
             message_id=delivery.messageId,
-            content=delivery.content,
+            content=str(delivery.metadata.get("error") or delivery.content) if is_error_delivery and not delivery.content else delivery.content,
             metadata=event_metadata,
         )
         persist_assistant_attachment_metadata(

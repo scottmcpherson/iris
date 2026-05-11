@@ -390,6 +390,15 @@ class HermesRuntimeAdapter:
             return {"ok": False, "error": "IRIS_TOKEN or AGENTUI_TOKEN is required for Iris gateway chat."}
         url = f"{self.agentui_gateway_url(profile).rstrip('/')}/iris/messages"
         metadata_payload = metadata if isinstance(metadata, dict) else {}
+        client_request_id = str(
+            metadata_payload.get("clientRequestId")
+            or metadata_payload.get("client_request_id")
+            or metadata_payload.get("clientMessageId")
+            or metadata_payload.get("client_message_id")
+            or message_id
+        ).strip()
+        if client_request_id:
+            metadata_payload = {**metadata_payload, "clientRequestId": client_request_id}
         multipart_attachments = agentui_multipart_attachments(attachments or [])
         body: dict[str, Any] = {
             "chatId": chat_id,

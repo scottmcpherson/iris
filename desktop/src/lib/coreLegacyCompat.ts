@@ -56,6 +56,7 @@ export function coreEventToInboxMessage(event: AgentUICoreEvent, fallbackProfile
     content: event.content,
     metadata: {
       ...metadata,
+      eventType: event.type,
       replyTo: metadata.replyTo || event.parentEventId || undefined,
     },
     createdAt: event.createdAt,

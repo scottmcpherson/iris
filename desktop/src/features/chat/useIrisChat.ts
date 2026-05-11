@@ -35,6 +35,7 @@ import {
 } from "./chatHistory";
 import {
   deliveryCompletesActiveStream,
+  mergeErrorDelivery,
   mergeCompletedDelivery,
   mergeStreamDelivery,
 } from "./chatStreamMerging";
@@ -92,6 +93,7 @@ export { isHiddenDeliveryMetadata, stripModelSwitchNote, toAppMessages } from ".
 export {
   coalescePostStreamAttachments,
   deliveryCompletesActiveStream,
+  mergeErrorDelivery,
   mergeCompletedDelivery,
   mergeMessageLists,
   mergeStreamDelivery,
@@ -128,10 +130,14 @@ type UseIrisChatOptions = {
 const coreDeliveryEventNames = [
   "message.assistant.delta",
   "message.assistant.completed",
+  "message.assistant.error",
   "message.error",
 ];
 
 export const SESSION_TITLE_RESOLVE_DELAY_MS = 3000;
+export const STREAM_SAFETY_TIMEOUT_MS = 60_000;
+const STREAM_SAFETY_CHECK_INTERVAL_MS = 5_000;
+const STREAM_SAFETY_TIMEOUT_MESSAGE = "Iris stopped receiving stream updates before the response completed.";
 
 export function useAgentUIChat({
   profile,
@@ -159,10 +165,10 @@ export function useAgentUIChat({
   const pendingProfileSelectionRef = useRef<PendingProfileSessionSelection | null>(null);
   const coreEventSourceRef = useRef<EventSource | null>(null);
   const activeDetailReconcileAtRef = useRef<Record<string, number>>({});
-  const streamLastDeltaAtRef = useRef<Record<string, number>>({});
   const sendInFlightRef = useRef(false);
   const messagesBySessionRef = useRef(messagesBySession);
   const activeRequestIdsBySessionRef = useRef(activeRequestIdsBySession);
+  const activeRequestTouchedAtRef = useRef<Record<string, number>>({});
   const activeSessionTitlesBySessionRef = useRef<Record<string, string>>({});
   const selectedSessionIdRef = useRef(selectedSessionId);
   const isChatViewActiveRef = useRef(isChatViewActive);
@@ -269,48 +275,11 @@ export function useAgentUIChat({
   }, [runtimeConfig.coreApiUrl, profile, hasActiveRequest]);
 
   useEffect(() => {
-    if (!hasActiveRequest) return;
-    const STREAM_STALL_MS = 8000;
-    const interval = window.setInterval(() => {
-      const now = Date.now();
-      const activeIds = Object.keys(activeRequestIdsBySessionRef.current);
-      for (const sessionId of activeIds) {
-        const lastDeltaAt = streamLastDeltaAtRef.current[sessionId];
-        if (!lastDeltaAt) continue;
-        if (now - lastDeltaAt < STREAM_STALL_MS) continue;
-        const sessionMessages = messagesBySessionRef.current[sessionId] || [];
-        const hasStreamingContentful = sessionMessages.some(
-          (message) =>
-            message.role === "assistant" &&
-            message.streaming === true &&
-            message.streamMessageId &&
-            (message.content || "").trim().length > 0,
-        );
-        if (!hasStreamingContentful) continue;
-        setMessagesBySession((current) => {
-          const list = current[sessionId];
-          if (!list) return current;
-          const next = list.map((message) =>
-            message.role === "assistant" && message.streaming === true
-              ? { ...message, streaming: false }
-              : message,
-          );
-          return { ...current, [sessionId]: next };
-        });
-        delete streamLastDeltaAtRef.current[sessionId];
-        activeRequestIdsBySessionRef.current = removeActiveRequestIds(
-          activeRequestIdsBySessionRef.current,
-          sessionId,
-        );
-        activeSessionTitlesBySessionRef.current = removeSessionValues(
-          activeSessionTitlesBySessionRef.current,
-          sessionId,
-        );
-        setActiveRequestIdsBySession((current) => removeActiveRequestIds(current, sessionId));
-      }
-    }, 2000);
-    return () => window.clearInterval(interval);
-  }, [hasActiveRequest]);
+    const timer = window.setInterval(() => {
+      failTimedOutStreams();
+    }, STREAM_SAFETY_CHECK_INTERVAL_MS);
+    return () => window.clearInterval(timer);
+  }, []);
 
   async function sendMessage(options: SendMessageOptions | MessageAttachment[] = {}) {
     const draftAttachments = Array.isArray(options) ? options : options.attachments || [];
@@ -382,6 +351,10 @@ export function useAgentUIChat({
     activeRequestIdsBySessionRef.current = {
       ...activeRequestIdsBySessionRef.current,
       [activeSessionId]: userMessage.id,
+    };
+    activeRequestTouchedAtRef.current = {
+      ...activeRequestTouchedAtRef.current,
+      [userMessage.id]: Date.now(),
     };
     activeSessionTitlesBySessionRef.current = {
       ...activeSessionTitlesBySessionRef.current,
@@ -589,6 +562,7 @@ export function useAgentUIChat({
       setActiveRequestIdsBySession((current) =>
         removeActiveRequestIds(current, activeSessionId, sessionId),
       );
+      delete activeRequestTouchedAtRef.current[userMessageId];
       updateSessionMessage(activeSessionId, assistantId, (current) => ({
         ...current,
         content: message,
@@ -940,6 +914,7 @@ export function useAgentUIChat({
         setActiveRequestIdsBySession((current) =>
           removeActiveRequestIds(current, sessionId, loadedSession.id, ...relatedSessionIds),
         );
+        if (activeRequestId) delete activeRequestTouchedAtRef.current[activeRequestId];
       }
       setHistoryErrorsByProfile((current) => ({ ...current, [profileName]: result.warning || null }));
       return true;
@@ -1079,6 +1054,7 @@ export function useAgentUIChat({
       activeSessionTitlesBySessionRef.current,
       sessionId,
     );
+    delete activeRequestTouchedAtRef.current[activeRequestId];
     setActiveRequestIdsBySession((current) => removeActiveRequestIds(current, sessionId));
   }
 
@@ -1152,10 +1128,22 @@ export function useAgentUIChat({
       }
       const streamMessageId = stringMetadata(delivery.metadata, "streamMessageId") ||
         stringMetadata(delivery.metadata, "stream_message_id");
+      const clientRequestId = stringMetadata(delivery.metadata, "clientRequestId") ||
+        stringMetadata(delivery.metadata, "client_request_id");
+      if (clientRequestId) {
+        activeRequestTouchedAtRef.current = {
+          ...activeRequestTouchedAtRef.current,
+          [clientRequestId]: Date.now(),
+        };
+      }
+      const isErrorDelivery = stringMetadata(delivery.metadata, "eventType") === "message.assistant.error" ||
+        delivery.source === "hermes-error" ||
+        Boolean(delivery.metadata?.error);
       const isStreamDelivery = Boolean(streamMessageId);
       const isFinalStreamDelivery = isStreamDelivery && streamDeliveryFinalized(delivery.metadata);
       const sessionId =
-        sessionIdForActiveRequest(replyTo) ||
+        sessionIdForActiveRequest(clientRequestId) ||
+        (delivery.source === "hermes-cron" ? "" : sessionIdForActiveRequest(replyTo)) ||
         sessionIdForChatId(delivery.chatId);
       if (!sessionId) {
         if (markUnmappedDeliveryForRetry(delivery.id)) {
@@ -1187,12 +1175,6 @@ export function useAgentUIChat({
           Array.from(processedInboxEventIdsRef.current).slice(-250),
         );
       }
-      if (isStreamDelivery) {
-        streamLastDeltaAtRef.current = {
-          ...streamLastDeltaAtRef.current,
-          [sessionId]: Date.now(),
-        };
-      }
       let postMergeMessages: Message[] | null = null;
       setMessagesBySession((current) => {
         const freshRelatedSessionIds = sessionIdsForChatId(
@@ -1208,9 +1190,11 @@ export function useAgentUIChat({
           postMergeMessages = existing;
           return current;
         }
-        const nextMessages = isStreamDelivery
-          ? mergeStreamDelivery(existing, delivery, streamMessageId, isFinalStreamDelivery, replyTo)
-          : mergeCompletedDelivery(existing, delivery, replyTo, replyTo);
+        const nextMessages = isErrorDelivery
+          ? mergeErrorDelivery(existing, delivery, clientRequestId)
+          : isStreamDelivery
+            ? mergeStreamDelivery(existing, delivery, streamMessageId, isFinalStreamDelivery, clientRequestId)
+            : mergeCompletedDelivery(existing, delivery, replyTo, clientRequestId);
         postMergeMessages = nextMessages;
         return setSessionMessages(current, freshRelatedSessionIds, sessionId, nextMessages);
       });
@@ -1220,12 +1204,15 @@ export function useAgentUIChat({
           )
         : true;
       const shouldClearActive =
-        (replyTo && (!isStreamDelivery || isFinalStreamDelivery)) ||
+        isErrorDelivery ||
+        (clientRequestId && (!isStreamDelivery || isFinalStreamDelivery)) ||
         isFinalStreamDelivery ||
         completesActiveStream ||
         (postMergeMessages !== null && !sessionStillStreaming);
       if (shouldClearActive) {
-        for (const id of relatedSessionIds) delete streamLastDeltaAtRef.current[id];
+        const clearedRequestIds = relatedSessionIds
+          .map((relatedSessionId) => activeRequestIdsBySessionRef.current[relatedSessionId])
+          .filter(Boolean);
         activeRequestIdsBySessionRef.current = removeActiveRequestIds(
           activeRequestIdsBySessionRef.current,
           ...relatedSessionIds,
@@ -1237,6 +1224,9 @@ export function useAgentUIChat({
         setActiveRequestIdsBySession((current) =>
           removeActiveRequestIds(current, ...relatedSessionIds),
         );
+        for (const requestId of clearedRequestIds) {
+          delete activeRequestTouchedAtRef.current[requestId];
+        }
       }
       if (!isStreamDelivery || isFinalStreamDelivery) {
         markDeliveredSessionReadState(relatedSessionIds, delivery.cursor);
@@ -1263,6 +1253,57 @@ export function useAgentUIChat({
         [sessionId]: nowMs,
       };
       void refreshSessionDetail(sessionId, profile, { silent: true, reconcileActive: true });
+    }
+  }
+
+  function failTimedOutStreams() {
+    const nowMs = Date.now();
+    const timedOut = Object.entries(activeRequestIdsBySessionRef.current).filter(([_sessionId, requestId]) => {
+      const touchedAt = activeRequestTouchedAtRef.current[requestId] || 0;
+      return touchedAt > 0 && nowMs - touchedAt >= STREAM_SAFETY_TIMEOUT_MS;
+    });
+    if (!timedOut.length) return;
+
+    setMessagesBySession((current) => {
+      let next = current;
+      for (const [sessionId, requestId] of timedOut) {
+        const existing = next[sessionId] || [];
+        const timeoutDelivery: HermesInboxMessage = {
+          id: `iris-stream-timeout-${requestId}`,
+          cursor: 0,
+          source: "iris-stream-timeout",
+          platform: "iris",
+          profile,
+          chatId: latestChatIdForSession(sessionId),
+          content: STREAM_SAFETY_TIMEOUT_MESSAGE,
+          metadata: {
+            clientRequestId: requestId,
+            error: STREAM_SAFETY_TIMEOUT_MESSAGE,
+          },
+          createdAt: Math.floor(nowMs / 1000),
+          acknowledgedAt: null,
+        };
+        next = {
+          ...next,
+          [sessionId]: mergeErrorDelivery(existing, timeoutDelivery, requestId),
+        };
+      }
+      return next;
+    });
+
+    activeRequestIdsBySessionRef.current = removeActiveRequestIds(
+      activeRequestIdsBySessionRef.current,
+      ...timedOut.map(([sessionId]) => sessionId),
+    );
+    activeSessionTitlesBySessionRef.current = removeSessionValues(
+      activeSessionTitlesBySessionRef.current,
+      ...timedOut.map(([sessionId]) => sessionId),
+    );
+    setActiveRequestIdsBySession((current) =>
+      removeActiveRequestIds(current, ...timedOut.map(([sessionId]) => sessionId)),
+    );
+    for (const [, requestId] of timedOut) {
+      delete activeRequestTouchedAtRef.current[requestId];
     }
   }
 

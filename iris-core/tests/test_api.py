@@ -894,21 +894,21 @@ def test_core_message_read_coalesces_existing_gateway_replay_rows():
             "role": "assistant",
             "content": "Hi! What can I help you with today?",
             "status": "streaming",
-            "metadata": {"source": "hermes-gateway-stream", "streamMessageId": "stream-1"},
+            "metadata": {"source": "hermes-gateway-stream", "streamMessageId": "stream-1", "clientRequestId": "user-1"},
         },
         {
             "id": "completed-1",
             "role": "assistant",
             "content": "Hi! What can I help you with today?",
             "status": "completed",
-            "metadata": {"source": "hermes-gateway", "replyTo": "user-1"},
+            "metadata": {"source": "hermes-gateway", "replyTo": "user-1", "clientRequestId": "user-1"},
         },
         {
             "id": "completed-2",
             "role": "assistant",
             "content": "Hi! What can I help you with today?",
             "status": "completed",
-            "metadata": {"source": "hermes-gateway", "replyTo": "user-1"},
+            "metadata": {"source": "hermes-gateway", "replyTo": "user-1", "clientRequestId": "user-1"},
         },
     ]
 
@@ -925,7 +925,7 @@ def test_core_message_coalescing_merges_attachment_metadata():
             "role": "assistant",
             "content": "Done",
             "status": "streaming",
-            "metadata": {"source": "hermes-gateway-stream", "streamMessageId": "stream-1"},
+            "metadata": {"source": "hermes-gateway-stream", "streamMessageId": "stream-1", "clientRequestId": "user-1"},
         },
         {
             "id": "completed-1",
@@ -935,6 +935,7 @@ def test_core_message_coalescing_merges_attachment_metadata():
             "metadata": {
                 "source": "hermes-gateway",
                 "replyTo": "user-1",
+                "clientRequestId": "user-1",
                 "attachments": [
                     {
                         "id": "att_1",

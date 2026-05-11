@@ -111,6 +111,19 @@ class FakeInboundRequest:
     headers = {"Authorization": "Bearer secret-token"}
 
 
+class FakeQueryRequest(FakeInboundRequest):
+    def __init__(self, query: dict[str, str] | None = None):
+        self.query = query or {}
+
+
+class FakeJsonRequest(FakeInboundRequest):
+    def __init__(self, payload: dict[str, Any]):
+        self._payload = payload
+
+    async def json(self):
+        return self._payload
+
+
 @dataclass
 class FakeWebResponse:
     status: int
@@ -272,6 +285,8 @@ def test_send_stream_preview_posts_delivery_payload(monkeypatch: pytest.MonkeyPa
                     "streamMessageId": "stream-1",
                     "streaming": True,
                     "finalize": False,
+                    "chunkProtocol": "v2-delta",
+                    "chunkOperation": "append",
                     "deliveredAt": requests[0][2]["metadata"]["deliveredAt"],
                 },
             },
@@ -303,6 +318,203 @@ def test_edit_message_requires_stream_message_id(monkeypatch: pytest.MonkeyPatch
 
     assert result.success is False
     assert result.error == "Iris stream message id is required"
+
+
+def test_edit_message_posts_delta_protocol_chunks(monkeypatch: pytest.MonkeyPatch):
+    adapter_module = load_adapter_module(monkeypatch)
+    adapter = adapter_module.IrisPlatformAdapter(Config())
+    requests: list[dict[str, Any]] = []
+
+    async def fake_request(_method: str, _path: str, body: dict[str, Any] | None = None):
+        requests.append(body or {})
+        return {"ok": True}
+
+    adapter._request = fake_request
+
+    first = asyncio.run(
+        adapter.edit_message(
+            "chat-1",
+            "stream-1",
+            "Hello",
+            metadata={"clientRequestId": "client-1"},
+        )
+    )
+    second = asyncio.run(adapter.edit_message("chat-1", "stream-1", "Hello world", finalize=True))
+
+    assert first.success is True
+    assert second.success is True
+    assert [request["content"] for request in requests] == ["Hello", " world"]
+    assert requests[0]["metadata"]["chunkProtocol"] == "v2-delta"
+    assert requests[0]["metadata"]["chunkOperation"] == "append"
+    assert requests[1]["metadata"]["finalize"] is True
+    assert requests[1]["metadata"]["clientRequestId"] == "client-1"
+
+
+def test_edit_message_marks_non_monotonic_content_as_replace(monkeypatch: pytest.MonkeyPatch):
+    adapter_module = load_adapter_module(monkeypatch)
+    adapter = adapter_module.IrisPlatformAdapter(Config())
+    requests: list[dict[str, Any]] = []
+
+    async def fake_request(_method: str, _path: str, body: dict[str, Any] | None = None):
+        requests.append(body or {})
+        return {"ok": True}
+
+    adapter._request = fake_request
+
+    asyncio.run(adapter.edit_message("chat-1", "stream-1", "Hello world", metadata={"clientRequestId": "client-1"}))
+    result = asyncio.run(adapter.edit_message("chat-1", "stream-1", "Goodbye", finalize=True))
+
+    assert result.success is True
+    assert requests[1]["content"] == "Goodbye"
+    assert requests[1]["metadata"]["chunkOperation"] == "replace"
+    assert requests[1]["metadata"]["clientRequestId"] == "client-1"
+
+
+def test_stream_state_is_pruned_and_finalize_cleans_active_request(monkeypatch: pytest.MonkeyPatch):
+    adapter_module = load_adapter_module(monkeypatch)
+    adapter = adapter_module.IrisPlatformAdapter(Config())
+
+    async def fake_request(_method: str, _path: str, _body: dict[str, Any] | None = None):
+        return {"ok": True}
+
+    adapter._request = fake_request
+    asyncio.run(adapter.edit_message("chat-1", "stream-1", "Hello", metadata={"clientRequestId": "client-1"}))
+    asyncio.run(adapter.edit_message("chat-1", "stream-1", "Hello", finalize=True))
+
+    assert "stream-1" not in adapter._stream_last_sent_content
+    assert "client-1" not in adapter._active_streams_by_client_request_id
+    assert "chat-1" not in adapter._active_client_request_ids_by_chat
+
+    adapter._stream_last_sent_content["stale-stream"] = "partial"
+    adapter._stream_last_sent_lengths["stale-stream"] = 7
+    adapter._stream_client_request_ids["stale-stream"] = "stale-client"
+    adapter._active_streams_by_client_request_id["stale-client"] = ("chat-1", "stale-stream")
+    adapter._stream_state_updated_at["stale-stream"] = 0
+    adapter._stream_terminal_sent.add("stale-terminal")
+    adapter._stream_terminal_sent_at["stale-terminal"] = 0
+    adapter._active_client_request_ids_by_chat["stale-chat"] = "stale-client"
+    adapter._active_client_request_id_updated_at["stale-chat"] = 0
+
+    adapter._prune_stream_state()
+
+    assert "stale-stream" not in adapter._stream_last_sent_content
+    assert "stale-client" not in adapter._active_streams_by_client_request_id
+    assert "stale-terminal" not in adapter._stream_terminal_sent
+    assert "stale-chat" not in adapter._active_client_request_ids_by_chat
+
+
+def test_inbound_task_failure_emits_terminal_stream_error(monkeypatch: pytest.MonkeyPatch):
+    adapter_module = load_adapter_module(monkeypatch)
+    adapter = adapter_module.IrisPlatformAdapter(Config())
+    requests: list[dict[str, Any]] = []
+
+    async def fake_payload_and_files(_request):
+        return {
+            "profile": "default",
+            "chatId": "core-chat-1",
+            "messageId": "client-message-1",
+            "text": "hello",
+        }, {}
+
+    async def fake_request(_method: str, _path: str, body: dict[str, Any] | None = None):
+        requests.append(body or {})
+        return {"ok": True}
+
+    async def fake_handle_message(_event):
+        adapter._stream_client_request_ids["stream-1"] = "client-message-1"
+        adapter._active_streams_by_client_request_id["client-message-1"] = ("core-chat-1", "stream-1")
+        adapter._touch_stream_state("stream-1")
+        raise RuntimeError("model crashed")
+
+    async def run():
+        if not adapter_module.AIOHTTP_AVAILABLE:
+            monkeypatch.setattr(adapter_module, "web", FakeWeb)
+        monkeypatch.setattr(adapter_module, "inbound_payload_and_files", fake_payload_and_files)
+        adapter._request = fake_request
+        adapter.handle_message = fake_handle_message
+        response = await adapter._inbound_message(FakeInboundRequest())
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+        return response
+
+    response = asyncio.run(run())
+
+    assert response.status == 202
+    assert requests[-1]["source"] == "hermes-error"
+    assert requests[-1]["metadata"]["clientRequestId"] == "client-message-1"
+    assert requests[-1]["metadata"]["streamMessageId"] == "stream-1"
+    assert requests[-1]["metadata"]["finalize"] is True
+
+
+def test_inbound_models_clamps_limit_and_returns_catalog(monkeypatch: pytest.MonkeyPatch):
+    adapter_module = load_adapter_module(monkeypatch)
+    adapter = adapter_module.IrisPlatformAdapter(Config())
+    if not adapter_module.AIOHTTP_AVAILABLE:
+        monkeypatch.setattr(adapter_module, "web", FakeWeb)
+
+    gateway_run = types.ModuleType("gateway.run")
+    hermes_cli = types.ModuleType("hermes_cli")
+    hermes_cli_config = types.ModuleType("hermes_cli.config")
+    hermes_cli_model_switch = types.ModuleType("hermes_cli.model_switch")
+    hermes_cli_providers = types.ModuleType("hermes_cli.providers")
+    observed: dict[str, Any] = {}
+
+    def fake_list_authenticated_providers(**kwargs):
+        observed.update(kwargs)
+        return [
+            {
+                "slug": "openrouter",
+                "name": "OpenRouter",
+                "models": ["gpt-5.5"],
+                "totalModels": 1,
+                "isCurrent": True,
+                "source": "configured",
+            }
+        ]
+
+    gateway_run._load_gateway_config = lambda: {"model": {"provider": "openrouter", "model": "gpt-5.5"}}
+    hermes_cli_config.get_compatible_custom_providers = lambda _cfg: []
+    hermes_cli_model_switch.list_authenticated_providers = fake_list_authenticated_providers
+    hermes_cli_providers.get_label = lambda provider: provider.title()
+    monkeypatch.setitem(sys.modules, "gateway.run", gateway_run)
+    monkeypatch.setitem(sys.modules, "hermes_cli", hermes_cli)
+    monkeypatch.setitem(sys.modules, "hermes_cli.config", hermes_cli_config)
+    monkeypatch.setitem(sys.modules, "hermes_cli.model_switch", hermes_cli_model_switch)
+    monkeypatch.setitem(sys.modules, "hermes_cli.providers", hermes_cli_providers)
+
+    response = asyncio.run(adapter._inbound_models(FakeQueryRequest({"maxModels": "999"})))
+    body = json.loads(response.text)
+
+    assert response.status == 200
+    assert body["ok"] is True
+    assert body["current"]["model"] == "gpt-5.5"
+    assert body["providers"][0]["slug"] == "openrouter"
+    assert observed["max_models"] == 200
+
+
+def test_inbound_slash_complete_uses_imported_clamp_limit(monkeypatch: pytest.MonkeyPatch):
+    adapter_module = load_adapter_module(monkeypatch)
+    adapter = adapter_module.IrisPlatformAdapter(Config())
+    if not adapter_module.AIOHTTP_AVAILABLE:
+        monkeypatch.setattr(adapter_module, "web", FakeWeb)
+
+    commands = [
+        {
+            "text": f"/command-{index}",
+            "label": f"command-{index}",
+            "description": "",
+            "category": "Commands",
+        }
+        for index in range(150)
+    ]
+    monkeypatch.setattr(adapter_module, "discover_slash_commands", lambda _profile: {"ok": True, "commands": commands})
+
+    response = asyncio.run(adapter._inbound_slash_complete(FakeJsonRequest({"text": "/", "limit": "1"})))
+    body = json.loads(response.text)
+
+    assert response.status == 200
+    assert body["ok"] is True
+    assert len(body["items"]) == 1
 
 
 def test_discovery_preserves_keyed_command_registry_names(monkeypatch: pytest.MonkeyPatch):

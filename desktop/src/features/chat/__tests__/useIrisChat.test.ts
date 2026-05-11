@@ -257,7 +257,7 @@ describe("Iris chat inbox merging", () => {
     });
   });
 
-  it("replaces local duplicate messages with persisted history rows when merging session aliases", () => {
+  it("keeps local and persisted rows without clientRequestId rather than merging by content", () => {
     const attachment = {
       id: "local-attachment-1",
       kind: "image" as const,
@@ -306,7 +306,13 @@ describe("Iris chat inbox merging", () => {
       ],
     );
 
-    expect(merged.map((message) => message.id)).toEqual(["1090", "1091", "current-user"]);
+    expect(merged.map((message) => message.id)).toEqual([
+      localUserId,
+      localAssistantId,
+      "1090",
+      "1091",
+      "current-user",
+    ]);
   });
 
   it("prefers uploaded Core previews over local draft previews after attachment upload", () => {
@@ -346,8 +352,8 @@ describe("Iris chat inbox merging", () => {
 
   it("replaces the optimistic assistant bubble with the first stream update", () => {
     const existing: Message[] = [
-      { id: "user-1", role: "user", content: "Write a long answer" },
-      { id: "assistant-1", role: "assistant", content: "Thinking...", streaming: true },
+      { id: "user-1", role: "user", content: "Write a long answer", clientRequestId: "user-1" },
+      { id: "assistant-1", role: "assistant", content: "Thinking...", streaming: true, clientRequestId: "user-1" },
     ];
 
     const merged = mergeStreamDelivery(
@@ -355,6 +361,7 @@ describe("Iris chat inbox merging", () => {
       inboxMessage({ id: "stream-1", content: "Starting" }),
       "stream-1",
       false,
+      "user-1",
     );
 
     expect(merged).toEqual([
@@ -365,14 +372,15 @@ describe("Iris chat inbox merging", () => {
         content: "Starting",
         streaming: true,
         streamMessageId: "stream-1",
+        clientRequestId: "user-1",
       },
     ]);
   });
 
   it("normalizes live tool metadata into stream tool events", () => {
     const existing: Message[] = [
-      { id: "user-1", role: "user", content: "Run a command" },
-      { id: "assistant-1", role: "assistant", content: "Thinking...", streaming: true },
+      { id: "user-1", role: "user", content: "Run a command", clientRequestId: "user-1" },
+      { id: "assistant-1", role: "assistant", content: "Thinking...", streaming: true, clientRequestId: "user-1" },
     ];
 
     const merged = mergeStreamDelivery(
@@ -396,6 +404,7 @@ describe("Iris chat inbox merging", () => {
       }),
       "stream-1",
       false,
+      "user-1",
     );
 
     expect(merged[1]).toMatchObject({
@@ -419,8 +428,8 @@ describe("Iris chat inbox merging", () => {
 
   it("does not infer live tool events from assistant text without metadata", () => {
     const existing: Message[] = [
-      { id: "user-1", role: "user", content: "Run a command" },
-      { id: "assistant-1", role: "assistant", content: "Thinking...", streaming: true },
+      { id: "user-1", role: "user", content: "Run a command", clientRequestId: "user-1" },
+      { id: "assistant-1", role: "assistant", content: "Thinking...", streaming: true, clientRequestId: "user-1" },
     ];
 
     const merged = mergeStreamDelivery(
@@ -428,6 +437,7 @@ describe("Iris chat inbox merging", () => {
       inboxMessage({ id: "stream-1:tool:1", content: '💻 terminal: "sleep 5 && echo \\"hello\\""' }),
       "stream-1",
       false,
+      "user-1",
     );
 
     expect(merged[1]).toMatchObject({
@@ -443,8 +453,8 @@ describe("Iris chat inbox merging", () => {
   it("keeps live metadata tool events when the stream completes with assistant content", () => {
     const streamed = mergeStreamDelivery(
       [
-        { id: "user-1", role: "user", content: "Run a command" },
-        { id: "assistant-1", role: "assistant", content: "Thinking...", streaming: true },
+        { id: "user-1", role: "user", content: "Run a command", clientRequestId: "user-1" },
+        { id: "assistant-1", role: "assistant", content: "Thinking...", streaming: true, clientRequestId: "user-1" },
       ],
       inboxMessage({
         id: "stream-1:tool:1",
@@ -465,6 +475,7 @@ describe("Iris chat inbox merging", () => {
       }),
       "stream-1",
       false,
+      "user-1",
     );
 
     const completed = mergeStreamDelivery(
@@ -472,6 +483,7 @@ describe("Iris chat inbox merging", () => {
       inboxMessage({ id: "stream-1:edit:1", content: "Ahoy — command completed:\n\nhello" }),
       "stream-1",
       true,
+      "user-1",
     );
 
     expect(completed[1]).toMatchObject({
@@ -497,14 +509,16 @@ describe("Iris chat inbox merging", () => {
         content: "Starting",
         streaming: true,
         streamMessageId: "stream-1",
+        clientRequestId: "user-1",
       },
     ];
 
     const merged = mergeStreamDelivery(
       existing,
-      inboxMessage({ id: "stream-1:edit:1", content: "Starting to answer." }),
+      inboxMessage({ id: "stream-1:edit:1", content: " to answer." }),
       "stream-1",
       true,
+      "user-1",
     );
 
     expect(merged).toHaveLength(2);
@@ -534,6 +548,7 @@ describe("Iris chat inbox merging", () => {
           chatId: "core-chat-1",
           profile: "default",
           source: "hermes-gateway",
+          clientRequestId: "user-1",
         },
       },
       "default",
@@ -558,6 +573,7 @@ describe("Iris chat inbox merging", () => {
           streamMessageId: "agentui-delivery-1",
           streaming: false,
           finalize: true,
+          clientRequestId: "user-1",
         },
       },
       "default",
@@ -567,12 +583,14 @@ describe("Iris chat inbox merging", () => {
       [{ id: "user-1", role: "user", content: "Hi" }],
       completedDelivery,
       "",
+      "user-1",
     );
     const finalized = mergeStreamDelivery(
       provisional,
       finalStreamEdit,
       "agentui-delivery-1",
       true,
+      "user-1",
     );
 
     expect(provisional[1]).toMatchObject({
@@ -593,13 +611,14 @@ describe("Iris chat inbox merging", () => {
 
   it("adds attachment metadata from stream deliveries", () => {
     const existing: Message[] = [
-      { id: "user-1", role: "user", content: "Create an image" },
+      { id: "user-1", role: "user", content: "Create an image", clientRequestId: "user-1" },
       {
         id: "stream-1",
         role: "assistant",
-        content: "Creating it.",
+        content: "",
         streaming: true,
         streamMessageId: "stream-1",
+        clientRequestId: "user-1",
       },
     ];
 
@@ -616,6 +635,7 @@ describe("Iris chat inbox merging", () => {
       }),
       "stream-1",
       true,
+      "user-1",
     );
 
     expect(merged[1]).toMatchObject({
@@ -625,7 +645,7 @@ describe("Iris chat inbox merging", () => {
     });
   });
 
-  it("keeps the longer stream snapshot when a later edit replays a shorter prefix", () => {
+  it("drops stream deliveries that do not carry clientRequestId", () => {
     const existing: Message[] = [
       { id: "user-1", role: "user", content: "Write a long answer" },
       {
@@ -666,9 +686,10 @@ describe("Iris chat inbox merging", () => {
 
     const merged = mergeStreamDelivery(
       existing,
-      inboxMessage({ id: "core-row-2", content: "Starting to answer." }),
+      inboxMessage({ id: "core-row-2", content: " to answer." }),
       "core-row-1",
       false,
+      "user-1",
     );
 
     expect(merged).toHaveLength(2);
@@ -683,12 +704,13 @@ describe("Iris chat inbox merging", () => {
   it("keeps non-stream deliveries on the completed-message path", () => {
     const existing: Message[] = [
       { id: "user-1", role: "user", content: "Ping" },
-      { id: "assistant-1", role: "assistant", content: "Thinking...", streaming: true },
+      { id: "assistant-1", role: "assistant", content: "Thinking...", streaming: true, clientRequestId: "user-1" },
     ];
 
     const merged = mergeCompletedDelivery(
       existing,
       inboxMessage({ id: "final-1", source: "hermes-gateway", content: "Pong" }),
+      "user-1",
       "user-1",
     );
 
@@ -699,6 +721,7 @@ describe("Iris chat inbox merging", () => {
         role: "assistant",
         content: "Pong",
         streaming: false,
+        clientRequestId: "user-1",
       },
     ]);
   });
@@ -711,6 +734,7 @@ describe("Iris chat inbox merging", () => {
         role: "assistant",
         content: "Thinking...",
         streaming: true,
+        clientRequestId: "user-1",
         streamEvents: [
           {
             id: "tool-1",
@@ -727,6 +751,7 @@ describe("Iris chat inbox merging", () => {
       existing,
       inboxMessage({ id: "final-1", source: "hermes-gateway", content: "Image: /tmp/hermes/test_image.png" }),
       "",
+      "user-1",
     );
 
     expect(merged).toEqual([
@@ -736,6 +761,7 @@ describe("Iris chat inbox merging", () => {
         id: "final-1",
         content: "Image: /tmp/hermes/test_image.png",
         streaming: false,
+        clientRequestId: "user-1",
       },
     ]);
   });
@@ -758,13 +784,7 @@ describe("Iris chat inbox merging", () => {
       "",
     );
 
-    expect(merged).toEqual([
-      existing[0],
-      {
-        ...existing[1],
-        content: "Here’s your test image:\n\n🖼️ Image: /tmp/hermes/test_image.png",
-      },
-    ]);
+    expect(merged).toEqual(existing);
   });
 
   it("merges a post-stream attachment card into the completed streamed assistant", () => {
@@ -793,12 +813,7 @@ describe("Iris chat inbox merging", () => {
       "",
     );
 
-    expect(merged[0]).toEqual(existing[0]);
-    expect(merged[1]).toMatchObject({
-      ...existing[1],
-      content: "Here’s your test image:",
-      attachments: [generatedImageAttachment],
-    });
+    expect(merged).toEqual(existing);
   });
 
   it("treats a fallback completed delivery as the end of the active stream", () => {
@@ -820,15 +835,8 @@ describe("Iris chat inbox merging", () => {
 
     const merged = mergeCompletedDelivery(existing, delivery, "");
 
-    expect(deliveryCompletesActiveStream(existing, delivery)).toBe(true);
-    expect(merged).toEqual([
-      existing[0],
-      {
-        ...existing[1],
-        content: "The rain began just as Mira opened the door.\n\nInside, the observatory smelled of dust and old brass.",
-        streaming: false,
-      },
-    ]);
+    expect(deliveryCompletesActiveStream(existing, delivery)).toBe(false);
+    expect(merged).toEqual(existing);
   });
 
   it("ignores replayed completed text after a stream finalizes", () => {
@@ -856,7 +864,7 @@ describe("Iris chat inbox merging", () => {
     expect(merged).toEqual(existing);
   });
 
-  it("repairs a replayed completed duplicate with cleaner punctuation spacing", () => {
+  it("does not repair replayed completed duplicates by content", () => {
     const existing: Message[] = [
       { id: "user-1", role: "user", content: "Write a story" },
       {
@@ -878,16 +886,10 @@ describe("Iris chat inbox merging", () => {
       "user-1",
     );
 
-    expect(merged).toHaveLength(2);
-    expect(merged[1]).toMatchObject({
-      id: "stream-1",
-      content: "The sign read: KEEP STREAMING.",
-      streaming: false,
-      streamMessageId: "stream-1",
-    });
+    expect(merged).toEqual(existing);
   });
 
-  it("merges a fallback tail that overlaps the middle of the streamed text", () => {
+  it("does not merge fallback tails by content overlap", () => {
     const existing: Message[] = [
       { id: "user-1", role: "user", content: "Write a story" },
       {
@@ -909,20 +911,14 @@ describe("Iris chat inbox merging", () => {
       "user-1",
     );
 
-    expect(merged).toHaveLength(2);
-    expect(merged[1]).toMatchObject({
-      id: "stream-1",
-      content: "Verification starts now, she said, uploading the logs live. By morning, the blackout was no longer a rumor, and the proof survived.",
-      streaming: false,
-      streamMessageId: "stream-1",
-    });
+    expect(merged).toEqual(existing);
   });
 
   it("shows a final stream plus file delivery provisionally until canonical history reloads", () => {
     const streamed = mergeStreamDelivery(
       [
-        { id: "user-1", role: "user", content: "create a test image for me" },
-        { id: "assistant-1", role: "assistant", content: "Thinking...", streaming: true },
+        { id: "user-1", role: "user", content: "create a test image for me", clientRequestId: "user-1" },
+        { id: "assistant-1", role: "assistant", content: "Thinking...", streaming: true, clientRequestId: "user-1" },
       ],
       inboxMessage({
         id: "stream-1:edit:1",
@@ -931,6 +927,7 @@ describe("Iris chat inbox merging", () => {
       }),
       "stream-1",
       true,
+      "user-1",
     );
 
     const provisional = mergeCompletedDelivery(
@@ -964,7 +961,7 @@ describe("Iris chat inbox merging", () => {
     ]);
 
     expect(provisional[1].content).toBe(
-      "I created a simple test image for you:\n\nNote: fallback SVG locally.\n\n📎 File: /tmp/test_image.svg",
+      "I created a simple test image for you:\n\nNote: fallback SVG locally.",
     );
     expect(canonical[1].content).toBe(
       "I created a simple test image for you:\n\nMEDIA:/tmp/test_image.svg\n\nNote: fallback SVG locally.",
@@ -1052,6 +1049,7 @@ describe("Iris chat inbox merging", () => {
       }),
       "stream-1",
       true,
+      "user-1",
     );
 
     expect(merged).toEqual([
@@ -1062,6 +1060,7 @@ describe("Iris chat inbox merging", () => {
         content: "Here’s your test image:\n\n🖼️ Image: /tmp/hermes/test_image.png",
         streaming: false,
         streamMessageId: "stream-1",
+        clientRequestId: "user-1",
       },
     ]);
   });
@@ -1117,7 +1116,7 @@ describe("clientRequestId dedup", () => {
     ]);
   });
 
-  it("does not duplicate when a completed delivery's content differs from the local stream snapshot", () => {
+  it("appends completed delivery deltas by clientRequestId", () => {
     const existing: Message[] = [
       { id: "uuid-user", role: "user", content: "hi", clientRequestId: "uuid-user" },
       {
@@ -1134,7 +1133,7 @@ describe("clientRequestId dedup", () => {
       existing,
       inboxMessage({
         id: "delivery-99",
-        content: "Hello, world!",
+        content: "orld!",
         metadata: { replyTo: "uuid-user" },
       }),
       "uuid-user",
@@ -1145,6 +1144,69 @@ describe("clientRequestId dedup", () => {
     expect(merged[1]).toMatchObject({
       role: "assistant",
       content: "Hello, world!",
+      streaming: false,
+      clientRequestId: "uuid-user",
+    });
+  });
+
+  it("replaces active stream content for non-monotonic replace chunks", () => {
+    const existing: Message[] = [
+      { id: "uuid-user", role: "user", content: "hi", clientRequestId: "uuid-user" },
+      {
+        id: "stream-1",
+        role: "assistant",
+        content: "Hello world",
+        streaming: true,
+        streamMessageId: "stream-1",
+        clientRequestId: "uuid-user",
+      },
+    ];
+
+    const merged = mergeStreamDelivery(
+      existing,
+      inboxMessage({
+        id: "stream-1:edit:2",
+        content: "Goodbye",
+        metadata: { streamMessageId: "stream-1", clientRequestId: "uuid-user", chunkOperation: "replace" },
+      }),
+      "stream-1",
+      false,
+      "uuid-user",
+    );
+
+    expect(merged[1]).toMatchObject({
+      content: "Goodbye",
+      streaming: true,
+      clientRequestId: "uuid-user",
+    });
+  });
+
+  it("replaces active stream content for final replace deliveries", () => {
+    const existing: Message[] = [
+      { id: "uuid-user", role: "user", content: "hi", clientRequestId: "uuid-user" },
+      {
+        id: "stream-1",
+        role: "assistant",
+        content: "Hello world",
+        streaming: true,
+        streamMessageId: "stream-1",
+        clientRequestId: "uuid-user",
+      },
+    ];
+
+    const merged = mergeCompletedDelivery(
+      existing,
+      inboxMessage({
+        id: "stream-1:edit:3",
+        content: "Goodbye",
+        metadata: { clientRequestId: "uuid-user", chunkOperation: "replace" },
+      }),
+      "uuid-user",
+      "uuid-user",
+    );
+
+    expect(merged[1]).toMatchObject({
+      content: "Goodbye",
       streaming: false,
       clientRequestId: "uuid-user",
     });
@@ -1171,7 +1233,7 @@ describe("clientRequestId dedup", () => {
     expect(merged.map((message) => message.id)).toEqual(["12345", "12346"]);
   });
 
-  it("falls back to the legacy content heuristic when clientRequestId is absent on both sides", () => {
+  it("does not merge history by content when clientRequestId is absent on both sides", () => {
     const local: Message[] = [
       { id: "uuid-user", role: "user", content: "same prompt" },
     ];
@@ -1181,10 +1243,10 @@ describe("clientRequestId dedup", () => {
 
     const merged = mergeMessageLists(local, history);
 
-    expect(merged.map((message) => message.id)).toEqual(["12345"]);
+    expect(merged.map((message) => message.id)).toEqual(["uuid-user", "12345"]);
   });
 
-  it("finalizes the orphan streaming assistant when a finalize delta arrives with an unmatched streamMessageId", () => {
+  it("drops unmatched finalize deltas without clientRequestId", () => {
     const existing: Message[] = [
       { id: "user-1", role: "user", content: "hi" },
       {
@@ -1203,13 +1265,7 @@ describe("clientRequestId dedup", () => {
       true,
     );
 
-    expect(merged).toHaveLength(2);
-    expect(merged[1]).toMatchObject({
-      role: "assistant",
-      streaming: false,
-      streamMessageId: "stream-z",
-    });
-    expect(merged.filter((m) => m.role === "assistant" && m.streaming === true)).toHaveLength(0);
+    expect(merged).toEqual(existing);
   });
 });
 

@@ -47,6 +47,7 @@ CORE_OWNED_TABLES = (
     "devices",
     "runtimes",
     "device_cursors",
+    "core_events",
     "client_message_metadata",
     "attachments",
     "message_attachments",
@@ -300,6 +301,31 @@ class CoreStore:
                   updated_at integer not null,
                   primary key (device_id, stream_name)
                 );
+
+                create table if not exists core_events (
+                  cursor integer primary key autoincrement,
+                  id text not null unique,
+                  session_id text not null,
+                  agent_id text not null,
+                  runtime_id text not null,
+                  type text not null,
+                  role text not null,
+                  content text not null,
+                  parent_event_id text not null,
+                  external_message_id text not null,
+                  idempotency_key text not null,
+                  created_at integer not null,
+                  metadata_json text not null
+                );
+
+                create index if not exists idx_core_events_cursor
+                  on core_events(cursor);
+
+                create index if not exists idx_core_events_session_cursor
+                  on core_events(session_id, cursor);
+
+                create index if not exists idx_core_events_agent_cursor
+                  on core_events(agent_id, cursor);
 
                 create table if not exists client_message_metadata (
                   runtime_id text not null,

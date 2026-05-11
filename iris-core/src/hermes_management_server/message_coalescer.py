@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
-import re
+import logging
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 
 def merge_client_attachments(existing: Any, additions: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -39,10 +41,11 @@ def prepare_assistant_delivery_event(
         existing_status = str(existing.get("status") or "")
         if existing_status == "completed" and status == "streaming":
             return existing_content, metadata, True
+        operation = chunk_operation(metadata)
         if status == "streaming":
-            merged = merged_stream_snapshot_content(existing_content, content)
+            merged = apply_stream_content(existing_content, content, operation)
             return merged, metadata, same_normalized_content(merged, existing_content)
-        merged = merged_completed_stream_content(existing_content, content)
+        merged = apply_stream_content(existing_content, content, operation)
         merged_metadata = merged_completion_metadata(existing, metadata, reply_to=reply_to)
         if existing_status == "completed" and same_normalized_content(merged, existing_content):
             return existing_content, merged_metadata, True
@@ -53,6 +56,7 @@ def prepare_assistant_delivery_event(
 
     fallback = stream_fallback_completion(messages, reply_to=reply_to, content=content)
     if fallback:
+        logger.warning("Assistant delivery without streamMessageId entered legacy stream fallback path.")
         return (
             str(fallback["content"]),
             finalized_stream_metadata(
@@ -64,11 +68,11 @@ def prepare_assistant_delivery_event(
             False,
         )
 
-    existing = last_mergeable_assistant_message(messages, reply_to=reply_to, content=content)
+    existing = last_mergeable_assistant_message(messages, reply_to=reply_to)
     if not existing:
         return content, metadata, False
     existing_content = str(existing.get("content") or "")
-    merged = merged_completed_stream_content(existing_content, content)
+    merged = append_delta_content(existing_content, content)
     merged_metadata = merged_completion_metadata(existing, metadata, reply_to=reply_to)
     if str(existing.get("status") or "") == "completed" and same_normalized_content(merged, existing_content):
         return existing_content, merged_metadata, True
@@ -100,7 +104,7 @@ def stream_fallback_completion(
         return None
     inferred_reply_to = reply_to or str(metadata.get("replyTo") or "") or last_user_message_id(messages)
     return {
-        "content": merged_completed_stream_content(str(existing.get("content") or ""), content),
+        "content": append_delta_content(str(existing.get("content") or ""), content),
         "messageId": str(existing.get("id") or stream_message_id),
         "metadata": metadata,
         "replyTo": inferred_reply_to,
@@ -171,12 +175,17 @@ def coalesce_core_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any
             previous = coalesced[-1]
             if (
                 previous["role"] == "assistant"
-                and equivalent_message_content(
-                    str(previous.get("content") or ""),
-                    str(message.get("content") or ""),
-                )
                 and is_gateway_replay_pair(previous, message)
             ):
+                content = coalesced_gateway_replay_content(previous, message)
+                if content is None:
+                    logger.warning(
+                        "Refusing to coalesce divergent Hermes gateway assistant rows: previous=%s current=%s",
+                        previous.get("id"),
+                        message.get("id"),
+                    )
+                    coalesced.append(message)
+                    continue
                 metadata = merged_completion_metadata(
                     previous,
                     message.get("metadata") if isinstance(message.get("metadata"), dict) else {},
@@ -186,6 +195,7 @@ def coalesce_core_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any
                     coalesced[-1] = {
                         **previous,
                         "status": "completed",
+                        "content": content,
                         "updatedAt": message.get("updatedAt") or previous.get("updatedAt"),
                         "metadata": metadata,
                     }
@@ -203,23 +213,32 @@ def is_gateway_replay_pair(left: dict[str, Any], right: dict[str, Any]) -> bool:
     right_source = str(right_metadata.get("source") or "")
     if not left_source.startswith("hermes-gateway") or not right_source.startswith("hermes-gateway"):
         return False
-    return bool(
-        left_metadata.get("streamMessageId")
-        or right_metadata.get("streamMessageId")
-        or (
-            left_metadata.get("replyTo")
-            and left_metadata.get("replyTo") == right_metadata.get("replyTo")
-        )
-    )
+    left_client_request_id = str(left_metadata.get("clientRequestId") or left_metadata.get("client_request_id") or "")
+    right_client_request_id = str(right_metadata.get("clientRequestId") or right_metadata.get("client_request_id") or "")
+    if left_client_request_id and left_client_request_id == right_client_request_id:
+        return True
+    left_stream_id = str(left_metadata.get("streamMessageId") or left_metadata.get("stream_message_id") or "")
+    right_stream_id = str(right_metadata.get("streamMessageId") or right_metadata.get("stream_message_id") or "")
+    return bool(left_stream_id and left_stream_id == right_stream_id)
+
+
+def coalesced_gateway_replay_content(left: dict[str, Any], right: dict[str, Any]) -> str | None:
+    left_content = str(left.get("content") or "")
+    right_content = str(right.get("content") or "")
+    if not right_content:
+        return left_content
+    if not left_content:
+        return right_content
+    if same_normalized_content(left_content, right_content):
+        return left_content
+    return None
 
 
 def last_mergeable_assistant_message(
     messages: list[dict[str, Any]],
     *,
     reply_to: str,
-    content: str,
 ) -> dict[str, Any] | None:
-    normalized_content = normalize_message_content(content)
     reply_scope_exists = bool(reply_to and any(
         message.get("role") == "user" and str(message.get("id") or "") == reply_to
         for message in messages
@@ -236,13 +255,7 @@ def last_mergeable_assistant_message(
         unscoped_stream_message = bool((not reply_to or not reply_scope_exists) and metadata.get("streamMessageId"))
         if message["status"] == "streaming":
             return message
-        if (
-            normalized_content
-            and equivalent_message_content(str(message.get("content") or ""), normalized_content)
-            and (reply_matches or unscoped_stream_message)
-        ):
-            return message
-        if is_post_stream_attachment(content) and (reply_matches or unscoped_stream_message):
+        if reply_matches or unscoped_stream_message:
             return message
     return None
 
@@ -255,81 +268,20 @@ def same_normalized_content(left: str, right: str) -> bool:
     return normalize_message_content(left) == normalize_message_content(right)
 
 
-def equivalent_message_content(left: str, right: str) -> bool:
-    return compact_message_content(left) == compact_message_content(right)
+def append_delta_content(existing: str, delta: str) -> str:
+    if not existing:
+        return delta
+    if not delta:
+        return existing
+    return f"{existing}{delta}"
 
 
-def compact_message_content(content: str) -> str:
-    return re.sub(r"\s+([,.;:!?])", r"\1", " ".join(normalize_message_content(content).split()))
+def apply_stream_content(existing: str, content: str, operation: str) -> str:
+    if operation == "replace":
+        return content
+    return append_delta_content(existing, content)
 
 
-def is_post_stream_attachment(content: str) -> bool:
-    stripped = content.strip()
-    return bool(
-        stripped.startswith("Media:")
-        or stripped.startswith("Image:")
-        or stripped.startswith("File:")
-        or stripped.startswith("🖼️ Image:")
-        or stripped.startswith("📎 File:")
-    )
-
-
-def append_message_content(content: str, addition: str) -> str:
-    left = content.rstrip()
-    right = addition.strip()
-    if not left:
-        return right
-    if not right or right in left or equivalent_message_content(left, right):
-        return left
-    if re.match(r"^[,.;:!?)]", right):
-        return f"{left}{right}"
-    if not re.search(r"[.!?:;)]$", left) and re.match(r"^[a-z]", right):
-        return f"{left} {right}"
-    return f"{left}\n\n{right}"
-
-
-def merged_completed_stream_content(existing: str, delivery: str) -> str:
-    existing_content = existing.rstrip()
-    delivery_content = delivery.strip()
-    if not existing_content:
-        return delivery_content
-    if not delivery_content:
-        return existing_content
-    compact_existing = compact_message_content(existing_content)
-    compact_delivery = compact_message_content(delivery_content)
-    if compact_existing == compact_delivery:
-        return delivery_content
-    if compact_delivery.startswith(compact_existing):
-        return delivery_content
-    if compact_existing.startswith(compact_delivery) or compact_delivery in compact_existing:
-        return existing_content
-    overlapped = overlapping_message_content(existing_content, delivery_content)
-    if overlapped:
-        return overlapped
-    return append_message_content(existing_content, delivery_content)
-
-
-def merged_stream_snapshot_content(existing: str, delivery: str) -> str:
-    existing_content = existing.rstrip()
-    delivery_content = delivery.strip()
-    if not existing_content:
-        return delivery_content
-    if not delivery_content:
-        return existing_content
-    compact_existing = compact_message_content(existing_content)
-    compact_delivery = compact_message_content(delivery_content)
-    if compact_delivery.startswith(compact_existing):
-        return delivery_content
-    if compact_existing.startswith(compact_delivery):
-        return existing_content
-    return delivery_content if len(compact_delivery) >= len(compact_existing) else existing_content
-
-
-def overlapping_message_content(existing: str, delivery: str) -> str:
-    max_overlap = min(len(existing), len(delivery))
-    for length in range(max_overlap, 11, -1):
-        prefix = delivery[:length]
-        index = existing.rfind(prefix)
-        if index != -1:
-            return f"{existing[:index]}{delivery}"
-    return ""
+def chunk_operation(metadata: dict[str, Any]) -> str:
+    operation = str(metadata.get("chunkOperation") or metadata.get("chunk_operation") or "append").strip().lower()
+    return operation if operation in {"append", "replace"} else "append"
