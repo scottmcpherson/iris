@@ -37,6 +37,13 @@ import {
   mimeTypeFromPath,
 } from "../../shared/files";
 import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "../../shared/ui/dropdown-menu";
+import {
   filterSlashCommands,
   moveSlashCommandIndex,
   slashCommandInsertion,
@@ -105,12 +112,6 @@ type ComposerSendOptions = {
   allowDuringDictation?: boolean;
 };
 
-type ModelMenuOption = {
-  provider: string;
-  providerName: string;
-  model: string;
-};
-
 export function ChatView({
   messages,
   selectedSessionId,
@@ -140,13 +141,8 @@ export function ChatView({
 }: ChatViewProps) {
   const chatPaneRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const addMenuRef = useRef<HTMLDivElement>(null);
-  const profileMenuRef = useRef<HTMLDivElement>(null);
-  const projectMenuRef = useRef<HTMLDivElement>(null);
-  const modelMenuRef = useRef<HTMLDivElement>(null);
   const modelSearchRef = useRef<HTMLInputElement>(null);
   const seenRenderedMessageIdsRef = useRef<Set<string>>(new Set());
-  const modelOptionRefs = useRef<Record<string, HTMLButtonElement | null>>({});
   const slashCommandRefs = useRef<Record<string, HTMLButtonElement | null>>({});
   const fileInputRef = useRef<HTMLInputElement>(null);
   const dragDepthRef = useRef(0);
@@ -158,7 +154,6 @@ export function ChatView({
   const [modelMenuOpen, setModelMenuOpen] = useState(false);
   const [modelSearch, setModelSearch] = useState("");
   const [modelDraftsBySession, setModelDraftsBySession] = useState<Record<string, HermesModelSelection>>({});
-  const [activeModelOptionKey, setActiveModelOptionKey] = useState("");
   const [activeSlashIndex, setActiveSlashIndex] = useState(0);
   const [composerSelection, setComposerSelection] = useState({ start: input.length, end: input.length });
   const [dismissedSlashToken, setDismissedSlashToken] = useState("");
@@ -212,10 +207,6 @@ export function ChatView({
     () => filterModelProviders(modelCatalog?.providers || [], modelSearch),
     [modelCatalog, modelSearch],
   );
-  const filteredModelOptions = useMemo(
-    () => flattenModelOptions(filteredModelProviders),
-    [filteredModelProviders],
-  );
   const slashToken = composerSelection.start === composerSelection.end
     ? slashTokenAtCursor(input, composerSelection.start) || slashTokenAtCursor(input, input.length)
     : null;
@@ -261,100 +252,11 @@ export function ChatView({
       : "Change project";
 
   useEffect(() => {
-    if (!addMenuOpen) return undefined;
-
-    function handlePointerDown(event: MouseEvent) {
-      if (addMenuRef.current?.contains(event.target as Node)) return;
-      setAddMenuOpen(false);
-    }
-
-    function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape") setAddMenuOpen(false);
-    }
-
-    document.addEventListener("mousedown", handlePointerDown);
-    document.addEventListener("keydown", handleKeyDown);
-    return () => {
-      document.removeEventListener("mousedown", handlePointerDown);
-      document.removeEventListener("keydown", handleKeyDown);
-    };
-  }, [addMenuOpen]);
-
-  useEffect(() => {
-    if (!profileMenuOpen) return undefined;
-
-    function handlePointerDown(event: MouseEvent) {
-      if (profileMenuRef.current?.contains(event.target as Node)) return;
-      setProfileMenuOpen(false);
-    }
-
-    function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape") setProfileMenuOpen(false);
-    }
-
-    document.addEventListener("mousedown", handlePointerDown);
-    document.addEventListener("keydown", handleKeyDown);
-    return () => {
-      document.removeEventListener("mousedown", handlePointerDown);
-      document.removeEventListener("keydown", handleKeyDown);
-    };
-  }, [profileMenuOpen]);
-
-  useEffect(() => {
-    if (!projectMenuOpen) return undefined;
-
-    function handlePointerDown(event: MouseEvent) {
-      if (projectMenuRef.current?.contains(event.target as Node)) return;
-      setProjectMenuOpen(false);
-    }
-
-    function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape") setProjectMenuOpen(false);
-    }
-
-    document.addEventListener("mousedown", handlePointerDown);
-    document.addEventListener("keydown", handleKeyDown);
-    return () => {
-      document.removeEventListener("mousedown", handlePointerDown);
-      document.removeEventListener("keydown", handleKeyDown);
-    };
-  }, [projectMenuOpen]);
-
-  useEffect(() => {
     if (!modelMenuOpen) return undefined;
     setModelSearch("");
-    setActiveModelOptionKey(modelOptionKeyForSelection(displayedModelSelection) || "");
     window.requestAnimationFrame(() => modelSearchRef.current?.focus());
-
-    function handlePointerDown(event: MouseEvent) {
-      if (modelMenuRef.current?.contains(event.target as Node)) return;
-      setModelMenuOpen(false);
-    }
-
-    function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape") setModelMenuOpen(false);
-    }
-
-    document.addEventListener("mousedown", handlePointerDown);
-    document.addEventListener("keydown", handleKeyDown);
-    return () => {
-      document.removeEventListener("mousedown", handlePointerDown);
-      document.removeEventListener("keydown", handleKeyDown);
-    };
+    return undefined;
   }, [modelMenuOpen]);
-
-  useEffect(() => {
-    if (!modelMenuOpen) return;
-    const availableKeys = new Set(filteredModelOptions.map(modelOptionKey));
-    if (activeModelOptionKey && availableKeys.has(activeModelOptionKey)) return;
-    const selectedKey = modelOptionKeyForSelection(displayedModelSelection);
-    setActiveModelOptionKey(selectedKey && availableKeys.has(selectedKey) ? selectedKey : modelOptionKey(filteredModelOptions[0]));
-  }, [activeModelOptionKey, displayedModelSelection, filteredModelOptions, modelMenuOpen]);
-
-  useEffect(() => {
-    if (!modelMenuOpen || !activeModelOptionKey) return;
-    modelOptionRefs.current[activeModelOptionKey]?.scrollIntoView({ block: "nearest" });
-  }, [activeModelOptionKey, modelMenuOpen]);
 
   useEffect(() => {
     setActiveSlashIndex(0);
@@ -638,31 +540,6 @@ export function ChatView({
     }
   }
 
-  function handleModelSearchKeyDown(event: ReactKeyboardEvent<HTMLInputElement>) {
-    if (event.key === "Enter") {
-      event.preventDefault();
-      const option = filteredModelOptions.find((item) => modelOptionKey(item) === activeModelOptionKey) ||
-        filteredModelOptions[0];
-      if (option) {
-        selectModel({
-          provider: option.provider,
-          model: option.model,
-          providerName: option.providerName,
-        });
-      }
-      return;
-    }
-    if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
-    event.preventDefault();
-    if (!filteredModelOptions.length) return;
-    const currentIndex = filteredModelOptions.findIndex((item) => modelOptionKey(item) === activeModelOptionKey);
-    const direction = event.key === "ArrowDown" ? 1 : -1;
-    const nextIndex = currentIndex === -1
-      ? event.key === "ArrowDown" ? 0 : filteredModelOptions.length - 1
-      : (currentIndex + direction + filteredModelOptions.length) % filteredModelOptions.length;
-    setActiveModelOptionKey(modelOptionKey(filteredModelOptions[nextIndex]));
-  }
-
   function hasFileDrag(event: DragEvent) {
     return Array.from(event.dataTransfer.types).includes("Files");
   }
@@ -832,27 +709,34 @@ export function ChatView({
         <AttachmentTray attachments={attachments} onRemove={removeAttachment} />
         <div className={["composer-toolbar", dictationToolbarOpen ? "recording" : ""].filter(Boolean).join(" ")}>
           <div className="composer-tools composer-tools-left">
-            <div className="composer-add-menu-wrap" ref={addMenuRef}>
-              <button
-                type="button"
-                className="composer-icon-button"
-                title="Add context"
-                aria-haspopup="menu"
-                aria-expanded={addMenuOpen}
-                onClick={() => setAddMenuOpen((open) => !open)}
-              >
-                <Plus size={18} />
-              </button>
-              {addMenuOpen ? (
-                <div className="composer-context-menu" role="menu">
-                  <button type="button" role="menuitem" onClick={openFilePicker}>
-                    <span>Add files</span>
-                    <Paperclip size={15} />
+            <div className="composer-add-menu-wrap">
+              <DropdownMenu open={addMenuOpen} onOpenChange={setAddMenuOpen}>
+                <DropdownMenuTrigger asChild>
+                  <button
+                    type="button"
+                    className="composer-icon-button"
+                    title="Add context"
+                    aria-label="Add context"
+                  >
+                    <Plus size={18} />
                   </button>
-                </div>
-              ) : null}
+                </DropdownMenuTrigger>
+                <DropdownMenuContent
+                  align="start"
+                  side="top"
+                  sideOffset={10}
+                  className="min-w-[178px]"
+                >
+                  <DropdownMenuGroup>
+                    <DropdownMenuItem onSelect={openFilePicker}>
+                      <span>Add files</span>
+                      <Paperclip data-icon="inline-end" className="ml-auto" />
+                    </DropdownMenuItem>
+                  </DropdownMenuGroup>
+                </DropdownMenuContent>
+              </DropdownMenu>
             </div>
-            <div className="composer-profile-menu-wrap" ref={profileMenuRef}>
+            <div className="composer-profile-menu-wrap">
               <ProfileMenu
                 profile={profile}
                 profiles={profiles}
@@ -861,11 +745,11 @@ export function ChatView({
                 disabled={profileSelectionDisabled}
                 title={profileSelectorTitle}
                 locked={profileSelectionLocked}
-                onToggle={() => setProfileMenuOpen((open) => !open)}
+                onOpenChange={setProfileMenuOpen}
                 onSelect={selectProfile}
               />
             </div>
-            <div className="composer-project-menu-wrap" ref={projectMenuRef}>
+            <div className="composer-project-menu-wrap">
               <ProjectMenu
                 projects={projects}
                 selectedProjectId={selectedProjectId}
@@ -874,7 +758,7 @@ export function ChatView({
                 disabled={projectSelectionDisabled}
                 title={projectSelectorTitle}
                 locked={projectSelectionLocked}
-                onToggle={() => setProjectMenuOpen((open) => !open)}
+                onOpenChange={setProjectMenuOpen}
                 onSelect={selectProject}
               />
             </div>
@@ -888,21 +772,18 @@ export function ChatView({
               />
             ) : (
               <>
-                <div className="composer-model-menu-wrap" ref={modelMenuRef}>
+                <div className="composer-model-menu-wrap">
                   <ModelMenu
                     open={modelMenuOpen}
                     disabled={modelSelectionDisabled}
                     title={modelSelectorTitle}
                     selection={displayedModelSelection}
                     providers={filteredModelProviders}
-                    activeOptionKey={activeModelOptionKey}
                     modelSearch={modelSearch}
                     modelError={modelError}
                     searchRef={modelSearchRef}
-                    optionRefs={modelOptionRefs}
-                    onToggle={() => setModelMenuOpen((open) => !open)}
+                    onOpenChange={setModelMenuOpen}
                     onSearch={setModelSearch}
-                    onSearchKeyDown={handleModelSearchKeyDown}
                     onSelect={selectModel}
                   />
                 </div>
@@ -1172,24 +1053,6 @@ function filterModelProviders(providers: HermesModelProvider[], query: string) {
       return { ...provider, models };
     })
     .filter((provider) => provider.models.length);
-}
-
-function flattenModelOptions(providers: HermesModelProvider[]): ModelMenuOption[] {
-  return providers.flatMap((provider) =>
-    provider.models.map((model) => ({
-      provider: provider.slug,
-      providerName: provider.name,
-      model,
-    })),
-  );
-}
-
-function modelOptionKey(option: ModelMenuOption | undefined) {
-  return option ? `${option.provider}:${option.model}` : "";
-}
-
-function modelOptionKeyForSelection(selection: HermesModelSelection | null) {
-  return selection ? `${selection.provider}:${selection.model}` : "";
 }
 
 function MessageEvents({ events }: { events?: HermesParsedEvents }) {

@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@import "tw-animate-css";
 @import "streamdown/styles.css";
 @import "./layout/AppShellDialogs.css";
 
@@ -921,11 +922,6 @@ button:disabled {
   border: 1px solid rgba(255, 255, 255, 0.085);
   border-radius: 7px;
   background: rgba(255, 255, 255, 0.045);
-}
-
-.jobs-project-menu-wrap .composer-project-menu {
-  top: calc(100% + 8px);
-  bottom: auto;
 }
 
 .jobs-form-field {
@@ -2976,73 +2972,6 @@ button:disabled {
   display: inline-flex;
 }
 
-.composer-context-menu,
-.composer-profile-menu,
-.composer-project-menu {
-  position: absolute;
-  bottom: calc(100% + 10px);
-  left: 0;
-  z-index: 6;
-  min-width: 218px;
-  padding: 6px;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 10px;
-  background: rgba(30, 32, 38, 0.98);
-  box-shadow: 0 18px 46px rgba(0, 0, 0, 0.38);
-}
-
-.composer-context-menu button,
-.composer-profile-menu button,
-.composer-project-menu button {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  width: 100%;
-  height: 34px;
-  padding: 0 10px;
-  border: 0;
-  border-radius: 7px;
-  color: #f4efe5;
-  background: transparent;
-  font-size: 13px;
-  font-weight: 700;
-  text-align: left;
-}
-
-.composer-context-menu button:hover,
-.composer-context-menu button:focus-visible,
-.composer-profile-menu button:hover,
-.composer-profile-menu button:focus-visible,
-.composer-project-menu button:hover,
-.composer-project-menu button:focus-visible {
-  background: rgba(255, 255, 255, 0.075);
-}
-
-.composer-menu-header {
-  margin: 0 2px 5px;
-  padding: 2px 8px 7px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-  color: #8d96a5;
-  font-size: 11px;
-  font-weight: 800;
-  line-height: 1.1;
-}
-
-.composer-profile-menu,
-.composer-project-menu {
-  left: 0;
-  min-width: 178px;
-  max-width: min(280px, 62vw);
-  max-height: 240px;
-  overflow-y: auto;
-}
-
-.composer-profile-menu button[aria-checked="true"],
-.composer-project-menu button[aria-checked="true"] {
-  color: #dfe3ea;
-}
-
 .attachment-tray {
   display: flex;
   flex-wrap: wrap;
@@ -3205,122 +3134,6 @@ button:disabled {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.composer-model-menu {
-  position: absolute;
-  right: 0;
-  bottom: calc(100% + 8px);
-  z-index: 30;
-  width: min(360px, calc(100vw - 32px));
-  max-height: 360px;
-  overflow: auto;
-  padding: 7px;
-  border: 1px solid rgba(255, 255, 255, 0.11);
-  border-radius: 12px;
-  background: rgba(24, 26, 31, 0.98);
-  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.36);
-}
-
-.composer-model-menu button {
-  width: 100%;
-  min-width: 0;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 8px 9px;
-  border: 0;
-  border-radius: 8px;
-  color: #dfe3ea;
-  background: transparent;
-  font: inherit;
-  font-size: 12px;
-  font-weight: 720;
-  text-align: left;
-}
-
-.composer-model-menu button:hover,
-.composer-model-menu button[aria-checked="true"],
-.composer-model-menu button[data-active="true"] {
-  background: rgba(255, 255, 255, 0.08);
-}
-
-.composer-model-menu button[data-active="true"] {
-  outline: 1px solid rgba(170, 178, 192, 0.24);
-}
-
-.composer-model-menu button span {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.composer-model-search {
-  position: sticky;
-  top: 0;
-  z-index: 2;
-  isolation: isolate;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 5px;
-  padding: 8px 9px;
-  border-radius: 8px;
-  color: #858c9b;
-  background: rgba(38, 40, 47, 0.98);
-}
-
-.composer-model-search::before {
-  content: "";
-  position: absolute;
-  inset: -7px -7px -5px;
-  z-index: -1;
-  border-radius: 12px 12px 0 0;
-  background: rgba(24, 26, 31, 0.98);
-  pointer-events: none;
-}
-
-.composer-model-search:focus-within {
-  color: #dfe3ea;
-  background: rgba(48, 51, 59, 0.98);
-  box-shadow: inset 0 0 0 1px rgba(170, 178, 192, 0.22);
-}
-
-.composer-model-search input {
-  min-width: 0;
-  width: 100%;
-  border: 0;
-  outline: 0;
-  color: #f5f2ea;
-  background: transparent;
-  font: inherit;
-  font-size: 12px;
-  font-weight: 720;
-}
-
-.composer-model-search input::placeholder {
-  color: #858c9b;
-}
-
-.composer-model-group + .composer-model-group {
-  margin-top: 6px;
-  padding-top: 6px;
-  border-top: 1px solid rgba(255, 255, 255, 0.08);
-}
-
-.composer-model-provider,
-.composer-menu-note {
-  padding: 7px 9px 5px;
-  color: #858c9b;
-  font-size: 11px;
-  font-weight: 780;
-}
-
-.composer-menu-note {
-  color: #e7a18c;
-  line-height: 1.35;
 }
 
 .event-strip {

@@ -1,5 +1,16 @@
-import { Check, ChevronDown, Folder } from "lucide-react";
+import { ChevronDown, Folder } from "lucide-react";
 import type { IrisProject } from "../../../lib/agentuiCore";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "../../../shared/ui/dropdown-menu";
+
+const NO_PROJECT_VALUE = "__no-project__";
 
 type ProjectMenuProps = {
   projects: IrisProject[];
@@ -9,7 +20,8 @@ type ProjectMenuProps = {
   title: string;
   locked: boolean;
   connected: boolean;
-  onToggle: () => void;
+  side?: "top" | "bottom";
+  onOpenChange: (open: boolean) => void;
   onSelect: (projectId: string | null) => void;
 };
 
@@ -21,58 +33,52 @@ export function ProjectMenu({
   title,
   locked,
   connected,
-  onToggle,
+  side = "top",
+  onOpenChange,
   onSelect,
 }: ProjectMenuProps) {
   const selectedProject = projects.find((project) => project.id === selectedProjectId) || null;
   const label = selectedProject?.name || "No project";
 
   return (
-    <>
-      <button
-        type="button"
-        className="composer-access-button"
-        title={title}
-        aria-haspopup="menu"
-        aria-expanded={open}
-        aria-label={
-          locked
-            ? `Session project ${label}`
-            : `Project ${connected ? label : "Offline"}`
-        }
-        disabled={disabled}
-        onClick={onToggle}
+    <DropdownMenu open={open} onOpenChange={onOpenChange}>
+      <DropdownMenuTrigger asChild>
+        <button
+          type="button"
+          className="composer-access-button"
+          title={title}
+          aria-label={
+            locked
+              ? `Session project ${label}`
+              : `Project ${connected ? label : "Offline"}`
+          }
+          disabled={disabled}
+        >
+          <Folder size={15} />
+          <span>{connected ? label : "Offline"}</span>
+          <ChevronDown size={14} />
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent
+        align="start"
+        side={side}
+        sideOffset={side === "top" ? 10 : 8}
+        className="max-w-[min(280px,62vw)] min-w-[178px]"
       >
-        <Folder size={15} />
-        <span>{connected ? label : "Offline"}</span>
-        <ChevronDown size={14} />
-      </button>
-      {open ? (
-        <div className="composer-project-menu" role="menu" aria-label="Choose project">
-          <div className="composer-menu-header" role="presentation">Projects</div>
-          <button
-            type="button"
-            role="menuitemradio"
-            aria-checked={!selectedProjectId}
-            onClick={() => onSelect(null)}
-          >
-            <span>No project</span>
-            {!selectedProjectId ? <Check size={14} /> : null}
-          </button>
+        <DropdownMenuLabel>Projects</DropdownMenuLabel>
+        <DropdownMenuRadioGroup
+          value={selectedProjectId || NO_PROJECT_VALUE}
+          onValueChange={(value) => onSelect(value === NO_PROJECT_VALUE ? null : value)}
+        >
           {projects.map((project) => (
-            <button
-              key={project.id}
-              type="button"
-              role="menuitemradio"
-              aria-checked={project.id === selectedProjectId}
-              onClick={() => onSelect(project.id)}
-            >
-              <span>{project.name}</span>
-              {project.id === selectedProjectId ? <Check size={14} /> : null}
-            </button>
+            <DropdownMenuRadioItem key={project.id} value={project.id}>
+              {project.name}
+            </DropdownMenuRadioItem>
           ))}
-        </div>
-      ) : null}
-    </>
+          {projects.length > 0 ? <DropdownMenuSeparator /> : null}
+          <DropdownMenuRadioItem value={NO_PROJECT_VALUE}>No project</DropdownMenuRadioItem>
+        </DropdownMenuRadioGroup>
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }

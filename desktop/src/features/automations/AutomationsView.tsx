@@ -251,7 +251,8 @@ export function AutomationsView({
                         title="Choose project"
                         locked={false}
                         connected={connected}
-                        onToggle={() => setProjectMenuOpen((open) => !open)}
+                        side="bottom"
+                        onOpenChange={setProjectMenuOpen}
                         onSelect={(projectId) => {
                           onProjectChange(projectId);
                           setProjectMenuOpen(false);

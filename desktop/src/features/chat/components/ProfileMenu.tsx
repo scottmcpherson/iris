@@ -1,5 +1,13 @@
-import { Bot, Check, ChevronDown } from "lucide-react";
+import { Bot, ChevronDown } from "lucide-react";
 import type { HermesProfile } from "../../../types/hermes";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuTrigger,
+} from "../../../shared/ui/dropdown-menu";
 
 type ProfileMenuProps = {
   profile: string;
@@ -9,7 +17,7 @@ type ProfileMenuProps = {
   disabled: boolean;
   title: string;
   locked: boolean;
-  onToggle: () => void;
+  onOpenChange: (open: boolean) => void;
   onSelect: (profile: string) => void;
 };
 
@@ -21,46 +29,43 @@ export function ProfileMenu({
   disabled,
   title,
   locked,
-  onToggle,
+  onOpenChange,
   onSelect,
 }: ProfileMenuProps) {
   return (
-    <>
-      <button
-        type="button"
-        className="composer-access-button"
-        title={title}
-        aria-haspopup="menu"
-        aria-expanded={open}
-        aria-label={
-          locked
-            ? `Session agent ${profile}`
-            : `Agent ${connected ? profile : "Offline"}`
-        }
-        disabled={disabled}
-        onClick={onToggle}
+    <DropdownMenu open={open} onOpenChange={onOpenChange}>
+      <DropdownMenuTrigger asChild>
+        <button
+          type="button"
+          className="composer-access-button"
+          title={title}
+          aria-label={
+            locked
+              ? `Session agent ${profile}`
+              : `Agent ${connected ? profile : "Offline"}`
+          }
+          disabled={disabled}
+        >
+          <Bot size={15} />
+          <span>{connected ? profile : "Offline"}</span>
+          <ChevronDown size={14} />
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent
+        align="start"
+        side="top"
+        sideOffset={10}
+        className="max-w-[min(280px,62vw)] min-w-[178px]"
       >
-        <Bot size={15} />
-        <span>{connected ? profile : "Offline"}</span>
-        <ChevronDown size={14} />
-      </button>
-      {open ? (
-        <div className="composer-profile-menu" role="menu" aria-label="Choose agent">
-          <div className="composer-menu-header" role="presentation">Agents</div>
+        <DropdownMenuLabel>Agents</DropdownMenuLabel>
+        <DropdownMenuRadioGroup value={profile} onValueChange={onSelect}>
           {profiles.map((item) => (
-            <button
-              key={item.name}
-              type="button"
-              role="menuitemradio"
-              aria-checked={item.name === profile}
-              onClick={() => onSelect(item.name)}
-            >
-              <span>{item.name}</span>
-              {item.name === profile ? <Check size={14} /> : null}
-            </button>
+            <DropdownMenuRadioItem key={item.name} value={item.name}>
+              {item.name}
+            </DropdownMenuRadioItem>
           ))}
-        </div>
-      ) : null}
-    </>
+        </DropdownMenuRadioGroup>
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }

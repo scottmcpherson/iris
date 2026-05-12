@@ -1,5 +1,5 @@
 import * as React from "react";
-import { CheckIcon, ChevronRightIcon, CircleIcon } from "lucide-react";
+import { CheckIcon, ChevronRightIcon } from "lucide-react";
 import * as ContextMenuPrimitive from "@radix-ui/react-context-menu";
 
 import { cn } from "@/shared/ui/utils";
@@ -167,17 +167,17 @@ function ContextMenuRadioItem({
     <ContextMenuPrimitive.RadioItem
       data-slot="context-menu-radio-item"
       className={cn(
-        "relative flex min-h-[30px] cursor-default items-center gap-2 rounded-sm py-0 pr-2 pl-8 text-xs text-menu-foreground outline-hidden select-none focus:bg-menu-hover focus:text-menu-hover-foreground data-[disabled]:pointer-events-none data-[disabled]:text-menu-disabled [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-3.5",
+        "relative flex min-h-[30px] cursor-default items-center gap-2 rounded-sm px-2 py-0 text-xs text-menu-foreground outline-hidden select-none focus:bg-menu-hover focus:text-menu-hover-foreground data-[disabled]:pointer-events-none data-[disabled]:text-menu-disabled [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-3.5",
         className,
       )}
       {...props}
     >
-      <span className="pointer-events-none absolute left-2 flex size-3.5 items-center justify-center">
+      {children}
+      <span className="pointer-events-none ml-auto flex size-3.5 items-center justify-center">
         <ContextMenuPrimitive.ItemIndicator>
-          <CircleIcon className="fill-current" />
+          <CheckIcon />
         </ContextMenuPrimitive.ItemIndicator>
       </span>
-      {children}
     </ContextMenuPrimitive.RadioItem>
   );
 }
