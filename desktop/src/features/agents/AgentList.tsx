@@ -1,9 +1,15 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import type { FormEvent } from "react";
 import { Bot, Copy, Database, Ellipsis, FolderOpen, Plus, Sparkles, Trash2 } from "lucide-react";
 import type { ProfileActionHandler } from "../../app/types";
-import { SidebarContextMenu, SidebarContextMenuItem } from "../../layout/SidebarContextMenu";
 import { formatBytes } from "../../shared/format";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "../../shared/ui/dropdown-menu";
 import type { HermesProfile } from "../../types/hermes";
 
 type AgentListDialog =
@@ -11,50 +17,16 @@ type AgentListDialog =
   | { action: "clone"; source: string; name: string }
   | { action: "delete"; source: string; name: string };
 
-type AgentListMenu = {
-  profile: string;
-  top: number;
-  left: number;
-};
-
 type AgentListProps = {
   profiles: HermesProfile[];
   onOpenAgent: (profileName: string) => void;
   onProfileAction: ProfileActionHandler;
 };
 
-type AgentListContextMenuProps = {
-  profile: HermesProfile;
-  top: number;
-  left: number;
-  onDismiss: () => void;
-  onDuplicate: () => void;
-  onDelete: () => void;
-};
-
 export function AgentList({ profiles, onOpenAgent, onProfileAction }: AgentListProps) {
-  const [menu, setMenu] = useState<AgentListMenu | null>(null);
   const [dialog, setDialog] = useState<AgentListDialog | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-
-  useEffect(() => {
-    if (!menu) return undefined;
-
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setMenu(null);
-    };
-    const closeOnLayoutChange = () => setMenu(null);
-
-    window.addEventListener("keydown", closeOnEscape);
-    window.addEventListener("resize", closeOnLayoutChange);
-    window.addEventListener("scroll", closeOnLayoutChange, true);
-    return () => {
-      window.removeEventListener("keydown", closeOnEscape);
-      window.removeEventListener("resize", closeOnLayoutChange);
-      window.removeEventListener("scroll", closeOnLayoutChange, true);
-    };
-  }, [menu]);
 
   return (
     <div className="agent-list-workspace">
@@ -107,41 +79,56 @@ export function AgentList({ profiles, onOpenAgent, onProfileAction }: AgentListP
                 <small>Skills</small>
               </span>
             </button>
-            <button
-              type="button"
-              className="profile-row-action agent-list-menu-trigger"
-              aria-label={`More actions for ${profile.name}`}
-              aria-haspopup="menu"
-              aria-expanded={menu?.profile === profile.name}
-              title={`More actions for ${profile.name}`}
-              onClick={(event) => toggleMenu(profile.name, event.currentTarget)}
-            >
-              <Ellipsis size={18} />
-            </button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <button
+                  type="button"
+                  className="profile-row-action agent-list-menu-trigger"
+                  aria-label={`More actions for ${profile.name}`}
+                  title={`More actions for ${profile.name}`}
+                  onClick={(event) => event.stopPropagation()}
+                >
+                  <Ellipsis size={18} />
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" sideOffset={6}>
+                <DropdownMenuGroup>
+                  <DropdownMenuItem onSelect={() => openCloneDialog(profile.name)}>
+                    <Copy data-icon="inline-start" />
+                    Duplicate
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    variant="destructive"
+                    disabled={profile.name === "default"}
+                    title={profile.name === "default" ? "The default agent cannot be deleted" : undefined}
+                    onSelect={() => openDeleteDialog(profile.name)}
+                  >
+                    <Trash2 data-icon="inline-start" />
+                    Delete
+                  </DropdownMenuItem>
+                </DropdownMenuGroup>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
         ))}
       </div>
-      {menu ? renderMenu() : null}
       {dialog ? renderDialog() : null}
     </div>
   );
 
   function openCreateDialog() {
     setError("");
-    setMenu(null);
     setDialog({ action: "create", name: nextProfileName("new-agent", profiles) });
   }
 
   function openCloneDialog(source: string) {
     setError("");
-    setMenu(null);
     setDialog({ action: "clone", source, name: nextProfileName(`${source}-copy`, profiles) });
   }
 
   function openDeleteDialog(source: string) {
     if (source === "default") return;
     setError("");
-    setMenu(null);
     setDialog({ action: "delete", source, name: "" });
   }
 
@@ -149,38 +136,6 @@ export function AgentList({ profiles, onOpenAgent, onProfileAction }: AgentListP
     if (busy) return;
     setDialog(null);
     setError("");
-  }
-
-  function toggleMenu(profileName: string, trigger: HTMLElement) {
-    setMenu((current) => {
-      if (current?.profile === profileName) return null;
-      const rect = trigger.getBoundingClientRect();
-      const menuWidth = 166;
-      const menuHeight = 82;
-      const left = clamp(rect.right - menuWidth, 8, window.innerWidth - menuWidth - 8);
-      const below = rect.bottom + 6;
-      const top = below + menuHeight > window.innerHeight - 8
-        ? Math.max(8, rect.top - menuHeight - 6)
-        : below;
-      return { profile: profileName, top, left };
-    });
-  }
-
-  function renderMenu() {
-    if (!menu) return null;
-    const profile = profiles.find((item) => item.name === menu.profile);
-    if (!profile) return null;
-
-    return (
-      <AgentListContextMenu
-        profile={profile}
-        top={menu.top}
-        left={menu.left}
-        onDismiss={() => setMenu(null)}
-        onDuplicate={() => openCloneDialog(profile.name)}
-        onDelete={() => openDeleteDialog(profile.name)}
-      />
-    );
   }
 
   function renderDialog() {
@@ -259,38 +214,6 @@ export function AgentList({ profiles, onOpenAgent, onProfileAction }: AgentListP
   }
 }
 
-export function AgentListContextMenu({
-  profile,
-  top,
-  left,
-  onDismiss,
-  onDuplicate,
-  onDelete,
-}: AgentListContextMenuProps) {
-  return (
-    <SidebarContextMenu
-      className="agent-list-context-menu"
-      top={top}
-      left={left}
-      onDismiss={onDismiss}
-    >
-      <SidebarContextMenuItem onClick={onDuplicate}>
-        <Copy size={14} />
-        Duplicate
-      </SidebarContextMenuItem>
-      <SidebarContextMenuItem
-        className="danger-menu-item"
-        disabled={profile.name === "default"}
-        title={profile.name === "default" ? "The default agent cannot be deleted" : undefined}
-        onClick={onDelete}
-      >
-        <Trash2 size={14} />
-        Delete
-      </SidebarContextMenuItem>
-    </SidebarContextMenu>
-  );
-}
-
 function nextProfileName(base: string, profiles: HermesProfile[]) {
   const names = new Set(profiles.map((profile) => profile.name));
   if (!names.has(base)) return base;
@@ -299,10 +222,6 @@ function nextProfileName(base: string, profiles: HermesProfile[]) {
     if (!names.has(candidate)) return candidate;
   }
   return `${base}-${Date.now()}`;
-}
-
-function clamp(value: number, minimum: number, maximum: number) {
-  return Math.max(minimum, Math.min(value, maximum));
 }
 
 function agentSubtitle(profile: HermesProfile) {

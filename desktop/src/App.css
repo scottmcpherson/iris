@@ -4,10 +4,82 @@
 
 @source "../node_modules/streamdown/dist/*.js";
 
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-menu: var(--menu);
+  --color-menu-foreground: var(--menu-foreground);
+  --color-menu-muted-foreground: var(--menu-muted-foreground);
+  --color-menu-border: var(--menu-border);
+  --color-menu-hover: var(--menu-hover);
+  --color-menu-hover-foreground: var(--menu-hover-foreground);
+  --color-menu-disabled: var(--menu-disabled);
+  --color-menu-danger: var(--menu-danger);
+  --color-menu-confirm: var(--menu-confirm);
+  --color-menu-confirm-foreground: var(--menu-confirm-foreground);
+  --color-menu-confirm-hover: var(--menu-confirm-hover);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --shadow-context-menu: var(--menu-shadow);
+  --radius-sm: calc(var(--radius) - 2px);
+  --radius-md: var(--radius);
+  --radius-lg: calc(var(--radius) + 2px);
+  --radius-xl: calc(var(--radius) + 4px);
+}
+
 :root {
   --button-primary-bg: #f4f1ea;
   --button-primary-bg-hover: #ffffff;
   --button-primary-fg: #0a0d13;
+  --radius: 8px;
+  --background: #07080b;
+  --foreground: #f5f2ea;
+  --card: #0d0f14;
+  --card-foreground: #f4f0e8;
+  --popover: #10131a;
+  --popover-foreground: #f4f0e8;
+  --primary: var(--button-primary-bg);
+  --primary-foreground: var(--button-primary-fg);
+  --secondary: rgba(255, 255, 255, 0.055);
+  --secondary-foreground: #dce0e8;
+  --muted: rgba(255, 255, 255, 0.045);
+  --muted-foreground: #8e96a5;
+  --accent: rgba(255, 255, 255, 0.085);
+  --accent-foreground: #f5f2ea;
+  --destructive: #c85d57;
+  --destructive-foreground: #fff7f5;
+  --menu: rgba(20, 23, 30, 0.98);
+  --menu-foreground: #d7dde8;
+  --menu-muted-foreground: #8e96a5;
+  --menu-border: rgba(255, 255, 255, 0.11);
+  --menu-hover: rgba(255, 255, 255, 0.085);
+  --menu-hover-foreground: #fffaf1;
+  --menu-disabled: #6f7784;
+  --menu-danger: #f0b6aa;
+  --menu-confirm: rgba(220, 78, 52, 0.18);
+  --menu-confirm-foreground: #ffd2c7;
+  --menu-confirm-hover: rgba(220, 78, 52, 0.26);
+  --menu-shadow: 0 16px 36px rgba(0, 0, 0, 0.38);
+  --border: rgba(255, 255, 255, 0.08);
+  --input: rgba(255, 255, 255, 0.075);
+  --ring: rgba(244, 241, 234, 0.42);
   color: #f5f2ea;
   background: #07080b;
   font-family:
@@ -4923,10 +4995,6 @@ button:disabled {
 
 .agent-list-menu-trigger {
   flex: 0 0 auto;
-}
-
-.agent-list-context-menu {
-  width: 156px;
 }
 
 .agent-avatar {

@@ -1,8 +1,7 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
-import type { CSSProperties, FormEvent, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent, ReactNode } from "react";
+import type { CSSProperties, FormEvent, PointerEvent as ReactPointerEvent, ReactNode } from "react";
 import {
   AlertCircle,
-  Check,
   ChevronDown,
   ChevronRight,
   Copy,
@@ -38,10 +37,22 @@ import {
   type ProjectDialog,
 } from "./AppShellDialogs";
 import {
-  SidebarContextMenu,
-  SidebarContextMenuHeader,
-  SidebarContextMenuItem,
-} from "./SidebarContextMenu";
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuGroup,
+  ContextMenuItem,
+  ContextMenuTrigger,
+} from "../shared/ui/context-menu";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuTrigger,
+} from "../shared/ui/dropdown-menu";
 
 export const SIDEBAR_AUTO_COLLAPSE_WIDTH = 820;
 const SIDEBAR_STANDARD_WIDTH = 252;
@@ -49,26 +60,6 @@ const SIDEBAR_COLLAPSED_WIDTH = 0;
 const SIDEBAR_MAX_WIDTH = 440;
 
 type SidebarWidthBand = "compact" | "regular";
-
-type ProfileMenu = {
-  profile: string;
-  top: number;
-  left: number;
-};
-
-type ProjectMenu = {
-  projectId: string;
-  top: number;
-  left: number;
-};
-
-type SessionMenu = {
-  session: HermesSession;
-  profileName: string;
-  pinKey: string;
-  top: number;
-  left: number;
-};
 
 type SessionSearchItem = {
   session: HermesSession;
@@ -79,11 +70,6 @@ type SessionSearchItem = {
 };
 
 type SidebarOrganization = "projects" | "agents";
-
-type SidebarOrganizationMenu = {
-  top: number;
-  left: number;
-};
 
 type SidebarSectionId = "pinned" | "projects" | "chats" | "agents";
 
@@ -185,9 +171,7 @@ export function AppShell({
 }: AppShellProps) {
   const profiles = status?.profiles ?? [offlineProfile];
   const showSelectedSession = activeView === "chat";
-  const [profileMenu, setProfileMenu] = useState<ProfileMenu | null>(null);
-  const [projectMenu, setProjectMenu] = useState<ProjectMenu | null>(null);
-  const [sessionMenu, setSessionMenu] = useState<SessionMenu | null>(null);
+  const [sessionContextMenuKey, setSessionContextMenuKey] = useState("");
   const [profileDialog, setProfileDialog] = useState<ProfileDialog | null>(null);
   const [projectDialog, setProjectDialog] = useState<ProjectDialog | null>(null);
   const [sessionDialog, setSessionDialog] = useState<SessionDialog | null>(null);
@@ -207,7 +191,6 @@ export function AppShell({
   const [sidebarOrganization, setSidebarOrganization] = useState<SidebarOrganization>(
     () => loadSidebarOrganization(),
   );
-  const [sidebarOrganizationMenu, setSidebarOrganizationMenu] = useState<SidebarOrganizationMenu | null>(null);
   const sessionSearchInputRef = useRef<HTMLInputElement | null>(null);
   const sidebarWidthBandRef = useRef(widthBandForWindow());
   const sidebarCollapsedRef = useRef(sidebarWidthBandRef.current === "compact");
@@ -336,87 +319,6 @@ export function AppShell({
   ]);
 
   useEffect(() => {
-    if (!sidebarOrganizationMenu) return undefined;
-
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setSidebarOrganizationMenu(null);
-    };
-    const closeOnLayoutChange = () => {
-      setSidebarOrganizationMenu(null);
-    };
-
-    window.addEventListener("keydown", closeOnEscape);
-    window.addEventListener("resize", closeOnLayoutChange);
-    window.addEventListener("scroll", closeOnLayoutChange, true);
-    return () => {
-      window.removeEventListener("keydown", closeOnEscape);
-      window.removeEventListener("resize", closeOnLayoutChange);
-      window.removeEventListener("scroll", closeOnLayoutChange, true);
-    };
-  }, [sidebarOrganizationMenu]);
-
-  useEffect(() => {
-    if (!profileMenu) return undefined;
-
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setProfileMenu(null);
-    };
-    const closeOnLayoutChange = () => {
-      setProfileMenu(null);
-    };
-
-    window.addEventListener("keydown", closeOnEscape);
-    window.addEventListener("resize", closeOnLayoutChange);
-    window.addEventListener("scroll", closeOnLayoutChange, true);
-    return () => {
-      window.removeEventListener("keydown", closeOnEscape);
-      window.removeEventListener("resize", closeOnLayoutChange);
-      window.removeEventListener("scroll", closeOnLayoutChange, true);
-    };
-  }, [profileMenu]);
-
-  useEffect(() => {
-    if (!projectMenu) return undefined;
-
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setProjectMenu(null);
-    };
-    const closeOnLayoutChange = () => {
-      setProjectMenu(null);
-    };
-
-    window.addEventListener("keydown", closeOnEscape);
-    window.addEventListener("resize", closeOnLayoutChange);
-    window.addEventListener("scroll", closeOnLayoutChange, true);
-    return () => {
-      window.removeEventListener("keydown", closeOnEscape);
-      window.removeEventListener("resize", closeOnLayoutChange);
-      window.removeEventListener("scroll", closeOnLayoutChange, true);
-    };
-  }, [projectMenu]);
-
-  useEffect(() => {
-    if (!sessionMenu) return undefined;
-    setConfirmDeleteSessionKey("");
-
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setSessionMenu(null);
-    };
-    const closeOnLayoutChange = () => {
-      setSessionMenu(null);
-    };
-
-    window.addEventListener("keydown", closeOnEscape);
-    window.addEventListener("resize", closeOnLayoutChange);
-    window.addEventListener("scroll", closeOnLayoutChange, true);
-    return () => {
-      window.removeEventListener("keydown", closeOnEscape);
-      window.removeEventListener("resize", closeOnLayoutChange);
-      window.removeEventListener("scroll", closeOnLayoutChange, true);
-    };
-  }, [sessionMenu]);
-
-  useEffect(() => {
     if (!sessionSearchOpen) return undefined;
     setSessionSearchIndex(0);
     const focusTimer = window.setTimeout(() => {
@@ -505,7 +407,7 @@ export function AppShell({
       >
         {sidebarCollapsed ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}
       </button>
-      <aside className="sidebar" onClickCapture={dismissSidebarContextMenuFromSidebarClick}>
+      <aside className="sidebar">
         <div className="window-drag-zone" data-tauri-drag-region />
         <div className="brand-block">
           <div className="brand-mark">
@@ -740,22 +642,44 @@ export function AppShell({
                             <span>{profile.name}</span>
                           </button>
                           <div className="profile-row-actions">
-                            <div className="profile-menu-wrap">
-                              <button
-                                type="button"
-                                className="profile-row-action profile-menu-trigger"
-                                title={`More actions for ${profile.name}`}
-                                aria-label={`More actions for ${profile.name}`}
-                                aria-haspopup="menu"
-                                aria-expanded={profileMenu?.profile === profile.name}
-                                onClick={(event) => {
-                                  event.stopPropagation();
-                                  toggleProfileMenu(profile.name, event.currentTarget);
-                                }}
-                              >
-                                <Ellipsis size={17} />
-                              </button>
-                            </div>
+                            <DropdownMenu onOpenChange={(open) => {
+                              if (open) closeSidebarMenus();
+                            }}>
+                              <div className="profile-menu-wrap">
+                                <DropdownMenuTrigger asChild>
+                                  <button
+                                    type="button"
+                                    className="profile-row-action profile-menu-trigger"
+                                    title={`More actions for ${profile.name}`}
+                                    aria-label={`More actions for ${profile.name}`}
+                                    onClick={(event) => event.stopPropagation()}
+                                  >
+                                    <Ellipsis size={17} />
+                                  </button>
+                                </DropdownMenuTrigger>
+                                <DropdownMenuContent align="end" sideOffset={6}>
+                                  <DropdownMenuGroup>
+                                    <DropdownMenuItem onSelect={() => onEditProfile(profile.name)}>
+                                      <Pencil data-icon="inline-start" />
+                                      Edit profile
+                                    </DropdownMenuItem>
+                                    <DropdownMenuItem onSelect={() => openProfileCloneDialog(profile.name)}>
+                                      <Copy data-icon="inline-start" />
+                                      Duplicate
+                                    </DropdownMenuItem>
+                                    <DropdownMenuItem
+                                      variant="destructive"
+                                      disabled={profile.name === "default"}
+                                      title={profile.name === "default" ? "The default agent cannot be deleted" : undefined}
+                                      onSelect={() => openProfileDeleteDialog(profile.name)}
+                                    >
+                                      <Trash2 data-icon="inline-start" />
+                                      Delete
+                                    </DropdownMenuItem>
+                                  </DropdownMenuGroup>
+                                </DropdownMenuContent>
+                              </div>
+                            </DropdownMenu>
                             <button
                               type="button"
                               className="profile-row-action profile-new-chat-action"
@@ -853,10 +777,6 @@ export function AppShell({
         </section>
       </main>
       {sessionSearchOpen ? renderSessionSearch() : null}
-      {profileMenu ? renderProfileMenu() : null}
-      {projectMenu ? renderProjectMenu() : null}
-      {sidebarOrganizationMenu ? renderSidebarOrganizationMenu() : null}
-      {sessionMenu ? renderSessionMenu() : null}
       {profileDialog ? (
         <ProfileActionDialog
           dialog={profileDialog}
@@ -913,64 +833,81 @@ export function AppShell({
 
     return (
       <div key={project.id} className="profile-node project-node">
-        <div
-          className="profile-node-row"
-          onContextMenu={(event) => {
-            event.preventDefault();
-            openProjectMenu(project.id, event.clientX, event.clientY);
-          }}
-        >
-          <button
-            type="button"
-            className="profile-node-button"
-            aria-expanded={!collapsed}
-            onClick={() => {
-              const willExpand = collapsed;
-              onToggleProjectCollapsed(project.id);
-              if (
-                willExpand &&
-                !projectSessionsLoaded[project.id] &&
-                !projectSessionsLoading[project.id]
-              ) {
-                onRefreshProjectSessions(project.id);
-              }
-            }}
-          >
-            <ProjectFolderIcon size={16} />
-            <span>{project.name}</span>
-          </button>
-          <div className="profile-row-actions">
-            <div className="project-menu-wrap">
+        <ContextMenu onOpenChange={(open) => {
+          if (open) closeSidebarMenus();
+        }}>
+          <ContextMenuTrigger asChild>
+            <div className="profile-node-row">
               <button
                 type="button"
-                className="profile-row-action profile-menu-trigger"
-                title={`More actions for ${project.name}`}
-                aria-label={`More actions for ${project.name}`}
-                aria-haspopup="menu"
-                aria-expanded={projectMenu?.projectId === project.id}
-                onClick={(event) => {
-                  event.stopPropagation();
-                  toggleProjectMenu(project.id, event.currentTarget);
+                className="profile-node-button"
+                aria-expanded={!collapsed}
+                onClick={() => {
+                  const willExpand = collapsed;
+                  onToggleProjectCollapsed(project.id);
+                  if (
+                    willExpand &&
+                    !projectSessionsLoaded[project.id] &&
+                    !projectSessionsLoading[project.id]
+                  ) {
+                    onRefreshProjectSessions(project.id);
+                  }
                 }}
               >
-                <Ellipsis size={17} />
+                <ProjectFolderIcon size={16} />
+                <span>{project.name}</span>
               </button>
+              <div className="profile-row-actions">
+                <DropdownMenu onOpenChange={(open) => {
+                  if (open) closeSidebarMenus();
+                }}>
+                  <div className="project-menu-wrap">
+                    <DropdownMenuTrigger asChild>
+                      <button
+                        type="button"
+                        className="profile-row-action profile-menu-trigger"
+                        title={`More actions for ${project.name}`}
+                        aria-label={`More actions for ${project.name}`}
+                        onClick={(event) => event.stopPropagation()}
+                      >
+                        <Ellipsis size={17} />
+                      </button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end" sideOffset={6}>
+                      <DropdownMenuGroup>
+                        <DropdownMenuItem onSelect={() => openProjectEditDialog(project)}>
+                          <Pencil data-icon="inline-start" />
+                          Edit
+                        </DropdownMenuItem>
+                      </DropdownMenuGroup>
+                    </DropdownMenuContent>
+                  </div>
+                </DropdownMenu>
+                <button
+                  type="button"
+                  className="profile-row-action profile-new-chat-action"
+                  title={`Start new session in ${project.name}`}
+                  aria-label={`Start new session in ${project.name}`}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    if (collapsed) onToggleProjectCollapsed(project.id);
+                    onNewSession(profileName, project.id);
+                  }}
+                >
+                  <SquarePen size={16} />
+                </button>
+              </div>
             </div>
-            <button
-              type="button"
-              className="profile-row-action profile-new-chat-action"
-              title={`Start new session in ${project.name}`}
-              aria-label={`Start new session in ${project.name}`}
-              onClick={(event) => {
-                event.stopPropagation();
-                if (collapsed) onToggleProjectCollapsed(project.id);
-                onNewSession(profileName, project.id);
-              }}
-            >
-              <SquarePen size={16} />
-            </button>
-          </div>
-        </div>
+          </ContextMenuTrigger>
+          <ContextMenuContent>
+            <ContextMenuGroup>
+              <ContextMenuItem onSelect={() => openProjectEditDialog(project)}>
+                <Pencil data-icon="inline-start" />
+                Edit
+              </ContextMenuItem>
+            </ContextMenuGroup>
+          </ContextMenuContent>
+        </ContextMenu>
         {showSessionBranch ? (
           <div className="session-branch">
             {projectError ? <div className="history-notice">{projectError}</div> : null}
@@ -1018,7 +955,9 @@ export function AppShell({
     const pinKey = options.pinKey || agentSessionPinKey(profileName, session.id);
     const pinned = isSessionPinned(pinKey);
     const rightLabel = options.rightLabel || timeLabel(session.lastActiveAt);
-    const contextTarget = sessionMenu?.pinKey === pinKey;
+    const contextTarget = sessionContextMenuKey === pinKey;
+    const deleteArmed = confirmDeleteSessionKey === pinKey;
+    const deleteDisabled = sessionActionBusy || activeSessionIds.includes(session.id);
     const rowClassName = [
       "sidebar-session-row",
       selected ? "active" : "",
@@ -1029,44 +968,99 @@ export function AppShell({
     ].filter(Boolean).join(" ");
 
     return (
-      <div
+      <ContextMenu
         key={`${pinKey}:${options.keySuffix || (options.pinnedSection ? "pinned" : "tree")}`}
-        className={rowClassName}
-        onContextMenu={(event) => {
-          event.preventDefault();
-          openSessionMenu(profileName, session, pinKey, event.clientX, event.clientY);
+        onOpenChange={(open) => {
+          if (open) {
+            closeSidebarMenus();
+            setSessionContextMenuKey(pinKey);
+            return;
+          }
+          setSessionContextMenuKey((current) => current === pinKey ? "" : current);
+          resetConfirmDeleteSession();
         }}
       >
-        <button
-          type="button"
-          className="sidebar-session-pin"
-          aria-label={pinned ? `Unpin ${session.title}` : `Pin ${session.title}`}
-          title={pinned ? "Unpin session" : "Pin session"}
-          onClick={(event) => {
-            event.stopPropagation();
-            toggleSessionPinned(pinKey);
-          }}
+        <ContextMenuTrigger asChild>
+          <div className={rowClassName}>
+            <button
+              type="button"
+              className="sidebar-session-pin"
+              aria-label={pinned ? `Unpin ${session.title}` : `Pin ${session.title}`}
+              title={pinned ? "Unpin session" : "Pin session"}
+              onClick={(event) => {
+                event.stopPropagation();
+                toggleSessionPinned(pinKey);
+              }}
+            >
+              <Pin size={14} />
+            </button>
+            <button
+              type="button"
+              className="sidebar-session"
+              onClick={options.onSelect || (() => onSelectSession(profileName, session.id))}
+            >
+              <span>{session.title}</span>
+              <em
+                className={[
+                  "sidebar-session-status",
+                  running ? "streaming" : "",
+                  unread ? "unread" : "",
+                ].filter(Boolean).join(" ")}
+                aria-label={running ? "Streaming response" : unread ? "Unread response" : undefined}
+              >
+                {running ? <i aria-hidden="true" /> : unread ? <i aria-hidden="true" /> : rightLabel}
+              </em>
+            </button>
+          </div>
+        </ContextMenuTrigger>
+        <ContextMenuContent
+          onMouseLeave={resetConfirmDeleteSession}
+          onPointerLeave={resetConfirmDeleteSession}
         >
-          <Pin size={14} />
-        </button>
-        <button
-          type="button"
-          className="sidebar-session"
-          onClick={options.onSelect || (() => onSelectSession(profileName, session.id))}
-        >
-          <span>{session.title}</span>
-          <em
-            className={[
-              "sidebar-session-status",
-              running ? "streaming" : "",
-              unread ? "unread" : "",
-            ].filter(Boolean).join(" ")}
-            aria-label={running ? "Streaming response" : unread ? "Unread response" : undefined}
-          >
-            {running ? <i aria-hidden="true" /> : unread ? <i aria-hidden="true" /> : rightLabel}
-          </em>
-        </button>
-      </div>
+          <ContextMenuGroup>
+            <ContextMenuItem
+              onFocus={resetConfirmDeleteSession}
+              onPointerEnter={resetConfirmDeleteSession}
+              onSelect={() => {
+                setSessionContextMenuKey("");
+                toggleSessionPinned(pinKey);
+              }}
+            >
+              <Pin data-icon="inline-start" />
+              {pinned ? "Unpin" : "Pin"}
+            </ContextMenuItem>
+            <ContextMenuItem
+              onFocus={resetConfirmDeleteSession}
+              onPointerEnter={resetConfirmDeleteSession}
+              onSelect={() => {
+                setSessionContextMenuKey("");
+                openSessionRenameDialog(profileName, session);
+              }}
+            >
+              <Pencil data-icon="inline-start" />
+              Rename
+            </ContextMenuItem>
+            <ContextMenuItem
+              variant={deleteArmed ? "confirm" : "destructive"}
+              disabled={deleteDisabled}
+              title={activeSessionIds.includes(session.id) ? "Wait for the active response to finish before deleting" : undefined}
+              onPointerLeave={resetConfirmDeleteSession}
+              onSelect={(event) => {
+                if (deleteDisabled) return;
+                if (!deleteArmed) {
+                  event.preventDefault();
+                  setConfirmDeleteSessionKey(pinKey);
+                  return;
+                }
+                void runSessionDelete(profileName, session.id, pinKey);
+              }}
+            >
+              <Trash2 data-icon="inline-start" />
+              {sessionActionBusy ? "Deleting..." : deleteArmed ? "Confirm delete" : "Delete"}
+            </ContextMenuItem>
+          </ContextMenuGroup>
+        </ContextMenuContent>
+      </ContextMenu>
     );
   }
 
@@ -1268,20 +1262,31 @@ export function AppShell({
 
   function renderSidebarOrganizationButton() {
     return (
-      <button
-        type="button"
-        className="sidebar-icon-button sidebar-organization-trigger"
-        aria-label="Organize sidebar"
-        aria-haspopup="menu"
-        aria-expanded={Boolean(sidebarOrganizationMenu)}
-        title={`Organize by ${sidebarOrganization === "projects" ? "project" : "agent"}`}
-        onClick={(event) => {
-          event.stopPropagation();
-          toggleSidebarOrganizationMenu(event.currentTarget);
-        }}
-      >
-        <SlidersHorizontal size={14} />
-      </button>
+      <DropdownMenu onOpenChange={(open) => {
+        if (open) closeSidebarMenus();
+      }}>
+        <DropdownMenuTrigger asChild>
+          <button
+            type="button"
+            className="sidebar-icon-button sidebar-organization-trigger"
+            aria-label="Organize sidebar"
+            title={`Organize by ${sidebarOrganization === "projects" ? "project" : "agent"}`}
+            onClick={(event) => event.stopPropagation()}
+          >
+            <SlidersHorizontal size={14} />
+          </button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" sideOffset={6}>
+          <DropdownMenuLabel>Organize</DropdownMenuLabel>
+          <DropdownMenuRadioGroup
+            value={sidebarOrganization}
+            onValueChange={(value) => selectSidebarOrganization(value as SidebarOrganization)}
+          >
+            <DropdownMenuRadioItem value="projects">By project</DropdownMenuRadioItem>
+            <DropdownMenuRadioItem value="agents">By agent</DropdownMenuRadioItem>
+          </DropdownMenuRadioGroup>
+        </DropdownMenuContent>
+      </DropdownMenu>
     );
   }
 
@@ -1296,13 +1301,11 @@ export function AppShell({
 
   function openProfileCreateDialog() {
     setProfileActionError("");
-    setProfileMenu(null);
     setProfileDialog({ action: "create", name: nextProfileName("new-agent", profiles) });
   }
 
   function openProjectCreateDialog() {
     setProjectActionError("");
-    setProjectMenu(null);
     setProjectDialog({
       action: "create",
       name: nextProjectName("new-project", projects),
@@ -1322,102 +1325,14 @@ export function AppShell({
     setProfileDialog({ action: "delete", source, name: "" });
   }
 
-  function toggleProfileMenu(profileName: string, trigger: HTMLElement) {
-    setProfileMenu((current) => {
-      if (current?.profile === profileName) return null;
-      const rect = trigger.getBoundingClientRect();
-      const menuWidth = 166;
-      const menuHeight = 112;
-      const left = clamp(rect.right - menuWidth, 8, window.innerWidth - menuWidth - 8);
-      const below = rect.bottom + 6;
-      const top = below + menuHeight > window.innerHeight - 8
-        ? Math.max(8, rect.top - menuHeight - 6)
-        : below;
-      return { profile: profileName, top, left };
-    });
-  }
-
-  function toggleProjectMenu(projectId: string, trigger: HTMLElement) {
-    setProjectMenu((current) => {
-      if (current?.projectId === projectId) return null;
-      const rect = trigger.getBoundingClientRect();
-      const menuWidth = 166;
-      const menuHeight = 44;
-      const left = clamp(rect.right - menuWidth, 8, window.innerWidth - menuWidth - 8);
-      const below = rect.bottom + 6;
-      const top = below + menuHeight > window.innerHeight - 8
-        ? Math.max(8, rect.top - menuHeight - 6)
-        : below;
-      return { projectId, top, left };
-    });
-  }
-
-  function toggleSidebarOrganizationMenu(trigger: HTMLElement) {
-    setSidebarOrganizationMenu((current) => {
-      if (current) return null;
-      const rect = trigger.getBoundingClientRect();
-      const menuWidth = 166;
-      const menuHeight = 98;
-      const left = clamp(rect.right - menuWidth, 8, window.innerWidth - menuWidth - 8);
-      const below = rect.bottom + 6;
-      const top = below + menuHeight > window.innerHeight - 8
-        ? Math.max(8, rect.top - menuHeight - 6)
-        : below;
-      return { top, left };
-    });
-  }
-
   function selectSidebarOrganization(value: SidebarOrganization) {
     setSidebarOrganization(value);
     saveSidebarOrganization(value);
-    setSidebarOrganizationMenu(null);
   }
 
-  function hasSidebarContextMenuOpen() {
-    return Boolean(profileMenu || projectMenu || sidebarOrganizationMenu || sessionMenu);
-  }
-
-  function closeSidebarContextMenus() {
-    setProfileMenu(null);
-    setProjectMenu(null);
-    setSidebarOrganizationMenu(null);
-    setSessionMenu(null);
+  function closeSidebarMenus() {
+    setSessionContextMenuKey("");
     resetConfirmDeleteSession();
-  }
-
-  function dismissSidebarContextMenuFromSidebarClick(event: ReactMouseEvent<HTMLElement>) {
-    if (!hasSidebarContextMenuOpen()) return;
-    event.preventDefault();
-    event.stopPropagation();
-    closeSidebarContextMenus();
-  }
-
-  function openProjectMenu(projectId: string, clientX: number, clientY: number) {
-    const menuWidth = 166;
-    const menuHeight = 44;
-    setProjectMenu({
-      projectId,
-      left: clamp(clientX, 8, window.innerWidth - menuWidth - 8),
-      top: clamp(clientY, 8, window.innerHeight - menuHeight - 8),
-    });
-  }
-
-  function openSessionMenu(
-    profileName: string,
-    session: HermesSession,
-    pinKey: string,
-    clientX: number,
-    clientY: number,
-  ) {
-    const menuWidth = 174;
-    const menuHeight = 112;
-    setSessionMenu({
-      profileName,
-      session,
-      pinKey,
-      left: clamp(clientX, 8, window.innerWidth - menuWidth - 8),
-      top: clamp(clientY, 8, window.innerHeight - menuHeight - 8),
-    });
   }
 
   function isSessionPinned(pinKey: string) {
@@ -1455,171 +1370,15 @@ export function AppShell({
     setSessionDialog({ profileName, session, name: session.title });
   }
 
-  function renderProfileMenu() {
-    if (!profileMenu) return null;
-    const profile = profiles.find((item) => item.name === profileMenu.profile);
-    if (!profile) return null;
-
-    return (
-      <SidebarContextMenu
-        top={profileMenu.top}
-        left={profileMenu.left}
-        onDismiss={closeSidebarContextMenus}
-      >
-        <SidebarContextMenuItem
-          onClick={() => {
-            setProfileMenu(null);
-            onEditProfile(profile.name);
-          }}
-        >
-          <Pencil size={14} />
-          Edit profile
-        </SidebarContextMenuItem>
-        <SidebarContextMenuItem
-          onClick={() => {
-            setProfileMenu(null);
-            openProfileCloneDialog(profile.name);
-          }}
-        >
-          <Copy size={14} />
-          Duplicate
-        </SidebarContextMenuItem>
-        <SidebarContextMenuItem
-          className="danger-menu-item"
-          disabled={profile.name === "default"}
-          title={profile.name === "default" ? "The default agent cannot be deleted" : undefined}
-          onClick={() => {
-            setProfileMenu(null);
-            openProfileDeleteDialog(profile.name);
-          }}
-        >
-          <Trash2 size={14} />
-          Delete
-        </SidebarContextMenuItem>
-      </SidebarContextMenu>
-    );
-  }
-
-  function renderProjectMenu() {
-    if (!projectMenu) return null;
-    const project = projects.find((item) => item.id === projectMenu.projectId);
-    if (!project) return null;
-
-    return (
-      <SidebarContextMenu
-        top={projectMenu.top}
-        left={projectMenu.left}
-        onDismiss={closeSidebarContextMenus}
-      >
-        <SidebarContextMenuItem
-          onClick={() => {
-            setProjectMenu(null);
-            setProjectActionError("");
-            setProjectDialog({
-              action: "edit",
-              projectId: project.id,
-              name: project.name,
-              defaultAgentId: project.defaultAgentId,
-              systemPrompt: project.systemPrompt,
-            });
-          }}
-        >
-          <Pencil size={14} />
-          Edit
-        </SidebarContextMenuItem>
-      </SidebarContextMenu>
-    );
-  }
-
-  function renderSidebarOrganizationMenu() {
-    const options: Array<{ value: SidebarOrganization; label: string }> = [
-      { value: "projects", label: "By project" },
-      { value: "agents", label: "By agent" },
-    ];
-
-    return (
-      <SidebarContextMenu
-        className="sidebar-organization-menu"
-        top={sidebarOrganizationMenu?.top ?? 0}
-        left={sidebarOrganizationMenu?.left ?? 0}
-        onDismiss={closeSidebarContextMenus}
-      >
-        <SidebarContextMenuHeader>Organize</SidebarContextMenuHeader>
-        {options.map((option) => (
-          <SidebarContextMenuItem
-            key={option.value}
-            role="menuitemradio"
-            aria-checked={sidebarOrganization === option.value}
-            onClick={() => selectSidebarOrganization(option.value)}
-          >
-            <Check size={14} style={{ opacity: sidebarOrganization === option.value ? 1 : 0 }} />
-            {option.label}
-          </SidebarContextMenuItem>
-        ))}
-      </SidebarContextMenu>
-    );
-  }
-
-  function renderSessionMenu() {
-    if (!sessionMenu) return null;
-    const pinned = isSessionPinned(sessionMenu.pinKey);
-    const deleteArmed = confirmDeleteSessionKey === sessionMenu.pinKey;
-    const deleteDisabled =
-      sessionActionBusy || activeSessionIds.includes(sessionMenu.session.id);
-
-    return (
-      <SidebarContextMenu
-        className="session-context-menu"
-        top={sessionMenu.top}
-        left={sessionMenu.left}
-        onDismiss={closeSidebarContextMenus}
-        onMouseLeave={resetConfirmDeleteSession}
-        onPointerLeave={resetConfirmDeleteSession}
-      >
-        <SidebarContextMenuItem
-          onMouseEnter={resetConfirmDeleteSession}
-          onPointerEnter={resetConfirmDeleteSession}
-          onClick={() => {
-            toggleSessionPinned(sessionMenu.pinKey);
-            setSessionMenu(null);
-          }}
-        >
-          <Pin size={14} />
-          {pinned ? "Unpin" : "Pin"}
-        </SidebarContextMenuItem>
-        <SidebarContextMenuItem
-          onMouseEnter={resetConfirmDeleteSession}
-          onPointerEnter={resetConfirmDeleteSession}
-          onClick={() => {
-            const { profileName, session } = sessionMenu;
-            setSessionMenu(null);
-            openSessionRenameDialog(profileName, session);
-          }}
-        >
-          <Pencil size={14} />
-          Rename
-        </SidebarContextMenuItem>
-        <SidebarContextMenuItem
-          className={deleteArmed ? "danger-menu-item confirm-menu-item" : "danger-menu-item"}
-          disabled={deleteDisabled}
-          title={activeSessionIds.includes(sessionMenu.session.id) ? "Wait for the active response to finish before deleting" : undefined}
-          onMouseLeave={resetConfirmDeleteSession}
-          onPointerLeave={resetConfirmDeleteSession}
-          onClick={() => {
-            if (deleteDisabled) return;
-            if (!deleteArmed) {
-              setConfirmDeleteSessionKey(sessionMenu.pinKey);
-              return;
-            }
-            const { profileName, session, pinKey } = sessionMenu;
-            void runSessionDelete(profileName, session.id, pinKey);
-          }}
-        >
-          <Trash2 size={14} />
-          {sessionActionBusy ? "Deleting..." : deleteArmed ? "Confirm delete" : "Delete"}
-        </SidebarContextMenuItem>
-      </SidebarContextMenu>
-    );
+  function openProjectEditDialog(project: IrisProject) {
+    setProjectActionError("");
+    setProjectDialog({
+      action: "edit",
+      projectId: project.id,
+      name: project.name,
+      defaultAgentId: project.defaultAgentId,
+      systemPrompt: project.systemPrompt,
+    });
   }
 
   function closeProfileDialog() {
@@ -1682,7 +1441,7 @@ export function AppShell({
     }
     removePinnedSession(sessionId, pinKey);
     setConfirmDeleteSessionKey("");
-    setSessionMenu(null);
+    setSessionContextMenuKey("");
   }
 
   async function submitProjectDialog(event: FormEvent<HTMLFormElement>) {

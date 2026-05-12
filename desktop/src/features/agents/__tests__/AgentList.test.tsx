@@ -1,47 +1,31 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { AgentListContextMenu } from "../AgentList";
+import { AgentList } from "../AgentList";
 import type { HermesProfile } from "../../../types/hermes";
 
-describe("AgentListContextMenu", () => {
-  it("uses the reusable fixed-position context menu shell", () => {
+describe("AgentList", () => {
+  it("renders button-driven agent actions without the legacy sidebar context menu", () => {
     const html = renderToStaticMarkup(
-      createElement(AgentListContextMenu, {
-        profile: profileFixture({ name: "health" }),
-        top: 120,
-        left: 320,
-        onDismiss: noop,
-        onDuplicate: noop,
-        onDelete: noop,
+      createElement(AgentList, {
+        profiles: [profileFixture({ name: "health" })],
+        onOpenAgent: noop,
+        onProfileAction: noopProfileAction,
       }),
     );
 
-    expect(html).toContain("sidebar-context-menu agent-list-context-menu");
-    expect(html).toContain("style=\"top:120px;left:320px\"");
-    expect(html).toContain("Duplicate");
-    expect(html).toContain("Delete");
-    expect(html).not.toContain("profile-context-menu");
-  });
-
-  it("disables delete for the default agent", () => {
-    const html = renderToStaticMarkup(
-      createElement(AgentListContextMenu, {
-        profile: profileFixture({ name: "default" }),
-        top: 120,
-        left: 320,
-        onDismiss: noop,
-        onDuplicate: noop,
-        onDelete: noop,
-      }),
-    );
-
-    expect(html).toContain("disabled=\"\"");
-    expect(html).toContain("The default agent cannot be deleted");
+    expect(html).toContain("More actions for health");
+    expect(html).toContain("agent-list-menu-trigger");
+    expect(html.includes(`sidebar-${"context"}-menu`)).toBe(false);
+    expect(html.includes(`agent-list-${"context"}-menu`)).toBe(false);
   });
 });
 
 function noop() {}
+
+async function noopProfileAction() {
+  return "";
+}
 
 function profileFixture(overrides: Partial<HermesProfile> = {}): HermesProfile {
   return {
