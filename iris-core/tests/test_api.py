@@ -1532,7 +1532,10 @@ def test_core_runtime_deliveries_publish_stream_events_without_materializing(tmp
 def test_core_automations_create_list_control_and_delete_hermes_jobs(tmp_path, monkeypatch):
     root = tmp_path / ".hermes"
     root.mkdir()
-    (root / ".env").write_text("API_SERVER_KEY=hermes-job-token\n", encoding="utf-8")
+    (root / ".env").write_text(
+        "API_SERVER_KEY=hermes-job-token\nAGENTUI_TOKEN=agentui-local-test\n",
+        encoding="utf-8",
+    )
     seen = []
     jobs = [
         {
@@ -1547,7 +1550,7 @@ def test_core_automations_create_list_control_and_delete_hermes_jobs(tmp_path, m
 
     def fake_http_json(url, *, method, token, body=None):
         seen.append({"url": url, "method": method, "token": token, "body": body})
-        if method == "GET":
+        if method == "GET" and url.endswith("/api/jobs?include_disabled=true"):
             assert "include_disabled=true" in url
             return {
                 "ok": True,
@@ -1558,6 +1561,20 @@ def test_core_automations_create_list_control_and_delete_hermes_jobs(tmp_path, m
                     "jobs": jobs,
                 },
             }
+        if method == "GET" and "/api/jobs/" in url:
+            job_id = url.rsplit("/api/jobs/", 1)[1]
+            for job in jobs:
+                if job["id"] == job_id:
+                    return {
+                        "ok": True,
+                        "status": 200,
+                        "url": url,
+                        "json": {
+                            "ok": True,
+                            "job": job,
+                        },
+                    }
+            return {"ok": False, "status": 404, "url": url, "error": "Job not found."}
         if method == "POST" and url.endswith("/api/jobs"):
             jobs.append(
                 {
@@ -1568,6 +1585,15 @@ def test_core_automations_create_list_control_and_delete_hermes_jobs(tmp_path, m
                     "state": "scheduled",
                     "deliver": body.get("deliver"),
                     "repeat": {"times": body.get("repeat"), "completed": 0},
+                    "skills": ["summarizer"],
+                    "script": "echo hi",
+                    "no_agent": True,
+                    "context_from": ["project"],
+                    "workdir": "/tmp/project",
+                    "enabled_toolsets": ["shell"],
+                    "model": "gpt-5.5",
+                    "provider": "openai",
+                    "base_url": "https://api.example.test",
                 }
             )
             return {
@@ -1619,11 +1645,13 @@ def test_core_automations_create_list_control_and_delete_hermes_jobs(tmp_path, m
     )
     automation = created.json()["automation"]
     listed = client.get(f"/v1/automations?agentId={agent['id']}")
+    fetched = client.get(f"/v1/automations/{automation['id']}")
+    missed = client.get("/v1/automations/not-a-job")
     updated = client.patch(
         f"/v1/automations/{automation['id']}",
         json={
             "name": "Morning standup",
-            "schedule": "daily at 09:00",
+            "schedule": "0 9 * * *",
             "prompt": "Send the morning standup note.",
             "repeat": None,
         },
@@ -1634,10 +1662,22 @@ def test_core_automations_create_list_control_and_delete_hermes_jobs(tmp_path, m
     deleted = client.delete(f"/v1/automations/{automation['id']}")
 
     assert created.status_code == 200
-    assert automation["id"].startswith("auto_")
+    assert automation["id"] == "external-job-created"
     assert automation["externalJobId"] == "external-job-created"
     assert automation["deliverToSessionId"] == session["id"]
+    assert automation["skills"] == ["summarizer"]
+    assert automation["script"] == "echo hi"
+    assert automation["noAgent"] is True
+    assert automation["contextFrom"] == ["project"]
+    assert automation["workdir"] == "/tmp/project"
+    assert automation["enabledToolsets"] == ["shell"]
+    assert automation["model"] == "gpt-5.5"
+    assert automation["provider"] == "openai"
+    assert automation["baseUrl"] == "https://api.example.test"
     assert listed.status_code == 200
+    assert fetched.status_code == 200
+    assert fetched.json()["automation"]["id"] == "external-job-created"
+    assert missed.status_code == 404
     assert {row["externalJobId"] for row in listed.json()["automations"]} >= {
         "external-job-created",
         "external-job-existing",
@@ -1655,12 +1695,187 @@ def test_core_automations_create_list_control_and_delete_hermes_jobs(tmp_path, m
     assert any(
         request["method"] == "PATCH"
         and request["body"]["repeat"] is None
-        and request["body"]["schedule"] == "daily at 09:00"
+        and request["body"]["schedule"] == "0 9 * * *"
         for request in seen
+    )
+    assert not any(
+        request["method"] == "GET"
+        and request["url"].endswith("/api/jobs?include_disabled=true")
+        for request in seen[2:]
     )
     assert any(request["url"].endswith("/api/jobs/external-job-created/pause") for request in seen)
     assert any(request["url"].endswith("/api/jobs/external-job-created/resume") for request in seen)
     assert any(request["url"].endswith("/api/jobs/external-job-created/run") for request in seen)
+
+
+def test_core_automation_create_surfaces_hermes_validation_error(tmp_path, monkeypatch):
+    root = tmp_path / ".hermes"
+    root.mkdir()
+    (root / ".env").write_text("API_SERVER_KEY=hermes-job-token\n", encoding="utf-8")
+
+    def fake_http_json(url, *, method, token, body=None):
+        if method == "POST" and url.endswith("/api/jobs"):
+            return {
+                "ok": False,
+                "status": 400,
+                "url": url,
+                "error": "Prompt must be at most 5000 characters.",
+            }
+        return {"ok": True, "status": 200, "url": url, "json": {"ok": True, "jobs": []}}
+
+    monkeypatch.setattr(hermes_adapter, "http_json", fake_http_json)
+    client = make_client(root)
+    agent = client.get("/v1/agents").json()["agents"][0]
+
+    created = client.post(
+        "/v1/automations",
+        json={
+            "agentId": agent["id"],
+            "name": "Too long",
+            "schedule": "10m",
+            "prompt": "x" * 5500,
+            "deliver": "iris:desktop",
+        },
+    )
+
+    assert created.status_code == 200
+    assert created.json()["ok"] is False
+    assert created.json()["error"] == "Prompt must be at most 5000 characters."
+
+
+def test_core_automation_create_with_project_resolves_project_session(tmp_path, monkeypatch):
+    root = tmp_path / ".hermes"
+    root.mkdir()
+    (root / ".env").write_text("API_SERVER_KEY=hermes-job-token\n", encoding="utf-8")
+    seen = []
+    jobs = []
+
+    def fake_http_json(url, *, method, token, body=None):
+        seen.append({"url": url, "method": method, "token": token, "body": body})
+        if method == "POST" and url.endswith("/api/jobs"):
+            jobs.append({
+                "id": "project-job",
+                "name": body["name"],
+                "prompt": body["prompt"],
+                "schedule_display": body["schedule"],
+                "state": "scheduled",
+                "deliver": body.get("deliver"),
+            })
+            return {"ok": True, "status": 200, "url": url, "json": {"ok": True, "job": jobs[-1]}}
+        if method == "GET" and url.endswith("/api/jobs?include_disabled=true"):
+            return {"ok": True, "status": 200, "url": url, "json": {"ok": True, "jobs": jobs}}
+        return {"ok": False, "status": 404, "url": url, "error": "not found"}
+
+    monkeypatch.setattr(hermes_adapter, "http_json", fake_http_json)
+    client = make_client(root)
+    agent = client.get("/v1/agents").json()["agents"][0]
+    project = client.post(
+        "/v1/projects",
+        json={"name": "Ops", "defaultAgentId": agent["id"]},
+    ).json()["project"]
+
+    created = client.post(
+        "/v1/automations",
+        json={
+            "agentId": agent["id"],
+            "name": "Project digest",
+            "schedule": "10m",
+            "prompt": "Summarize project activity.",
+            "projectId": project["id"],
+        },
+    )
+    automation = created.json()["automation"]
+    project_sessions = client.get(f"/v1/projects/{project['id']}/sessions").json()["sessions"]
+    listed = client.get(f"/v1/automations?agentId={agent['id']}").json()["automations"][0]
+
+    assert created.status_code == 200
+    assert seen[0]["body"]["deliver"].startswith("iris:automation-chat_")
+    assert seen[0]["body"]["deliver"] != "iris:desktop"
+    assert automation["projectId"] == project["id"]
+    assert automation["deliverToSessionId"]
+    assert automation["resolvedDeliveryTarget"]["chatId"].startswith("automation-chat_")
+    assert project_sessions[0]["id"] == automation["deliverToSessionId"]
+    assert project_sessions[0]["title"] == "Project digest"
+    assert listed["projectId"] == project["id"]
+    assert listed["deliverToSessionId"] == automation["deliverToSessionId"]
+
+
+def test_core_automation_no_project_delivery_uses_unprojected_automation_session(tmp_path, monkeypatch):
+    root = tmp_path / ".hermes"
+    root.mkdir()
+    (root / ".env").write_text(
+        "API_SERVER_KEY=hermes-job-token\nAGENTUI_TOKEN=agentui-local-test\n",
+        encoding="utf-8",
+    )
+    jobs = []
+
+    def fake_http_json(url, *, method, token, body=None):
+        if method == "POST" and url.endswith("/api/jobs"):
+            jobs.append({
+                "id": "abc123def456",
+                "name": body["name"],
+                "prompt": body["prompt"],
+                "schedule_display": body["schedule"],
+                "state": "scheduled",
+                "deliver": body.get("deliver"),
+            })
+            return {"ok": True, "status": 200, "url": url, "json": {"ok": True, "job": jobs[-1]}}
+        if method == "GET" and url.endswith("/api/jobs?include_disabled=true"):
+            return {"ok": True, "status": 200, "url": url, "json": {"ok": True, "jobs": jobs}}
+        return {"ok": False, "status": 404, "url": url, "error": "not found"}
+
+    monkeypatch.setattr(hermes_adapter, "http_json", fake_http_json)
+    client = make_client(root)
+    agent = client.get("/v1/agents").json()["agents"][0]
+
+    created = client.post(
+        "/v1/automations",
+        json={
+            "agentId": agent["id"],
+            "name": "No project reminder",
+            "schedule": "10m",
+            "prompt": "Reply with the reminder.",
+            "projectId": None,
+        },
+    )
+    automation = created.json()["automation"]
+    chat_id = automation["resolvedDeliveryTarget"]["chatId"]
+    create_core_history_db(
+        root / "state.db",
+        session_id="cron_abc123def456_20260512_102933",
+        title="",
+        user_text="Remind me to finish the task",
+        assistant_text="Reminder complete",
+        chat_id="",
+    )
+    delivery = client.post(
+        "/v1/runtime-deliveries/hermes",
+        headers={"Authorization": "Bearer agentui-local-test"},
+        json={
+            "runtimeId": "runtime_local_hermes",
+            "profile": "default",
+            "chatId": chat_id,
+            "messageId": "automation-delivery-1",
+            "content": "Cronjob Response: No project reminder\n(job_id: abc123def456)\n-------------\n\nReminder complete",
+            "source": "hermes-cron",
+            "metadata": {},
+        },
+    )
+    sessions = client.get(f"/v1/sessions?agentId={agent['id']}").json()["sessions"]
+    inbox = next(session for session in sessions if session["id"] == automation["deliverToSessionId"])
+    messages = client.get(f"/v1/sessions/{automation['deliverToSessionId']}/messages").json()["messages"]
+
+    assert created.status_code == 200
+    assert automation["projectId"] is None
+    assert jobs[0]["deliver"].startswith("iris:automation-chat_")
+    assert jobs[0]["deliver"] != "iris:desktop"
+    assert delivery.status_code == 200
+    assert delivery.json()["sessionId"] == automation["deliverToSessionId"]
+    assert inbox["title"] == "No project reminder"
+    assert inbox["externalSessionId"] == "cron_abc123def456_20260512_102933"
+    assert inbox["metadata"].get("projectId") is None
+    assert inbox["readState"]["state"] == "unread"
+    assert [message["content"] for message in messages] == ["Remind me to finish the task", "Reminder complete"]
 
 
 def test_core_send_owns_chat_id_and_uses_env_file_token(tmp_path, monkeypatch):

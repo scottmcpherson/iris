@@ -304,9 +304,12 @@ export function AppShell({
   }, [sessionSearchItems, sessionSearchQuery]);
 
   const pinnedSessionItems = useMemo(() => {
-    const items = sessionSearchItems.filter(({ pinKey }) =>
-      Boolean(pinnedSessions[pinKey]),
-    );
+    const items = sessionSearchItems
+      .map((item) => {
+        const pinnedKey = pinnedPinKeyForSessionItem(item, pinnedSessions);
+        return pinnedKey ? { ...item, pinKey: pinnedKey } : null;
+      })
+      .filter((item): item is SessionSearchItem => Boolean(item));
     return items.sort(
       (left, right) =>
         sessionMillis(right.session.lastActiveAt) -
@@ -1924,6 +1927,20 @@ function sessionSearchIdentityKey(profileName: string, sessionId: string) {
 
 function legacySessionPinKey(profileName: string, sessionId: string) {
   return `${profileName}:${sessionId}`;
+}
+
+function pinnedPinKeyForSessionItem(
+  item: SessionSearchItem,
+  pinnedSessions: Record<string, boolean>,
+) {
+  const candidates = [
+    item.pinKey,
+    agentSessionPinKey(item.profileName, item.session.id),
+    unprojectedSessionPinKey(item.profileName, item.session.id),
+    legacySessionPinKey(item.profileName, item.session.id),
+  ];
+
+  return candidates.find((pinKey) => pinnedSessions[pinKey]) || "";
 }
 
 export function unpinnedProfileSessions<T extends { id: string }>(

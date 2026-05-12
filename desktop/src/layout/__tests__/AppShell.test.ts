@@ -363,6 +363,72 @@ describe("AppShell pinned sessions", () => {
     expect(html).not.toContain("Pirate");
   });
 
+  it("shows sessions pinned from the agent organization in the pinned section", () => {
+    const looseChat = sessionFixture({ id: "session_loose", title: "Loose chat" });
+
+    vi.stubGlobal("localStorage", {
+      getItem: (key: string) => {
+        if (key === storageKeys.sidebarOrganization) return JSON.stringify("agents");
+        if (key === storageKeys.pinnedSessions) {
+          return JSON.stringify({ "agent:default:session_loose": true });
+        }
+        return null;
+      },
+      setItem: vi.fn(),
+    });
+
+    const html = renderToStaticMarkup(
+      createElement(AppShell, {
+        activeView: "chat",
+        connected: true,
+        isRefreshing: false,
+        primaryPane: null,
+        selectedProfile: "default",
+        status: statusFixture(),
+        sessions: [looseChat],
+        sessionsByProfile: {},
+        sessionReadStates: {},
+        projects: [],
+        projectAgents: [],
+        sessionsByProject: {},
+        projectSessionsLoading: {},
+        projectSessionsLoaded: {},
+        projectErrors: {},
+        collapsedProjects: {},
+        unprojectedSessions: [looseChat],
+        sessionsLoadedByProfile: { default: true },
+        sessionsLoading: false,
+        sessionsLoadingByProfile: {},
+        historyError: null,
+        historyErrorsByProfile: {},
+        selectedSessionId: null,
+        selectedProjectId: "",
+        activeSessionIds: [],
+        coreApiUrl: "http://127.0.0.1:8765",
+        onNewSession: noop,
+        onCreateProject: async () => projectFixture(),
+        onUpdateProject: async () => projectFixture(),
+        onToggleProjectCollapsed: noop,
+        onRefreshProjects: noop,
+        onRefreshProjectSessions: noop,
+        onEditProfile: noop,
+        onProfileAction: async () => "",
+        onRefresh: noop,
+        onRefreshSessions: noop,
+        onDeleteSession: async () => "",
+        onRenameSession: async () => "",
+        onSelectSession: noop,
+        onSelectProjectSession: noop,
+        onSelectProfile: noop,
+        onSelectView: noop,
+      }),
+    );
+
+    expect(html).toContain('<span class="sidebar-label">Pinned</span>');
+    expect(html).toContain('aria-label="Unpin Loose chat"');
+    expect(html).not.toContain('aria-label="Pin Loose chat"');
+  });
+
   it("deduplicates the selected profile session in sidebar search results", () => {
     const sharedSession = sessionFixture({
       id: "session_3782123ec7792ff6f4fa59",

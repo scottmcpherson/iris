@@ -1,7 +1,7 @@
 export const storageKeys = {
   runtimeConfig: "hermes.desktop.runtime",
   onboardingDismissed: "hermes.desktop.onboarding.dismissed",
-  jobsDeliveryTarget: "hermes.desktop.jobs.deliveryTarget",
+  automationsDeliveryTarget: "hermes.desktop.automations.deliveryTarget",
   memoryProviders: "hermes-memory-provider-controls",
   modelSelectionByProfile: "hermes.desktop.modelSelectionByProfile",
   collapsedSidebarSections: "iris.desktop.sidebar.collapsedSections",

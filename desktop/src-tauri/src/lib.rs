@@ -78,6 +78,9 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
+            #[cfg(target_os = "macos")]
+            app.set_activation_policy(tauri::ActivationPolicy::Regular);
+
             install_crash_logging(app.handle().clone());
             install_app_menu(app)?;
 
@@ -243,8 +246,15 @@ fn install_app_menu(app: &mut tauri::App) -> tauri::Result<()> {
 }
 
 fn show_main_window(app: &tauri::AppHandle) {
+    #[cfg(target_os = "macos")]
+    let _ = app.show();
+
     if let Some(window) = app.get_webview_window("main") {
+        let _ = window.set_title("Iris");
+        let _ = window.set_content_protected(false);
+        let _ = window.unminimize();
         let _ = window.show();
+        let _ = window.center();
         let _ = window.set_focus();
     }
 }

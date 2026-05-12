@@ -294,6 +294,37 @@ def test_send_stream_preview_posts_delivery_payload(monkeypatch: pytest.MonkeyPa
     ]
 
 
+def test_send_cron_delivery_includes_session_context(monkeypatch: pytest.MonkeyPatch):
+    adapter_module = load_adapter_module(monkeypatch)
+    session_context = types.ModuleType("gateway.session_context")
+    values = {
+        "HERMES_SESSION_KEY": "cron_abc123def456_20260512_102933",
+        "HERMES_CRON_AUTO_DELIVER_PLATFORM": "iris",
+        "HERMES_CRON_AUTO_DELIVER_CHAT_ID": "automation-chat_123",
+        "HERMES_CRON_AUTO_DELIVER_THREAD_ID": "",
+    }
+    session_context.get_session_env = lambda name, default="": values.get(name, default)
+    monkeypatch.setitem(sys.modules, "gateway.session_context", session_context)
+    adapter = adapter_module.IrisPlatformAdapter(Config())
+    requests: list[tuple[str, str, dict[str, Any] | None]] = []
+
+    async def fake_request(method: str, path: str, body: dict[str, Any] | None = None):
+        requests.append((method, path, body))
+        return {"ok": True}
+
+    adapter._request = fake_request
+
+    result = asyncio.run(adapter.send("automation-chat_123", "Cronjob Response: Cook Rice\n(job_id: abc123def456)"))
+
+    assert result.success is True
+    metadata = requests[0][2]["metadata"]
+    assert requests[0][2]["source"] == "hermes-cron"
+    assert metadata["externalSessionId"] == "cron_abc123def456_20260512_102933"
+    assert metadata["hermesSessionId"] == "cron_abc123def456_20260512_102933"
+    assert metadata["cronDeliveryPlatform"] == "iris"
+    assert metadata["cronDeliveryChatId"] == "automation-chat_123"
+
+
 def test_send_returns_retryable_failure_from_delivery_error(monkeypatch: pytest.MonkeyPatch):
     adapter_module = load_adapter_module(monkeypatch)
     adapter = adapter_module.IrisPlatformAdapter(Config())

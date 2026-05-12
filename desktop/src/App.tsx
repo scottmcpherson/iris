@@ -16,9 +16,9 @@ import { useAgentUIChat } from "./features/chat/useIrisChat";
 import { useIrisModelCatalog } from "./features/chat/useIrisModelCatalog";
 import { useIrisSlashCommands } from "./features/chat/useIrisSlashCommands";
 import { useIrisRuntime } from "./features/iris/useIrisRuntime";
-import { JobsView } from "./features/jobs/JobsView";
-import { useAgentUIAutomations } from "./features/jobs/useIrisAutomations";
-import type { HermesInboxMessage } from "./types/hermes";
+import { AutomationsView } from "./features/automations/AutomationsView";
+import { useAgentUIAutomations } from "./features/automations/useIrisAutomations";
+import type { HermesInboxMessage, HermesSession } from "./types/hermes";
 import { useIrisProjects } from "./features/projects/useIrisProjects";
 import { CommandMenu } from "./features/polish/CommandMenu";
 import { NotificationCenter } from "./features/polish/NotificationCenter";
@@ -153,16 +153,29 @@ function App() {
 
   function openDeliveryChat(delivery: HermesInboxMessage) {
     const targetProfile = delivery.profile || iris.selectedProfile;
+    const deliveryMetadata = delivery.metadata || {};
+    const deliverySessionId =
+      typeof deliveryMetadata.agentuiSessionId === "string"
+        ? deliveryMetadata.agentuiSessionId
+        : typeof deliveryMetadata.sessionId === "string"
+          ? deliveryMetadata.sessionId
+          : "";
     const allSessionEntries = [
-      ...chat.sessions.map((session) => ({ profile: iris.selectedProfile, session })),
+      ...chat.sessions.map((session) => ({ profile: iris.selectedProfile, projectId: null as string | null, session })),
       ...Object.entries(chat.sessionsByProfile).flatMap(([profileName, sessions]) =>
-        sessions.map((session) => ({ profile: profileName, session })),
+        sessions.map((session) => ({ profile: profileName, projectId: null as string | null, session })),
+      ),
+      ...Object.entries(sidebarSessionsByProject).flatMap(([projectId, sessions]) =>
+        sessions.map((session) => ({ profile: sessionProfile(session) || targetProfile, projectId, session })),
       ),
     ];
     const match = allSessionEntries.find(
-      ({ session }) => session.chatId === delivery.chatId || session.id === delivery.chatId,
+      ({ session }) =>
+        Boolean(deliverySessionId && session.id === deliverySessionId) ||
+        session.chatId === delivery.chatId ||
+        session.id === delivery.chatId,
     );
-    const sessionId = match?.session.id || (delivery.chatId.startsWith("session_") ? delivery.chatId : "");
+    const sessionId = match?.session.id || deliverySessionId || (delivery.chatId.startsWith("session_") ? delivery.chatId : "");
     if (!sessionId) {
       pushNotification({
         tone: "info",
@@ -173,7 +186,7 @@ function App() {
     }
     const profileName = match?.profile || targetProfile;
     setActiveView("chat");
-    projects.selectProject(null);
+    projects.selectProject(match?.projectId || null);
     if (profileName !== iris.selectedProfile) {
       iris.selectProfile(profileName);
     }
@@ -452,18 +465,27 @@ function App() {
     }
     if (activeView === "jobs") {
       return (
-        <JobsView
-          activeJobs={jobs.activeJobs}
-          busyJobId={jobs.busyJobId}
-          completedJobs={jobs.completedJobs}
+        <AutomationsView
+          activeAutomations={jobs.activeAutomations}
+          busyAutomationId={jobs.busyAutomationId}
+          connected={iris.connected}
           deliveries={jobs.deliveries}
-          deliveryTarget={jobs.deliveryTarget}
           error={jobs.error}
-          pausedJobs={jobs.pausedJobs}
+          pausedAutomations={jobs.pausedAutomations}
+          projects={projects.projects}
+          selectedProjectId={projects.selectedProjectId}
           onAcknowledgeDelivery={(messageId) => void jobs.acknowledgeDelivery(messageId)}
           onCreateScheduledMessage={jobs.createScheduledMessage}
-          onDeliveryTargetChange={jobs.updateDeliveryTarget}
           onOpenDeliveryChat={openDeliveryChat}
+          onProjectChange={(projectId) => {
+            projects.selectProject(projectId);
+            if (!projectId) return;
+            const project = projects.projects.find((item) => item.id === projectId);
+            const agent = project ? projectAgentById.get(project.defaultAgentId) : null;
+            if (agent && agent.runtimeProfile !== iris.selectedProfile) {
+              iris.selectProfile(agent.runtimeProfile);
+            }
+          }}
           onRunJobAction={jobs.runJobAction}
           onUpdateScheduledMessage={jobs.updateScheduledMessage}
         />
@@ -530,6 +552,11 @@ function profileActionTitle(action: ProfileAction) {
   if (action === "delete") return "Agent deleted";
   if (action === "rename") return "Agent renamed";
   return "Agent switched";
+}
+
+function sessionProfile(session: HermesSession) {
+  const metadata = session.metadata || {};
+  return typeof metadata.runtimeProfile === "string" ? metadata.runtimeProfile : "";
 }
 
 function isProfileActionFailure(message: string) {

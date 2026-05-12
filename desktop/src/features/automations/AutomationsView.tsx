@@ -2,46 +2,50 @@ import { useState } from "react";
 import type { FormEvent, KeyboardEvent } from "react";
 import { Check, Info, Pause, Pencil, Play, Plus, Send, Trash2, X } from "lucide-react";
 import type { CreateScheduledMessageInput, UpdateScheduledMessageInput } from "./useIrisAutomations";
-import type { HermesInboxMessage, HermesJob } from "../../types/hermes";
+import { ProjectMenu } from "../chat/components/ProjectMenu";
+import type { IrisProject } from "../../lib/agentuiCore";
+import type { HermesAutomation, HermesInboxMessage } from "../../types/hermes";
 
-type TabKey = "active" | "paused" | "completed";
+type TabKey = "active" | "paused";
 type ScheduleMode = "delay" | "datetime" | "daily" | "custom";
 type RepeatMode = "once" | "forever" | "count";
 
-type JobsViewProps = {
-  activeJobs: HermesJob[];
-  busyJobId: string | null;
-  completedJobs: HermesJob[];
+type AutomationsViewProps = {
+  activeAutomations: HermesAutomation[];
+  busyAutomationId: string | null;
+  connected: boolean;
   deliveries: HermesInboxMessage[];
-  deliveryTarget: string;
   error: string | null;
-  pausedJobs: HermesJob[];
+  pausedAutomations: HermesAutomation[];
+  projects: IrisProject[];
+  selectedProjectId: string | null;
   onAcknowledgeDelivery: (messageId: string) => void;
   onCreateScheduledMessage: (input: CreateScheduledMessageInput) => Promise<string>;
-  onDeliveryTargetChange: (value: string) => void;
   onOpenDeliveryChat: (delivery: HermesInboxMessage) => void;
+  onProjectChange: (projectId: string | null) => void;
   onRunJobAction: (jobId: string, action: "pause" | "resume" | "run" | "delete") => Promise<string>;
   onUpdateScheduledMessage: (jobId: string, input: UpdateScheduledMessageInput) => Promise<string>;
 };
 
-const tabOrder: TabKey[] = ["active", "paused", "completed"];
+const tabOrder: TabKey[] = ["active", "paused"];
 
-export function JobsView({
-  activeJobs,
-  busyJobId,
-  completedJobs,
+export function AutomationsView({
+  activeAutomations,
+  busyAutomationId,
+  connected,
   deliveries,
-  deliveryTarget,
   error,
-  pausedJobs,
+  pausedAutomations,
+  projects,
+  selectedProjectId,
   onAcknowledgeDelivery,
   onCreateScheduledMessage,
-  onDeliveryTargetChange,
   onOpenDeliveryChat,
+  onProjectChange,
   onRunJobAction,
   onUpdateScheduledMessage,
-}: JobsViewProps) {
-  const allJobs = [...activeJobs, ...pausedJobs, ...completedJobs];
+}: AutomationsViewProps) {
+  const allJobs = [...activeAutomations, ...pausedAutomations];
   const [name, setName] = useState("");
   const [prompt, setPrompt] = useState("");
   const [scheduleMode, setScheduleMode] = useState<ScheduleMode>("delay");
@@ -56,26 +60,25 @@ export function JobsView({
   const [formOpen, setFormOpen] = useState(false);
   const [tab, setTab] = useState<TabKey>("active");
   const [editingJobId, setEditingJobId] = useState<string | null>(null);
+  const [projectMenuOpen, setProjectMenuOpen] = useState(false);
   const [selectedJobId, setSelectedJobId] = useState<string | null>(null);
   const [confirmDeleteJobId, setConfirmDeleteJobId] = useState<string | null>(null);
 
   const visibleJobs =
-    tab === "active" ? activeJobs : tab === "paused" ? pausedJobs : completedJobs;
+    tab === "active" ? activeAutomations : pausedAutomations;
   const selectedJob = allJobs.find((job) => job.id === selectedJobId) || null;
-  const schedule = scheduleValue({ scheduleMode, minutes, runAt, dailyTime, customSchedule });
+  const schedule = automationScheduleValue({ scheduleMode, minutes, runAt, dailyTime, customSchedule });
   const repeat = repeatValue(repeatMode, repeatCount);
   const preview = schedulePreview({ scheduleMode, minutes, runAt, dailyTime, customSchedule, repeatMode, repeatCount });
   const emptyText =
     tab === "active"
       ? "No active automations."
-      : tab === "paused"
-        ? "No paused automations."
-        : "No completed automations yet.";
+      : "No paused automations.";
 
   async function submitSchedule(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setFormBusy(true);
-    const input = { name, prompt, schedule, repeat, deliver: deliveryTarget };
+    const input = { name, prompt, schedule, repeat, projectId: selectedProjectId || null };
     const result = editingJobId
       ? await onUpdateScheduledMessage(editingJobId, input)
       : await onCreateScheduledMessage(input);
@@ -94,8 +97,8 @@ export function JobsView({
     setFormOpen(true);
   }
 
-  function startEditing(job: HermesJob) {
-    const form = formStateFromJob(job);
+  function startEditing(job: HermesAutomation) {
+    const form = automationFormStateFromJob(job);
     setEditingJobId(job.id);
     setSelectedJobId(job.id);
     setFormOpen(true);
@@ -108,7 +111,7 @@ export function JobsView({
     setCustomSchedule(form.customSchedule);
     setRepeatMode(form.repeatMode);
     setRepeatCount(form.repeatCount);
-    onDeliveryTargetChange(job.deliver || deliveryTarget);
+    onProjectChange(job.projectId || null);
     setFormNotice("");
   }
 
@@ -128,6 +131,7 @@ export function JobsView({
     setCustomSchedule("tomorrow at 9am");
     setRepeatMode("once");
     setRepeatCount(5);
+    setProjectMenuOpen(false);
     setFormNotice("");
   }
 
@@ -208,11 +212,13 @@ export function JobsView({
               </div>
               <form className="jobs-form" onSubmit={submitSchedule}>
                 <div className="jobs-form-grid">
+                  {/* Mirrors Hermes _MAX_NAME_LENGTH=200 and _MAX_PROMPT_LENGTH=5000. */}
                   <label className="jobs-form-field jobs-form-prompt">
                     <span>Name</span>
                     <input
                       value={name}
                       placeholder="Morning standup"
+                      maxLength={200}
                       onChange={(event) => setName(event.target.value)}
                     />
                   </label>
@@ -221,6 +227,7 @@ export function JobsView({
                     <textarea
                       value={prompt}
                       placeholder="Send a concise morning standup reminder."
+                      maxLength={5000}
                       onChange={(event) => setPrompt(event.target.value)}
                     />
                   </label>
@@ -233,6 +240,25 @@ export function JobsView({
                       <option value="custom">Custom</option>
                     </select>
                   </label>
+                  <div className="jobs-form-field jobs-project-field">
+                    <span>Project</span>
+                    <div className="composer-project-menu-wrap jobs-project-menu-wrap">
+                      <ProjectMenu
+                        projects={projects}
+                        selectedProjectId={selectedProjectId}
+                        open={projectMenuOpen}
+                        disabled={!connected}
+                        title="Choose project"
+                        locked={false}
+                        connected={connected}
+                        onToggle={() => setProjectMenuOpen((open) => !open)}
+                        onSelect={(projectId) => {
+                          onProjectChange(projectId);
+                          setProjectMenuOpen(false);
+                        }}
+                      />
+                    </div>
+                  </div>
                   {scheduleMode === "delay" ? (
                     <label className="jobs-form-field jobs-form-wide-control">
                       <span>Minutes</span>
@@ -287,17 +313,6 @@ export function JobsView({
                       />
                     </label>
                   ) : null}
-                  <details className="jobs-advanced jobs-form-prompt">
-                    <summary>Advanced</summary>
-                    <label className="jobs-form-field">
-                      <span>Delivery target</span>
-                      <input
-                        value={deliveryTarget}
-                        placeholder="iris:desktop"
-                        onChange={(event) => onDeliveryTargetChange(event.target.value)}
-                      />
-                    </label>
-                  </details>
                 </div>
                 <div className="jobs-form-footer">
                   <div className="jobs-form-status">
@@ -328,30 +343,23 @@ export function JobsView({
             <TabButton
               tabKey="active"
               label="Active"
-              count={activeJobs.length}
+              count={activeAutomations.length}
               selected={tab === "active"}
               onSelect={() => setTab("active")}
             />
             <TabButton
               tabKey="paused"
               label="Paused"
-              count={pausedJobs.length}
+              count={pausedAutomations.length}
               selected={tab === "paused"}
               onSelect={() => setTab("paused")}
-            />
-            <TabButton
-              tabKey="completed"
-              label="Completed"
-              count={completedJobs.length}
-              selected={tab === "completed"}
-              onSelect={() => setTab("completed")}
             />
           </div>
           <div id={`jobs-tabpanel-${tab}`} role="tabpanel" aria-label={`${tab} automations`}>
             <JobList
               jobs={visibleJobs}
               emptyText={emptyText}
-              busyJobId={busyJobId}
+              busyJobId={busyAutomationId}
               confirmDeleteJobId={confirmDeleteJobId}
               selectedJobId={selectedJobId}
               onDeleteJob={deleteJob}
@@ -436,13 +444,13 @@ function JobList({
   onRunJobAction,
   onToggleDetails,
 }: {
-  jobs: HermesJob[];
+  jobs: HermesAutomation[];
   emptyText: string;
   busyJobId: string | null;
   confirmDeleteJobId: string | null;
   selectedJobId: string | null;
   onDeleteJob: (jobId: string) => void;
-  onEditJob: (job: HermesJob) => void;
+  onEditJob: (job: HermesAutomation) => void;
   onRunJobAction: (jobId: string, action: "pause" | "resume" | "run" | "delete") => Promise<string>;
   onToggleDetails: (jobId: string) => void;
 }) {
@@ -543,7 +551,7 @@ function JobDetail({
   deliveries,
   onOpenDeliveryChat,
 }: {
-  job: HermesJob;
+  job: HermesAutomation;
   deliveries: HermesInboxMessage[];
   onOpenDeliveryChat: (delivery: HermesInboxMessage) => void;
 }) {
@@ -559,11 +567,11 @@ function JobDetail({
       <dl className="jobs-detail-grid">
         <div>
           <dt>Schedule</dt>
-          <dd>{job.schedule || "Manual"}</dd>
+          <dd>{scheduleDisplay(job) || "Manual"}</dd>
         </div>
         <div>
           <dt>Delivery</dt>
-          <dd>{job.deliver || "local"}</dd>
+          <dd>{jobDeliveryLabel(job)}</dd>
         </div>
         <div>
           <dt>Runs</dt>
@@ -648,22 +656,27 @@ function timeLabel(value: number | null) {
   }).format(new Date(milliseconds));
 }
 
-function jobMetaLine(job: HermesJob) {
-  return [job.schedule || "Manual", job.deliver || "local", jobTimelineLabel(job), jobRunLabel(job)]
+function jobMetaLine(job: HermesAutomation) {
+  return [scheduleDisplay(job) || "Manual", jobDeliveryLabel(job), jobTimelineLabel(job), jobRunLabel(job)]
     .filter(Boolean)
     .join(" · ");
 }
 
-function jobTimelineLabel(job: HermesJob) {
+function jobDeliveryLabel(job: HermesAutomation) {
+  if (job.projectId) return "Project";
+  if (job.deliverToSessionId) return "No project";
+  return job.deliver || "No project";
+}
+
+function jobTimelineLabel(job: HermesAutomation) {
   if (job.status === "active" && job.nextRunAt) return `Next ${timeLabel(job.nextRunAt)}`;
   if (job.lastRunAt) return `Last ${timeLabel(job.lastRunAt)}`;
   if (job.status === "error") return "Error";
-  if (job.status === "completed") return "Completed";
   if (job.status === "paused") return "Paused";
   return job.status;
 }
 
-function jobRunLabel(job: HermesJob) {
+function jobRunLabel(job: HermesAutomation) {
   const runPart = job.repeat
     ? `${job.runCount}/${job.repeat}`
     : `${job.runCount} run${job.runCount === 1 ? "" : "s"}`;
@@ -671,7 +684,7 @@ function jobRunLabel(job: HermesJob) {
   return statusPart ? `${runPart} · ${statusPart}` : runPart;
 }
 
-function scheduleValue({
+export function automationScheduleValue({
   scheduleMode,
   minutes,
   runAt,
@@ -686,7 +699,10 @@ function scheduleValue({
 }) {
   if (scheduleMode === "delay") return `${Math.max(1, Math.floor(minutes || 1))}m`;
   if (scheduleMode === "datetime") return localInputToIso(runAt);
-  if (scheduleMode === "daily") return `daily at ${dailyTime || "09:00"}`;
+  if (scheduleMode === "daily") {
+    const [hours = "9", minutes = "0"] = (dailyTime || "09:00").split(":");
+    return `${Number(minutes) || 0} ${Number(hours) || 9} * * *`;
+  }
   return customSchedule.trim();
 }
 
@@ -737,18 +753,21 @@ function nextDailyLabel(time: string) {
   return timeLabel(Math.floor(next.getTime() / 1000));
 }
 
-function formStateFromJob(job: HermesJob) {
-  const schedule = job.schedule || "";
+export function automationFormStateFromJob(job: HermesAutomation) {
+  const schedule = scheduleEditValue(job);
   const delayMatch = schedule.match(/^(\d+)m$/i);
-  const dailyMatch = schedule.match(/^daily at (\d{2}:\d{2})$/i);
+  const dailyMatch = schedule.match(/^(\d{1,2}) (\d{1,2}) \* \* \*$/);
   const date = Date.parse(schedule);
+  const dailyTime = dailyMatch
+    ? `${dailyMatch[2].padStart(2, "0")}:${dailyMatch[1].padStart(2, "0")}`
+    : "09:00";
   return {
     name: job.name || "",
     prompt: job.prompt || "",
     scheduleMode: delayMatch ? "delay" as ScheduleMode : dailyMatch ? "daily" as ScheduleMode : Number.isFinite(date) ? "datetime" as ScheduleMode : "custom" as ScheduleMode,
     minutes: delayMatch ? Number(delayMatch[1]) : 10,
     runAt: Number.isFinite(date) ? dateTimeLocalValue(date) : dateTimeLocalValue(Date.now() + 10 * 60 * 1000),
-    dailyTime: dailyMatch?.[1] || "09:00",
+    dailyTime,
     customSchedule: delayMatch || dailyMatch || Number.isFinite(date) ? schedule || "tomorrow at 9am" : schedule,
     repeatMode: job.repeat == null ? "forever" as RepeatMode : job.repeat === 1 ? "once" as RepeatMode : "count" as RepeatMode,
     repeatCount: job.repeat && job.repeat > 1 ? job.repeat : 5,
@@ -766,23 +785,35 @@ function localInputToIso(value: string) {
   return Number.isNaN(date.getTime()) ? "" : date.toISOString();
 }
 
-function matchingDeliveries(job: HermesJob, deliveries: HermesInboxMessage[]) {
+export function matchingDeliveries(job: HermesAutomation, deliveries: HermesInboxMessage[]) {
   const jobIds = new Set([
     job.id,
     stringValue(job.raw.externalJobId),
     stringValue(job.raw.jobId),
     stringValue(job.raw.job_id),
   ].filter(Boolean));
-  const deliverChatId = job.deliver.replace(/^iris:/, "");
+  const deliverChatId = job.resolvedDeliveryTarget?.chatId || job.deliver.replace(/^iris:/, "");
+  const deliverySessionId = job.resolvedDeliveryTarget?.sessionId || job.deliverToSessionId;
   return deliveries.filter((delivery) => {
     const metadata = delivery.metadata || {};
     return (
       jobIds.has(stringValue(metadata.automationId)) ||
       jobIds.has(stringValue(metadata.jobId)) ||
       jobIds.has(stringValue(metadata.job_id)) ||
-      Boolean(deliverChatId && delivery.chatId === deliverChatId)
+      Boolean(deliverChatId && delivery.chatId === deliverChatId) ||
+      Boolean(deliverySessionId && stringValue(metadata.agentuiSessionId) === deliverySessionId)
     );
   });
+}
+
+function scheduleDisplay(job: HermesAutomation) {
+  return job.schedule.display;
+}
+
+function scheduleEditValue(job: HermesAutomation) {
+  if (job.schedule.kind === "cron" && job.schedule.expr) return job.schedule.expr;
+  if (job.schedule.kind === "once" && job.schedule.runAt) return job.schedule.runAt;
+  return job.schedule.display;
 }
 
 function stringValue(value: unknown) {

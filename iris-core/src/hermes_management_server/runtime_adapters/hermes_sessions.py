@@ -263,7 +263,7 @@ def read_sqlite_session_detail(
         message_table = choose_message_table(schema.tables, session_table)
         messages = read_sqlite_messages(connection, schema, message_table, session_id)
         summary = normalize_session_row(dict(session), session_columns, messages, default_source="sqlite")
-        if summary is None or not is_visible_chat_session(summary):
+        if summary is None:
             return None
         enrich_session_origins([summary], profile_root)
         return SessionDetail(
@@ -718,7 +718,7 @@ def read_session_file_session_detail(profile_root: Path, session_id: str) -> Ses
         if not isinstance(payload, dict):
             continue
         summary = normalize_session_file(payload)
-        if summary is None or summary.id != session_id or not is_visible_chat_session(summary):
+        if summary is None or summary.id != session_id:
             continue
         messages = normalize_file_messages(payload.get("messages"))
         return SessionDetail(

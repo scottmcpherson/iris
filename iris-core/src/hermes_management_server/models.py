@@ -211,7 +211,7 @@ class CoreAutomationCreateRequest(BaseModel):
     repeat: int | None = None
     deliver: str | None = None
     deliverToSessionId: str | None = None
-    metadata: dict[str, Any] = Field(default_factory=dict)
+    projectId: str | None = None
 
 
 class CoreAutomationUpdateRequest(BaseModel):
@@ -221,8 +221,8 @@ class CoreAutomationUpdateRequest(BaseModel):
     repeat: int | None = None
     deliver: str | None = None
     deliverToSessionId: str | None = None
+    projectId: str | None = None
     status: str | None = None
-    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 class SessionSummary(BaseModel):

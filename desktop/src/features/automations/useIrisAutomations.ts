@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { loadStringValue, saveStringValue, storageKeys } from "../../app/storage";
 import {
   createAgentUICoreAutomation,
   deleteAgentUICoreAutomation,
@@ -13,7 +12,13 @@ import {
 } from "../../lib/agentuiCore";
 import { coreEventToInboxMessage } from "../../lib/irisRuntime";
 import { rawStringValue } from "../../shared/strings";
-import type { HermesInboxMessage, HermesJob, HermesJobStatus, HermesRuntimeConfig } from "../../types/hermes";
+import type {
+  HermesAutomation,
+  HermesAutomationSchedule,
+  HermesInboxMessage,
+  HermesJobStatus,
+  HermesRuntimeConfig,
+} from "../../types/hermes";
 
 const defaultDeliveryTarget = "iris:desktop";
 const legacyDeliveryPrefix = "agentui:";
@@ -24,6 +29,7 @@ export type CreateScheduledMessageInput = {
   schedule: string;
   repeat?: number | null;
   deliver?: string;
+  projectId?: string | null;
 };
 
 export type UpdateScheduledMessageInput = {
@@ -32,6 +38,7 @@ export type UpdateScheduledMessageInput = {
   schedule: string;
   repeat?: number | null;
   deliver?: string;
+  projectId?: string | null;
 };
 
 type AutomationPayloadResult =
@@ -43,11 +50,8 @@ type AutomationRequestPayload = {
   schedule: string;
   prompt: string;
   repeat?: number | null;
-  deliver: string;
-  metadata: {
-    kind: string;
-    profile: string;
-  };
+  deliver?: string;
+  projectId?: string | null;
 };
 
 export type LegacyCreateScheduledMessageInput = {
@@ -55,20 +59,22 @@ export type LegacyCreateScheduledMessageInput = {
   name?: string;
   minutes?: number;
   deliver?: string;
+  projectId?: string | null;
 };
 
 export function useAgentUIAutomations(runtimeConfig: HermesRuntimeConfig, profile = "default", active = true) {
-  const [jobs, setJobs] = useState<HermesJob[]>([]);
+  const [automations, setAutomations] = useState<HermesAutomation[]>([]);
   const [deliveries, setDeliveries] = useState<HermesInboxMessage[]>([]);
   const [loading, setLoading] = useState(false);
-  const [busyJobId, setBusyJobId] = useState<string | null>(null);
+  const [busyAutomationId, setBusyAutomationId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [deliveryTarget, setDeliveryTarget] = useState(() => loadDeliveryTarget());
   const inboxCursorRef = useRef(0);
 
-  const activeJobs = useMemo(() => jobs.filter((job) => job.status === "active"), [jobs]);
-  const pausedJobs = useMemo(() => jobs.filter((job) => job.status === "paused"), [jobs]);
-  const completedJobs = useMemo(() => jobs.filter((job) => !["active", "paused"].includes(job.status)), [jobs]);
+  const activeAutomations = useMemo(
+    () => automations.filter((automation) => automation.enabled && automation.status !== "paused" && automation.status !== "error"),
+    [automations],
+  );
+  const pausedAutomations = useMemo(() => automations.filter((automation) => automation.status === "paused"), [automations]);
 
   useEffect(() => {
     if (!active) return;
@@ -79,12 +85,6 @@ export function useAgentUIAutomations(runtimeConfig: HermesRuntimeConfig, profil
     }, 6000);
     return () => window.clearInterval(timer);
   }, [active, profile, runtimeConfig.coreApiUrl]);
-
-  function updateDeliveryTarget(value: string) {
-    const normalized = normalizeDeliveryTarget(value);
-    setDeliveryTarget(normalized);
-    saveStringValue(storageKeys.jobsDeliveryTarget, normalized);
-  }
 
   async function refresh() {
     setLoading(true);
@@ -100,7 +100,7 @@ export function useAgentUIAutomations(runtimeConfig: HermesRuntimeConfig, profil
       }
       const result = await getAgentUICoreAutomations(agentResult.agent.id, runtimeConfig);
       if (!result.ok) throw new Error(result.error || "Could not load scheduled jobs.");
-      setJobs(normalizeJobsResult(result));
+      setAutomations(normalizeJobsResult(result));
       setError(null);
     } catch (error) {
       if (!options.silent) {
@@ -132,9 +132,8 @@ export function useAgentUIAutomations(runtimeConfig: HermesRuntimeConfig, profil
   }
 
   async function createScheduledMessage(input: CreateScheduledMessageInput | LegacyCreateScheduledMessageInput) {
-    const normalized = automationPayloadFromInput(input, deliveryTarget, profile);
+    const normalized = automationPayloadFromInput(input, profile);
     if (!normalized.ok) return normalized.error;
-    updateDeliveryTarget(normalized.payload.deliver);
     const agentResult = await getAgentUICoreAgentForProfile(profile, runtimeConfig);
     if (!agentResult.ok || !agentResult.agent) return agentError(agentResult) || "Could not resolve Iris agent.";
     const result = await createAgentUICoreAutomation(
@@ -150,19 +149,16 @@ export function useAgentUIAutomations(runtimeConfig: HermesRuntimeConfig, profil
   }
 
   async function updateScheduledMessage(jobId: string, input: UpdateScheduledMessageInput) {
-    const normalized = automationPayloadFromInput(input, deliveryTarget, profile);
+    const normalized = automationPayloadFromInput(input, profile);
     if (!normalized.ok) return normalized.error;
-    updateDeliveryTarget(normalized.payload.deliver);
-    const { metadata, ...payload } = normalized.payload;
-    void metadata;
-    const result = await updateAgentUICoreAutomation(jobId, payload, runtimeConfig);
+    const result = await updateAgentUICoreAutomation(jobId, normalized.payload, runtimeConfig);
     if (!result.ok) return result.error || "Could not update scheduled message.";
     await loadJobs();
     return "Automation updated.";
   }
 
   async function runJobAction(jobId: string, action: "pause" | "resume" | "run" | "delete") {
-    setBusyJobId(jobId);
+    setBusyAutomationId(jobId);
     try {
       const result =
         action === "pause"
@@ -180,7 +176,7 @@ export function useAgentUIAutomations(runtimeConfig: HermesRuntimeConfig, profil
       setError(message);
       return message;
     } finally {
-      setBusyJobId(null);
+      setBusyAutomationId(null);
     }
   }
 
@@ -195,21 +191,18 @@ export function useAgentUIAutomations(runtimeConfig: HermesRuntimeConfig, profil
   }
 
   return {
-    activeJobs,
+    activeAutomations,
     acknowledgeDelivery,
-    busyJobId,
-    completedJobs,
+    busyAutomationId,
     createScheduledMessage,
     deliveries,
-    deliveryTarget,
     error,
-    jobs,
+    automations,
     loading,
-    pausedJobs,
+    pausedAutomations,
     refresh,
     runJobAction,
     updateScheduledMessage,
-    updateDeliveryTarget,
   };
 }
 
@@ -228,32 +221,80 @@ export function normalizeJobsResult(result: Record<string, unknown>) {
     .sort((left, right) => (left.nextRunAt || 0) - (right.nextRunAt || 0));
 }
 
-function normalizeJob(row: Record<string, unknown>): HermesJob {
+function normalizeJob(row: Record<string, unknown>): HermesAutomation {
+  const metadata = recordValue(row.metadata);
+  const runtimeJob = recordValue(metadata.runtimeJob);
+  const source = runtimeJob ? { ...row, ...runtimeJob } : row;
   const schedule = row.schedule && typeof row.schedule === "object" && !Array.isArray(row.schedule)
     ? row.schedule as Record<string, unknown>
+    : source.schedule && typeof source.schedule === "object" && !Array.isArray(source.schedule)
+      ? source.schedule as Record<string, unknown>
     : null;
   const repeat = row.repeat && typeof row.repeat === "object" && !Array.isArray(row.repeat)
     ? row.repeat as Record<string, unknown>
+    : source.repeat && typeof source.repeat === "object" && !Array.isArray(source.repeat)
+      ? source.repeat as Record<string, unknown>
     : null;
-  const metadata = row.metadata && typeof row.metadata === "object" && !Array.isArray(row.metadata)
-    ? row.metadata as Record<string, unknown>
-    : {};
+  const status = normalizeJobStatus(source.status || source.state || (source.enabled === false || row.enabled === false ? "paused" : "active"));
+  const enabled = booleanValue(source.enabled ?? row.enabled, status !== "paused");
   return {
-    id: rawStringValue(row.id || row.jobId || row.job_id),
-    name: rawStringValue(row.name) || "Untitled job",
-    schedule: rawStringValue(row.schedule_display || schedule?.display || row.schedule || row.scheduleText || row.cron || row.when),
-    prompt: rawStringValue(row.prompt),
-    deliver: rawStringValue(row.deliver || row.delivery || metadata.deliver || row.deliverToSessionId),
-    status: normalizeJobStatus(row.status || row.state || (row.enabled === false ? "paused" : "active")),
-    nextRunAt: timestampValue(row.nextRunAt || row.next_run_at || row.nextRun || row.next_run || schedule?.run_at),
-    lastRunAt: timestampValue(row.lastRunAt || row.last_run_at || row.lastRun || row.last_run),
-    lastStatus: rawStringValue(row.lastStatus || row.last_status),
-    lastError: rawStringValue(row.lastError || row.last_error),
-    lastDeliveryError: rawStringValue(row.lastDeliveryError || row.last_delivery_error),
-    runCount: Math.floor(numberValue(row.runCount || row.run_count || row.runs || repeat?.completed) || 0),
-    repeat: numberValue(repeat?.times || row.repeat || metadata.repeat),
-    createdAt: timestampValue(row.createdAt || row.created_at),
-    raw: row,
+    id: rawStringValue(row.id || source.id || source.jobId || source.job_id),
+    name: rawStringValue(source.name) || "Untitled job",
+    schedule: normalizeSchedule(row, source, schedule),
+    prompt: rawStringValue(source.prompt),
+    deliver: rawStringValue(source.deliver || source.delivery || metadata.deliver || row.deliverToSessionId),
+    deliverToSessionId: rawStringValue(row.deliverToSessionId || metadata.deliverToSessionId),
+    projectId: nullableStringValue(row.projectId || metadata.projectId),
+    resolvedDeliveryTarget: recordValue(row.resolvedDeliveryTarget || metadata.resolvedDeliveryTarget),
+    status,
+    enabled,
+    nextRunAt: timestampValue(row.nextRunAt || source.nextRunAt || source.next_run_at || source.nextRun || source.next_run || schedule?.run_at),
+    lastRunAt: timestampValue(row.lastRunAt || source.lastRunAt || source.last_run_at || source.lastRun || source.last_run),
+    lastStatus: rawStringValue(source.lastStatus || source.last_status),
+    lastError: rawStringValue(source.lastError || source.last_error),
+    lastDeliveryError: rawStringValue(source.lastDeliveryError || source.last_delivery_error),
+    runCount: Math.floor(numberValue(source.runCount || source.run_count || source.runs || repeat?.completed) || 0),
+    repeat: numberValue(repeat?.times || source.repeat || metadata.repeat),
+    skills: stringArrayValue(source.skills),
+    skill: nullableStringValue(source.skill),
+    script: nullableStringValue(source.script),
+    noAgent: booleanValue(source.noAgent ?? source.no_agent, false),
+    contextFrom: stringArrayValue(source.contextFrom ?? source.context_from),
+    workdir: nullableStringValue(source.workdir),
+    enabledToolsets: arrayOrNull(source.enabledToolsets ?? source.enabled_toolsets),
+    model: nullableStringValue(source.model),
+    provider: nullableStringValue(source.provider),
+    baseUrl: nullableStringValue(source.baseUrl ?? source.base_url),
+    createdAt: timestampValue(row.createdAt || source.createdAt || source.created_at),
+    raw: runtimeJob || row,
+  };
+}
+
+function normalizeSchedule(
+  row: Record<string, unknown>,
+  source: Record<string, unknown>,
+  schedule: Record<string, unknown> | null,
+): HermesAutomationSchedule {
+  const display = rawStringValue(
+    row.schedule_display ||
+      source.schedule_display ||
+      schedule?.display ||
+      (typeof row.schedule === "string" ? row.schedule : "") ||
+      (typeof source.schedule === "string" ? source.schedule : "") ||
+      source.cron ||
+      source.when,
+  );
+  const kind = rawStringValue(schedule?.kind).toLowerCase();
+  const normalizedKind =
+    kind === "once" || kind === "interval" || kind === "cron"
+      ? kind
+      : "unknown";
+  return {
+    kind: normalizedKind,
+    display,
+    ...(rawStringValue(schedule?.run_at || schedule?.runAt) ? { runAt: rawStringValue(schedule?.run_at || schedule?.runAt) } : {}),
+    ...(numberValue(schedule?.minutes) !== null ? { minutes: numberValue(schedule?.minutes) || 0 } : {}),
+    ...(rawStringValue(schedule?.expr) ? { expr: rawStringValue(schedule?.expr) } : {}),
   };
 }
 
@@ -286,13 +327,6 @@ function timestampValue(value: unknown): number | null {
   return Number.isFinite(milliseconds) ? Math.floor(milliseconds / 1000) : null;
 }
 
-function loadDeliveryTarget() {
-  const stored = loadStringValue(storageKeys.jobsDeliveryTarget, defaultDeliveryTarget);
-  const normalized = normalizeDeliveryTarget(stored);
-  if (stored !== normalized) saveStringValue(storageKeys.jobsDeliveryTarget, normalized);
-  return normalized;
-}
-
 function agentError(value: unknown) {
   return value && typeof value === "object" && "error" in value
     ? String((value as { error?: unknown }).error || "")
@@ -301,10 +335,9 @@ function agentError(value: unknown) {
 
 function automationPayloadFromInput(
   input: CreateScheduledMessageInput | UpdateScheduledMessageInput | LegacyCreateScheduledMessageInput,
-  fallbackDeliver: string,
   profile: string,
 ): AutomationPayloadResult {
-  const payload = automationRequestPayload(input, fallbackDeliver, profile);
+  const payload = automationRequestPayload(input, profile);
   if (!payload.prompt) return { ok: false, error: "Enter a prompt to schedule." };
   if (!payload.schedule) return { ok: false, error: "Enter a schedule." };
   return { ok: true, payload };
@@ -312,9 +345,9 @@ function automationPayloadFromInput(
 
 export function automationRequestPayload(
   input: CreateScheduledMessageInput | UpdateScheduledMessageInput | LegacyCreateScheduledMessageInput,
-  fallbackDeliver: string,
   profile: string,
 ): AutomationRequestPayload {
+  void profile;
   const legacyMinutes =
     "minutes" in input && input.minutes != null
       ? Math.max(1, Math.floor(input.minutes || 1))
@@ -328,17 +361,15 @@ export function automationRequestPayload(
   const repeat = "repeat" in input
     ? normalizeRepeat(input.repeat)
     : 1;
-  const deliver = normalizeDeliveryTarget(input.deliver || fallbackDeliver);
+  const deliver = input.deliver ? normalizeDeliveryTarget(input.deliver) : "";
+  const projectId = "projectId" in input ? normalizeProjectId(input.projectId) : null;
   return {
     name: input.name?.trim() || "Iris reminder",
     schedule,
     prompt,
     ...(repeat !== undefined ? { repeat } : {}),
-    deliver,
-    metadata: {
-      kind: "scheduled-message",
-      profile,
-    },
+    ...(deliver ? { deliver } : {}),
+    projectId,
   };
 }
 
@@ -352,4 +383,31 @@ export function normalizeDeliveryTarget(value: string) {
 function normalizeRepeat(value: number | null | undefined) {
   if (value === null || value === undefined) return undefined;
   return Math.max(1, Math.floor(value || 1));
+}
+
+function normalizeProjectId(value: string | null | undefined) {
+  const projectId = rawStringValue(value);
+  return projectId || null;
+}
+
+function recordValue(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
+function stringArrayValue(value: unknown): string[] {
+  return Array.isArray(value) ? value.map((item) => rawStringValue(item)).filter(Boolean) : [];
+}
+
+function arrayOrNull(value: unknown): string[] | null {
+  const rows = stringArrayValue(value);
+  return rows.length ? rows : null;
+}
+
+function nullableStringValue(value: unknown): string | null {
+  const text = rawStringValue(value);
+  return text || null;
+}
+
+function booleanValue(value: unknown, fallback: boolean) {
+  return typeof value === "boolean" ? value : fallback;
 }

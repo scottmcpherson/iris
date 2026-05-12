@@ -79,6 +79,29 @@ STREAM_STATE_TTL_SECONDS = 60 * 60
 STREAM_STATE_MAX_ENTRIES = 512
 
 
+def current_cron_delivery_metadata() -> Dict[str, str]:
+    try:
+        from gateway.session_context import get_session_env
+    except Exception:
+        return {}
+    metadata: Dict[str, str] = {}
+    session_id = str(get_session_env("HERMES_SESSION_KEY", "") or "").strip()
+    if session_id.startswith("cron_"):
+        metadata["externalSessionId"] = session_id
+        metadata["hermesSessionId"] = session_id
+        metadata["cronSessionId"] = session_id
+    platform = str(get_session_env("HERMES_CRON_AUTO_DELIVER_PLATFORM", "") or "").strip()
+    chat_id = str(get_session_env("HERMES_CRON_AUTO_DELIVER_CHAT_ID", "") or "").strip()
+    thread_id = str(get_session_env("HERMES_CRON_AUTO_DELIVER_THREAD_ID", "") or "").strip()
+    if platform:
+        metadata["cronDeliveryPlatform"] = platform
+    if chat_id:
+        metadata["cronDeliveryChatId"] = chat_id
+    if thread_id:
+        metadata["cronDeliveryThreadId"] = thread_id
+    return metadata
+
+
 class IrisPlatformAdapter(BasePlatformAdapter):
     SUPPORTS_MESSAGE_EDITING = True
     REQUIRES_EDIT_FINALIZE = True
@@ -185,6 +208,9 @@ class IrisPlatformAdapter(BasePlatformAdapter):
         source = str(merged_metadata.pop("source", "") or "").strip()
         if not source:
             source = "hermes-cron" if content.lstrip().startswith("Cronjob Response:") else "hermes-gateway"
+        if source == "hermes-cron":
+            for key, value in current_cron_delivery_metadata().items():
+                merged_metadata.setdefault(key, value)
 
         is_stream_preview = source == "hermes-gateway-stream" or content.endswith(" ▉")
         visible_content = strip_stream_cursor(content) if is_stream_preview else content

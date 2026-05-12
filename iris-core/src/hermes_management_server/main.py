@@ -1243,6 +1243,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         for item in [row for row in agents if row]:
             adapter = app.state.runtime_registry.adapter_for_runtime(item["runtimeId"])
             sessions.extend(await run_runtime_call(app, adapter.list_sessions, item, limit))
+        sessions = merge_active_sessions_for_agents(app, sessions, [row for row in agents if row])
         sessions.sort(key=lambda row: int(row.get("updatedAt") or 0), reverse=True)
         sessions = with_read_states(app, sessions)
         return {
@@ -1407,6 +1408,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             session=session,
             messages=messages,
         )
+        if not messages:
+            messages = merge_core_event_messages(
+                messages,
+                core_event_messages_for_session(app, session_id),
+            )
         return {"ok": True, "sessionId": session_id, "messages": messages, "source": "hermes-management", "warning": warning}
 
     @app.post("/v1/sessions/{session_id}/messages")
@@ -1688,6 +1694,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         agent = agent_for_runtime_profile(app, delivery.runtimeId, delivery.profile)
         if not agent:
             raise ManagementError("Delivery profile is not mapped to an Iris agent.", status_code=404)
+        delivery_runtime_session_id = cron_delivery_external_session_id(app, agent, delivery)
+        delivery_title = cron_delivery_title(delivery)
         session = resolve_core_session(
             app,
             "",
@@ -1696,19 +1704,24 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             external_chat_id=delivery.chatId,
         )
         if not session:
+            project_link = app.state.core_store.project_session_link_for_external_chat(
+                runtime_id=delivery.runtimeId,
+                runtime_profile=delivery.profile,
+                external_chat_id=delivery.chatId,
+            )
             session = draft_session(
                 agent,
-                title=f"{delivery.profile} delivery",
+                title=delivery_title or f"{delivery.profile} delivery",
                 external_chat_id=delivery.chatId,
+                external_session_id=delivery_runtime_session_id,
                 metadata={"createdBy": "runtime-delivery"},
             )
             remember_active_session(app, session)
-        delivery_runtime_session_id = str(
-            delivery.metadata.get("externalSessionId")
-            or delivery.metadata.get("hermesSessionId")
-            or delivery.metadata.get("sessionId")
-            or ""
-        )
+            if project_link:
+                app.state.core_store.link_project_session(str(project_link["projectId"]), session)
+        elif delivery_title and str(session.get("title") or "").endswith(" delivery"):
+            session = {**session, "title": delivery_title}
+            remember_active_session(app, session)
         if delivery_runtime_session_id and delivery_runtime_session_id != session.get("externalSessionId"):
             session = {**session, "externalSessionId": delivery_runtime_session_id}
             remember_active_session(app, session)
@@ -1716,6 +1729,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             if project:
                 app.state.core_store.link_project_session(project["id"], session)
         session_id = session["id"]
+        project = app.state.core_store.project_for_session(session_id)
         stream_message_id = str(
             delivery.metadata.get("streamMessageId")
             or delivery.metadata.get("stream_message_id")
@@ -1733,8 +1747,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "profile": delivery.profile,
             "chatId": delivery.chatId,
             "source": delivery.source,
+            "agentuiSessionId": session_id,
             **delivery.metadata,
         }
+        if project:
+            event_metadata.update(project_runtime_metadata(project))
         client_request_id = str(
             event_metadata.get("clientRequestId")
             or event_metadata.get("client_request_id")
@@ -1812,7 +1829,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise ManagementError("Agent was not found.", status_code=404)
         payload = automation_create_payload(app, agent, dump_model(request))
         adapter = app.state.runtime_registry.adapter_for_runtime(agent["runtimeId"])
-        result = await run_runtime_call(app, adapter.create_automation, payload)
+        runtime_payload = {key: value for key, value in payload.items() if key != "_delivery"}
+        result = await run_runtime_call(app, adapter.create_automation, runtime_payload)
         if not result.get("ok"):
             return {
                 "ok": False,
@@ -1820,10 +1838,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "runtime": result,
             }
         job = automation_job_payload(result)
+        delivery = payload.get("_delivery") if isinstance(payload.get("_delivery"), dict) else {}
+        delivery_session = delivery.get("session") if isinstance(delivery.get("session"), dict) else {}
+        delivery_project = delivery.get("project") if isinstance(delivery.get("project"), dict) else None
+        request_payload = {
+            **dump_model(request),
+            "deliverToSessionId": str(delivery_session.get("id") or request.deliverToSessionId or ""),
+            "projectId": delivery_project["id"] if delivery_project else None,
+        }
         automation = automation_record_from_job(
             agent,
             job,
-            request_payload=dump_model(request),
+            app=app,
+            request_payload=request_payload,
             deliver=payload.get("deliver", ""),
         )
         return {"ok": True, "automation": automation, "runtime": result}
@@ -1851,6 +1878,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         result: dict[str, Any] = {"ok": True}
         if automation["externalJobId"]:
             adapter = app.state.runtime_registry.adapter_for_runtime(automation["runtimeId"])
+            if "deliverToSessionId" in updates or "projectId" in updates:
+                delivery_request = {**automation, **updates}
+                delivery = automation_delivery_resolution(app, agent, delivery_request)
+                delivery_session = delivery.get("session") if isinstance(delivery.get("session"), dict) else {}
+                delivery_project = delivery.get("project") if isinstance(delivery.get("project"), dict) else None
+                updates["deliver"] = delivery["deliver"]
+                updates["deliverToSessionId"] = str(delivery_session.get("id") or updates.get("deliverToSessionId") or "")
+                updates["projectId"] = delivery_project["id"] if delivery_project else None
             result = await run_runtime_call(app, 
                 adapter.update_automation,
                 automation["externalJobId"],
@@ -1859,8 +1894,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             if not result.get("ok"):
                 return {"ok": False, "error": result.get("error") or "Could not update Hermes job.", "runtime": result}
         updated_job = automation_job_payload(result)
-        updated = automation_record_from_job(agent, updated_job, request_payload={**automation, **updates}) if updated_job else automation
+        updated = automation_record_from_job(agent, updated_job, app=app, request_payload={**automation, **updates}) if updated_job else automation
         return {"ok": True, "automation": updated, "runtime": result}
+
+    @app.get("/v1/automations/{automation_id}")
+    async def core_get_automation(automation_id: str, _auth: None = Depends(require_auth)) -> dict[str, Any]:
+        automation = resolve_runtime_automation(app, automation_id)
+        if not automation:
+            raise ManagementError("Automation was not found.", status_code=404)
+        return {"ok": True, "automation": automation}
 
     @app.delete("/v1/automations/{automation_id}")
     async def core_delete_automation(automation_id: str, _auth: None = Depends(require_auth)) -> dict[str, Any]:
@@ -2087,6 +2129,89 @@ def inbox_message_for_id(app: FastAPI, message_id: str) -> dict[str, Any] | None
     return None
 
 
+def core_event_messages_for_session(app: FastAPI, session_id: str) -> list[dict[str, Any]]:
+    events = app.state.live_delivery_bus.list_events(after=0, limit=500, session_id=session_id)
+    messages: list[dict[str, Any]] = []
+    for event in events:
+        metadata = event.get("metadata") if isinstance(event.get("metadata"), dict) else {}
+        event_type = str(event.get("type") or "")
+        if bool(metadata.get("hidden")):
+            continue
+        if str(event.get("role") or "") != "assistant":
+            continue
+        if not is_automation_delivery_event(event, metadata):
+            continue
+        if not (
+            event_type == "message.error" or
+            event_type == "message.assistant.error" or
+            event_type == "message.assistant.completed"
+        ):
+            continue
+        message_id = str(event.get("externalMessageId") or event.get("id") or "")
+        messages.append({
+            "id": message_id,
+            "sessionId": session_id,
+            "role": "assistant",
+            "content": str(event.get("content") or ""),
+            "status": "error" if "error" in event_type else "completed",
+            "toolName": "",
+            "createdAt": int(event.get("createdAt") or now()),
+            "updatedAt": int(event.get("createdAt") or now()),
+            "metadata": {
+                **metadata,
+                "eventCursor": int(event.get("cursor") or 0),
+                "eventType": event_type,
+                "parentEventId": str(event.get("parentEventId") or ""),
+                "externalMessageId": message_id,
+            },
+        })
+    return messages
+
+
+def is_automation_delivery_event(event: dict[str, Any], metadata: dict[str, Any]) -> bool:
+    source = str(metadata.get("source") or "")
+    return (
+        source == "hermes-cron" or
+        bool(metadata.get("automationId")) or
+        bool(metadata.get("jobId")) or
+        bool(metadata.get("job_id"))
+    )
+
+
+def merge_core_event_messages(
+    history_messages: list[dict[str, Any]],
+    event_messages: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    if not event_messages:
+        return history_messages
+    seen = set()
+    for message in history_messages:
+        metadata = message.get("metadata") if isinstance(message.get("metadata"), dict) else {}
+        for key in (
+            str(message.get("id") or ""),
+            str(metadata.get("externalMessageId") or ""),
+            str(metadata.get("streamMessageId") or metadata.get("stream_message_id") or ""),
+        ):
+            if key:
+                seen.add(key)
+    merged = list(history_messages)
+    for message in event_messages:
+        metadata = message.get("metadata") if isinstance(message.get("metadata"), dict) else {}
+        keys = [
+            str(message.get("id") or ""),
+            str(metadata.get("externalMessageId") or ""),
+            str(metadata.get("streamMessageId") or metadata.get("stream_message_id") or ""),
+        ]
+        if any(key and key in seen for key in keys):
+            continue
+        for key in keys:
+            if key:
+                seen.add(key)
+        merged.append(message)
+    merged.sort(key=lambda row: int(row.get("createdAt") or row.get("updatedAt") or 0))
+    return coalesce_core_messages(merged)
+
+
 def remember_active_session(app: FastAPI, session: dict[str, Any]) -> None:
     app.state.active_sessions[session["id"]] = session
     chat_id = str(session.get("externalChatId") or "")
@@ -2169,6 +2294,41 @@ def with_read_states(app: FastAPI, sessions: list[dict[str, Any]]) -> list[dict[
         }
         for session in sessions
     ]
+
+
+def merge_active_sessions_for_agents(
+    app: FastAPI,
+    sessions: list[dict[str, Any]],
+    agents: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    agent_ids = {str(agent.get("id") or "") for agent in agents}
+    seen_ids = {str(session.get("id") or "") for session in sessions}
+    seen_chats = {
+        (
+            str(session.get("runtimeId") or ""),
+            str(session.get("runtimeProfile") or ""),
+            str(session.get("externalChatId") or ""),
+        )
+        for session in sessions
+        if str(session.get("externalChatId") or "")
+    }
+    merged = list(sessions)
+    for session in app.state.active_sessions.values():
+        if str(session.get("agentId") or "") not in agent_ids:
+            continue
+        session_id = str(session.get("id") or "")
+        chat_key = (
+            str(session.get("runtimeId") or ""),
+            str(session.get("runtimeProfile") or ""),
+            str(session.get("externalChatId") or ""),
+        )
+        if session_id in seen_ids or (chat_key[2] and chat_key in seen_chats):
+            continue
+        seen_ids.add(session_id)
+        if chat_key[2]:
+            seen_chats.add(chat_key)
+        merged.append(session)
+    return merged
 
 
 def should_mark_session_unread(event: dict[str, Any]) -> bool:
@@ -2457,55 +2617,283 @@ def list_runtime_automations(app: FastAPI, agent_id: str | None = None) -> list[
             continue
         for job in automation_jobs_from_result(result):
             if job_id(job):
-                automations.append(automation_record_from_job(agent, job))
+                automations.append(automation_record_from_job(agent, job, app=app))
     return sorted(automations, key=lambda row: (row["nextRunAt"] or row["updatedAt"], -row["createdAt"], row["id"]))
 
 
 def resolve_runtime_automation(app: FastAPI, automation_id: str) -> dict[str, Any] | None:
-    return next(
-        (
-            automation
-            for automation in list_runtime_automations(app)
-            if automation["id"] == automation_id or automation["externalJobId"] == automation_id
-        ),
-        None,
-    )
+    registry: RuntimeRegistry = app.state.runtime_registry
+    for agent in registry.agents():
+        adapter = registry.adapter_for_runtime(agent["runtimeId"])
+        result = adapter.get_automation(automation_id)
+        if not result.get("ok"):
+            continue
+        job = automation_job_payload(result)
+        if job_id(job):
+            return automation_record_from_job(agent, job, app=app)
+    return None
 
 
 def automation_record_from_job(
     agent: dict[str, Any],
     job: dict[str, Any],
     *,
+    app: FastAPI | None = None,
     request_payload: dict[str, Any] | None = None,
     deliver: str = "",
 ) -> dict[str, Any]:
     timestamp = now()
     external_job_id = job_id(job)
     request_payload = request_payload or {}
-    metadata = request_payload.get("metadata") if isinstance(request_payload.get("metadata"), dict) else {}
+    job_name = str(job.get("name") or request_payload.get("name") or "Hermes job")
+    if job_name and "name" not in request_payload:
+        request_payload = {**request_payload, "name": job_name}
     deliver = deliver or str(job.get("deliver") or job.get("delivery") or "")
+    routing = automation_delivery_fields(app, agent, deliver, request_payload)
     return {
-        "id": f"auto_{stable_hash(agent['runtimeId'], external_job_id, length=22)}",
+        "id": external_job_id,
         "agentId": agent["id"],
         "runtimeId": agent["runtimeId"],
         "externalJobId": external_job_id,
-        "name": str(job.get("name") or request_payload.get("name") or "Hermes job"),
+        "name": job_name,
         "schedule": job_schedule(job) or str(request_payload.get("schedule") or ""),
         "prompt": str(job.get("prompt") or request_payload.get("prompt") or ""),
-        "deliverToSessionId": str(request_payload.get("deliverToSessionId") or ""),
+        "projectId": routing["projectId"],
+        "deliverToSessionId": routing["deliverToSessionId"],
+        "resolvedDeliveryTarget": routing["resolvedDeliveryTarget"],
         "status": job_status(job) or "active",
         "createdAt": job_timestamp(job, "createdAt", "created_at", "created") or timestamp,
         "updatedAt": job_timestamp(job, "updatedAt", "updated_at", "updated") or timestamp,
         "lastRunAt": job_timestamp(job, "lastRunAt", "last_run_at", "lastRun", "last_run"),
         "nextRunAt": job_timestamp(job, "nextRunAt", "next_run_at", "nextRun", "next_run"),
+        "skills": list(job.get("skills") or []),
+        "skill": job.get("skill"),
+        "script": job.get("script"),
+        "noAgent": bool(job.get("no_agent")),
+        "contextFrom": list(job.get("context_from") or []),
+        "workdir": job.get("workdir"),
+        "enabledToolsets": job.get("enabled_toolsets"),
+        "model": job.get("model"),
+        "provider": job.get("provider"),
+        "baseUrl": job.get("base_url"),
+        "enabled": job.get("enabled", True),
         "metadata": {
-            **metadata,
             "source": "hermes-jobs",
             "deliver": deliver,
+            "projectId": routing["projectId"],
+            "deliverToSessionId": routing["deliverToSessionId"],
+            "resolvedDeliveryTarget": routing["resolvedDeliveryTarget"],
             "repeat": job_repeat(job),
             "runtimeJob": job,
         },
     }
+
+
+def automation_delivery_fields(
+    app: FastAPI | None,
+    agent: dict[str, Any],
+    deliver: str,
+    request_payload: dict[str, Any],
+) -> dict[str, Any]:
+    session = None
+    project_id = normalized_optional_string(request_payload.get("projectId"))
+    deliver_to_session_id = normalized_optional_string(request_payload.get("deliverToSessionId"))
+    chat_id = iris_delivery_chat_id(deliver)
+    project = None
+
+    if app and deliver_to_session_id:
+        session = resolve_core_session(app, deliver_to_session_id, prefer_runtime=True)
+    if app and not session and chat_id:
+        session = resolve_core_session(
+            app,
+            "",
+            runtime_id=agent["runtimeId"],
+            runtime_profile=agent["runtimeProfile"],
+            external_chat_id=chat_id,
+            prefer_runtime=True,
+        )
+    if app and session:
+        deliver_to_session_id = str(session.get("id") or deliver_to_session_id)
+        linked_project = app.state.core_store.project_for_session(deliver_to_session_id)
+        if linked_project:
+            project = linked_project
+            project_id = linked_project["id"]
+        chat_id = str(session.get("externalChatId") or chat_id)
+    if app and not project_id and chat_id:
+        link = app.state.core_store.project_session_link_for_external_chat(
+            runtime_id=agent["runtimeId"],
+            runtime_profile=agent["runtimeProfile"],
+            external_chat_id=chat_id,
+        )
+        if link:
+            deliver_to_session_id = str(link["sessionId"])
+            project_id = str(link["projectId"])
+            project = app.state.core_store.get_project(project_id)
+    if app and project_id and not project:
+        project = app.state.core_store.get_project(project_id)
+
+    if app and chat_id and not session and is_automation_delivery_chat_id(chat_id):
+        title = str(request_payload.get("name") or "Automation")
+        metadata = {"createdBy": "automation", "automationDelivery": True}
+        if project:
+            metadata.update(project_runtime_metadata(project))
+        session = draft_session(
+            agent,
+            title=title,
+            external_chat_id=chat_id,
+            metadata=metadata,
+        )
+        remember_active_session(app, session)
+        deliver_to_session_id = str(session.get("id") or deliver_to_session_id)
+        if project:
+            app.state.core_store.link_project_session(project["id"], session, metadata={"createdBy": "automation"})
+
+    resolved_delivery = {
+        "platform": "iris" if chat_id else "",
+        "deliver": deliver,
+        "chatId": chat_id,
+        "sessionId": deliver_to_session_id,
+        "projectId": project_id,
+    }
+    return {
+        "projectId": project_id or None,
+        "deliverToSessionId": deliver_to_session_id,
+        "resolvedDeliveryTarget": resolved_delivery,
+    }
+
+
+def automation_delivery_resolution(
+    app: FastAPI,
+    agent: dict[str, Any],
+    request: dict[str, Any],
+) -> dict[str, Any]:
+    explicit_session_id = normalized_optional_string(request.get("deliverToSessionId"))
+    if explicit_session_id:
+        session = resolve_core_session(app, explicit_session_id)
+        if not session or session["agentId"] != agent["id"]:
+            raise ManagementError("Delivery session was not found for this agent.", status_code=404)
+        project = app.state.core_store.project_for_session(session["id"])
+        chat_id = str(session.get("externalChatId") or chat_id_for_session(session["id"]))
+        return {
+            "deliver": f"iris:{chat_id}",
+            "session": session,
+            "project": project,
+        }
+
+    project_id = normalized_optional_string(request.get("projectId"))
+    project = app.state.core_store.get_project(project_id) if project_id else None
+    if project_id and not project:
+        raise ManagementError("Project was not found.", status_code=404)
+    if project and project["defaultAgentId"] != agent["id"]:
+        raise ManagementError("Project default agent does not match the automation agent.", status_code=400)
+
+    chat_id = automation_delivery_chat_id()
+    session = resolve_core_session(
+        app,
+        "",
+        runtime_id=agent["runtimeId"],
+        runtime_profile=agent["runtimeProfile"],
+        external_chat_id=chat_id,
+        prefer_runtime=True,
+    )
+    if not session:
+        metadata = {"createdBy": "automation", "automationDelivery": True}
+        if project:
+            metadata.update(project_runtime_metadata(project))
+        session = draft_session(
+            agent,
+            title=str(request.get("name") or "Automation"),
+            external_chat_id=chat_id,
+            metadata=metadata,
+        )
+    remember_active_session(app, session)
+    if project:
+        app.state.core_store.link_project_session(project["id"], session, metadata={"createdBy": "automation"})
+        session = with_project_metadata(session, project)
+    return {
+        "deliver": f"iris:{session['externalChatId']}",
+        "session": session,
+        "project": project,
+    }
+
+
+def automation_delivery_chat_id() -> str:
+    return f"automation-{random_id('chat')}"
+
+
+def is_automation_delivery_chat_id(chat_id: str) -> bool:
+    return str(chat_id or "").startswith("automation-")
+
+
+def iris_delivery_chat_id(deliver: str) -> str:
+    value = str(deliver or "").strip()
+    return value.removeprefix("iris:") if value.startswith("iris:") else ""
+
+
+CRON_RESPONSE_RE = re.compile(
+    r"^\s*Cronjob Response:\s*(?P<title>.*?)\s*\(job_id:\s*(?P<job_id>[^)\s]+)\)",
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+def cron_delivery_fields(delivery: RuntimeDeliveryHermesRequest) -> dict[str, str]:
+    metadata = delivery.metadata if isinstance(delivery.metadata, dict) else {}
+    job_id_value = (
+        metadata.get("jobId")
+        or metadata.get("job_id")
+        or metadata.get("automationId")
+        or metadata.get("automation_id")
+        or ""
+    )
+    title = str(metadata.get("automationName") or metadata.get("jobName") or metadata.get("job_name") or "").strip()
+    job_id_text = str(job_id_value or "").strip()
+    match = CRON_RESPONSE_RE.search(str(delivery.content or ""))
+    if match:
+        title = title or re.sub(r"\s+", " ", match.group("title")).strip()
+        job_id_text = job_id_text or str(match.group("job_id") or "").strip()
+    return {"jobId": job_id_text, "title": title}
+
+
+def cron_delivery_title(delivery: RuntimeDeliveryHermesRequest) -> str:
+    if delivery.source != "hermes-cron":
+        return ""
+    return cron_delivery_fields(delivery)["title"]
+
+
+def cron_delivery_external_session_id(
+    app: FastAPI,
+    agent: dict[str, Any],
+    delivery: RuntimeDeliveryHermesRequest,
+) -> str:
+    metadata = delivery.metadata if isinstance(delivery.metadata, dict) else {}
+    explicit = str(
+        metadata.get("externalSessionId")
+        or metadata.get("hermesSessionId")
+        or metadata.get("cronSessionId")
+        or metadata.get("sessionId")
+        or ""
+    ).strip()
+    if explicit:
+        return explicit
+    if delivery.source != "hermes-cron":
+        return ""
+    job_id_text = cron_delivery_fields(delivery)["jobId"]
+    if not job_id_text:
+        return ""
+    adapter = app.state.runtime_registry.adapter_for_runtime(agent["runtimeId"])
+    finder = getattr(adapter, "latest_cron_session_for_job", None)
+    if not callable(finder):
+        return ""
+    try:
+        session = finder(agent, job_id_text)
+    except Exception:
+        logging.getLogger(__name__).exception("Could not resolve Hermes cron session for job %s", job_id_text)
+        return ""
+    return str((session or {}).get("externalSessionId") or "")
+
+
+def normalized_optional_string(value: Any) -> str:
+    return str(value or "").strip()
 
 
 def automation_create_payload(app: FastAPI, agent: dict[str, Any], request: dict[str, Any]) -> dict[str, Any]:
@@ -2515,17 +2903,13 @@ def automation_create_payload(app: FastAPI, agent: dict[str, Any], request: dict
         raise ManagementError("Automation schedule is required.", status_code=400)
     if not prompt:
         raise ManagementError("Automation prompt is required.", status_code=400)
-    deliver = str(request.get("deliver") or "").strip()
-    session_id = str(request.get("deliverToSessionId") or "").strip()
-    if session_id:
-        session = resolve_core_session(app, session_id)
-        if not session or session["agentId"] != agent["id"]:
-            raise ManagementError("Delivery session was not found for this agent.", status_code=404)
-        deliver = deliver or f"iris:{session['externalChatId'] or chat_id_for_session(session_id)}"
+    delivery = automation_delivery_resolution(app, agent, request)
+    deliver = delivery["deliver"]
     payload: dict[str, Any] = {
         "name": str(request.get("name") or "Iris reminder"),
         "schedule": schedule,
         "prompt": prompt,
+        "_delivery": delivery,
     }
     if deliver:
         payload["deliver"] = deliver

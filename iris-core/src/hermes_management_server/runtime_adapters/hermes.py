@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import sqlite3
 import time
 import urllib.error
 import urllib.parse
@@ -260,6 +261,65 @@ class HermesRuntimeAdapter:
         )
         return [session_from_runtime_summary(agent, summary) for summary in summaries]
 
+    def latest_cron_session_for_job(self, agent: dict[str, Any], job_id: str) -> dict[str, Any] | None:
+        clean_job_id = "".join(char for char in str(job_id or "").strip() if char in "0123456789abcdefABCDEF")
+        if not clean_job_id:
+            return None
+        profile = str(agent["runtimeProfile"])
+        directory = self.require_store().profile_directory(profile)
+        candidates: list[tuple[float, str]] = []
+
+        db_path = directory / "state.db"
+        if db_path.is_file():
+            try:
+                connection = sqlite3.connect(f"file:{db_path.as_posix()}?mode=ro", uri=True)
+                connection.row_factory = sqlite3.Row
+                rows = connection.execute(
+                    """
+                    select id, coalesce(ended_at, started_at, 0) as active_at
+                    from sessions
+                    where id like ?
+                    order by coalesce(ended_at, started_at, 0) desc
+                    limit 5
+                    """,
+                    (f"cron_{clean_job_id}_%",),
+                ).fetchall()
+                candidates.extend((float(row["active_at"] or 0), str(row["id"])) for row in rows)
+            except sqlite3.Error:
+                pass
+            finally:
+                try:
+                    connection.close()  # type: ignore[has-type]
+                except Exception:
+                    pass
+
+        sessions_dir = directory / "sessions"
+        if sessions_dir.is_dir():
+            for path in sessions_dir.glob(f"session_cron_{clean_job_id}_*.json"):
+                try:
+                    payload = json.loads(path.read_text(encoding="utf-8"))
+                except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+                    continue
+                session_id = str(payload.get("session_id") or "").strip()
+                if session_id:
+                    candidates.append((float(path.stat().st_mtime), session_id))
+
+        for _, session_id in sorted(candidates, reverse=True):
+            session = self.get_cron_session_by_id(agent, session_id)
+            if session:
+                return session
+        return None
+
+    def get_cron_session_by_id(self, agent: dict[str, Any], session_id: str) -> dict[str, Any] | None:
+        clean_session_id = str(session_id or "").strip()
+        if not clean_session_id.startswith("cron_"):
+            return None
+        try:
+            detail = self.require_store().session_detail(str(agent["runtimeProfile"]), clean_session_id)
+        except ManagementError:
+            return None
+        return session_from_runtime_summary(agent, detail.session)
+
     def rename_session(
         self,
         agent: dict[str, Any],
@@ -297,20 +357,26 @@ class HermesRuntimeAdapter:
         chat_id: str = "",
         session_id: str = "",
     ) -> tuple[list[dict[str, Any]], str | None]:
-        session = self.get_session(
-            agent,
-            external_id,
-            chat_id=chat_id,
-            session_id=session_id,
-        )
+        if str(external_id or "").strip().startswith("cron_"):
+            session = self.get_cron_session_by_id(agent, str(external_id or "").strip())
+            if session and session_id:
+                session = {**session, "id": session_id, "externalChatId": chat_id or session.get("externalChatId") or ""}
+        else:
+            session = self.get_session(
+                agent,
+                external_id,
+                chat_id=chat_id,
+                session_id=session_id,
+            )
         if not session or not session["externalSessionId"]:
             return [], None
         detail = self.require_store().session_detail(
             str(agent["runtimeProfile"]),
             str(session["externalSessionId"]),
         )
+        core_session_id = session_id or str(session["id"])
         messages = [
-            {**core_message_from_hermes(message), "sessionId": session["id"]}
+            {**core_message_from_hermes(message), "sessionId": core_session_id}
             for message in detail.messages
         ]
         return self.with_client_message_metadata(
@@ -528,6 +594,12 @@ class HermesRuntimeAdapter:
     def list_automations(self, profile: str) -> dict[str, Any]:
         del profile
         return self.jobs_request("/api/jobs?include_disabled=true", method="GET")
+
+    def get_automation(self, external_job_id: str) -> dict[str, Any]:
+        return self.jobs_request(
+            f"/api/jobs/{urllib.parse.quote(external_job_id, safe='')}",
+            method="GET",
+        )
 
     def require_store(self) -> HermesStore:
         if self.hermes_store is None:

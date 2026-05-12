@@ -304,13 +304,31 @@ export type HermesStreamToolEvent = {
 
 export type HermesJobStatus = "active" | "paused" | "completed" | "error" | "unknown";
 
-export type HermesJob = {
+export type HermesAutomationSchedule = {
+  kind: "once" | "interval" | "cron" | "unknown";
+  display: string;
+  runAt?: string;
+  minutes?: number;
+  expr?: string;
+};
+
+export type HermesAutomation = {
   id: string;
   name: string;
-  schedule: string;
+  schedule: HermesAutomationSchedule;
   prompt: string;
   deliver: string;
+  deliverToSessionId: string;
+  projectId: string | null;
+  resolvedDeliveryTarget?: {
+    platform?: string;
+    deliver?: string;
+    chatId?: string;
+    sessionId?: string;
+    projectId?: string | null;
+  };
   status: HermesJobStatus;
+  enabled: boolean;
   nextRunAt: number | null;
   lastRunAt: number | null;
   lastStatus: string;
@@ -318,6 +336,16 @@ export type HermesJob = {
   lastDeliveryError: string;
   runCount: number;
   repeat: number | null;
+  skills: string[];
+  skill: string | null;
+  script: string | null;
+  noAgent: boolean;
+  contextFrom: string[];
+  workdir: string | null;
+  enabledToolsets: string[] | null;
+  model: string | null;
+  provider: string | null;
+  baseUrl: string | null;
   createdAt: number | null;
   raw: Record<string, unknown>;
 };

@@ -834,6 +834,28 @@ button:disabled {
   grid-column: span 2;
 }
 
+.jobs-project-field {
+  align-self: end;
+}
+
+.jobs-project-menu-wrap {
+  min-width: 0;
+}
+
+.jobs-project-menu-wrap .composer-access-button {
+  width: 100%;
+  max-width: none;
+  justify-content: flex-start;
+  border: 1px solid rgba(255, 255, 255, 0.085);
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.045);
+}
+
+.jobs-project-menu-wrap .composer-project-menu {
+  top: calc(100% + 8px);
+  bottom: auto;
+}
+
 .jobs-form-field {
   display: grid;
   gap: 6px;
@@ -1383,6 +1405,9 @@ button:disabled {
 }
 
 .sidebar-scroll-region {
+  --sidebar-tree-row-gap: 1px;
+  --sidebar-tree-row-height: 30px;
+  --sidebar-tree-row-padding-block: 0;
   flex: 1 1 auto;
   min-height: 0;
   margin-right: -14px;
@@ -1515,7 +1540,7 @@ button:disabled {
   display: grid;
   flex: 0 0 auto;
   align-content: start;
-  gap: 7px;
+  gap: var(--sidebar-tree-row-gap);
   min-height: 0;
   margin: 9px 0 0;
   padding-right: 0;
@@ -1524,7 +1549,7 @@ button:disabled {
 
 .profile-node {
   display: grid;
-  gap: 4px;
+  gap: var(--sidebar-tree-row-gap);
 }
 
 .profile-node-row {
@@ -1562,8 +1587,8 @@ button:disabled {
   grid-template-columns: auto minmax(0, 1fr);
   align-items: center;
   gap: 9px;
-  min-height: 36px;
-  padding: 0 6px 0 9px;
+  min-height: var(--sidebar-tree-row-height);
+  padding: var(--sidebar-tree-row-padding-block) 6px var(--sidebar-tree-row-padding-block) 9px;
   color: #c9d0dc;
   font-size: 13px;
   font-weight: 400;
@@ -1640,8 +1665,8 @@ button:disabled {
 
 .session-branch {
   display: grid;
-  gap: 1px;
-  padding: 0 0 4px;
+  gap: var(--sidebar-tree-row-gap);
+  padding: 0;
 }
 
 .sidebar-session-row {
@@ -1665,8 +1690,8 @@ button:disabled {
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: 12px;
-  min-height: 28px;
-  padding: 0 7px 0 var(--profile-text-inset);
+  min-height: var(--sidebar-tree-row-height);
+  padding: var(--sidebar-tree-row-padding-block) 7px var(--sidebar-tree-row-padding-block) var(--profile-text-inset);
   color: #bbc4d1;
   background: transparent;
 }

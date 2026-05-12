@@ -175,14 +175,33 @@ export type AgentUICoreAutomation = {
   runtimeId: string;
   externalJobId: string;
   name: string;
-  schedule: string;
+  schedule: string | Record<string, unknown>;
   prompt: string;
+  projectId?: string | null;
   deliverToSessionId: string;
+  resolvedDeliveryTarget?: {
+    platform?: string;
+    deliver?: string;
+    chatId?: string;
+    sessionId?: string;
+    projectId?: string | null;
+  };
   status: string;
+  enabled?: boolean;
   createdAt: number;
   updatedAt: number;
   lastRunAt: number | null;
   nextRunAt: number | null;
+  skills?: string[];
+  skill?: string | null;
+  script?: string | null;
+  noAgent?: boolean;
+  contextFrom?: string[];
+  workdir?: string | null;
+  enabledToolsets?: string[] | null;
+  model?: string | null;
+  provider?: string | null;
+  baseUrl?: string | null;
   metadata: CoreMetadata;
 };
 
@@ -795,6 +814,14 @@ export async function getAgentUICoreAutomations(agentId: string, runtime?: Herme
   return coreRequest<{ automations: AgentUICoreAutomation[] }>(runtime, "GET", `/automations?${query}`);
 }
 
+export async function getAgentUICoreAutomation(automationId: string, runtime?: HermesRuntimeConfig) {
+  return coreRequest<{ automation: AgentUICoreAutomation }>(
+    runtime,
+    "GET",
+    `/automations/${encodeURIComponent(automationId)}`,
+  );
+}
+
 export async function createAgentUICoreAutomation(
   payload: {
     agentId: string;
@@ -804,7 +831,7 @@ export async function createAgentUICoreAutomation(
     repeat?: number | null;
     deliver?: string;
     deliverToSessionId?: string;
-    metadata?: CoreMetadata;
+    projectId?: string | null;
   },
   runtime?: HermesRuntimeConfig,
 ) {
@@ -825,8 +852,8 @@ export async function updateAgentUICoreAutomation(
     repeat?: number | null;
     deliver?: string;
     deliverToSessionId?: string;
+    projectId?: string | null;
     status?: string;
-    metadata?: CoreMetadata;
   },
   runtime?: HermesRuntimeConfig,
 ) {

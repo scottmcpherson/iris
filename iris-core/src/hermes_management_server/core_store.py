@@ -698,6 +698,32 @@ class CoreStore:
             ).fetchone()
         return project_session_link_from_row(row) if row else None
 
+    def project_session_link_for_external_chat(
+        self,
+        *,
+        runtime_id: str,
+        runtime_profile: str,
+        external_chat_id: str,
+    ) -> dict[str, Any] | None:
+        chat_id = str(external_chat_id or "").strip()
+        if not chat_id:
+            return None
+        with self.connect() as connection:
+            row = connection.execute(
+                """
+                select ps.* from project_sessions ps
+                join projects p on p.id = ps.project_id
+                where ps.runtime_id = ?
+                  and ps.runtime_profile = ?
+                  and ps.external_chat_id = ?
+                  and p.archived_at is null
+                order by ps.updated_at desc
+                limit 1
+                """,
+                (runtime_id or DEFAULT_RUNTIME_ID, runtime_profile or "default", chat_id),
+            ).fetchone()
+        return project_session_link_from_row(row) if row else None
+
     def project_for_session(self, session_id: str) -> dict[str, Any] | None:
         with self.connect() as connection:
             row = connection.execute(
