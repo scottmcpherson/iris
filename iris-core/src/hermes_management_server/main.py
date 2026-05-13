@@ -190,17 +190,27 @@ class LiveDeliveryBus:
         limit: int = 200,
         session_id: str = "",
         agent_id: str = "",
+        automation_only: bool = False,
+        descending: bool = False,
     ) -> list[dict[str, Any]]:
         if self.core_store:
-            return self._list_events_sqlite(after=after, limit=limit, session_id=session_id, agent_id=agent_id)
+            return self._list_events_sqlite(
+                after=after,
+                limit=limit,
+                session_id=session_id,
+                agent_id=agent_id,
+                automation_only=automation_only,
+                descending=descending,
+            )
         with self._lock:
             self.prune()
             rows = [
                 event
-                for event in self._events
+                for event in (reversed(self._events) if descending else self._events)
                 if event["cursor"] > after
                 and (not session_id or event["sessionId"] == session_id)
                 and (not agent_id or event["agentId"] == agent_id)
+                and (not automation_only or is_automation_activity_event(event))
             ]
             return rows[:limit]
 
@@ -211,6 +221,8 @@ class LiveDeliveryBus:
         limit: int,
         session_id: str,
         agent_id: str,
+        automation_only: bool,
+        descending: bool,
     ) -> list[dict[str, Any]]:
         clauses = ["cursor > ?"]
         values: list[Any] = [after]
@@ -220,13 +232,24 @@ class LiveDeliveryBus:
         if agent_id:
             clauses.append("agent_id = ?")
             values.append(agent_id)
+        if automation_only:
+            clauses.append("(type like 'message.assistant%' or type = 'message.error')")
+            clauses.append(
+                "("
+                "metadata_json like '%\"source\":\"hermes-cron\"%' "
+                "or metadata_json like '%\"automationId\"%' "
+                "or metadata_json like '%\"jobId\"%' "
+                "or metadata_json like '%\"job_id\"%'"
+                ")"
+            )
         values.append(limit)
+        direction = "desc" if descending else "asc"
         with self._lock, self.core_store.connect() as connection:
             rows = connection.execute(
                 f"""
                 select * from core_events
                 where {' and '.join(clauses)}
-                order by cursor asc
+                order by cursor {direction}
                 limit ?
                 """,
                 tuple(values),
@@ -1618,17 +1641,27 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         after: int = Query(0),
         limit: int = Query(200),
         agentId: str | None = Query(None),
+        automationOnly: bool = Query(False),
+        order: str = Query("asc"),
         _auth: None = Depends(require_auth),
     ) -> dict[str, Any]:
         if agentId and not app.state.runtime_registry.agent(agentId):
             raise ManagementError("Agent was not found.", status_code=404)
         after = clamp_int(after, default=0, minimum=0, maximum=9_223_372_036_854_775_807)
         limit = clamp_int(limit, default=200, minimum=1, maximum=500)
-        events = app.state.live_delivery_bus.list_events(after=after, limit=limit, agent_id=agentId or "")
+        descending = order.lower() == "desc"
+        events = app.state.live_delivery_bus.list_events(
+            after=after,
+            limit=limit,
+            agent_id=agentId or "",
+            automation_only=automationOnly,
+            descending=descending,
+        )
+        latest_cursor = app.state.live_delivery_bus.latest_cursor(agent_id=agentId or "")
         return {
             "ok": True,
             "events": events,
-            "cursor": events[-1]["cursor"] if events else app.state.live_delivery_bus.latest_cursor(agent_id=agentId or ""),
+            "cursor": latest_cursor if descending else max((int(event["cursor"]) for event in events), default=latest_cursor),
         }
 
     @app.get("/v1/sessions/{session_id}/events")
@@ -3035,6 +3068,14 @@ def job_timestamp(job: dict[str, Any], *keys: str) -> int | None:
 
 def json_dumps(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+
+
+def is_automation_activity_event(event: dict[str, Any]) -> bool:
+    event_type = str(event.get("type") or "")
+    if not (event_type.startswith("message.assistant") or event_type == "message.error"):
+        return False
+    metadata = event.get("metadata") if isinstance(event.get("metadata"), dict) else {}
+    return is_automation_delivery_event(event, metadata)
 
 
 def is_model_switch_reply(reply_to: str, metadata: dict[str, Any]) -> bool:

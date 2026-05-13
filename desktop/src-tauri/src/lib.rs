@@ -157,7 +157,7 @@ fn install_app_menu(app: &mut tauri::App) -> tauri::Result<()> {
 
     let new_chat = MenuItem::with_id(app, "new-chat", "New Chat", true, Some("CmdOrCtrl+KeyN"))?;
     let command_menu =
-        MenuItem::with_id(app, "command-menu", "Command Palette", true, Some("CmdOrCtrl+P"))?;
+        MenuItem::with_id(app, "command-menu", "Command Palette", true, Some("CmdOrCtrl+KeyK"))?;
     let search_chats =
         MenuItem::with_id(app, "search-chats", "Search Chats", true, Some("CmdOrCtrl+KeyG"))?;
     let refresh =

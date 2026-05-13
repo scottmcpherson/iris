@@ -1,5 +1,6 @@
 import { ArrowLeft } from "lucide-react";
 import { Button } from "../../shared/ui/button";
+import { Tabs, TabsList, TabsTrigger } from "../../shared/ui/tabs";
 import type { HermesProfile } from "../../types/hermes";
 import type { AgentDetailSection } from "./types";
 
@@ -34,20 +35,22 @@ export function AgentTopbar({
         </div>
       </div>
       <div className="agent-topbar-actions">
-        <div className="agent-section-tabs" role="tablist" aria-label={`${profile.name} sections`}>
-          {(["overview", "memory", "skills"] as AgentDetailSection[]).map((item) => (
-            <Button
-              type="button"
-              key={item}
-              variant="ghost"
-              size="sm"
-              className={section === item ? "active" : ""}
-              onClick={() => onSectionChange(item)}
-            >
-              {item}
-            </Button>
-          ))}
-        </div>
+        <Tabs value={section} onValueChange={(value) => onSectionChange(value as AgentDetailSection)}>
+          <TabsList
+            aria-label={`${profile.name} sections`}
+            className="h-[var(--agent-topbar-control-height,34px)] min-w-max border border-menu-border bg-secondary p-0"
+          >
+            {(["overview", "memory", "skills"] as AgentDetailSection[]).map((item) => (
+              <TabsTrigger
+                key={item}
+                value={item}
+                className="min-w-[76px] rounded-[7px] px-3 capitalize"
+              >
+                {item}
+              </TabsTrigger>
+            ))}
+          </TabsList>
+        </Tabs>
       </div>
     </div>
   );

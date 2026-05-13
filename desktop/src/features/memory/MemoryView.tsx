@@ -3,7 +3,6 @@ import {
   AlertTriangle,
   BarChart3,
   CheckCircle2,
-  Database,
   FileDiff,
   History,
   RotateCcw,
@@ -14,9 +13,10 @@ import {
   Undo2,
 } from "lucide-react";
 import { loadJsonValue, saveJsonValue, storageKeys } from "../../app/storage";
-import { ViewHeader } from "../../shared/ViewHeader";
 import { endpointLabel, formatBytes } from "../../shared/format";
+import { Badge } from "../../shared/ui/badge";
 import { Button } from "../../shared/ui/button";
+import { Card, CardContent, CardHeader } from "../../shared/ui/card";
 import {
   Dialog,
   DialogContent,
@@ -25,7 +25,11 @@ import {
   DialogHeader,
   DialogTitle,
 } from "../../shared/ui/dialog";
+import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "../../shared/ui/empty";
 import { Input } from "../../shared/ui/input";
+import { ScrollArea } from "../../shared/ui/scroll-area";
+import { Switch } from "../../shared/ui/switch";
+import { Tabs, TabsList, TabsTrigger } from "../../shared/ui/tabs";
 import type { HermesMemory, HermesMemoryFile, HermesMemoryHistoryEntry, HermesStatus } from "../../types/hermes";
 
 type MemoryFileKey = "memory" | "user";
@@ -113,13 +117,6 @@ export function MemoryView({
 
   return (
     <div className="tool-view memory-workspace">
-      <ViewHeader
-        icon={<Database size={19} />}
-        eyebrow={`Profile: ${profile}`}
-        title="Memory management"
-        action={memory?.path || "Open folder"}
-      />
-
       <section className="memory-dashboard" aria-label="Memory growth dashboard">
         <MetricTile label="Total" value={formatBytes(stats.totalBytes)} detail={`${stats.totalLines} lines`} />
         <MetricTile label="MEMORY.md" value={formatBytes(memoryFile.bytes)} detail={formatDate(memoryFile.updatedAt)} />
@@ -128,64 +125,70 @@ export function MemoryView({
       </section>
 
       <section className="memory-provider-board" aria-label="Memory provider status">
-        <div className="provider-card">
-          <div>
+        <Card className="provider-card">
+          <div className="provider-card-title">
             <ShieldCheck size={17} />
             <span>Management API</span>
           </div>
-          <strong>{memory?.ok ? "Ready" : "Offline"}</strong>
-          <small>{endpointLabel(status?.managementStatus)}</small>
-        </div>
-        <div className="provider-card">
-          <div>
+          <Badge variant={memory?.ok ? "secondary" : "outline"}>{memory?.ok ? "Ready" : "Offline"}</Badge>
+          <small className="provider-card-detail">{endpointLabel(status?.managementStatus)}</small>
+        </Card>
+        <Card className="provider-card">
+          <div className="provider-card-title">
             <Server size={17} />
             <span>Session API</span>
           </div>
-          <strong>{status?.activeApiStatus?.ok ? "Online" : "Offline"}</strong>
-          <small>{endpointLabel(status?.activeApiStatus)}</small>
-        </div>
-        <label className="memory-toggle">
-          <input
-            type="checkbox"
+          <Badge variant={status?.activeApiStatus?.ok ? "secondary" : "outline"}>{status?.activeApiStatus?.ok ? "Online" : "Offline"}</Badge>
+          <small className="provider-card-detail">{endpointLabel(status?.activeApiStatus)}</small>
+        </Card>
+        <div className="memory-toggle">
+          <Switch
+            id="memory-provider-builtin"
             checked={providers.builtin}
-            onChange={(event) => setProviders((current) => ({ ...current, builtin: event.target.checked }))}
+            onCheckedChange={(checked) => setProviders((current) => ({ ...current, builtin: checked }))}
           />
-          <span>Agent memory</span>
-        </label>
-        <label className="memory-toggle">
-          <input
-            type="checkbox"
+          <label htmlFor="memory-provider-builtin">Agent memory</label>
+        </div>
+        <div className="memory-toggle">
+          <Switch
+            id="memory-provider-external"
             checked={providers.external}
-            onChange={(event) => setProviders((current) => ({ ...current, external: event.target.checked }))}
+            onCheckedChange={(checked) => setProviders((current) => ({ ...current, external: checked }))}
           />
-          <span>External providers</span>
-        </label>
-        <label className="memory-toggle">
-          <input
-            type="checkbox"
+          <label htmlFor="memory-provider-external">External providers</label>
+        </div>
+        <div className="memory-toggle">
+          <Switch
+            id="memory-provider-workspace"
             checked={providers.workspace}
-            onChange={(event) => setProviders((current) => ({ ...current, workspace: event.target.checked }))}
+            onCheckedChange={(checked) => setProviders((current) => ({ ...current, workspace: checked }))}
           />
-          <span>Workspace context</span>
-        </label>
+          <label htmlFor="memory-provider-workspace">Workspace context</label>
+        </div>
       </section>
 
       <section className="memory-editor-shell">
         <div className="memory-toolbar">
-          <div className="memory-tabs" role="tablist" aria-label="Memory files">
-            {(["memory", "user"] as MemoryFileKey[]).map((file) => (
-              <Button
-                className={`memory-tab ${activeFile === file ? "active" : ""}`}
-                key={file}
-                type="button"
-                variant="ghost"
-                onClick={() => setActiveFile(file)}
-              >
-                <span>{fileLabels[file]}</span>
-                <small>{formatBytes(files[file].bytes)}</small>
-              </Button>
-            ))}
-          </div>
+          <Tabs
+            value={activeFile}
+            onValueChange={(value) => setActiveFile(value as MemoryFileKey)}
+            className="min-w-0"
+          >
+            <TabsList aria-label="Memory files" className="h-auto gap-[5px] bg-transparent p-0">
+              {(["memory", "user"] as MemoryFileKey[]).map((file) => (
+                <TabsTrigger
+                  className="grid h-[44px] min-w-[132px] gap-0.5 rounded-lg px-[11px] py-0 text-left"
+                  key={file}
+                  value={file}
+                >
+                  <span className="self-end truncate">{fileLabels[file]}</span>
+                  <small className="self-start truncate text-[11px] font-[700] text-menu-muted-foreground">
+                    {formatBytes(files[file].bytes)}
+                  </small>
+                </TabsTrigger>
+              ))}
+            </TabsList>
+          </Tabs>
           <div className="memory-actions">
             <Button variant="appIcon" size="icon-md" type="button" title="Undo draft" disabled={!dirty} onClick={undoDraft}>
               <Undo2 size={15} />
@@ -214,76 +217,91 @@ export function MemoryView({
       </section>
 
       <section className="memory-lower-grid">
-        <div className="memory-panel memory-search-panel">
-          <header>
-            <p>
+        <Card className="memory-panel memory-search-panel">
+          <CardHeader>
+            <p className="memory-panel-title">
               <Search size={15} />
               Search
             </p>
-            <span>{searchResults.length} matches</span>
-          </header>
+            <Badge variant="secondary">{searchResults.length} matches</Badge>
+          </CardHeader>
+          <CardContent className="memory-panel-content">
           <div className="memory-search">
-            <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search memory" />
+            <Input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search memory" />
           </div>
-          <div className="memory-result-list">
-            {searchResults.map((result) => (
-              <Button
-                key={result.id}
-                type="button"
-                variant="ghost"
-                onClick={() => {
-                  setActiveFile(result.file);
-                  setSelectedHistoryId(result.historyId || "");
-                }}
-              >
-                <span>{fileLabels[result.file]}</span>
-                <strong>{result.title}</strong>
-                <small>{result.snippet}</small>
-              </Button>
-            ))}
-          </div>
-        </div>
+          <ScrollArea className="memory-result-list">
+            {searchResults.length ? (
+              searchResults.map((result) => (
+                <Button
+                  key={result.id}
+                  type="button"
+                  variant="ghost"
+                  onClick={() => {
+                    setActiveFile(result.file);
+                    setSelectedHistoryId(result.historyId || "");
+                  }}
+                >
+                  <span>{fileLabels[result.file]}</span>
+                  <strong>{result.title}</strong>
+                  <small>{result.snippet}</small>
+                </Button>
+              ))
+            ) : (
+              <MemoryEmptyState>No search results</MemoryEmptyState>
+            )}
+          </ScrollArea>
+          </CardContent>
+        </Card>
 
-        <div className="memory-panel">
-          <header>
-            <p>
+        <Card className="memory-panel">
+          <CardHeader>
+            <p className="memory-panel-title">
               <History size={15} />
               Timeline
             </p>
-            <span>{activeHistory.length} revisions</span>
-          </header>
-          <div className="memory-timeline">
-            {activeHistory.map((entry) => (
-              <Button
-                className={selectedHistory?.id === entry.id ? "active" : ""}
-                key={entry.id}
-                type="button"
-                variant="ghost"
-                onClick={() => setSelectedHistoryId(entry.id)}
-              >
-                <span>{entry.action}</span>
-                <strong>{entry.summary}</strong>
-                <small>{formatDate(entry.updatedAt)} · {formatBytes(entry.bytes)}</small>
-              </Button>
-            ))}
-            {!activeHistory.length ? <p className="memory-empty">No saved revisions yet.</p> : null}
-          </div>
-        </div>
+            <Badge variant="secondary">{activeHistory.length} revisions</Badge>
+          </CardHeader>
+          <CardContent className="memory-panel-content">
+          <ScrollArea className="memory-timeline">
+            {activeHistory.length ? (
+              activeHistory.map((entry) => (
+                <Button
+                  className={selectedHistory?.id === entry.id ? "active" : ""}
+                  key={entry.id}
+                  type="button"
+                  variant="ghost"
+                  onClick={() => setSelectedHistoryId(entry.id)}
+                >
+                  <span>{entry.action}</span>
+                  <strong>{entry.summary}</strong>
+                  <small>{formatDate(entry.updatedAt)} · {formatBytes(entry.bytes)}</small>
+                </Button>
+              ))
+            ) : (
+              <MemoryEmptyState>No saved revisions yet.</MemoryEmptyState>
+            )}
+          </ScrollArea>
+          </CardContent>
+        </Card>
 
-        <div className="memory-panel memory-diff-panel">
-          <header>
-            <p>
+        <Card className="memory-panel memory-diff-panel">
+          <CardHeader>
+            <p className="memory-panel-title">
               <FileDiff size={15} />
               Diff
             </p>
-            <span>{selectedHistory ? "Revision to current" : "Draft to saved"}</span>
-          </header>
+            <Badge variant="secondary">{selectedHistory ? "Revision to current" : "Draft to saved"}</Badge>
+          </CardHeader>
+          <CardContent className="memory-panel-content">
           <div className="diff-summary">
             <span>+{selectedHistory ? historyDiff.added : draftDiff.added}</span>
             <span>-{selectedHistory ? historyDiff.removed : draftDiff.removed}</span>
           </div>
-          <pre>{formatDiff(selectedHistory ? historyDiff.lines : draftDiff.lines)}</pre>
-        </div>
+          <ScrollArea className="memory-diff-scroll">
+            <pre className="memory-diff-output">{formatDiff(selectedHistory ? historyDiff.lines : draftDiff.lines)}</pre>
+          </ScrollArea>
+          </CardContent>
+        </Card>
       </section>
 
       <Button className="memory-reset-all" variant="appDanger" size="appSmall" type="button" onClick={() => beginReset("all")}>
@@ -362,12 +380,23 @@ export function MemoryView({
 
 function MetricTile({ label, value, detail }: { label: string; value: string; detail: string }) {
   return (
-    <div className="metric-tile">
+    <Card className="metric-tile">
       <BarChart3 size={15} />
       <span>{label}</span>
       <strong>{value}</strong>
       <small>{detail}</small>
-    </div>
+    </Card>
+  );
+}
+
+function MemoryEmptyState({ children }: { children: string }) {
+  return (
+    <Empty className="memory-empty">
+      <EmptyHeader>
+        <EmptyTitle>{children}</EmptyTitle>
+        <EmptyDescription>Memory activity appears here after edits, searches, or saved revisions.</EmptyDescription>
+      </EmptyHeader>
+    </Empty>
   );
 }
 

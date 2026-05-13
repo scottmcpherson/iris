@@ -1,6 +1,18 @@
 import { describe, expect, it } from "vitest";
-import { automationRequestPayload, normalizeDeliveryTarget, normalizeJobsResult } from "../useIrisAutomations";
-import { automationFormStateFromJob, automationScheduleValue, matchingDeliveries } from "../AutomationsView";
+import {
+  automationDeliveryMessagesFromEvents,
+  automationRequestPayload,
+  isAutomationActivityLoading,
+  normalizeDeliveryTarget,
+  normalizeJobsResult,
+} from "../useIrisAutomations";
+import {
+  automationActivityEmptyText,
+  automationFormStateFromJob,
+  automationScheduleValue,
+  matchingDeliveries,
+} from "../AutomationsView";
+import type { AgentUICoreEvent, CoreMetadata } from "../../../lib/agentuiCore";
 
 describe("runtime jobs helpers", () => {
   it("treats scheduled runtime jobs as active", () => {
@@ -319,7 +331,56 @@ describe("runtime jobs helpers", () => {
       "chat",
     ]);
   });
+
+  it("filters Core events down to automation delivery activity", () => {
+    const events = [
+      coreEvent("evt-chat", "Chat answer", { source: "agentui-core-send" }),
+      coreEvent("evt-cron", "Cron answer", { source: "hermes-cron", jobId: "job-1" }),
+      coreEvent("evt-automation", "Automation answer", { automationId: "job-2" }),
+      coreEvent("evt-job-id", "Job answer", { job_id: "job-3" }),
+      coreEvent("evt-user", "User message", { source: "hermes-cron" }, "message.user.created"),
+    ];
+
+    expect(automationDeliveryMessagesFromEvents(events, "default").map((item) => item.id)).toEqual([
+      "evt-cron",
+      "evt-automation",
+      "evt-job-id",
+    ]);
+  });
+
+  it("does not show the no-deliveries message while recent activity is loading", () => {
+    expect(automationActivityEmptyText(true)).toBe("Loading recent activity...");
+    expect(automationActivityEmptyText(false)).toBe("Automation deliveries will appear here after jobs run.");
+  });
+
+  it("treats a newly active delivery scope as loading before the first effect settles", () => {
+    expect(isAutomationActivityLoading(true, false, "", "default:http://127.0.0.1:8765")).toBe(true);
+    expect(isAutomationActivityLoading(true, false, "default:http://127.0.0.1:8765", "default:http://127.0.0.1:8765")).toBe(false);
+    expect(isAutomationActivityLoading(false, false, "", "default:http://127.0.0.1:8765")).toBe(false);
+  });
 });
+
+function coreEvent(
+  id: string,
+  content: string,
+  metadata: CoreMetadata,
+  type = "message.assistant.completed",
+): AgentUICoreEvent {
+  return {
+    cursor: 1,
+    id,
+    sessionId: "session_1",
+    agentId: "agent_default",
+    runtimeId: "runtime_local_hermes",
+    type,
+    role: "assistant",
+    content,
+    parentEventId: "",
+    externalMessageId: id,
+    createdAt: 1_777_777_777,
+    metadata,
+  };
+}
 
 function delivery(id: string, metadata: Record<string, unknown>, chatId: string) {
   return {

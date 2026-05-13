@@ -5,7 +5,7 @@ import { Slot } from "@radix-ui/react-slot";
 import { cn } from "@/shared/ui/utils";
 
 const buttonVariants = cva(
-  "inline-flex shrink-0 items-center justify-center gap-2 rounded-md text-sm font-medium whitespace-nowrap transition-all outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
+  "inline-flex shrink-0 items-center justify-center gap-2 rounded-md text-[13px] font-[650] leading-none whitespace-nowrap transition-all outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-destructive/20 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
   {
     variants: {
       variant: {
@@ -13,18 +13,18 @@ const buttonVariants = cva(
         destructive:
           "bg-destructive text-white hover:bg-destructive/90 focus-visible:ring-destructive/20 dark:bg-destructive/60 dark:focus-visible:ring-destructive/40",
         outline:
-          "border bg-background shadow-xs hover:bg-accent hover:text-accent-foreground dark:border-input dark:bg-input/30 dark:hover:bg-input/50",
+          "border border-menu-border bg-background shadow-xs hover:bg-accent hover:text-accent-foreground",
         secondary:
           "bg-secondary text-secondary-foreground hover:bg-secondary/80",
         ghost:
-          "hover:bg-accent hover:text-accent-foreground dark:hover:bg-accent/50",
+          "hover:bg-accent hover:text-accent-foreground",
         link: "text-primary underline-offset-4 hover:underline",
         composerIcon:
-          "rounded-full border-0 bg-transparent text-composer-icon-foreground shadow-none transition-[color,background] duration-150 hover:bg-composer-button-hover hover:text-foreground aria-expanded:bg-composer-button-active aria-expanded:text-foreground disabled:bg-transparent disabled:text-composer-button-disabled disabled:opacity-[0.62]",
+          "rounded-full border-0 bg-transparent text-composer-icon-foreground shadow-none transition-[color,background] duration-150 hover:bg-composer-button-hover hover:text-foreground focus-visible:ring-0 aria-expanded:bg-composer-button-active aria-expanded:text-foreground disabled:bg-transparent disabled:text-composer-button-disabled disabled:opacity-[0.62]",
         composerAccess:
-          "max-w-[min(360px,40vw)] rounded-full border-0 bg-transparent text-composer-pill-foreground shadow-none transition-[color,background] duration-150 hover:bg-composer-button-hover hover:text-foreground aria-expanded:bg-composer-button-active aria-expanded:text-foreground disabled:bg-transparent disabled:text-composer-button-disabled disabled:opacity-[0.62] [&_span]:min-w-0 [&_span]:truncate",
+          "max-w-[min(360px,40vw)] rounded-full border-0 bg-transparent text-composer-pill-foreground shadow-none transition-[color,background] duration-150 hover:bg-composer-button-hover hover:text-foreground focus-visible:ring-0 aria-expanded:bg-composer-button-active aria-expanded:text-foreground disabled:bg-transparent disabled:text-composer-button-disabled disabled:opacity-[0.62] [&_span]:min-w-0 [&_span]:truncate",
         composerModel:
-          "max-w-[min(170px,34vw)] rounded-full border-0 bg-transparent text-composer-pill-foreground shadow-none transition-[color,background] duration-150 hover:bg-composer-button-active hover:text-foreground aria-expanded:bg-composer-button-active aria-expanded:text-foreground disabled:bg-transparent disabled:text-composer-button-disabled disabled:opacity-[0.62] [&_span]:min-w-0 [&_span]:truncate",
+          "max-w-[min(170px,34vw)] rounded-full border-0 bg-transparent text-composer-pill-foreground shadow-none transition-[color,background] duration-150 hover:bg-composer-button-active hover:text-foreground focus-visible:ring-0 aria-expanded:bg-composer-button-active aria-expanded:text-foreground disabled:bg-transparent disabled:text-composer-button-disabled disabled:opacity-[0.62] [&_span]:min-w-0 [&_span]:truncate",
         composerSend:
           "rounded-full border-0 bg-[var(--button-primary-bg)] text-[var(--button-primary-fg)] font-extrabold shadow-none hover:bg-[var(--button-primary-bg-hover)] disabled:bg-[var(--button-primary-bg)] disabled:text-[var(--button-primary-fg)] disabled:opacity-50",
         composerRecordingCancel:
@@ -34,13 +34,13 @@ const buttonVariants = cva(
         attachmentRemove:
           "rounded-full border-0 bg-transparent text-composer-attachment-remove shadow-none hover:bg-composer-attachment-remove-hover hover:text-composer-attachment-remove-hover-foreground focus-visible:bg-composer-attachment-remove-hover focus-visible:text-composer-attachment-remove-hover-foreground",
         appNeutral:
-          "border border-white/10 bg-white/[0.08] text-[#eef1f6] shadow-[inset_0_1px_0_rgba(255,255,255,0.05)] hover:bg-white/[0.12]",
+          "border border-menu-border bg-secondary text-menu-foreground shadow-[inset_0_1px_0_rgba(255,255,255,0.05)] hover:bg-menu-hover hover:text-menu-hover-foreground",
         appGhost:
-          "border border-white/[0.075] bg-white/[0.045] text-[#dce0e8] hover:bg-white/[0.085]",
+          "border border-menu-border bg-secondary text-menu-foreground hover:bg-menu-hover hover:text-menu-hover-foreground",
         appDanger:
           "border border-[#ff8372]/25 bg-[#ff8372]/10 text-[#ffe9e6] hover:bg-[#ff8372]/20",
         appIcon:
-          "border border-white/[0.075] bg-white/[0.045] text-[#dce0e8] hover:bg-white/[0.085]",
+          "border border-menu-border bg-secondary text-menu-foreground hover:bg-menu-hover hover:text-menu-hover-foreground",
         appIconDanger:
           "border border-white/[0.075] bg-white/[0.045] text-[#f2b9ac] hover:bg-white/[0.085]",
         appIconConfirm:
@@ -49,12 +49,12 @@ const buttonVariants = cva(
           "h-auto border-0 bg-transparent p-0 text-inherit shadow-none hover:bg-transparent hover:underline",
       },
       size: {
-        default: "h-9 px-4 py-2 has-[>svg]:px-3",
-        xs: "h-6 gap-1 rounded-md px-2 text-xs has-[>svg]:px-1.5 [&_svg:not([class*='size-'])]:size-3",
-        sm: "h-8 gap-1.5 rounded-md px-3 has-[>svg]:px-2.5",
+        default: "h-8 px-3 py-1.5 has-[>svg]:px-2.5",
+        xs: "h-6 gap-1 rounded-md px-2 text-xs font-[700] has-[>svg]:px-1.5 [&_svg:not([class*='size-'])]:size-3",
+        sm: "h-7 gap-1.5 rounded-md px-2.5 text-xs font-[700] has-[>svg]:px-2",
         lg: "h-10 rounded-md px-6 has-[>svg]:px-4",
-        icon: "size-9",
-        appSmall: "h-8 gap-2 px-[11px] text-xs font-[750] whitespace-nowrap [&_svg:not([class*='size-'])]:size-3.5",
+        icon: "size-8",
+        appSmall: "h-[30px] gap-2 px-[11px] text-xs font-[750] whitespace-nowrap [&_svg:not([class*='size-'])]:size-3.5",
         "icon-xs": "size-6 rounded-md [&_svg:not([class*='size-'])]:size-3",
         "icon-sm": "size-8",
         "icon-md": "size-[34px]",

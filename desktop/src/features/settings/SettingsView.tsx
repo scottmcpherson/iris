@@ -15,7 +15,13 @@ import {
 } from "../../lib/irisRuntime";
 import { endpointLabel } from "../../shared/format";
 import { rawStringValue } from "../../shared/strings";
+import { Alert, AlertDescription } from "../../shared/ui/alert";
+import { Badge } from "../../shared/ui/badge";
 import { Button } from "../../shared/ui/button";
+import { Card, CardContent, CardHeader } from "../../shared/ui/card";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "../../shared/ui/collapsible";
+import { Field, FieldDescription, FieldLabel } from "../../shared/ui/field";
+import { Input } from "../../shared/ui/input";
 import type {
   HermesProfile,
   HermesRuntimeConfig,
@@ -222,13 +228,13 @@ export function SettingsView({
             </div>
             <div className="usage-dashboard">
               {(status?.profiles ?? [profile]).map((item) => (
-                <article key={item.name} className={item.name === selectedProfile ? "usage-card active" : "usage-card"}>
+                <Card key={item.name} className={item.name === selectedProfile ? "usage-card active" : "usage-card"}>
                   <span>{item.name}</span>
                   <strong>{item.sessionCount}</strong>
                   <small>
                     {item.estimatedCostUsd == null ? "Cost unavailable" : `$${item.estimatedCostUsd.toFixed(4)} estimated`}
                   </small>
-                </article>
+                </Card>
               ))}
             </div>
           </section>
@@ -240,17 +246,17 @@ export function SettingsView({
             title="Routes and credentials"
             variant="plain"
           >
-            <article className="core-connection-form">
-              <div className="core-connection-heading">
-                <div>
+            <Card className="core-connection-form">
+              <CardHeader className="core-connection-heading">
+                <div className="core-connection-title">
                   <span className={status?.managementStatus?.ok ? "service-health-dot online" : "service-health-dot offline"} />
                   <strong>Iris Core</strong>
                 </div>
-                <small title={endpointLabel(status?.managementStatus)}>
+                <Badge variant={status?.managementStatus?.ok ? "secondary" : "outline"} title={endpointLabel(status?.managementStatus)}>
                   {healthLabel(status?.managementStatus)} · {checkedAt}
-                </small>
-              </div>
-              <div className="core-connection-fields">
+                </Badge>
+              </CardHeader>
+              <CardContent className="core-connection-fields">
                 <RuntimeTextField
                   id="profile-core-route"
                   label="URL"
@@ -268,7 +274,7 @@ export function SettingsView({
                   onClear={() => void clearToken("core")}
                   actions="none"
                 />
-              </div>
+              </CardContent>
               {pendingCoreApiUrl ? <em className="core-connection-pending">Unsaved URL: {pendingCoreApiUrl}</em> : null}
               <div className="core-connection-actions">
                 <Button
@@ -283,7 +289,7 @@ export function SettingsView({
                   Save Core connection
                 </Button>
               </div>
-            </article>
+            </Card>
           </SettingsSection>
 
           <section className="settings-section model-section">
@@ -312,7 +318,11 @@ export function SettingsView({
         </>
       )}
 
-      {notice ? <p className="settings-notice">{notice}</p> : null}
+      {notice ? (
+        <Alert className="settings-notice">
+          <AlertDescription>{notice}</AlertDescription>
+        </Alert>
+      ) : null}
     </div>
   );
 }
@@ -327,11 +337,11 @@ function ProfileWorkflows({
   onProfileAction: (action: ProfileAction) => Promise<void>;
 }) {
   return (
-    <div className="profile-workflows">
+    <Card className="profile-workflows">
       <div>
         <h2>Agent management</h2>
       </div>
-      <input
+      <Input
         value={profileName}
         placeholder="new-agent-name"
         onChange={(event) => onProfileNameChange(event.target.value)}
@@ -353,7 +363,7 @@ function ProfileWorkflows({
           Delete current
         </Button>
       </div>
-    </div>
+    </Card>
   );
 }
 
@@ -375,23 +385,23 @@ function ServiceCard({
   children: ReactNode;
 }) {
   return (
-    <article className="service-card">
-      <header>
-        <div>
+    <Card className="service-card">
+      <CardHeader>
+        <div className="service-card-title">
           <span className={healthy ? "service-health-dot online" : "service-health-dot offline"} />
           <strong>{name}</strong>
         </div>
-        <small title={statusTitle}>
+        <Badge variant={healthy ? "secondary" : "outline"} title={statusTitle}>
           {statusLabel} · {lastChecked}
-        </small>
-      </header>
-      <div className="service-card-fields">{children}</div>
+        </Badge>
+      </CardHeader>
+      <CardContent className="service-card-fields">{children}</CardContent>
       {pendingUrl ? (
         <footer>
           <em>Unsaved URL: {pendingUrl}</em>
         </footer>
       ) : null}
-    </article>
+    </Card>
   );
 }
 
@@ -404,18 +414,21 @@ function ModelCard({
   rawModel: string;
   provider: string;
 }) {
+  const [open, setOpen] = useState(false);
   return (
-    <details className="model-card">
-      <summary>
+    <Collapsible open={open} onOpenChange={setOpen} className="model-card">
+      <CollapsibleTrigger className="model-card-summary">
         <Cpu size={17} />
         <span>
           <strong>{summary.model}</strong>
           <small>{summary.provider}</small>
         </span>
         <em>Configuration</em>
-      </summary>
-      <pre>{summary.config || prettyModelConfig(rawModel, provider)}</pre>
-    </details>
+      </CollapsibleTrigger>
+      <CollapsibleContent>
+        <pre>{summary.config || prettyModelConfig(rawModel, provider)}</pre>
+      </CollapsibleContent>
+    </Collapsible>
   );
 }
 
@@ -440,10 +453,10 @@ function TokenField({
 }) {
   const storedLabel = status?.exists ? `Stored via ${status.source}` : "Not stored";
   return (
-    <div className="runtime-field wide token-field">
-      <label htmlFor={id}>{label}</label>
+    <Field className="runtime-field wide token-field">
+      <FieldLabel htmlFor={id}>{label}</FieldLabel>
       <div className="token-input-row">
-        <input
+        <Input
           id={id}
           type="password"
           value={value}
@@ -461,8 +474,8 @@ function TokenField({
           </Button>
         </div>
       ) : null}
-      <span>{storedLabel}</span>
-    </div>
+      <FieldDescription>{storedLabel}</FieldDescription>
+    </Field>
   );
 }
 
@@ -488,7 +501,7 @@ function SettingsSection({
           {detail ? <span>{detail}</span> : null}
         </div>
       </div>
-      {variant === "panel" ? <div className="runtime-panel">{children}</div> : children}
+      {variant === "panel" ? <Card className="runtime-panel">{children}</Card> : children}
     </section>
   );
 }
@@ -509,16 +522,16 @@ function RuntimeTextField({
   onChange: (value: string) => void;
 }) {
   return (
-    <div className="runtime-field wide">
-      <label htmlFor={id}>{label}</label>
-      <input
+    <Field className="runtime-field wide">
+      <FieldLabel htmlFor={id}>{label}</FieldLabel>
+      <Input
         id={id}
         type={type}
         value={value}
         placeholder={placeholder}
         onChange={(event) => onChange(event.target.value)}
       />
-    </div>
+    </Field>
   );
 }
 

@@ -6,6 +6,7 @@ import {
   createAgentUICoreAgentSkill,
   deleteAgentUICoreAgent,
   getAgentUICoreAgentMemory,
+  getAgentUICoreAutomationEvents,
   getAgentUICoreAgentSkill,
   getAgentUICoreAgentSkills,
   getAgentUICoreEvents,
@@ -84,6 +85,31 @@ describe("agentuiCore", () => {
     const query = new URL(calls[0]).searchParams;
     expect(query.get("after")).toBe(String(Number.MAX_SAFE_INTEGER));
     expect(query.get("limit")).toBe("1");
+    expect(query.get("agentId")).toBe("agent_default");
+  });
+
+  it("loads recent automation events without replaying unrelated history", async () => {
+    const calls: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        calls.push(url);
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ ok: true, events: [], cursor: 95 }),
+        };
+      }),
+    );
+
+    const result = await getAgentUICoreAutomationEvents(50, defaultRuntimeConfig, "agent_default");
+
+    expect(result.cursor).toBe(95);
+    const query = new URL(calls[0]).searchParams;
+    expect(query.get("after")).toBe("0");
+    expect(query.get("limit")).toBe("50");
+    expect(query.get("automationOnly")).toBe("true");
+    expect(query.get("order")).toBe("desc");
     expect(query.get("agentId")).toBe("agent_default");
   });
 

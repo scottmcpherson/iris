@@ -144,7 +144,7 @@ export function ChatView({
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const modelSearchRef = useRef<HTMLInputElement>(null);
   const seenRenderedMessageIdsRef = useRef<Set<string>>(new Set());
-  const slashCommandRefs = useRef<Record<string, HTMLButtonElement | null>>({});
+  const slashCommandRefs = useRef<Record<string, HTMLElement | null>>({});
   const fileInputRef = useRef<HTMLInputElement>(null);
   const dragDepthRef = useRef(0);
   const attachmentsRef = useRef<AttachmentDraft[]>([]);
@@ -895,7 +895,7 @@ function DictationWaveform({
             ? state.message
             : "Recording";
 
-  const showStatus = state.status !== "recording";
+  const showStatus = shouldShowVisibleDictationStatus(state);
   const canCancel =
     state.status === "requesting-permission" ||
     state.status === "recording" ||
@@ -915,6 +915,7 @@ function DictationWaveform({
           />
         ))}
       </div>
+      {!showStatus ? <span className="sr-only">{statusText}</span> : null}
       {showStatus ? <span className="composer-recording-status">{statusText}</span> : null}
       <Button
         type="button"
@@ -1033,6 +1034,10 @@ export function chatTranscriptScrollKey(selectedSessionId: string | null, render
 
 export function shouldLockComposerModelSelection(composerBusy: boolean) {
   return composerBusy;
+}
+
+export function shouldShowVisibleDictationStatus(state: DictationState) {
+  return state.status === "error";
 }
 
 export function composerModelSelection(

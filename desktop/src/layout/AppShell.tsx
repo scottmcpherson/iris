@@ -1166,10 +1166,11 @@ export function AppShell({
           onValueChange={setSessionSearchQuery}
           onKeyDown={(event) => {
             if ((event.metaKey || event.ctrlKey) && /^[1-9]$/.test(event.key)) {
+              event.preventDefault();
+              event.stopPropagation();
               const shortcutIndex = Number(event.key) - 1;
               const item = filteredSessionSearchItems[shortcutIndex];
               if (item) {
-                event.preventDefault();
                 selectSessionSearchItem(item);
               }
             }

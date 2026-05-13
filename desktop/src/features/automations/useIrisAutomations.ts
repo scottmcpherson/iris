@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   createAgentUICoreAutomation,
   deleteAgentUICoreAutomation,
+  getAgentUICoreAutomationEvents,
   getAgentUICoreAgentForProfile,
   getAgentUICoreAutomations,
   getAgentUICoreEvents,
@@ -9,6 +10,8 @@ import {
   resumeAgentUICoreAutomation,
   runAgentUICoreAutomation,
   updateAgentUICoreAutomation,
+  type AgentUICoreAgent,
+  type AgentUICoreEvent,
 } from "../../lib/agentuiCore";
 import { coreEventToInboxMessage } from "../../lib/irisRuntime";
 import { rawStringValue } from "../../shared/strings";
@@ -65,43 +68,70 @@ export type LegacyCreateScheduledMessageInput = {
 export function useAgentUIAutomations(runtimeConfig: HermesRuntimeConfig, profile = "default", active = true) {
   const [automations, setAutomations] = useState<HermesAutomation[]>([]);
   const [deliveries, setDeliveries] = useState<HermesInboxMessage[]>([]);
+  const [deliveriesLoading, setDeliveriesLoading] = useState(false);
+  const [deliveriesLoadedKey, setDeliveriesLoadedKey] = useState("");
   const [loading, setLoading] = useState(false);
   const [busyAutomationId, setBusyAutomationId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const inboxCursorRef = useRef(0);
+  const deliveriesRequestRef = useRef(0);
+  const deliveriesLoadingStartedAtRef = useRef(0);
+  const deliveriesLoadingTimerRef = useRef<number | null>(null);
 
   const activeAutomations = useMemo(
     () => automations.filter((automation) => automation.enabled && automation.status !== "paused" && automation.status !== "error"),
     [automations],
   );
   const pausedAutomations = useMemo(() => automations.filter((automation) => automation.status === "paused"), [automations]);
+  const deliveriesScopeKey = `${profile}:${runtimeConfig.coreApiUrl || ""}`;
 
   useEffect(() => {
     if (!active) return;
-    void refresh();
+    const requestId = deliveriesRequestRef.current + 1;
+    deliveriesRequestRef.current = requestId;
+    inboxCursorRef.current = 0;
+    beginDeliveriesLoading();
+    void refresh(requestId, deliveriesScopeKey);
     const timer = window.setInterval(() => {
-      void pollDeliveries();
-      void loadJobs({ silent: true });
+      void refreshSilently();
     }, 6000);
-    return () => window.clearInterval(timer);
-  }, [active, profile, runtimeConfig.coreApiUrl]);
+    return () => {
+      window.clearInterval(timer);
+      clearDeliveriesLoadingTimer();
+    };
+  }, [active, deliveriesScopeKey]);
 
-  async function refresh() {
+  async function refresh(deliveriesRequestId = deliveriesRequestRef.current, scopeKey = deliveriesScopeKey) {
     setLoading(true);
-    await Promise.all([loadJobs(), pollDeliveries()]);
-    setLoading(false);
+    try {
+      const agent = await resolveAgent();
+      if (!agent) return;
+      await Promise.all([loadJobsForAgent(agent.id), loadRecentDeliveries(agent.id, deliveriesRequestId, true, scopeKey)]);
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "Could not load automations.");
+      if (deliveriesRequestId === deliveriesRequestRef.current) {
+        finishDeliveriesLoading(deliveriesRequestId, scopeKey, false);
+      }
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function refreshSilently() {
+    try {
+      const agent = await resolveAgent();
+      if (!agent) return;
+      await Promise.all([pollDeliveries(agent.id), loadJobsForAgent(agent.id)]);
+    } catch {
+      // Background polling should not replace the visible error from an explicit refresh.
+    }
   }
 
   async function loadJobs(options: { silent?: boolean } = {}) {
     try {
-      const agentResult = await getAgentUICoreAgentForProfile(profile, runtimeConfig);
-      if (!agentResult.ok || !agentResult.agent) {
-        throw new Error(agentError(agentResult) || "Could not resolve Iris agent.");
-      }
-      const result = await getAgentUICoreAutomations(agentResult.agent.id, runtimeConfig);
-      if (!result.ok) throw new Error(result.error || "Could not load scheduled jobs.");
-      setAutomations(normalizeJobsResult(result));
-      setError(null);
+      const agent = await resolveAgent();
+      if (!agent) return;
+      await loadJobsForAgent(agent.id);
     } catch (error) {
       if (!options.silent) {
         setError(error instanceof Error ? error.message : "Could not load scheduled jobs.");
@@ -109,25 +139,91 @@ export function useAgentUIAutomations(runtimeConfig: HermesRuntimeConfig, profil
     }
   }
 
-  async function pollDeliveries() {
-    const agentResult = await getAgentUICoreAgentForProfile(profile, runtimeConfig);
-    if (!agentResult.ok || !agentResult.agent) return;
-    const result = await getAgentUICoreEvents(inboxCursorRef.current, 50, runtimeConfig, agentResult.agent.id);
+  async function loadJobsForAgent(agentId: string) {
+    const result = await getAgentUICoreAutomations(agentId, runtimeConfig);
+    if (!result.ok) throw new Error(result.error || "Could not load scheduled jobs.");
+    setAutomations(normalizeJobsResult(result));
+    setError(null);
+  }
+
+  async function pollDeliveries(agentId?: string) {
+    const resolvedAgentId = agentId || (await resolveAgent())?.id;
+    if (!resolvedAgentId) return;
+    if (!inboxCursorRef.current) {
+      await loadRecentDeliveries(resolvedAgentId, deliveriesRequestRef.current, false, deliveriesScopeKey);
+      return;
+    }
+    const result = await getAgentUICoreEvents(inboxCursorRef.current, 50, runtimeConfig, resolvedAgentId);
     if (!result.ok) return;
     inboxCursorRef.current = result.cursor || inboxCursorRef.current;
-    const messages = result.events
-      .filter((event) => event.type.startsWith("message.assistant") || event.type === "message.error")
-      .map((event) => coreEventToInboxMessage(event, profile));
+    const messages = automationDeliveryMessagesFromEvents(result.events, profile);
+    mergeDeliveries(messages);
+  }
+
+  async function loadRecentDeliveries(
+    agentId: string,
+    requestId = deliveriesRequestRef.current,
+    showLoading = true,
+    scopeKey = deliveriesScopeKey,
+  ) {
+    if (showLoading) beginDeliveriesLoading();
+    const result = await getAgentUICoreAutomationEvents(50, runtimeConfig, agentId);
+    if (requestId !== deliveriesRequestRef.current) return;
+    const messages = result.ok ? sortDeliveries(automationDeliveryMessagesFromEvents(result.events, profile)) : [];
+    if (result.ok) {
+      inboxCursorRef.current = result.cursor || latestEventCursor(result.events) || inboxCursorRef.current;
+      setDeliveries(messages);
+    }
+    finishDeliveriesLoading(requestId, scopeKey, messages.length > 0);
+  }
+
+  function beginDeliveriesLoading() {
+    clearDeliveriesLoadingTimer();
+    deliveriesLoadingStartedAtRef.current = Date.now();
+    setDeliveriesLoading(true);
+  }
+
+  function finishDeliveriesLoading(requestId: number, scopeKey: string, hasDeliveries: boolean) {
+    if (requestId !== deliveriesRequestRef.current) return;
+    setDeliveriesLoadedKey(scopeKey);
+    if (hasDeliveries) {
+      setDeliveriesLoading(false);
+      return;
+    }
+    const remaining = Math.max(0, 750 - (Date.now() - deliveriesLoadingStartedAtRef.current));
+    if (!remaining) {
+      setDeliveriesLoading(false);
+      return;
+    }
+    deliveriesLoadingTimerRef.current = window.setTimeout(() => {
+      if (requestId === deliveriesRequestRef.current) {
+        setDeliveriesLoading(false);
+      }
+    }, remaining);
+  }
+
+  function clearDeliveriesLoadingTimer() {
+    if (deliveriesLoadingTimerRef.current == null) return;
+    window.clearTimeout(deliveriesLoadingTimerRef.current);
+    deliveriesLoadingTimerRef.current = null;
+  }
+
+  async function resolveAgent(): Promise<AgentUICoreAgent | null> {
+    const agentResult = await getAgentUICoreAgentForProfile(profile, runtimeConfig);
+    if (!agentResult.ok || !agentResult.agent) {
+      throw new Error(agentError(agentResult) || "Could not resolve Iris agent.");
+    }
+    return agentResult.agent;
+  }
+
+  function mergeDeliveries(messages: HermesInboxMessage[]) {
     if (!messages.length) return;
     setDeliveries((current) => {
       const byId = new Map(current.map((message) => [message.id, message]));
       for (const message of messages) {
-        const metadata = message.metadata as Record<string, unknown>;
-        if (message.source === "hermes-cron" || metadata.automationId || metadata.jobId) {
-          byId.set(message.id, message);
-        }
+        byId.set(message.id, message);
       }
-      return [...byId.values()].sort((left, right) => right.createdAt - left.createdAt).slice(0, 50);
+      return sortDeliveries([...byId.values()]);
     });
   }
 
@@ -196,6 +292,7 @@ export function useAgentUIAutomations(runtimeConfig: HermesRuntimeConfig, profil
     busyAutomationId,
     createScheduledMessage,
     deliveries,
+    deliveriesLoading: isAutomationActivityLoading(active, deliveriesLoading, deliveriesLoadedKey, deliveriesScopeKey),
     error,
     automations,
     loading,
@@ -207,6 +304,40 @@ export function useAgentUIAutomations(runtimeConfig: HermesRuntimeConfig, profil
 }
 
 export const useIrisAutomations = useAgentUIAutomations;
+
+export function isAutomationActivityLoading(
+  active: boolean,
+  loading: boolean,
+  loadedKey: string,
+  scopeKey: string,
+) {
+  return loading || (active && loadedKey !== scopeKey);
+}
+
+export function automationDeliveryMessagesFromEvents(events: AgentUICoreEvent[], profile: string) {
+  return events
+    .filter((event) => event.type.startsWith("message.assistant") || event.type === "message.error")
+    .map((event) => coreEventToInboxMessage(event, profile))
+    .filter(isAutomationDeliveryMessage);
+}
+
+export function isAutomationDeliveryMessage(message: HermesInboxMessage) {
+  const metadata = message.metadata as Record<string, unknown>;
+  return (
+    message.source === "hermes-cron" ||
+    Boolean(metadata.automationId) ||
+    Boolean(metadata.jobId) ||
+    Boolean(metadata.job_id)
+  );
+}
+
+function sortDeliveries(messages: HermesInboxMessage[]) {
+  return [...messages].sort((left, right) => right.createdAt - left.createdAt).slice(0, 50);
+}
+
+function latestEventCursor(events: AgentUICoreEvent[]) {
+  return events.reduce((cursor, event) => Math.max(cursor, event.cursor || 0), 0);
+}
 
 export function normalizeJobsResult(result: Record<string, unknown>) {
   const rawJobs =

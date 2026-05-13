@@ -162,6 +162,7 @@ export function AgentList({ profiles, onOpenAgent, onProfileAction }: AgentListP
     const title = isDelete ? `Delete ${source}` : isClone ? `Duplicate ${source}` : "New agent";
     const label = isDelete ? "Confirm agent name" : "Agent name";
     const submitLabel = isDelete ? "Delete" : isClone ? "Duplicate" : "Create";
+    const submitVariant = isDelete ? "appDanger" : isClone ? "appNeutral" : "default";
     const disabled = busy || (isDelete ? dialog.name.trim() !== source : !dialog.name.trim());
 
     return (
@@ -196,7 +197,7 @@ export function AgentList({ profiles, onOpenAgent, onProfileAction }: AgentListP
               </Button>
               <Button
                 type="submit"
-                variant={isDelete ? "appDanger" : "appNeutral"}
+                variant={submitVariant}
                 size="appSmall"
                 disabled={disabled}
               >

@@ -2,15 +2,18 @@ import { useEffect, useMemo, useState } from "react";
 import {
   FileCode2,
   Filter,
+  Plus,
   Save,
   Search,
-  Sparkles,
   Store,
 } from "lucide-react";
 import { getIrisSkillDetail, saveIrisSkill } from "../../lib/irisRuntime";
 import { CodeEditor } from "../../shared/CodeEditor";
-import { ViewHeader } from "../../shared/ViewHeader";
+import { Alert, AlertDescription } from "../../shared/ui/alert";
+import { Badge } from "../../shared/ui/badge";
 import { Button } from "../../shared/ui/button";
+import { Field, FieldLabel } from "../../shared/ui/field";
+import { Input } from "../../shared/ui/input";
 import {
   Select,
   SelectContent,
@@ -202,26 +205,20 @@ export function SkillsView({
 
   return (
     <div className="tool-view skills-workspace">
-      <ViewHeader
-        icon={<Sparkles size={19} />}
-        title="Skills."
-        action="New skill"
-        onAction={createNewSkill}
-      />
-
       <div className="skills-toolbar">
         <label className="skill-search">
-          <Search size={15} />
-          <input
+          <Search aria-hidden="true" />
+          <Input
+            className="pl-9"
             value={query}
             placeholder="Search skills, tags, or categories"
             onChange={(event) => setQuery(event.target.value)}
           />
         </label>
         <label className="skill-select">
-          <Filter size={15} />
           <Select value={categoryFilter} onValueChange={setCategoryFilter}>
-            <SelectTrigger size="sm" className="min-w-[130px]">
+            <SelectTrigger className="w-full min-w-0">
+              <Filter aria-hidden="true" />
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -236,12 +233,12 @@ export function SkillsView({
           </Select>
         </label>
         <label className="skill-select">
-          <Store size={15} />
           <Select
             value={sourceFilter}
             onValueChange={(value) => setSourceFilter(value as SkillSource | "all")}
           >
-            <SelectTrigger size="sm" className="min-w-[130px]">
+            <SelectTrigger className="w-full min-w-0">
+              <Store aria-hidden="true" />
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -254,6 +251,10 @@ export function SkillsView({
             </SelectContent>
           </Select>
         </label>
+        <Button className="skills-toolbar-action" size="appSmall" type="button" onClick={createNewSkill}>
+          <Plus data-icon="inline-start" />
+          New skill
+        </Button>
       </div>
 
       <div className="skills-browser">
@@ -273,11 +274,11 @@ export function SkillsView({
                 <div className="skill-icon">
                   <FileCode2 size={18} />
                 </div>
-                <div>
-                  <p>{skill.name}</p>
-                  <span>{skill.description}</span>
+                <div className="skill-row-copy">
+                  <p className="skill-row-title">{skill.name}</p>
+                  <span className="skill-row-description">{skill.description}</span>
                 </div>
-                <small className={`source-pill ${skill.source}`}>{skill.source}</small>
+                <Badge variant="secondary" className={`source-pill ${skill.source}`}>{skill.source}</Badge>
               </Button>
             ))}
           </div>
@@ -298,19 +299,23 @@ export function SkillsView({
 
           <div className="skill-editor-shell">
             <div className="skill-editor-fields">
-              <label>
-                <span>Name</span>
-                <input value={draftName} onChange={(event) => setDraftName(event.target.value)} />
-              </label>
-              <label>
-                <span>Category</span>
-                <input value={draftCategory} onChange={(event) => setDraftCategory(event.target.value)} />
-              </label>
+              <Field>
+                <FieldLabel>Name</FieldLabel>
+                <Input value={draftName} onChange={(event) => setDraftName(event.target.value)} />
+              </Field>
+              <Field>
+                <FieldLabel>Category</FieldLabel>
+                <Input value={draftCategory} onChange={(event) => setDraftCategory(event.target.value)} />
+              </Field>
             </div>
             <CodeEditor value={draftContent} onChange={setDraftContent} metadata={editorMetadata} />
           </div>
 
-          {notice ? <p className="settings-notice">{notice}</p> : null}
+          {notice ? (
+            <Alert className="settings-notice">
+              <AlertDescription>{notice}</AlertDescription>
+            </Alert>
+          ) : null}
         </section>
       </div>
     </div>

@@ -3,7 +3,6 @@ import { isTauri } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import "./App.css";
 import type {
-  AppNotification,
   CommandItem,
   ProfileAction,
   View,
@@ -21,9 +20,9 @@ import { useAgentUIAutomations } from "./features/automations/useIrisAutomations
 import type { HermesInboxMessage, HermesSession } from "./types/hermes";
 import { useIrisProjects } from "./features/projects/useIrisProjects";
 import { CommandMenu } from "./features/polish/CommandMenu";
-import { NotificationCenter } from "./features/polish/NotificationCenter";
 import { OnboardingOverlay } from "./features/polish/OnboardingOverlay";
 import { AppShell } from "./layout/AppShell";
+import { globalShortcutActionForKey } from "./app/keyboardShortcuts";
 import { loadBooleanValue, saveBooleanValue, storageKeys } from "./app/storage";
 import {
   isProjectSession,
@@ -31,13 +30,20 @@ import {
   mergeProjectSessionReadStatesForSidebar,
   projectSessionMembership,
 } from "./app/projectSessions";
+import { Toaster } from "./shared/ui/sonner";
+import { toast } from "sonner";
+
+type AppNotificationInput = {
+  tone: "info" | "success" | "error";
+  title: string;
+  message: string;
+};
 
 function App() {
   const [activeView, setActiveView] = useState<View>("chat");
   const [agentDetailProfile, setAgentDetailProfile] = useState<string | null>(null);
   const [agentSection, setAgentSection] = useState<AgentDetailSection>("overview");
   const [commandMenuOpen, setCommandMenuOpen] = useState(false);
-  const [notifications, setNotifications] = useState<AppNotification[]>([]);
   const [onboardingOpen, setOnboardingOpen] = useState(
     () => !loadBooleanValue(storageKeys.onboardingDismissed),
   );
@@ -59,19 +65,18 @@ function App() {
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      const commandKey = event.metaKey || event.ctrlKey;
-      if (!commandKey) return;
+      const action = globalShortcutActionForKey(event);
+      if (!action) return;
 
-      if (event.key.toLowerCase() === "p") {
+      if (action.type === "open-command-menu") {
         event.preventDefault();
         setCommandMenuOpen(true);
-      } else if (event.key.toLowerCase() === "r") {
+      } else if (action.type === "refresh") {
         event.preventDefault();
         void refreshWithNotice();
-      } else if (/^[1-3]$/.test(event.key)) {
+      } else if (action.type === "select-view") {
         event.preventDefault();
-        const views: View[] = ["chat", "agents", "jobs"];
-        selectView(views[Number(event.key) - 1]);
+        selectView(action.view);
       }
     };
 
@@ -197,7 +202,7 @@ function App() {
     () => [
       ...(["chat", "agents", "jobs"] as View[]).map((view, index) => ({
         id: `view-${view}`,
-        label: `Open ${view}`,
+        label: view === "jobs" ? "Open automations" : `Open ${view}`,
         detail: "Switch workspace",
         shortcut: `⌘${index + 1}`,
         run: () => selectView(view),
@@ -379,10 +384,7 @@ function App() {
         open={commandMenuOpen}
         onClose={() => setCommandMenuOpen(false)}
       />
-      <NotificationCenter
-        notifications={notifications}
-        onDismiss={(id) => setNotifications((current) => current.filter((item) => item.id !== id))}
-      />
+      <Toaster closeButton visibleToasts={4} duration={5200} position="bottom-right" />
       {onboardingOpen ? (
         <OnboardingOverlay
           connected={iris.connected}
@@ -422,12 +424,10 @@ function App() {
     }
   }
 
-  function pushNotification(notification: Omit<AppNotification, "id">) {
-    const id = crypto.randomUUID();
-    setNotifications((current) => [{ id, ...notification }, ...current].slice(0, 4));
-    window.setTimeout(() => {
-      setNotifications((current) => current.filter((item) => item.id !== id));
-    }, 5200);
+  function pushNotification(notification: AppNotificationInput) {
+    toast[notification.tone](notification.title, {
+      description: notification.message,
+    });
   }
 
   async function runProfileActionWithNotice(action: ProfileAction, name: string, sourceProfile?: string) {
@@ -470,6 +470,7 @@ function App() {
           busyAutomationId={jobs.busyAutomationId}
           connected={iris.connected}
           deliveries={jobs.deliveries}
+          deliveriesLoading={jobs.deliveriesLoading}
           error={jobs.error}
           pausedAutomations={jobs.pausedAutomations}
           projects={projects.projects}

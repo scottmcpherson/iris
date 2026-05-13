@@ -1,11 +1,24 @@
 import { useState } from "react";
-import type { FormEvent, KeyboardEvent } from "react";
-import { Check, Info, Pause, Pencil, Play, Plus, Send, Trash2, X } from "lucide-react";
+import type { FormEvent } from "react";
+import { AlertCircle, Check, Info, Pause, Pencil, Play, Plus, Trash2 } from "lucide-react";
 import type { CreateScheduledMessageInput, UpdateScheduledMessageInput } from "./useIrisAutomations";
 import { ProjectMenu } from "../chat/components/ProjectMenu";
 import type { IrisProject } from "../../lib/agentuiCore";
 import type { HermesAutomation, HermesInboxMessage } from "../../types/hermes";
+import { Alert, AlertDescription } from "../../shared/ui/alert";
+import { Badge } from "../../shared/ui/badge";
 import { Button } from "../../shared/ui/button";
+import { Card, CardContent, CardHeader } from "../../shared/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "../../shared/ui/dialog";
+import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "../../shared/ui/empty";
+import { Field, FieldDescription, FieldGroup, FieldLabel } from "../../shared/ui/field";
+import { Input } from "../../shared/ui/input";
 import {
   Select,
   SelectContent,
@@ -14,6 +27,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "../../shared/ui/select";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../shared/ui/tabs";
+import { Textarea } from "../../shared/ui/textarea";
 
 type TabKey = "active" | "paused";
 type ScheduleMode = "delay" | "datetime" | "daily" | "custom";
@@ -24,6 +39,7 @@ type AutomationsViewProps = {
   busyAutomationId: string | null;
   connected: boolean;
   deliveries: HermesInboxMessage[];
+  deliveriesLoading: boolean;
   error: string | null;
   pausedAutomations: HermesAutomation[];
   projects: IrisProject[];
@@ -36,13 +52,12 @@ type AutomationsViewProps = {
   onUpdateScheduledMessage: (jobId: string, input: UpdateScheduledMessageInput) => Promise<string>;
 };
 
-const tabOrder: TabKey[] = ["active", "paused"];
-
 export function AutomationsView({
   activeAutomations,
   busyAutomationId,
   connected,
   deliveries,
+  deliveriesLoading,
   error,
   pausedAutomations,
   projects,
@@ -144,25 +159,6 @@ export function AutomationsView({
     setFormNotice("");
   }
 
-  function handleTabsKeyDown(event: KeyboardEvent<HTMLDivElement>) {
-    if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
-    event.preventDefault();
-    const currentIndex = tabOrder.indexOf(tab);
-    const nextIndex =
-      event.key === "Home"
-        ? 0
-        : event.key === "End"
-          ? tabOrder.length - 1
-          : event.key === "ArrowRight"
-            ? (currentIndex + 1) % tabOrder.length
-            : (currentIndex - 1 + tabOrder.length) % tabOrder.length;
-    const nextTab = tabOrder[nextIndex];
-    setTab(nextTab);
-    window.requestAnimationFrame(() => {
-      document.querySelector<HTMLButtonElement>(`[data-jobs-tab="${nextTab}"]`)?.focus();
-    });
-  }
-
   async function deleteJob(jobId: string) {
     if (confirmDeleteJobId !== jobId) {
       setConfirmDeleteJobId(jobId);
@@ -194,54 +190,63 @@ export function AutomationsView({
       </header>
 
       <div className="jobs-body">
-        {error ? <div className="jobs-alert">{error}</div> : null}
+        {error ? (
+          <Alert variant="destructive" className="jobs-alert">
+            <AlertCircle />
+            <AlertDescription>{error}</AlertDescription>
+          </Alert>
+        ) : null}
 
         {formOpen ? (
-          <div
-            className="jobs-modal-backdrop"
-            role="presentation"
-            onMouseDown={(event) => {
-              if (event.target === event.currentTarget && !formBusy) cancelEditing();
+          <Dialog
+            open={formOpen}
+            onOpenChange={(open) => {
+              if (!open && formBusy) return;
+              if (!open) cancelEditing();
             }}
           >
-            <section
+            <DialogContent
               className="jobs-create-card jobs-modal-card"
-              role="dialog"
-              aria-modal="true"
-              aria-labelledby="jobs-form-title"
+              showCloseButton={false}
+              onEscapeKeyDown={(event) => {
+                if (formBusy) event.preventDefault();
+              }}
+              onPointerDownOutside={(event) => {
+                if (formBusy) event.preventDefault();
+              }}
             >
-              <div className="jobs-create-heading">
+              <DialogHeader className="jobs-create-heading">
                 <div>
                   <p className="eyebrow">Automation</p>
-                  <h2 id="jobs-form-title">{editingJobId ? "Edit automation" : "New automation"}</h2>
+                  <DialogTitle>{editingJobId ? "Edit automation" : "New automation"}</DialogTitle>
+                  <DialogDescription className="sr-only">
+                    Schedule a prompt for Iris to deliver later.
+                  </DialogDescription>
                 </div>
-                <Button type="button" variant="appIcon" size="icon-md" title="Close" onClick={cancelEditing} disabled={formBusy}>
-                  <X size={15} />
-                </Button>
-              </div>
+              </DialogHeader>
               <form className="jobs-form" onSubmit={submitSchedule}>
-                <div className="jobs-form-grid">
+                <FieldGroup className="jobs-form-grid">
                   {/* Mirrors Hermes _MAX_NAME_LENGTH=200 and _MAX_PROMPT_LENGTH=5000. */}
-                  <label className="jobs-form-field jobs-form-prompt">
-                    <span>Name</span>
-                    <input
+                  <Field className="jobs-form-field jobs-form-prompt">
+                    <FieldLabel>Name</FieldLabel>
+                    <Input
                       value={name}
                       placeholder="Morning standup"
                       maxLength={200}
                       onChange={(event) => setName(event.target.value)}
                     />
-                  </label>
-                  <label className="jobs-form-field jobs-form-prompt">
-                    <span>Prompt</span>
-                    <textarea
+                  </Field>
+                  <Field className="jobs-form-field jobs-form-prompt">
+                    <FieldLabel>Prompt</FieldLabel>
+                    <Textarea
                       value={prompt}
                       placeholder="Send a concise morning standup reminder."
                       maxLength={5000}
                       onChange={(event) => setPrompt(event.target.value)}
                     />
-                  </label>
-                  <label className="jobs-form-field jobs-form-prompt">
-                    <span>Schedule</span>
+                  </Field>
+                  <Field className="jobs-form-field jobs-form-prompt">
+                    <FieldLabel>Schedule</FieldLabel>
                     <Select value={scheduleMode} onValueChange={(value) => setScheduleMode(value as ScheduleMode)}>
                       <SelectTrigger className="w-full">
                         <SelectValue />
@@ -255,9 +260,9 @@ export function AutomationsView({
                         </SelectGroup>
                       </SelectContent>
                     </Select>
-                  </label>
-                  <div className="jobs-form-field jobs-project-field">
-                    <span>Project</span>
+                  </Field>
+                  <Field className="jobs-form-field jobs-project-field">
+                    <FieldLabel>Project</FieldLabel>
                     <div className="composer-project-menu-wrap jobs-project-menu-wrap">
                       <ProjectMenu
                         projects={projects}
@@ -275,43 +280,43 @@ export function AutomationsView({
                         }}
                       />
                     </div>
-                  </div>
+                  </Field>
                   {scheduleMode === "delay" ? (
-                    <label className="jobs-form-field jobs-form-wide-control">
-                      <span>Minutes</span>
-                      <input
+                    <Field className="jobs-form-field jobs-form-wide-control">
+                      <FieldLabel>Minutes</FieldLabel>
+                      <Input
                         type="number"
                         min={1}
                         max={10080}
                         value={minutes}
                         onChange={(event) => setMinutes(Number(event.target.value) || 1)}
                       />
-                    </label>
+                    </Field>
                   ) : null}
                   {scheduleMode === "datetime" ? (
-                    <label className="jobs-form-field jobs-form-wide-control">
-                      <span>Run at</span>
-                      <input type="datetime-local" value={runAt} onChange={(event) => setRunAt(event.target.value)} />
-                    </label>
+                    <Field className="jobs-form-field jobs-form-wide-control">
+                      <FieldLabel>Run at</FieldLabel>
+                      <Input type="datetime-local" value={runAt} onChange={(event) => setRunAt(event.target.value)} />
+                    </Field>
                   ) : null}
                   {scheduleMode === "daily" ? (
-                    <label className="jobs-form-field jobs-form-wide-control">
-                      <span>Time</span>
-                      <input type="time" value={dailyTime} onChange={(event) => setDailyTime(event.target.value)} />
-                    </label>
+                    <Field className="jobs-form-field jobs-form-wide-control">
+                      <FieldLabel>Time</FieldLabel>
+                      <Input type="time" value={dailyTime} onChange={(event) => setDailyTime(event.target.value)} />
+                    </Field>
                   ) : null}
                   {scheduleMode === "custom" ? (
-                    <label className="jobs-form-field jobs-form-wide-control">
-                      <span>Custom schedule</span>
-                      <input
+                    <Field className="jobs-form-field jobs-form-wide-control">
+                      <FieldLabel>Custom schedule</FieldLabel>
+                      <Input
                         value={customSchedule}
                         placeholder="tomorrow at 9am or cron: 0 9 * * 1-5"
                         onChange={(event) => setCustomSchedule(event.target.value)}
                       />
-                    </label>
+                    </Field>
                   ) : null}
-                  <label className="jobs-form-field">
-                    <span>Repeat</span>
+                  <Field className="jobs-form-field">
+                    <FieldLabel>Repeat</FieldLabel>
                     <Select value={repeatMode} onValueChange={(value) => setRepeatMode(value as RepeatMode)}>
                       <SelectTrigger className="w-full">
                         <SelectValue />
@@ -324,27 +329,30 @@ export function AutomationsView({
                         </SelectGroup>
                       </SelectContent>
                     </Select>
-                  </label>
+                  </Field>
                   {repeatMode === "count" ? (
-                    <label className="jobs-form-field">
-                      <span>Runs</span>
-                      <input
+                    <Field className="jobs-form-field">
+                      <FieldLabel>Runs</FieldLabel>
+                      <Input
                         type="number"
                         min={1}
                         max={999}
                         value={repeatCount}
                         onChange={(event) => setRepeatCount(Number(event.target.value) || 1)}
                       />
-                    </label>
+                    </Field>
                   ) : null}
-                </div>
+                </FieldGroup>
                 <div className="jobs-form-footer">
                   <div className="jobs-form-status">
-                    <p className="jobs-schedule-preview">{preview}</p>
+                    <FieldDescription className="jobs-schedule-preview">{preview}</FieldDescription>
                     {formNotice ? (
-                      <p className={isFailure(formNotice) ? "jobs-form-notice error" : "jobs-form-notice"}>
-                        {formNotice}
-                      </p>
+                      <Alert
+                        variant={isFailure(formNotice) ? "destructive" : "default"}
+                        className={isFailure(formNotice) ? "jobs-form-notice error" : "jobs-form-notice"}
+                      >
+                        <AlertDescription>{formNotice}</AlertDescription>
+                      </Alert>
                     ) : null}
                   </div>
                   <div className="jobs-form-action">
@@ -352,48 +360,60 @@ export function AutomationsView({
                       Cancel
                     </Button>
                     <Button type="submit" size="appSmall" disabled={formBusy}>
-                      <Send data-icon="inline-start" />
-                      {formBusy ? "Saving..." : editingJobId ? "Save changes" : "Schedule"}
+                      {formBusy ? "Saving..." : editingJobId ? "Save changes" : "Create"}
                     </Button>
                   </div>
                 </div>
               </form>
-            </section>
-          </div>
+            </DialogContent>
+          </Dialog>
         ) : null}
 
         <section className="jobs-list-section">
-          <div className="jobs-tabs" role="tablist" aria-label="Automation status" onKeyDown={handleTabsKeyDown}>
-            <TabButton
-              tabKey="active"
-              label="Active"
-              count={activeAutomations.length}
-              selected={tab === "active"}
-              onSelect={() => setTab("active")}
-            />
-            <TabButton
-              tabKey="paused"
-              label="Paused"
-              count={pausedAutomations.length}
-              selected={tab === "paused"}
-              onSelect={() => setTab("paused")}
-            />
-          </div>
-          <div id={`jobs-tabpanel-${tab}`} role="tabpanel" aria-label={`${tab} automations`}>
-            <JobList
-              jobs={visibleJobs}
-              emptyText={emptyText}
-              busyJobId={busyAutomationId}
-              confirmDeleteJobId={confirmDeleteJobId}
-              selectedJobId={selectedJobId}
-              onDeleteJob={deleteJob}
-              onEditJob={startEditing}
-              onRunJobAction={onRunJobAction}
-              onToggleDetails={(jobId) =>
-                setSelectedJobId((current) => current === jobId ? null : jobId)
-              }
-            />
-          </div>
+          <Tabs value={tab} onValueChange={(value) => setTab(value as TabKey)} className="gap-2">
+            <TabsList
+              aria-label="Automation status"
+              className="h-[34px] border border-menu-border bg-secondary p-0"
+            >
+              <TabsTrigger
+                value="active"
+                className="min-w-[76px] gap-[7px] rounded-[7px] px-3"
+              >
+                <span>Active</span>
+                {activeAutomations.length > 0 ? (
+                  <Badge variant="secondary" className="bg-background/35 px-1.5 py-px text-[11px] font-extrabold text-menu-muted-foreground">
+                    {activeAutomations.length}
+                  </Badge>
+                ) : null}
+              </TabsTrigger>
+              <TabsTrigger
+                value="paused"
+                className="min-w-[76px] gap-[7px] rounded-[7px] px-3"
+              >
+                <span>Paused</span>
+                {pausedAutomations.length > 0 ? (
+                  <Badge variant="secondary" className="bg-background/35 px-1.5 py-px text-[11px] font-extrabold text-menu-muted-foreground">
+                    {pausedAutomations.length}
+                  </Badge>
+                ) : null}
+              </TabsTrigger>
+            </TabsList>
+            <TabsContent value={tab} className="m-0">
+              <JobList
+                jobs={visibleJobs}
+                emptyText={emptyText}
+                busyJobId={busyAutomationId}
+                confirmDeleteJobId={confirmDeleteJobId}
+                selectedJobId={selectedJobId}
+                onDeleteJob={deleteJob}
+                onEditJob={startEditing}
+                onRunJobAction={onRunJobAction}
+                onToggleDetails={(jobId) =>
+                  setSelectedJobId((current) => current === jobId ? null : jobId)
+                }
+              />
+            </TabsContent>
+          </Tabs>
         </section>
 
         {selectedJob ? (
@@ -418,7 +438,7 @@ export function AutomationsView({
               ))}
             </div>
           ) : (
-            <p className="jobs-empty">Automation deliveries will appear here after jobs run.</p>
+            <AutomationEmptyState>{automationActivityEmptyText(deliveriesLoading)}</AutomationEmptyState>
           )}
         </section>
       </div>
@@ -426,35 +446,8 @@ export function AutomationsView({
   );
 }
 
-function TabButton({
-  tabKey,
-  label,
-  count,
-  selected,
-  onSelect,
-}: {
-  tabKey: TabKey;
-  label: string;
-  count: number;
-  selected: boolean;
-  onSelect: () => void;
-}) {
-  return (
-    <Button
-      type="button"
-      role="tab"
-      id={`jobs-tab-${tabKey}`}
-      aria-controls={`jobs-tabpanel-${tabKey}`}
-      aria-selected={selected}
-      tabIndex={selected ? 0 : -1}
-      data-jobs-tab={tabKey}
-      className={selected ? "jobs-tab selected" : "jobs-tab"}
-      onClick={onSelect}
-    >
-      <span>{label}</span>
-      {count > 0 ? <span className="jobs-tab-count">{count}</span> : null}
-    </Button>
-  );
+export function automationActivityEmptyText(loading: boolean) {
+  return loading ? "Loading recent activity..." : "Automation deliveries will appear here after jobs run.";
 }
 
 function JobList({
@@ -478,7 +471,7 @@ function JobList({
   onRunJobAction: (jobId: string, action: "pause" | "resume" | "run" | "delete") => Promise<string>;
   onToggleDetails: (jobId: string) => void;
 }) {
-  if (!jobs.length) return <p className="jobs-empty">{emptyText}</p>;
+  if (!jobs.length) return <AutomationEmptyState>{emptyText}</AutomationEmptyState>;
 
   return (
     <div className="job-list">
@@ -487,11 +480,11 @@ function JobList({
         const meta = jobMetaLine(job);
         const selected = selectedJobId === job.id;
         return (
-          <article
+          <Card
             key={job.id}
             className={selected ? "job-row selected" : "job-row"}
           >
-            <div className="job-row-head">
+            <CardHeader className="job-row-head">
               <div className="job-row-title">
                 <span className={`job-status-dot status-${job.status}`} aria-hidden />
                 <strong>{job.name}</strong>
@@ -565,10 +558,12 @@ function JobList({
                   {confirmDeleteJobId === job.id ? <Check size={14} /> : <Trash2 size={14} />}
                 </Button>
               </div>
-            </div>
-            {meta ? <p className="job-row-meta">{meta}</p> : null}
-            {job.prompt ? <p className="job-row-prompt">{job.prompt}</p> : null}
-          </article>
+            </CardHeader>
+            <CardContent className="job-row-content">
+              {meta ? <p className="job-row-meta">{meta}</p> : null}
+              {job.prompt ? <p className="job-row-prompt">{job.prompt}</p> : null}
+            </CardContent>
+          </Card>
         );
       })}
     </div>
@@ -585,55 +580,59 @@ function JobDetail({
   onOpenDeliveryChat: (delivery: HermesInboxMessage) => void;
 }) {
   return (
-    <section className="jobs-detail-section" id={`job-detail-${job.id}`}>
-      <div className="jobs-detail-heading">
+    <Card className="jobs-detail-section" id={`job-detail-${job.id}`}>
+      <CardHeader className="jobs-detail-heading">
         <div>
           <p className="eyebrow">Job detail</p>
           <h2>{job.name}</h2>
         </div>
-        <span className={`jobs-detail-status status-${job.status}`}>{job.status}</span>
-      </div>
-      <dl className="jobs-detail-grid">
-        <div>
-          <dt>Schedule</dt>
-          <dd>{scheduleDisplay(job) || "Manual"}</dd>
-        </div>
-        <div>
-          <dt>Delivery</dt>
-          <dd>{jobDeliveryLabel(job)}</dd>
-        </div>
-        <div>
-          <dt>Runs</dt>
-          <dd>{jobRunLabel(job)}</dd>
-        </div>
-        <div>
-          <dt>Next</dt>
-          <dd>{job.nextRunAt ? timeLabel(job.nextRunAt) : "Not scheduled"}</dd>
-        </div>
-      </dl>
-      {job.prompt ? <p className="jobs-detail-prompt">{job.prompt}</p> : null}
-      {job.lastError || job.lastDeliveryError ? (
-        <p className="jobs-detail-error">{job.lastError || job.lastDeliveryError}</p>
-      ) : null}
-      <div className="jobs-detail-history">
-        <p className="eyebrow">Run history</p>
-        {deliveries.length ? (
-          <div className="delivery-list compact">
-            {deliveries.map((delivery) => (
-              <DeliveryRow
-                key={delivery.id}
-                delivery={delivery}
-                onAcknowledgeDelivery={() => undefined}
-                onOpenDeliveryChat={onOpenDeliveryChat}
-                compact
-              />
-            ))}
+        <Badge variant="secondary" className={`jobs-detail-status status-${job.status}`}>{job.status}</Badge>
+      </CardHeader>
+      <CardContent className="jobs-detail-content">
+        <dl className="jobs-detail-grid">
+          <div>
+            <dt>Schedule</dt>
+            <dd>{scheduleDisplay(job) || "Manual"}</dd>
           </div>
-        ) : (
-          <p className="jobs-empty compact">No deliveries matched this job yet.</p>
-        )}
-      </div>
-    </section>
+          <div>
+            <dt>Delivery</dt>
+            <dd>{jobDeliveryLabel(job)}</dd>
+          </div>
+          <div>
+            <dt>Runs</dt>
+            <dd>{jobRunLabel(job)}</dd>
+          </div>
+          <div>
+            <dt>Next</dt>
+            <dd>{job.nextRunAt ? timeLabel(job.nextRunAt) : "Not scheduled"}</dd>
+          </div>
+        </dl>
+        {job.prompt ? <p className="jobs-detail-prompt">{job.prompt}</p> : null}
+        {job.lastError || job.lastDeliveryError ? (
+          <Alert variant="destructive" className="jobs-detail-error">
+            <AlertDescription>{job.lastError || job.lastDeliveryError}</AlertDescription>
+          </Alert>
+        ) : null}
+        <div className="jobs-detail-history">
+          <p className="eyebrow">Run history</p>
+          {deliveries.length ? (
+            <div className="delivery-list compact">
+              {deliveries.map((delivery) => (
+                <DeliveryRow
+                  key={delivery.id}
+                  delivery={delivery}
+                  onAcknowledgeDelivery={() => undefined}
+                  onOpenDeliveryChat={onOpenDeliveryChat}
+                  compact
+                />
+              ))}
+            </div>
+          ) : (
+            <AutomationEmptyState compact>No deliveries matched this job yet.</AutomationEmptyState>
+          )}
+        </div>
+      </CardContent>
+    </Card>
   );
 }
 
@@ -649,10 +648,10 @@ function DeliveryRow({
   onOpenDeliveryChat: (delivery: HermesInboxMessage) => void;
 }) {
   return (
-    <article className={compact ? "delivery-row compact" : "delivery-row"}>
+    <Card className={compact ? "delivery-row compact" : "delivery-row"}>
       <div className="delivery-row-main">
-        <p>{delivery.content}</p>
-        <span>
+        <p className="delivery-row-content">{delivery.content}</p>
+        <span className="delivery-row-meta">
           <Button type="button" variant="appLink" onClick={() => onOpenDeliveryChat(delivery)}>
             {delivery.chatId || "Open chat"}
           </Button>
@@ -671,7 +670,18 @@ function DeliveryRow({
           <Check size={15} />
         </Button>
       ) : null}
-    </article>
+    </Card>
+  );
+}
+
+function AutomationEmptyState({ children, compact = false }: { children: string; compact?: boolean }) {
+  return (
+    <Empty className={compact ? "jobs-empty compact" : "jobs-empty"}>
+      <EmptyHeader>
+        <EmptyTitle>{children}</EmptyTitle>
+        {!compact ? <EmptyDescription>Scheduled deliveries and activity remain available once they exist.</EmptyDescription> : null}
+      </EmptyHeader>
+    </Empty>
   );
 }
 

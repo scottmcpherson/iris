@@ -1,6 +1,12 @@
-import { Command, Sparkles } from "lucide-react";
+import { Command as CommandIcon, Sparkles } from "lucide-react";
 import type { MutableRefObject } from "react";
-import { Button } from "../../../shared/ui/button";
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandItem,
+  CommandList,
+} from "../../../shared/ui/command";
 import { cn } from "../../../shared/ui/utils";
 import type { HermesSlashCommand } from "../../../types/hermes";
 
@@ -9,7 +15,7 @@ type SlashCommandMenuProps = {
   activeIndex: number;
   loading: boolean;
   error: string | null;
-  commandRefs: MutableRefObject<Record<string, HTMLButtonElement | null>>;
+  commandRefs: MutableRefObject<Record<string, HTMLElement | null>>;
   onRefresh: () => void;
   onActiveIndex: (index: number) => void;
   onSelect: (command: HermesSlashCommand) => void;
@@ -33,66 +39,66 @@ export function SlashCommandMenu({
   const iconClassName = "inline-flex size-[22px] items-center justify-center rounded-[7px] bg-secondary text-composer-icon-foreground group-hover:text-menu-hover-foreground group-data-[active=true]:bg-accent group-data-[active=true]:text-menu-hover-foreground";
 
   return (
-    <div
+    <Command
       id="composer-slash-menu"
       className="absolute bottom-[calc(100%+8px)] left-0 z-[32] max-h-80 w-[min(460px,100%)] overflow-auto rounded-xl border border-menu-border bg-menu p-[7px] text-menu-foreground shadow-context-menu"
-      role="listbox"
       aria-label="Slash commands"
+      shouldFilter={false}
     >
-      {loading && !commands.length ? (
-        <div className="px-[9px] py-[9px] text-[11px] font-[720] text-menu-muted-foreground">Loading commands...</div>
-      ) : null}
-      {error && !commands.length ? (
-        <Button
-          type="button"
-          variant="ghost"
-          className={rowClassName}
-          onClick={onRefresh}
-        >
-          <span className={iconClassName}>
-            <Command size={14} />
-          </span>
-          <span className="grid min-w-0 gap-1 overflow-hidden">
-            <strong className="truncate text-[12px] font-[760] leading-[15px] text-menu-hover-foreground">Commands unavailable</strong>
-            <small className="truncate text-[11px] font-[720] leading-[13px] text-menu-muted-foreground">Click to retry</small>
-          </span>
-        </Button>
-      ) : null}
-      {!loading && !error && !commands.length ? (
-        <div className="px-[9px] py-[9px] text-[11px] font-[720] text-menu-muted-foreground">No matching commands</div>
-      ) : null}
-      {commands.map((command, index) => {
-        const active = index === activeIndex;
-        const meta = command.description || command.category || command.source;
-        return (
-          <Button
-            key={command.id}
-            ref={(node) => {
-              commandRefs.current[command.id] = node;
-            }}
-            type="button"
-            variant="ghost"
-            className={rowClassName}
-            role="option"
-            aria-selected={active}
-            data-active={active}
-            onMouseDown={(event) => event.preventDefault()}
-            onMouseEnter={() => onActiveIndex(index)}
-            onClick={() => onSelect(command)}
-          >
-            <span className={iconClassName}>
-              {command.source === "skill" ? <Sparkles size={14} /> : <Command size={14} />}
-            </span>
-            <span className="grid min-w-0 gap-1 overflow-hidden">
-              <strong className="truncate text-[12px] font-[760] leading-[15px] text-menu-hover-foreground">{command.label || command.text}</strong>
-              {meta ? <small className="truncate text-[11px] font-[720] leading-[13px] text-menu-muted-foreground">{meta}</small> : null}
-            </span>
-            <span className="max-w-[124px] truncate pl-2 text-[11px] font-[720] leading-[13px] text-menu-muted-foreground">
-              {command.category}
-            </span>
-          </Button>
-        );
-      })}
-    </div>
+      <CommandList className="max-h-none overflow-visible">
+        <CommandGroup className="p-0">
+          {loading && !commands.length ? (
+            <div className="px-[9px] py-[9px] text-[11px] font-[720] text-menu-muted-foreground">Loading commands...</div>
+          ) : null}
+          {error && !commands.length ? (
+            <CommandItem
+              value="commands-unavailable"
+              className={rowClassName}
+              onSelect={onRefresh}
+            >
+              <span className={iconClassName}>
+                <CommandIcon size={14} />
+              </span>
+              <span className="grid min-w-0 gap-1 overflow-hidden">
+                <strong className="truncate text-[12px] font-[760] leading-[15px] text-menu-hover-foreground">Commands unavailable</strong>
+                <small className="truncate text-[11px] font-[720] leading-[13px] text-menu-muted-foreground">Click to retry</small>
+              </span>
+            </CommandItem>
+          ) : null}
+          {!loading && !error && !commands.length ? <CommandEmpty>No matching commands</CommandEmpty> : null}
+          {commands.map((command, index) => {
+            const active = index === activeIndex;
+            const meta = command.description || command.category || command.source;
+            return (
+              <CommandItem
+                key={command.id}
+                ref={(node) => {
+                  commandRefs.current[command.id] = node;
+                }}
+                value={command.id}
+                className={rowClassName}
+                role="option"
+                aria-selected={active}
+                data-active={active}
+                onMouseDown={(event) => event.preventDefault()}
+                onMouseEnter={() => onActiveIndex(index)}
+                onSelect={() => onSelect(command)}
+              >
+                <span className={iconClassName}>
+                  {command.source === "skill" ? <Sparkles size={14} /> : <CommandIcon size={14} />}
+                </span>
+                <span className="grid min-w-0 gap-1 overflow-hidden">
+                  <strong className="truncate text-[12px] font-[760] leading-[15px] text-menu-hover-foreground">{command.label || command.text}</strong>
+                  {meta ? <small className="truncate text-[11px] font-[720] leading-[13px] text-menu-muted-foreground">{meta}</small> : null}
+                </span>
+                <span className="max-w-[124px] truncate pl-2 text-[11px] font-[720] leading-[13px] text-menu-muted-foreground">
+                  {command.category}
+                </span>
+              </CommandItem>
+            );
+          })}
+        </CommandGroup>
+      </CommandList>
+    </Command>
   );
 }

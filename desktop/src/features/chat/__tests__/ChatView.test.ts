@@ -5,6 +5,7 @@ import {
   shouldLockComposerModelSelection,
   shouldRenderMessageBody,
   shouldShowChatEmptyState,
+  shouldShowVisibleDictationStatus,
 } from "../ChatView";
 
 describe("shouldShowChatEmptyState", () => {
@@ -83,5 +84,24 @@ describe("composer model selection", () => {
     expect(composerModelSelection(false, profileDraft, sessionModel)).toEqual(sessionModel);
     expect(composerModelSelection(false, profileDraft, sessionModel, sessionDraft)).toEqual(sessionDraft);
     expect(composerModelSelection(true, profileDraft, sessionModel, sessionDraft)).toEqual(profileDraft);
+  });
+});
+
+describe("composer voice recording status", () => {
+  it("keeps transient dictation states out of the visible toolbar layout", () => {
+    expect(shouldShowVisibleDictationStatus({ status: "requesting-permission" })).toBe(false);
+    expect(shouldShowVisibleDictationStatus({
+      status: "recording",
+      startedAt: 1,
+      elapsedMs: 0,
+      audioLevel: 0,
+      audioLevels: [],
+    })).toBe(false);
+    expect(shouldShowVisibleDictationStatus({ status: "stopping", elapsedMs: 1000 })).toBe(false);
+    expect(shouldShowVisibleDictationStatus({ status: "sending", elapsedMs: 1000 })).toBe(false);
+  });
+
+  it("shows visible dictation text only when the user needs an error message", () => {
+    expect(shouldShowVisibleDictationStatus({ status: "error", message: "No microphone was found." })).toBe(true);
   });
 });

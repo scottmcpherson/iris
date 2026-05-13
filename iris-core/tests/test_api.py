@@ -1468,6 +1468,45 @@ def test_core_events_cursor_replay_and_sse_stream(tmp_path):
     assert '"content":"SSE answer"' in stream_text
 
 
+def test_core_events_can_fetch_recent_automation_activity_without_replaying_chat_history(tmp_path):
+    root = tmp_path / ".hermes"
+    client = make_client(root)
+    agent = client.get("/v1/agents").json()["agents"][0]
+    session = client.post(
+        "/v1/sessions",
+        json={"agentId": agent["id"], "title": "Automation activity"},
+    ).json()["session"]
+
+    def deliver(message_id, content, metadata=None, source="hermes-gateway"):
+        return client.post(
+            "/v1/runtime-deliveries/hermes",
+            json={
+                "runtimeId": "runtime_local_hermes",
+                "profile": "default",
+                "chatId": session["externalChatId"],
+                "messageId": message_id,
+                "source": source,
+                "content": content,
+                "metadata": metadata or {},
+            },
+        )
+
+    deliver("chat-1", "Regular chat answer", source="agentui-core-send")
+    deliver("automation-1", "Older automation", {"jobId": "job-1"}, source="hermes-cron")
+    deliver("chat-2", "Another regular chat answer", source="agentui-core-send")
+    deliver("automation-2", "Newer automation", {"automationId": "job-2"}, source="hermes-gateway")
+    deliver("chat-3", "Newest regular chat answer", source="agentui-core-send")
+
+    response = client.get(f"/v1/events?agentId={agent['id']}&automationOnly=true&order=desc&limit=5")
+
+    assert response.status_code == 200
+    assert [event["content"] for event in response.json()["events"]] == [
+        "Newer automation",
+        "Older automation",
+    ]
+    assert response.json()["cursor"] > response.json()["events"][0]["cursor"]
+
+
 def test_core_runtime_deliveries_publish_stream_events_without_materializing(tmp_path):
     root = tmp_path / ".hermes"
     client = make_client(root)

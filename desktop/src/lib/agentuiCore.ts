@@ -770,6 +770,21 @@ export async function getAgentUICoreEvents(
   return coreRequest<{ events: AgentUICoreEvent[]; cursor: number }>(runtime, "GET", `/events?${query}`);
 }
 
+export async function getAgentUICoreAutomationEvents(
+  limit = 50,
+  runtime?: HermesRuntimeConfig,
+  agentId = "",
+) {
+  const query = new URLSearchParams({
+    after: "0",
+    limit: String(limit),
+    automationOnly: "true",
+    order: "desc",
+  });
+  if (agentId) query.set("agentId", agentId);
+  return coreRequest<{ events: AgentUICoreEvent[]; cursor: number }>(runtime, "GET", `/events?${query}`);
+}
+
 export async function getAgentUICoreLatestEventCursor(
   runtime?: HermesRuntimeConfig,
   agentId = "",

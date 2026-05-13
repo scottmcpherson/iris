@@ -67,7 +67,6 @@ type SessionActionDialogProps = {
 const dialogContentClassName = "border-menu-border bg-menu text-menu-foreground shadow-context-menu sm:max-w-[360px]";
 const projectDialogContentClassName = "border-menu-border bg-menu text-menu-foreground shadow-context-menu sm:max-w-[560px]";
 const labelClassName = "grid gap-[7px] text-xs font-[750] text-menu-muted-foreground";
-const inputClassName = "h-[38px] border-menu-border bg-secondary text-menu-hover-foreground placeholder:text-menu-muted-foreground";
 
 export function ProjectActionDialog({
   dialog,
@@ -92,9 +91,6 @@ export function ProjectActionDialog({
       <DialogContent className={projectDialogContentClassName} showCloseButton={false}>
         <form className="grid gap-4" onSubmit={onSubmit}>
           <DialogHeader>
-            <DialogDescription className="text-xs font-[750] text-menu-muted-foreground">
-              {isCreate ? "Project management" : "Project"}
-            </DialogDescription>
             <DialogTitle className="text-lg text-menu-hover-foreground">
               {isCreate ? "New project" : "Edit project"}
             </DialogTitle>
@@ -103,7 +99,6 @@ export function ProjectActionDialog({
             <span>Project name</span>
             <Input
               autoFocus
-              className={inputClassName}
               value={dialog.name}
               placeholder="new-project"
               onChange={(event) => onChange({ ...dialog, name: event.target.value })}
@@ -129,7 +124,7 @@ export function ProjectActionDialog({
               </SelectContent>
             </Select>
           </label>
-          <div className="grid min-h-[220px] gap-[7px]">
+          <div className="grid gap-[7px]">
             <span className="text-xs font-[750] text-menu-muted-foreground">System prompt</span>
             <CodeEditor
               className="min-h-[190px] overflow-hidden rounded-[10px] border border-menu-border bg-background/20"
@@ -146,7 +141,7 @@ export function ProjectActionDialog({
             <Button type="button" variant="appNeutral" size="appSmall" onClick={onCancel}>
               Cancel
             </Button>
-            <Button type="submit" variant="appNeutral" size="appSmall" disabled={submitDisabled}>
+            <Button type="submit" variant={isCreate ? "default" : "appNeutral"} size="appSmall" disabled={submitDisabled}>
               {busy ? "Working..." : isCreate ? "Create" : "Save"}
             </Button>
           </DialogFooter>
@@ -186,7 +181,6 @@ export function SessionActionDialog({
             <span>Session name</span>
             <Input
               autoFocus
-              className={inputClassName}
               value={inputValue}
               placeholder="Session name"
               onChange={(event) => onChange({ ...dialog, name: event.target.value })}
@@ -225,6 +219,7 @@ export function ProfileActionDialog({
       : "New agent";
   const label = isDelete ? "Confirm agent name" : "Agent name";
   const submitLabel = isDelete ? "Delete" : isClone ? "Duplicate" : "Create";
+  const submitVariant = isDelete ? "appDanger" : isClone ? "appNeutral" : "default";
   const inputValue = dialog.name;
   const submitDisabled = busy || (isDelete ? inputValue.trim() !== source : !inputValue.trim());
 
@@ -247,7 +242,6 @@ export function ProfileActionDialog({
             <span>{label}</span>
             <Input
               autoFocus
-              className={inputClassName}
               value={inputValue}
               placeholder={isDelete ? source : "agent-name"}
               onChange={(event) => onChange({ ...dialog, name: event.target.value })}
@@ -260,7 +254,7 @@ export function ProfileActionDialog({
             </Button>
             <Button
               type="submit"
-              variant={isDelete ? "appDanger" : "appNeutral"}
+              variant={submitVariant}
               size="appSmall"
               disabled={submitDisabled}
             >
