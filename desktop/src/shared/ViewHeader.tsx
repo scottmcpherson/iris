@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { Button } from "./ui/button";
 
 type ViewHeaderProps = {
   icon: ReactNode;
@@ -16,9 +17,9 @@ export function ViewHeader({ icon, eyebrow, title, action, onAction }: ViewHeade
         {eyebrow ? <p className="eyebrow">{eyebrow}</p> : null}
         <h1>{title}</h1>
       </div>
-      <button className="small-button" onClick={onAction}>
+      <Button size="appSmall" onClick={onAction}>
         {action}
-      </button>
+      </Button>
     </div>
   );
 }

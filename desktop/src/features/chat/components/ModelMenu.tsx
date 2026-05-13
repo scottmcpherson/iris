@@ -18,6 +18,7 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "../../../shared/ui/popover";
+import { Button } from "../../../shared/ui/button";
 
 type ModelMenuProps = {
   open: boolean;
@@ -49,17 +50,18 @@ export function ModelMenu({
   return (
     <Popover open={open} onOpenChange={onOpenChange}>
       <PopoverTrigger asChild>
-        <button
+        <Button
           type="button"
-          className="composer-model-button"
+          variant="composerModel"
+          size="composerModel"
           title={title}
           aria-label={`Model ${selection?.model || "unavailable"}`}
           disabled={disabled}
         >
-          <Zap size={14} />
+          <Zap data-icon="inline-start" />
           <span>{selection?.model || "Model"}</span>
-          <ChevronDown size={13} />
-        </button>
+          <ChevronDown data-icon="inline-end" />
+        </Button>
       </PopoverTrigger>
       <PopoverContent
         align="end"
@@ -111,7 +113,7 @@ export function ModelMenu({
                         }
                       >
                         <span className="truncate">{model}</span>
-                        {selected ? <Check className="ml-auto" /> : null}
+                        {selected ? <Check data-icon="inline-end" className="ml-auto" /> : null}
                       </CommandItem>
                     );
                   })}

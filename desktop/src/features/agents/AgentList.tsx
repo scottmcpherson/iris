@@ -10,6 +10,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "../../shared/ui/dropdown-menu";
+import { Button } from "../../shared/ui/button";
 import type { HermesProfile } from "../../types/hermes";
 
 type AgentListDialog =
@@ -34,15 +35,15 @@ export function AgentList({ profiles, onOpenAgent, onProfileAction }: AgentListP
         <div>
           <h1>Agent Profiles</h1>
         </div>
-        <button
+        <Button
           type="button"
-          className="icon-button agent-list-add-button"
+          size="icon-md"
           aria-label="Create agent"
           title="Create agent"
           onClick={openCreateDialog}
         >
-          <Plus size={17} />
-        </button>
+          <Plus data-icon="inline-start" />
+        </Button>
       </div>
 
       <div className="agent-list-grid">

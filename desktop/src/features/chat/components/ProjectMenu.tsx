@@ -9,6 +9,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "../../../shared/ui/dropdown-menu";
+import { Button } from "../../../shared/ui/button";
 
 const NO_PROJECT_VALUE = "__no-project__";
 
@@ -43,9 +44,10 @@ export function ProjectMenu({
   return (
     <DropdownMenu open={open} onOpenChange={onOpenChange}>
       <DropdownMenuTrigger asChild>
-        <button
+        <Button
           type="button"
-          className="composer-access-button"
+          variant="composerAccess"
+          size="composerAccess"
           title={title}
           aria-label={
             locked
@@ -54,10 +56,10 @@ export function ProjectMenu({
           }
           disabled={disabled}
         >
-          <Folder size={15} />
+          <Folder data-icon="inline-start" />
           <span>{connected ? label : "Offline"}</span>
-          <ChevronDown size={14} />
-        </button>
+          <ChevronDown data-icon="inline-end" />
+        </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent
         align="start"

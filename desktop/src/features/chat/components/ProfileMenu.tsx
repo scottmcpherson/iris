@@ -8,6 +8,7 @@ import {
   DropdownMenuRadioItem,
   DropdownMenuTrigger,
 } from "../../../shared/ui/dropdown-menu";
+import { Button } from "../../../shared/ui/button";
 
 type ProfileMenuProps = {
   profile: string;
@@ -35,9 +36,10 @@ export function ProfileMenu({
   return (
     <DropdownMenu open={open} onOpenChange={onOpenChange}>
       <DropdownMenuTrigger asChild>
-        <button
+        <Button
           type="button"
-          className="composer-access-button"
+          variant="composerAccess"
+          size="composerAccess"
           title={title}
           aria-label={
             locked
@@ -46,10 +48,10 @@ export function ProfileMenu({
           }
           disabled={disabled}
         >
-          <Bot size={15} />
+          <Bot data-icon="inline-start" />
           <span>{connected ? profile : "Offline"}</span>
-          <ChevronDown size={14} />
-        </button>
+          <ChevronDown data-icon="inline-end" />
+        </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent
         align="start"

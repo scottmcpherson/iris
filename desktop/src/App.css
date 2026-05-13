@@ -35,6 +35,14 @@
   --color-menu-confirm: var(--menu-confirm);
   --color-menu-confirm-foreground: var(--menu-confirm-foreground);
   --color-menu-confirm-hover: var(--menu-confirm-hover);
+  --color-composer-icon-foreground: var(--composer-icon-foreground);
+  --color-composer-pill-foreground: var(--composer-pill-foreground);
+  --color-composer-button-hover: var(--composer-button-hover);
+  --color-composer-button-active: var(--composer-button-active);
+  --color-composer-button-disabled: var(--composer-button-disabled);
+  --color-composer-attachment-remove: var(--composer-attachment-remove);
+  --color-composer-attachment-remove-hover: var(--composer-attachment-remove-hover);
+  --color-composer-attachment-remove-hover-foreground: var(--composer-attachment-remove-hover-foreground);
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
@@ -77,6 +85,14 @@
   --menu-confirm: rgba(220, 78, 52, 0.18);
   --menu-confirm-foreground: #ffd2c7;
   --menu-confirm-hover: rgba(220, 78, 52, 0.26);
+  --composer-icon-foreground: #aeb5c1;
+  --composer-pill-foreground: #aab2c0;
+  --composer-button-hover: rgba(255, 255, 255, 0.075);
+  --composer-button-active: rgba(255, 255, 255, 0.095);
+  --composer-button-disabled: #828b99;
+  --composer-attachment-remove: #9ca3af;
+  --composer-attachment-remove-hover: rgba(255, 255, 255, 0.08);
+  --composer-attachment-remove-hover-foreground: #f4efe5;
   --menu-shadow: 0 16px 36px rgba(0, 0, 0, 0.38);
   --border: rgba(255, 255, 255, 0.08);
   --input: rgba(255, 255, 255, 0.075);
@@ -331,8 +347,7 @@ button:disabled {
 .ghost-button,
 .icon-button,
 .chat-scroll-bottom-button,
-.small-button,
-.send-button {
+.small-button {
   border: 0;
   color: inherit;
   background: transparent;
@@ -588,8 +603,7 @@ button:disabled {
 
 .ghost-button,
 .icon-button,
-.small-button,
-.send-button {
+.small-button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -623,10 +637,6 @@ button:disabled {
   font-size: 12px;
   font-weight: 750;
   white-space: nowrap;
-}
-
-.small-button:not(.settings-button):not(.danger):hover:not(:disabled) {
-  background: var(--button-primary-bg-hover);
 }
 
 .ghost-button:hover,
@@ -798,19 +808,6 @@ button:disabled {
   margin-left: auto;
 }
 
-.jobs-header-add-button {
-  flex: 0 0 auto;
-  width: 34px;
-  height: 34px;
-  color: var(--button-primary-fg);
-  border-color: transparent;
-  background: var(--button-primary-bg);
-}
-
-.jobs-header-add-button:hover {
-  background: var(--button-primary-bg-hover);
-}
-
 .jobs-body {
   display: grid;
   align-content: start;
@@ -915,7 +912,7 @@ button:disabled {
   min-width: 0;
 }
 
-.jobs-project-menu-wrap .composer-access-button {
+.jobs-project-menu-wrap [data-variant="composerAccess"] {
   width: 100%;
   max-width: none;
   justify-content: flex-start;
@@ -2765,16 +2762,6 @@ button:disabled {
   padding: 9px;
 }
 
-.send-button {
-  width: 36px;
-  height: 36px;
-  padding: 0;
-  border-radius: 999px;
-  color: var(--button-primary-fg);
-  background: var(--button-primary-bg);
-  font-weight: 800;
-}
-
 .small-button.danger {
   color: #fff4ef;
   background: rgba(180, 83, 64, 0.84);
@@ -2885,86 +2872,6 @@ button:disabled {
   white-space: nowrap;
 }
 
-.composer-recording-cancel,
-.composer-recording-confirm {
-  display: inline-flex;
-  flex: 0 0 auto;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  border: 0;
-  border-radius: 999px;
-  transition:
-    color 150ms ease,
-    background 150ms ease,
-    opacity 150ms ease;
-}
-
-.composer-recording-cancel {
-  color: #aeb5c1;
-  background: transparent;
-}
-
-.composer-recording-cancel:hover {
-  color: #f5f2ea;
-  background: rgba(255, 255, 255, 0.075);
-}
-
-.composer-recording-confirm {
-  color: var(--button-primary-fg);
-  background: var(--button-primary-bg);
-}
-
-.composer-recording-confirm:hover {
-  background: var(--button-primary-bg-hover);
-}
-
-.composer-recording-cancel:disabled,
-.composer-recording-confirm:disabled {
-  cursor: default;
-  opacity: 0.46;
-}
-
-.composer-recording-cancel:disabled:hover {
-  color: #aeb5c1;
-  background: transparent;
-}
-
-.composer-recording-confirm:disabled:hover {
-  background: var(--button-primary-bg);
-}
-
-.composer-icon-button,
-.composer-access-button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  height: 32px;
-  border: 0;
-  border-radius: 999px;
-  color: #aeb5c1;
-  background: transparent;
-  transition:
-    color 150ms ease,
-    background 150ms ease;
-}
-
-.composer-icon-button {
-  width: 32px;
-}
-
-.composer-icon-button[aria-expanded="true"] {
-  color: #f5f2ea;
-  background: rgba(255, 255, 255, 0.095);
-}
-
-.composer-icon-button:hover,
-.composer-access-button:hover {
-  color: #f5f2ea;
-  background: rgba(255, 255, 255, 0.075);
-}
-
 .composer-add-menu-wrap,
 .composer-profile-menu-wrap,
 .composer-project-menu-wrap {
@@ -3035,105 +2942,9 @@ button:disabled {
   white-space: nowrap;
 }
 
-.attachment-remove {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  flex: 0 0 auto;
-  width: 22px;
-  height: 22px;
-  padding: 0;
-  border: 0;
-  border-radius: 999px;
-  color: #9ca3af;
-  background: transparent;
-}
-
-.attachment-remove:hover,
-.attachment-remove:focus-visible {
-  color: #f4efe5;
-  background: rgba(255, 255, 255, 0.08);
-}
-
-.composer-access-button {
-  max-width: min(360px, 40vw);
-  gap: 7px;
-  padding: 0 10px;
-  color: #aab2c0;
-  font-size: 13px;
-  font-weight: 750;
-}
-
-.composer-access-button[aria-expanded="true"] {
-  color: #f5f2ea;
-  background: rgba(255, 255, 255, 0.095);
-}
-
-.composer-access-button:disabled {
-  color: #828b99;
-  cursor: default;
-  opacity: 0.62;
-}
-
-.composer-access-button:disabled:hover {
-  color: #828b99;
-  background: transparent;
-}
-
-.composer-access-button span {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .composer-model-menu-wrap {
   position: relative;
   display: inline-flex;
-}
-
-.composer-model-button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  max-width: min(170px, 34vw);
-  height: 32px;
-  gap: 7px;
-  padding: 0 10px;
-  border: 0;
-  border-radius: 999px;
-  color: #aab2c0;
-  background: transparent;
-  font: inherit;
-  font-size: 13px;
-  font-weight: 750;
-  transition:
-    color 150ms ease,
-    background 150ms ease;
-}
-
-.composer-model-button:hover,
-.composer-model-button[aria-expanded="true"] {
-  color: #f5f2ea;
-  background: rgba(255, 255, 255, 0.095);
-}
-
-.composer-model-button:disabled {
-  color: #828b99;
-  cursor: default;
-  opacity: 0.62;
-}
-
-.composer-model-button:disabled:hover {
-  color: #828b99;
-  background: transparent;
-}
-
-.composer-model-button span {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .event-strip {
@@ -3302,11 +3113,6 @@ button:disabled {
 .runtime-panel .settings-row,
 .runtime-panel .runtime-field.wide {
   grid-column: 1 / -1;
-}
-
-.small-button.primary {
-  color: var(--button-primary-fg);
-  background: var(--button-primary-bg);
 }
 
 .settings-actions {
@@ -4730,19 +4536,6 @@ button:disabled {
   gap: 16px;
 }
 
-.agent-list-add-button {
-  flex: 0 0 auto;
-  width: 34px;
-  height: 34px;
-  color: var(--button-primary-fg);
-  border-color: transparent;
-  background: var(--button-primary-bg);
-}
-
-.agent-list-add-button:hover {
-  background: var(--button-primary-bg-hover);
-}
-
 .agent-list-header h1,
 .agent-detail-title h1 {
   margin: 4px 0 0;
@@ -5465,12 +5258,13 @@ kbd {
     min-width: 0;
   }
 
-  .composer-model-button {
+  .composer-model-menu-wrap [data-variant="composerModel"] {
     max-width: clamp(92px, 28vw, 150px);
     padding: 0 8px;
   }
 
-  .composer-access-button {
+  .composer-profile-menu-wrap [data-variant="composerAccess"],
+  .composer-project-menu-wrap [data-variant="composerAccess"] {
     max-width: 34vw;
   }
 

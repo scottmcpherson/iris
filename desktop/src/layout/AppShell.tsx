@@ -53,6 +53,7 @@ import {
   DropdownMenuRadioItem,
   DropdownMenuTrigger,
 } from "../shared/ui/dropdown-menu";
+import { Button } from "../shared/ui/button";
 
 export const SIDEBAR_AUTO_COLLAPSE_WIDTH = 820;
 const SIDEBAR_STANDARD_WIDTH = 252;
@@ -759,9 +760,9 @@ export function AppShell({
           <div className="connection-banner">
             <AlertCircle size={16} />
             <span>{error}</span>
-            <button className="small-button" onClick={onRefresh} disabled={isRefreshing}>
+            <Button size="appSmall" onClick={onRefresh} disabled={isRefreshing}>
               Retry
-            </button>
+            </Button>
           </div>
         ) : null}
 

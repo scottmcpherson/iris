@@ -10,6 +10,7 @@ import {
 import { getIrisSkillDetail, saveIrisSkill } from "../../lib/irisRuntime";
 import { CodeEditor } from "../../shared/CodeEditor";
 import { ViewHeader } from "../../shared/ViewHeader";
+import { Button } from "../../shared/ui/button";
 import type { HermesRuntimeConfig, HermesSkill, HermesSkillDetail } from "../../types/hermes";
 
 type SkillSource = HermesSkill["source"];
@@ -265,10 +266,10 @@ export function SkillsView({
               <h2>{detail?.name || "Select a skill"}</h2>
               <span>{detail?.path || "No skill selected"}</span>
             </div>
-            <button className="small-button" disabled={!canSave || isSaving} onClick={() => void saveSkill()}>
-              <Save size={14} />
+            <Button size="appSmall" disabled={!canSave || isSaving} onClick={() => void saveSkill()}>
+              <Save data-icon="inline-start" />
               {isSaving ? "Saving" : isVirtualPath(detail?.path || "") ? "Install" : "Save"}
-            </button>
+            </Button>
           </div>
 
           <div className="skill-editor-shell">

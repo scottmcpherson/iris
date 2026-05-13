@@ -43,6 +43,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "../../shared/ui/dropdown-menu";
+import { Button } from "../../shared/ui/button";
 import {
   filterSlashCommands,
   moveSlashCommandIndex,
@@ -712,14 +713,15 @@ export function ChatView({
             <div className="composer-add-menu-wrap">
               <DropdownMenu open={addMenuOpen} onOpenChange={setAddMenuOpen}>
                 <DropdownMenuTrigger asChild>
-                  <button
+                  <Button
                     type="button"
-                    className="composer-icon-button"
+                    variant="composerIcon"
+                    size="composerIcon"
                     title="Add context"
                     aria-label="Add context"
                   >
-                    <Plus size={18} />
-                  </button>
+                    <Plus data-icon="inline-start" />
+                  </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent
                   align="start"
@@ -787,27 +789,29 @@ export function ChatView({
                     onSelect={selectModel}
                   />
                 </div>
-                <button
+                <Button
                   type="button"
-                  className="composer-icon-button"
+                  variant="composerIcon"
+                  size="composerIcon"
                   title={requestActive ? "Wait for the current request to finish" : "Start voice input"}
                   aria-label="Start voice input"
                   disabled={dictationBusy || requestActive}
                   onClick={startVoiceInput}
                 >
-                  <Mic size={16} />
-                </button>
+                  <Mic data-icon="inline-start" />
+                </Button>
               </>
             )}
             {!dictationToolbarOpen ? (
               requestActive ? (
-                <button type="button" className="send-button cancel" onClick={onCancel} title="Cancel request">
-                  <Square size={15} />
-                </button>
+                <Button type="button" variant="composerSend" size="composerSend" onClick={onCancel} title="Cancel request">
+                  <Square data-icon="inline-start" />
+                </Button>
               ) : (
-                <button
+                <Button
                   type="button"
-                  className="send-button"
+                  variant="composerSend"
+                  size="composerSend"
                   title={
                     !composerCanSend
                       ? "Enter a message or add a file to send"
@@ -824,8 +828,8 @@ export function ChatView({
                   }}
                   onClick={() => void sendWithAttachments()}
                 >
-                  <Send size={16} />
-                </button>
+                  <Send data-icon="inline-start" />
+                </Button>
               )
             ) : null}
           </div>
@@ -912,26 +916,28 @@ function DictationWaveform({
         ))}
       </div>
       {showStatus ? <span className="composer-recording-status">{statusText}</span> : null}
-      <button
+      <Button
         type="button"
-        className="composer-recording-cancel"
+        variant="composerRecordingCancel"
+        size="composerRecording"
         title={state.status === "error" ? "Dismiss voice error" : "Cancel voice input"}
         aria-label={state.status === "error" ? "Dismiss voice error" : "Cancel voice input"}
         disabled={!canCancel}
         onClick={onCancel}
       >
-        <X size={15} />
-      </button>
-      <button
+        <X data-icon="inline-start" />
+      </Button>
+      <Button
         type="button"
-        className="composer-recording-confirm"
+        variant="composerRecordingConfirm"
+        size="composerRecording"
         title={canConfirm ? "Send voice input" : statusText}
         aria-label="Send voice input"
         disabled={!canConfirm}
         onClick={onConfirm}
       >
-        <Check size={16} />
-      </button>
+        <Check data-icon="inline-start" />
+      </Button>
     </div>
   );
 }

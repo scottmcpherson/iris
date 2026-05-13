@@ -1,6 +1,7 @@
 import { Archive, FileCode, FileText, Image, Music, Paperclip, Video, X } from "lucide-react";
 import type { MessageAttachment } from "../../../app/types";
 import { attachmentTypeLabel, formatAttachmentSize } from "../../../shared/files";
+import { Button } from "../../../shared/ui/button";
 
 type AttachmentTrayAttachment = MessageAttachment & {
   previewUrl?: string;
@@ -41,14 +42,15 @@ export function AttachmentTray({ attachments, onRemove }: AttachmentTrayProps) {
                 ? formatAttachmentSize(attachment.size)
                 : attachmentTypeLabel(attachment.kind, attachment.mimeType)}
           </span>
-          <button
+          <Button
             type="button"
-            className="attachment-remove"
+            variant="attachmentRemove"
+            size="attachmentRemove"
             onClick={() => onRemove(attachment.id)}
             title={`Remove ${attachment.name}`}
           >
-            <X size={13} />
-          </button>
+            <X data-icon="inline-start" />
+          </Button>
         </div>
       ))}
     </div>

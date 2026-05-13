@@ -5,6 +5,7 @@ import type { CreateScheduledMessageInput, UpdateScheduledMessageInput } from ".
 import { ProjectMenu } from "../chat/components/ProjectMenu";
 import type { IrisProject } from "../../lib/agentuiCore";
 import type { HermesAutomation, HermesInboxMessage } from "../../types/hermes";
+import { Button } from "../../shared/ui/button";
 
 type TabKey = "active" | "paused";
 type ScheduleMode = "delay" | "datetime" | "daily" | "custom";
@@ -172,15 +173,15 @@ export function AutomationsView({
           <h1>Automations</h1>
         </div>
         <div className="jobs-header-actions">
-          <button
+          <Button
             type="button"
-            className="icon-button jobs-header-add-button"
+            size="icon-md"
             aria-label="Create automation"
             title="Create automation"
             onClick={startCreating}
           >
-            <Plus size={17} />
-          </button>
+            <Plus data-icon="inline-start" />
+          </Button>
         </div>
       </header>
 
@@ -328,10 +329,10 @@ export function AutomationsView({
                     <button type="button" className="small-button settings-button" onClick={cancelEditing} disabled={formBusy}>
                       Cancel
                     </button>
-                    <button type="submit" className="small-button" disabled={formBusy}>
-                      <Send size={14} />
+                    <Button type="submit" size="appSmall" disabled={formBusy}>
+                      <Send data-icon="inline-start" />
                       {formBusy ? "Saving..." : editingJobId ? "Save changes" : "Schedule"}
-                    </button>
+                    </Button>
                   </div>
                 </div>
               </form>

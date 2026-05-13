@@ -1,4 +1,5 @@
 import { CheckCircle2, FolderCog, Route, Sparkles, X } from "lucide-react";
+import { Button } from "../../shared/ui/button";
 
 type OnboardingOverlayProps = {
   connected: boolean;
@@ -53,9 +54,9 @@ export function OnboardingOverlay({
         </div>
 
         <div className="onboarding-actions">
-          <button className="small-button" onClick={onOpenSettings}>
+          <Button size="appSmall" onClick={onOpenSettings}>
             Open Settings
-          </button>
+          </Button>
           <button className="ghost-button" onClick={onRefresh}>
             Retry connection
           </button>
