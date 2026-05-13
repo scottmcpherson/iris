@@ -1,5 +1,6 @@
 import { AlertCircle, CheckCircle2, Info, X } from "lucide-react";
 import type { AppNotification } from "../../app/types";
+import { Button } from "../../shared/ui/button";
 
 type NotificationCenterProps = {
   notifications: AppNotification[];
@@ -25,9 +26,9 @@ export function NotificationCenter({ notifications, onDismiss }: NotificationCen
               <strong>{notification.title}</strong>
               <small>{notification.message}</small>
             </span>
-            <button className="icon-button" title="Dismiss notification" onClick={() => onDismiss(notification.id)}>
+            <Button variant="appIcon" size="icon-md" title="Dismiss notification" onClick={() => onDismiss(notification.id)}>
               <X size={14} />
-            </button>
+            </Button>
           </article>
         );
       })}

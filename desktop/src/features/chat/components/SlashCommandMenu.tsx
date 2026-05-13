@@ -1,5 +1,7 @@
 import { Command, Sparkles } from "lucide-react";
 import type { MutableRefObject } from "react";
+import { Button } from "../../../shared/ui/button";
+import { cn } from "../../../shared/ui/utils";
 import type { HermesSlashCommand } from "../../../types/hermes";
 
 type SlashCommandMenuProps = {
@@ -23,43 +25,54 @@ export function SlashCommandMenu({
   onActiveIndex,
   onSelect,
 }: SlashCommandMenuProps) {
+  const rowClassName = cn(
+    "group grid h-[50px] w-full min-w-0 grid-cols-[22px_minmax(0,1fr)_auto] items-center gap-[9px] overflow-hidden rounded-lg px-[9px] py-0 text-left text-[12px] font-[inherit] leading-none text-menu-foreground",
+    "hover:bg-menu-hover hover:text-menu-hover-foreground",
+    "data-[active=true]:bg-menu-hover data-[active=true]:text-menu-hover-foreground data-[active=true]:outline data-[active=true]:outline-1 data-[active=true]:outline-menu-border"
+  );
+  const iconClassName = "inline-flex size-[22px] items-center justify-center rounded-[7px] bg-secondary text-composer-icon-foreground group-hover:text-menu-hover-foreground group-data-[active=true]:bg-accent group-data-[active=true]:text-menu-hover-foreground";
+
   return (
     <div
       id="composer-slash-menu"
-      className="composer-slash-menu"
+      className="absolute bottom-[calc(100%+8px)] left-0 z-[32] max-h-80 w-[min(460px,100%)] overflow-auto rounded-xl border border-menu-border bg-menu p-[7px] text-menu-foreground shadow-context-menu"
       role="listbox"
       aria-label="Slash commands"
     >
       {loading && !commands.length ? (
-        <div className="composer-slash-empty">Loading commands...</div>
+        <div className="px-[9px] py-[9px] text-[11px] font-[720] text-menu-muted-foreground">Loading commands...</div>
       ) : null}
       {error && !commands.length ? (
-        <button
+        <Button
           type="button"
-          className="composer-slash-row disabled"
+          variant="ghost"
+          className={rowClassName}
           onClick={onRefresh}
         >
-          <span className="composer-slash-icon"><Command size={14} /></span>
-          <span className="composer-slash-main">
-            <strong>Commands unavailable</strong>
-            <small>Click to retry</small>
+          <span className={iconClassName}>
+            <Command size={14} />
           </span>
-        </button>
+          <span className="grid min-w-0 gap-1 overflow-hidden">
+            <strong className="truncate text-[12px] font-[760] leading-[15px] text-menu-hover-foreground">Commands unavailable</strong>
+            <small className="truncate text-[11px] font-[720] leading-[13px] text-menu-muted-foreground">Click to retry</small>
+          </span>
+        </Button>
       ) : null}
       {!loading && !error && !commands.length ? (
-        <div className="composer-slash-empty">No matching commands</div>
+        <div className="px-[9px] py-[9px] text-[11px] font-[720] text-menu-muted-foreground">No matching commands</div>
       ) : null}
       {commands.map((command, index) => {
         const active = index === activeIndex;
         const meta = command.description || command.category || command.source;
         return (
-          <button
+          <Button
             key={command.id}
             ref={(node) => {
               commandRefs.current[command.id] = node;
             }}
             type="button"
-            className="composer-slash-row"
+            variant="ghost"
+            className={rowClassName}
             role="option"
             aria-selected={active}
             data-active={active}
@@ -67,15 +80,17 @@ export function SlashCommandMenu({
             onMouseEnter={() => onActiveIndex(index)}
             onClick={() => onSelect(command)}
           >
-            <span className="composer-slash-icon">
+            <span className={iconClassName}>
               {command.source === "skill" ? <Sparkles size={14} /> : <Command size={14} />}
             </span>
-            <span className="composer-slash-main">
-              <strong>{command.label || command.text}</strong>
-              {meta ? <small>{meta}</small> : null}
+            <span className="grid min-w-0 gap-1 overflow-hidden">
+              <strong className="truncate text-[12px] font-[760] leading-[15px] text-menu-hover-foreground">{command.label || command.text}</strong>
+              {meta ? <small className="truncate text-[11px] font-[720] leading-[13px] text-menu-muted-foreground">{meta}</small> : null}
             </span>
-            <span className="composer-slash-meta">{active ? "Tab" : command.category}</span>
-          </button>
+            <span className="max-w-[124px] truncate pl-2 text-[11px] font-[720] leading-[13px] text-menu-muted-foreground">
+              {command.category}
+            </span>
+          </Button>
         );
       })}
     </div>

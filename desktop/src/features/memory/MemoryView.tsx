@@ -16,6 +16,7 @@ import {
 import { loadJsonValue, saveJsonValue, storageKeys } from "../../app/storage";
 import { ViewHeader } from "../../shared/ViewHeader";
 import { endpointLabel, formatBytes } from "../../shared/format";
+import { Button } from "../../shared/ui/button";
 import type { HermesMemory, HermesMemoryFile, HermesMemoryHistoryEntry, HermesStatus } from "../../types/hermes";
 
 type MemoryFileKey = "memory" | "user";
@@ -164,27 +165,28 @@ export function MemoryView({
         <div className="memory-toolbar">
           <div className="memory-tabs" role="tablist" aria-label="Memory files">
             {(["memory", "user"] as MemoryFileKey[]).map((file) => (
-              <button
+              <Button
                 className={`memory-tab ${activeFile === file ? "active" : ""}`}
                 key={file}
                 type="button"
+                variant="ghost"
                 onClick={() => setActiveFile(file)}
               >
                 <span>{fileLabels[file]}</span>
                 <small>{formatBytes(files[file].bytes)}</small>
-              </button>
+              </Button>
             ))}
           </div>
           <div className="memory-actions">
-            <button className="icon-button" type="button" title="Undo draft" disabled={!dirty} onClick={undoDraft}>
+            <Button variant="appIcon" size="icon-md" type="button" title="Undo draft" disabled={!dirty} onClick={undoDraft}>
               <Undo2 size={15} />
-            </button>
-            <button className="icon-button" type="button" title="Save memory" disabled={!dirty} onClick={saveDraft}>
+            </Button>
+            <Button variant="appIcon" size="icon-md" type="button" title="Save memory" disabled={!dirty} onClick={saveDraft}>
               <Save size={15} />
-            </button>
-            <button className="icon-button danger-icon" type="button" title="Reset file" onClick={() => beginReset(activeFile)}>
+            </Button>
+            <Button variant="appIconDanger" size="icon-md" type="button" title="Reset file" onClick={() => beginReset(activeFile)}>
               <RotateCcw size={15} />
-            </button>
+            </Button>
           </div>
         </div>
 
@@ -216,9 +218,10 @@ export function MemoryView({
           </div>
           <div className="memory-result-list">
             {searchResults.map((result) => (
-              <button
+              <Button
                 key={result.id}
                 type="button"
+                variant="ghost"
                 onClick={() => {
                   setActiveFile(result.file);
                   setSelectedHistoryId(result.historyId || "");
@@ -227,7 +230,7 @@ export function MemoryView({
                 <span>{fileLabels[result.file]}</span>
                 <strong>{result.title}</strong>
                 <small>{result.snippet}</small>
-              </button>
+              </Button>
             ))}
           </div>
         </div>
@@ -242,16 +245,17 @@ export function MemoryView({
           </header>
           <div className="memory-timeline">
             {activeHistory.map((entry) => (
-              <button
+              <Button
                 className={selectedHistory?.id === entry.id ? "active" : ""}
                 key={entry.id}
                 type="button"
+                variant="ghost"
                 onClick={() => setSelectedHistoryId(entry.id)}
               >
                 <span>{entry.action}</span>
                 <strong>{entry.summary}</strong>
                 <small>{formatDate(entry.updatedAt)} · {formatBytes(entry.bytes)}</small>
-              </button>
+              </Button>
             ))}
             {!activeHistory.length ? <p className="memory-empty">No saved revisions yet.</p> : null}
           </div>
@@ -273,9 +277,9 @@ export function MemoryView({
         </div>
       </section>
 
-      <button className="small-button danger memory-reset-all" type="button" onClick={() => beginReset("all")}>
+      <Button className="memory-reset-all" variant="appDanger" size="appSmall" type="button" onClick={() => beginReset("all")}>
         Reset all memory
-      </button>
+      </Button>
 
       {resetTarget ? (
         <div className="memory-reset-modal" role="dialog" aria-modal="true">
@@ -291,12 +295,12 @@ export function MemoryView({
             placeholder="RESET MEMORY"
           />
           <div>
-            <button className="ghost-button" type="button" onClick={cancelReset}>
+            <Button variant="appGhost" size="appSmall" type="button" onClick={cancelReset}>
               Cancel
-            </button>
-            <button className="small-button danger" type="button" disabled={resetText !== "RESET MEMORY"} onClick={confirmReset}>
+            </Button>
+            <Button variant="appDanger" size="appSmall" type="button" disabled={resetText !== "RESET MEMORY"} onClick={confirmReset}>
               Confirm reset
-            </button>
+            </Button>
           </div>
         </div>
       ) : null}

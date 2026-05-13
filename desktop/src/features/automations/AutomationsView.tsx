@@ -6,6 +6,14 @@ import { ProjectMenu } from "../chat/components/ProjectMenu";
 import type { IrisProject } from "../../lib/agentuiCore";
 import type { HermesAutomation, HermesInboxMessage } from "../../types/hermes";
 import { Button } from "../../shared/ui/button";
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "../../shared/ui/select";
 
 type TabKey = "active" | "paused";
 type ScheduleMode = "delay" | "datetime" | "daily" | "custom";
@@ -207,9 +215,9 @@ export function AutomationsView({
                   <p className="eyebrow">Automation</p>
                   <h2 id="jobs-form-title">{editingJobId ? "Edit automation" : "New automation"}</h2>
                 </div>
-                <button type="button" className="icon-button" title="Close" onClick={cancelEditing} disabled={formBusy}>
+                <Button type="button" variant="appIcon" size="icon-md" title="Close" onClick={cancelEditing} disabled={formBusy}>
                   <X size={15} />
-                </button>
+                </Button>
               </div>
               <form className="jobs-form" onSubmit={submitSchedule}>
                 <div className="jobs-form-grid">
@@ -234,12 +242,19 @@ export function AutomationsView({
                   </label>
                   <label className="jobs-form-field jobs-form-prompt">
                     <span>Schedule</span>
-                    <select value={scheduleMode} onChange={(event) => setScheduleMode(event.target.value as ScheduleMode)}>
-                      <option value="delay">In minutes</option>
-                      <option value="datetime">Date and time</option>
-                      <option value="daily">Daily time</option>
-                      <option value="custom">Custom</option>
-                    </select>
+                    <Select value={scheduleMode} onValueChange={(value) => setScheduleMode(value as ScheduleMode)}>
+                      <SelectTrigger className="w-full">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectGroup>
+                          <SelectItem value="delay">In minutes</SelectItem>
+                          <SelectItem value="datetime">Date and time</SelectItem>
+                          <SelectItem value="daily">Daily time</SelectItem>
+                          <SelectItem value="custom">Custom</SelectItem>
+                        </SelectGroup>
+                      </SelectContent>
+                    </Select>
                   </label>
                   <div className="jobs-form-field jobs-project-field">
                     <span>Project</span>
@@ -297,11 +312,18 @@ export function AutomationsView({
                   ) : null}
                   <label className="jobs-form-field">
                     <span>Repeat</span>
-                    <select value={repeatMode} onChange={(event) => setRepeatMode(event.target.value as RepeatMode)}>
-                      <option value="once">Once</option>
-                      <option value="forever">Until paused</option>
-                      <option value="count">Fixed count</option>
-                    </select>
+                    <Select value={repeatMode} onValueChange={(value) => setRepeatMode(value as RepeatMode)}>
+                      <SelectTrigger className="w-full">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectGroup>
+                          <SelectItem value="once">Once</SelectItem>
+                          <SelectItem value="forever">Until paused</SelectItem>
+                          <SelectItem value="count">Fixed count</SelectItem>
+                        </SelectGroup>
+                      </SelectContent>
+                    </Select>
                   </label>
                   {repeatMode === "count" ? (
                     <label className="jobs-form-field">
@@ -326,9 +348,9 @@ export function AutomationsView({
                     ) : null}
                   </div>
                   <div className="jobs-form-action">
-                    <button type="button" className="small-button settings-button" onClick={cancelEditing} disabled={formBusy}>
+                    <Button type="button" variant="appNeutral" size="appSmall" onClick={cancelEditing} disabled={formBusy}>
                       Cancel
-                    </button>
+                    </Button>
                     <Button type="submit" size="appSmall" disabled={formBusy}>
                       <Send data-icon="inline-start" />
                       {formBusy ? "Saving..." : editingJobId ? "Save changes" : "Schedule"}
@@ -418,7 +440,7 @@ function TabButton({
   onSelect: () => void;
 }) {
   return (
-    <button
+    <Button
       type="button"
       role="tab"
       id={`jobs-tab-${tabKey}`}
@@ -431,7 +453,7 @@ function TabButton({
     >
       <span>{label}</span>
       {count > 0 ? <span className="jobs-tab-count">{count}</span> : null}
-    </button>
+    </Button>
   );
 }
 
@@ -475,9 +497,10 @@ function JobList({
                 <strong>{job.name}</strong>
               </div>
               <div className="job-row-actions">
-                <button
+                <Button
                   type="button"
-                  className="icon-button"
+                  variant="appIcon"
+                  size="icon-md"
                   title="Job details"
                   aria-expanded={selected}
                   aria-controls={`job-detail-${job.id}`}
@@ -488,10 +511,11 @@ function JobList({
                   }}
                 >
                   <Info size={14} />
-                </button>
-                <button
+                </Button>
+                <Button
                   type="button"
-                  className="icon-button"
+                  variant="appIcon"
+                  size="icon-md"
                   title="Edit"
                   disabled={busy}
                   onClick={(event) => {
@@ -500,10 +524,11 @@ function JobList({
                   }}
                 >
                   <Pencil size={14} />
-                </button>
-                <button
+                </Button>
+                <Button
                   type="button"
-                  className="icon-button"
+                  variant="appIcon"
+                  size="icon-md"
                   title="Run now"
                   disabled={busy}
                   onClick={(event) => {
@@ -512,10 +537,11 @@ function JobList({
                   }}
                 >
                   <Play size={14} />
-                </button>
-                <button
+                </Button>
+                <Button
                   type="button"
-                  className="icon-button"
+                  variant="appIcon"
+                  size="icon-md"
                   title={job.status === "paused" ? "Resume" : "Pause"}
                   disabled={busy}
                   onClick={(event) => {
@@ -524,10 +550,11 @@ function JobList({
                   }}
                 >
                   {job.status === "paused" ? <Play size={14} /> : <Pause size={14} />}
-                </button>
-                <button
+                </Button>
+                <Button
                   type="button"
-                  className={confirmDeleteJobId === job.id ? "icon-button danger pending" : "icon-button danger"}
+                  variant={confirmDeleteJobId === job.id ? "appIconConfirm" : "appIconDanger"}
+                  size="icon-md"
                   title={confirmDeleteJobId === job.id ? "Confirm delete" : "Delete"}
                   disabled={busy}
                   onClick={(event) => {
@@ -536,7 +563,7 @@ function JobList({
                   }}
                 >
                   {confirmDeleteJobId === job.id ? <Check size={14} /> : <Trash2 size={14} />}
-                </button>
+                </Button>
               </div>
             </div>
             {meta ? <p className="job-row-meta">{meta}</p> : null}
@@ -626,22 +653,23 @@ function DeliveryRow({
       <div className="delivery-row-main">
         <p>{delivery.content}</p>
         <span>
-          <button type="button" className="inline-link" onClick={() => onOpenDeliveryChat(delivery)}>
+          <Button type="button" variant="appLink" onClick={() => onOpenDeliveryChat(delivery)}>
             {delivery.chatId || "Open chat"}
-          </button>
+          </Button>
           {" · "}
           {timeLabel(delivery.createdAt)}
         </span>
       </div>
       {!compact && !delivery.acknowledgedAt ? (
-        <button
+        <Button
           type="button"
-          className="icon-button"
+          variant="appIcon"
+          size="icon-md"
           title="Mark as read"
           onClick={() => onAcknowledgeDelivery(delivery.id)}
         >
           <Check size={15} />
-        </button>
+        </Button>
       ) : null}
     </article>
   );

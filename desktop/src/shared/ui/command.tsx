@@ -32,25 +32,38 @@ function CommandDialog({
   description = "Search for a command to run...",
   children,
   className,
+  commandClassName,
+  commandProps,
   showCloseButton = true,
   ...props
 }: React.ComponentProps<typeof Dialog> & {
   title?: string
   description?: string
   className?: string
+  commandClassName?: string
+  commandProps?: React.ComponentProps<typeof CommandPrimitive>
   showCloseButton?: boolean
 }) {
   return (
     <Dialog {...props}>
-      <DialogHeader className="sr-only">
-        <DialogTitle>{title}</DialogTitle>
-        <DialogDescription>{description}</DialogDescription>
-      </DialogHeader>
       <DialogContent
-        className={cn("overflow-hidden p-0", className)}
+        className={cn(
+          "top-[21vh] w-[min(690px,calc(100vw-40px))] translate-y-0 overflow-hidden border-menu-border bg-menu p-0 text-menu-foreground shadow-context-menu",
+          className,
+        )}
         showCloseButton={showCloseButton}
       >
-        <Command className="**:data-[slot=command-input-wrapper]:h-12 [&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:font-medium [&_[cmdk-group-heading]]:text-muted-foreground [&_[cmdk-group]]:px-2 [&_[cmdk-group]:not([hidden])_~[cmdk-group]]:pt-0 [&_[cmdk-input-wrapper]_svg]:h-5 [&_[cmdk-input-wrapper]_svg]:w-5 [&_[cmdk-input]]:h-12 [&_[cmdk-item]]:px-2 [&_[cmdk-item]]:py-3 [&_[cmdk-item]_svg]:h-5 [&_[cmdk-item]_svg]:w-5">
+        <DialogHeader className="sr-only">
+          <DialogTitle>{title}</DialogTitle>
+          <DialogDescription>{description}</DialogDescription>
+        </DialogHeader>
+        <Command
+          className={cn(
+            "**:data-[slot=command-input-wrapper]:h-14 [&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:font-bold [&_[cmdk-group-heading]]:text-menu-muted-foreground [&_[cmdk-group]]:px-2 [&_[cmdk-group]:not([hidden])_~[cmdk-group]]:pt-0 [&_[cmdk-input-wrapper]_svg]:size-4 [&_[cmdk-input]]:h-12 [&_[cmdk-item]]:px-2 [&_[cmdk-item]]:py-3 [&_[cmdk-item]_svg]:size-4",
+            commandClassName,
+          )}
+          {...commandProps}
+        >
           {children}
         </Command>
       </DialogContent>
@@ -58,10 +71,10 @@ function CommandDialog({
   );
 }
 
-function CommandInput({
-  className,
-  ...props
-}: React.ComponentProps<typeof CommandPrimitive.Input>) {
+const CommandInput = React.forwardRef<
+  React.ElementRef<typeof CommandPrimitive.Input>,
+  React.ComponentPropsWithoutRef<typeof CommandPrimitive.Input>
+>(function CommandInput({ className, ...props }, ref) {
   return (
     <div
       data-slot="command-input-wrapper"
@@ -69,6 +82,7 @@ function CommandInput({
     >
       <SearchIcon className="size-4 shrink-0 text-menu-muted-foreground" />
       <CommandPrimitive.Input
+        ref={ref}
         data-slot="command-input"
         className={cn(
           "flex h-10 w-full rounded-md bg-transparent py-3 text-xs font-medium text-menu-foreground outline-hidden placeholder:text-menu-muted-foreground disabled:cursor-not-allowed disabled:opacity-50",
@@ -78,7 +92,7 @@ function CommandInput({
       />
     </div>
   );
-}
+});
 
 function CommandList({
   className,
@@ -145,7 +159,7 @@ function CommandItem({
     <CommandPrimitive.Item
       data-slot="command-item"
       className={cn(
-        "relative flex min-h-[30px] cursor-default items-center gap-2 rounded-sm px-2 py-0 text-xs text-menu-foreground outline-hidden select-none data-[disabled=true]:pointer-events-none data-[disabled=true]:text-menu-disabled data-[selected=true]:bg-menu-hover data-[selected=true]:text-menu-hover-foreground [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-3.5",
+        "group relative flex min-h-[30px] cursor-default items-center gap-2 rounded-sm px-2 py-0 text-xs text-menu-foreground outline-hidden select-none data-[disabled=true]:pointer-events-none data-[disabled=true]:text-menu-disabled data-[selected=true]:bg-menu-hover data-[selected=true]:text-menu-hover-foreground [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-3.5",
         className,
       )}
       {...props}

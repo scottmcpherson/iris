@@ -33,6 +33,20 @@ const buttonVariants = cva(
           "rounded-full border-0 bg-[var(--button-primary-bg)] text-[var(--button-primary-fg)] shadow-none transition-[background,opacity] duration-150 hover:bg-[var(--button-primary-bg-hover)] disabled:bg-[var(--button-primary-bg)] disabled:text-[var(--button-primary-fg)] disabled:opacity-[0.46]",
         attachmentRemove:
           "rounded-full border-0 bg-transparent text-composer-attachment-remove shadow-none hover:bg-composer-attachment-remove-hover hover:text-composer-attachment-remove-hover-foreground focus-visible:bg-composer-attachment-remove-hover focus-visible:text-composer-attachment-remove-hover-foreground",
+        appNeutral:
+          "border border-white/10 bg-white/[0.08] text-[#eef1f6] shadow-[inset_0_1px_0_rgba(255,255,255,0.05)] hover:bg-white/[0.12]",
+        appGhost:
+          "border border-white/[0.075] bg-white/[0.045] text-[#dce0e8] hover:bg-white/[0.085]",
+        appDanger:
+          "border border-[#ff8372]/25 bg-[#ff8372]/10 text-[#ffe9e6] hover:bg-[#ff8372]/20",
+        appIcon:
+          "border border-white/[0.075] bg-white/[0.045] text-[#dce0e8] hover:bg-white/[0.085]",
+        appIconDanger:
+          "border border-white/[0.075] bg-white/[0.045] text-[#f2b9ac] hover:bg-white/[0.085]",
+        appIconConfirm:
+          "border border-[#f2b9ac] bg-[#f2b9ac] text-[#1c1110] hover:bg-[#f2b9ac]/90",
+        appLink:
+          "h-auto border-0 bg-transparent p-0 text-inherit shadow-none hover:bg-transparent hover:underline",
       },
       size: {
         default: "h-9 px-4 py-2 has-[>svg]:px-3",

@@ -18,7 +18,7 @@ export function slashTokenAtCursor(value: string, cursor: number): SlashToken | 
 
 export function filterSlashCommands(commands: HermesSlashCommand[], query: string) {
   const needle = query.trim().toLowerCase();
-  if (!needle) return commands.slice(0, 30);
+  if (!needle) return commands;
   return commands
     .map((command) => ({
       command,

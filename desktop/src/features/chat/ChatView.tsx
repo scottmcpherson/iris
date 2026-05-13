@@ -948,16 +948,17 @@ function ScrollToBottomButton() {
   if (isAtBottom) return null;
 
   return (
-    <button
+    <Button
       className="chat-scroll-bottom-button"
       type="button"
+      variant="ghost"
       title="Jump to latest message"
       onClick={() => {
         void scrollToBottom("smooth");
       }}
     >
       <ArrowDown size={16} />
-    </button>
+    </Button>
   );
 }
 

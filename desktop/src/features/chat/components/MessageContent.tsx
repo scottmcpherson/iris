@@ -7,6 +7,7 @@ import { Streamdown, type StreamdownProps } from "streamdown";
 import type { Message, MessageAttachment } from "../../../app/types";
 import { agentUICoreAttachmentUrl, getAgentUICoreAttachmentDataUrl } from "../../../lib/agentuiCore";
 import { attachmentTypeLabel } from "../../../shared/files";
+import { Button } from "../../../shared/ui/button";
 import type { HermesRuntimeConfig } from "../../../types/hermes";
 import { normalizeChatMarkdown } from "../markdown";
 import { LegacyToolEvents, StreamToolEvents } from "./ToolEvents";
@@ -57,9 +58,10 @@ export function MessageAttachments({
         }
         const title = contentUrl ? `Open ${attachment.name}` : attachment.name;
         return (
-          <button
+          <Button
             key={attachment.id}
             type="button"
+            variant="ghost"
             className="message-attachment-card"
             title={title}
             disabled={!contentUrl}
@@ -76,7 +78,7 @@ export function MessageAttachments({
             )}
             <span className="message-attachment-label">{attachment.name}</span>
             <span className="message-attachment-kind">{attachmentTypeLabel(attachment.kind, attachment.mimeType)}</span>
-          </button>
+          </Button>
         );
       })}
     </div>
@@ -328,8 +330,9 @@ function AudioAttachmentPlayer({
           }}
         />
       ) : null}
-      <button
+      <Button
         type="button"
+        variant="ghost"
         className="message-audio-toggle"
         disabled={!contentUrl || loading}
         title={playing ? "Pause voice message" : "Play voice message"}
@@ -337,10 +340,11 @@ function AudioAttachmentPlayer({
         onClick={() => void togglePlayback()}
       >
         {playing ? <Pause size={18} fill="currentColor" /> : <Play size={19} fill="currentColor" />}
-      </button>
+      </Button>
       <div className="message-audio-main">
-        <button
+        <Button
           type="button"
+          variant="ghost"
           className="message-audio-waveform"
           disabled={!contentUrl || loading}
           style={waveformStyle}
@@ -350,7 +354,7 @@ function AudioAttachmentPlayer({
           {audioWaveformBars.map((height, index) => (
             <span key={`audio-waveform-bar-${index}`} style={{ "--bar-scale": height } as CSSProperties} />
           ))}
-        </button>
+        </Button>
         <span className="message-audio-time">{error || (loading ? "Loading..." : formatAudioPlaybackTime(displayTime))}</span>
       </div>
     </div>

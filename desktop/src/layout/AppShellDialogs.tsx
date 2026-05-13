@@ -1,6 +1,15 @@
 import type { FormEvent } from "react";
 import { CodeEditor } from "../shared/CodeEditor";
 import type { AgentUICoreAgent } from "../lib/agentuiCore";
+import { Button } from "../shared/ui/button";
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "../shared/ui/select";
 import type { HermesSession } from "../types/hermes";
 
 export type ProfileDialog =
@@ -77,16 +86,23 @@ export function ProjectActionDialog({
         </label>
         <label>
           <span>Default agent</span>
-          <select
+          <Select
             value={dialog.defaultAgentId}
-            onChange={(event) => onChange({ ...dialog, defaultAgentId: event.target.value })}
+            onValueChange={(value) => onChange({ ...dialog, defaultAgentId: value })}
           >
-            {agentOptions.map((agent) => (
-              <option key={agent.id} value={agent.id}>
-                {agent.displayName || agent.runtimeProfile || agent.id}
-              </option>
-            ))}
-          </select>
+            <SelectTrigger className="w-full">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectGroup>
+                {agentOptions.map((agent) => (
+                  <SelectItem key={agent.id} value={agent.id}>
+                    {agent.displayName || agent.runtimeProfile || agent.id}
+                  </SelectItem>
+                ))}
+              </SelectGroup>
+            </SelectContent>
+          </Select>
         </label>
         <div className="project-prompt-editor">
           <span>System prompt</span>
@@ -101,12 +117,12 @@ export function ProjectActionDialog({
         </div>
         {error ? <p className="profile-action-error">{error}</p> : null}
         <div className="profile-action-modal-actions">
-          <button type="button" className="small-button settings-button" onClick={onCancel}>
+          <Button type="button" variant="appNeutral" size="appSmall" onClick={onCancel}>
             Cancel
-          </button>
-          <button type="submit" className="small-button settings-button" disabled={submitDisabled}>
+          </Button>
+          <Button type="submit" variant="appNeutral" size="appSmall" disabled={submitDisabled}>
             {busy ? "Working..." : isCreate ? "Create" : "Save"}
-          </button>
+          </Button>
         </div>
       </form>
     </div>
@@ -142,12 +158,12 @@ export function SessionActionDialog({
         </label>
         {error ? <p className="profile-action-error">{error}</p> : null}
         <div className="profile-action-modal-actions">
-          <button type="button" className="small-button settings-button" onClick={onCancel}>
+          <Button type="button" variant="appNeutral" size="appSmall" onClick={onCancel}>
             Cancel
-          </button>
-          <button type="submit" className="small-button settings-button" disabled={submitDisabled}>
+          </Button>
+          <Button type="submit" variant="appNeutral" size="appSmall" disabled={submitDisabled}>
             {busy ? "Working..." : "Rename"}
-          </button>
+          </Button>
         </div>
       </form>
     </div>
@@ -193,16 +209,17 @@ export function ProfileActionDialog({
         </label>
         {error ? <p className="profile-action-error">{error}</p> : null}
         <div className="profile-action-modal-actions">
-          <button type="button" className="small-button settings-button" onClick={onCancel}>
+          <Button type="button" variant="appNeutral" size="appSmall" onClick={onCancel}>
             Cancel
-          </button>
-          <button
+          </Button>
+          <Button
             type="submit"
-            className={isDelete ? "small-button settings-button danger" : "small-button settings-button"}
+            variant={isDelete ? "appDanger" : "appNeutral"}
+            size="appSmall"
             disabled={submitDisabled}
           >
             {busy ? "Working..." : submitLabel}
-          </button>
+          </Button>
         </div>
       </form>
     </div>

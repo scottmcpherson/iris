@@ -11,6 +11,14 @@ import { getIrisSkillDetail, saveIrisSkill } from "../../lib/irisRuntime";
 import { CodeEditor } from "../../shared/CodeEditor";
 import { ViewHeader } from "../../shared/ViewHeader";
 import { Button } from "../../shared/ui/button";
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "../../shared/ui/select";
 import type { HermesRuntimeConfig, HermesSkill, HermesSkillDetail } from "../../types/hermes";
 
 type SkillSource = HermesSkill["source"];
@@ -212,25 +220,39 @@ export function SkillsView({
         </label>
         <label className="skill-select">
           <Filter size={15} />
-          <select value={categoryFilter} onChange={(event) => setCategoryFilter(event.target.value)}>
-            {categories.map((category) => (
-              <option key={category} value={category}>
-                {category}
-              </option>
-            ))}
-          </select>
+          <Select value={categoryFilter} onValueChange={setCategoryFilter}>
+            <SelectTrigger size="sm" className="min-w-[130px]">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectGroup>
+                {categories.map((category) => (
+                  <SelectItem key={category} value={category}>
+                    {category}
+                  </SelectItem>
+                ))}
+              </SelectGroup>
+            </SelectContent>
+          </Select>
         </label>
         <label className="skill-select">
           <Store size={15} />
-          <select
+          <Select
             value={sourceFilter}
-            onChange={(event) => setSourceFilter(event.target.value as SkillSource | "all")}
+            onValueChange={(value) => setSourceFilter(value as SkillSource | "all")}
           >
-            <option value="all">all sources</option>
-            <option value="installed">installed</option>
-            <option value="bundled">bundled</option>
-            <option value="community">community</option>
-          </select>
+            <SelectTrigger size="sm" className="min-w-[130px]">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectGroup>
+                <SelectItem value="all">all sources</SelectItem>
+                <SelectItem value="installed">installed</SelectItem>
+                <SelectItem value="bundled">bundled</SelectItem>
+                <SelectItem value="community">community</SelectItem>
+              </SelectGroup>
+            </SelectContent>
+          </Select>
         </label>
       </div>
 
@@ -241,8 +263,10 @@ export function SkillsView({
           </div>
           <div className="skill-grid">
             {visibleSkills.map((skill) => (
-              <button
+              <Button
                 key={skillKey(skill)}
+                type="button"
+                variant="ghost"
                 className={`skill-row ${skillKey(skill) === selectedKey ? "active" : ""}`}
                 onClick={() => setSelectedKey(skillKey(skill))}
               >
@@ -254,7 +278,7 @@ export function SkillsView({
                   <span>{skill.description}</span>
                 </div>
                 <small className={`source-pill ${skill.source}`}>{skill.source}</small>
-              </button>
+              </Button>
             ))}
           </div>
         </aside>

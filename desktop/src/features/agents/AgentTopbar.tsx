@@ -1,4 +1,5 @@
 import { ArrowLeft } from "lucide-react";
+import { Button } from "../../shared/ui/button";
 import type { HermesProfile } from "../../types/hermes";
 import type { AgentDetailSection } from "./types";
 
@@ -23,9 +24,9 @@ export function AgentTopbar({
 
   return (
     <div className="agent-topbar agent-topbar-detail">
-      <button type="button" className="icon-button" title="All agents" onClick={onBack}>
+      <Button type="button" variant="appIcon" size="icon-md" title="All agents" onClick={onBack}>
         <ArrowLeft size={16} />
-      </button>
+      </Button>
       <div className="agent-detail-title">
         <div>
           <p className="eyebrow">Agents / {profile.name}</p>
@@ -35,14 +36,16 @@ export function AgentTopbar({
       <div className="agent-topbar-actions">
         <div className="agent-section-tabs" role="tablist" aria-label={`${profile.name} sections`}>
           {(["overview", "memory", "skills"] as AgentDetailSection[]).map((item) => (
-            <button
+            <Button
               type="button"
               key={item}
+              variant="ghost"
+              size="sm"
               className={section === item ? "active" : ""}
               onClick={() => onSectionChange(item)}
             >
               {item}
-            </button>
+            </Button>
           ))}
         </div>
       </div>

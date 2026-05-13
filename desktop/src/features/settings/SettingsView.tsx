@@ -15,6 +15,7 @@ import {
 } from "../../lib/irisRuntime";
 import { endpointLabel } from "../../shared/format";
 import { rawStringValue } from "../../shared/strings";
+import { Button } from "../../shared/ui/button";
 import type {
   HermesProfile,
   HermesRuntimeConfig,
@@ -141,9 +142,9 @@ export function SettingsView({
     <div className="tool-view settings-view">
       <div className="settings-toolbar">
         <span />
-        <button className="small-button settings-button" onClick={onRefresh}>
+        <Button variant="appNeutral" size="appSmall" onClick={onRefresh}>
           Refresh
-        </button>
+        </Button>
       </div>
 
       {mode === "settings" ? (
@@ -168,9 +169,9 @@ export function SettingsView({
               onChange={(value) => updateDraft("model", value)}
             />
             <div className="settings-actions">
-              <button className="small-button settings-button" onClick={() => applyRuntimeConfig("App settings saved.")}>
+              <Button variant="appNeutral" size="appSmall" onClick={() => applyRuntimeConfig("App settings saved.")}>
                 Save app settings
-              </button>
+              </Button>
             </div>
           </SettingsSection>
 
@@ -205,9 +206,9 @@ export function SettingsView({
               />
             </ServiceCard>
             <div className="settings-actions">
-              <button className="small-button settings-button" onClick={() => void saveCoreConnection()}>
+              <Button variant="appNeutral" size="appSmall" onClick={() => void saveCoreConnection()}>
                 Save Core connection
-              </button>
+              </Button>
             </div>
           </SettingsSection>
 
@@ -270,17 +271,17 @@ export function SettingsView({
               </div>
               {pendingCoreApiUrl ? <em className="core-connection-pending">Unsaved URL: {pendingCoreApiUrl}</em> : null}
               <div className="core-connection-actions">
-                <button
+                <Button
                   type="button"
-                  className="small-link-button"
+                  variant="appLink"
                   disabled={!coreCredentialStatus?.exists}
                   onClick={() => void clearToken("core")}
                 >
                   Clear stored token
-                </button>
-                <button className="small-button settings-button" onClick={() => void saveCoreConnection()}>
+                </Button>
+                <Button variant="appNeutral" size="appSmall" onClick={() => void saveCoreConnection()}>
                   Save Core connection
-                </button>
+                </Button>
               </div>
             </article>
           </SettingsSection>
@@ -336,21 +337,21 @@ function ProfileWorkflows({
         onChange={(event) => onProfileNameChange(event.target.value)}
       />
       <div className="profile-actions">
-        <button className="small-button settings-button" onClick={() => void onProfileAction("create")}>
+        <Button variant="appNeutral" size="appSmall" onClick={() => void onProfileAction("create")}>
           Create
-        </button>
-        <button className="small-button settings-button" onClick={() => void onProfileAction("clone")}>
+        </Button>
+        <Button variant="appNeutral" size="appSmall" onClick={() => void onProfileAction("clone")}>
           Clone
-        </button>
-        <button className="small-button settings-button" onClick={() => void onProfileAction("rename")}>
+        </Button>
+        <Button variant="appNeutral" size="appSmall" onClick={() => void onProfileAction("rename")}>
           Rename
-        </button>
-        <button className="small-button settings-button" onClick={() => void onProfileAction("switch")}>
+        </Button>
+        <Button variant="appNeutral" size="appSmall" onClick={() => void onProfileAction("switch")}>
           Switch
-        </button>
-        <button className="small-button settings-button danger" onClick={() => void onProfileAction("delete")}>
+        </Button>
+        <Button variant="appDanger" size="appSmall" onClick={() => void onProfileAction("delete")}>
           Delete current
-        </button>
+        </Button>
       </div>
     </div>
   );
@@ -452,12 +453,12 @@ function TokenField({
       </div>
       {actions === "inline" ? (
         <div className="token-actions-row">
-          <button className="small-button settings-button" disabled={!value.trim()} onClick={onSave}>
+          <Button variant="appNeutral" size="appSmall" disabled={!value.trim()} onClick={onSave}>
             Save
-          </button>
-          <button className="small-button settings-button" disabled={!status?.exists} onClick={onClear}>
+          </Button>
+          <Button variant="appNeutral" size="appSmall" disabled={!status?.exists} onClick={onClear}>
             Clear
-          </button>
+          </Button>
         </div>
       ) : null}
       <span>{storedLabel}</span>

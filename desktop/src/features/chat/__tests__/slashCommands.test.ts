@@ -31,6 +31,14 @@ describe("slash command helpers", () => {
     expect(filterSlashCommands(commands, "reload_").map((item) => item.text)).toEqual(["/reload-skills"]);
   });
 
+  it("shows the full command list for an empty slash query", () => {
+    const manyCommands = Array.from({ length: 35 }, (_, index) =>
+      command({ name: `command-${String(index).padStart(2, "0")}` }),
+    );
+
+    expect(filterSlashCommands(manyCommands, "")).toHaveLength(35);
+  });
+
   it("adds a trailing space for skills and commands requiring arguments", () => {
     const token = slashTokenAtCursor("/soft", 5);
     expect(token).not.toBeNull();

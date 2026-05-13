@@ -17,9 +17,9 @@ export function OnboardingOverlay({
   return (
     <div className="onboarding-scrim" role="presentation">
       <section className="onboarding-card" role="dialog" aria-modal="true" aria-label="Iris setup">
-        <button className="icon-button onboarding-close" title="Close onboarding" onClick={onClose}>
+        <Button variant="appIcon" size="icon-md" className="onboarding-close" title="Close onboarding" onClick={onClose}>
           <X size={15} />
-        </button>
+        </Button>
         <div className="onboarding-mark">
           <Sparkles size={24} />
         </div>
@@ -57,12 +57,12 @@ export function OnboardingOverlay({
           <Button size="appSmall" onClick={onOpenSettings}>
             Open Settings
           </Button>
-          <button className="ghost-button" onClick={onRefresh}>
+          <Button variant="appGhost" size="appSmall" onClick={onRefresh}>
             Retry connection
-          </button>
-          <button className="ghost-button" onClick={onClose}>
+          </Button>
+          <Button variant="appGhost" size="appSmall" onClick={onClose}>
             Start exploring
-          </button>
+          </Button>
         </div>
       </section>
     </div>

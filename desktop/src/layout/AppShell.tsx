@@ -19,7 +19,6 @@ import {
   SlidersHorizontal,
   SquarePen,
   Trash2,
-  X,
 } from "lucide-react";
 import irisSidebarIcon from "../assets/iris-sidebar-icon-borderless.png";
 import { navItems, viewTitle } from "../app/navigation";
@@ -53,6 +52,15 @@ import {
   DropdownMenuRadioItem,
   DropdownMenuTrigger,
 } from "../shared/ui/dropdown-menu";
+import {
+  CommandDialog,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+  CommandShortcut,
+} from "../shared/ui/command";
 import { Button } from "../shared/ui/button";
 
 export const SIDEBAR_AUTO_COLLAPSE_WIDTH = 820;
@@ -188,7 +196,6 @@ export function AppShell({
   );
   const [sessionSearchOpen, setSessionSearchOpen] = useState(false);
   const [sessionSearchQuery, setSessionSearchQuery] = useState("");
-  const [sessionSearchIndex, setSessionSearchIndex] = useState(0);
   const [sidebarOrganization, setSidebarOrganization] = useState<SidebarOrganization>(
     () => loadSidebarOrganization(),
   );
@@ -321,26 +328,11 @@ export function AppShell({
 
   useEffect(() => {
     if (!sessionSearchOpen) return undefined;
-    setSessionSearchIndex(0);
     const focusTimer = window.setTimeout(() => {
       sessionSearchInputRef.current?.focus();
     }, 0);
     return () => window.clearTimeout(focusTimer);
   }, [sessionSearchOpen]);
-
-  useEffect(() => {
-    setSessionSearchIndex(0);
-  }, [sessionSearchQuery]);
-
-  useEffect(() => {
-    if (!filteredSessionSearchItems.length) {
-      setSessionSearchIndex(0);
-      return;
-    }
-    setSessionSearchIndex((current) =>
-      clamp(current, 0, filteredSessionSearchItems.length - 1),
-    );
-  }, [filteredSessionSearchItems.length]);
 
   useEffect(() => {
     const handleOpenSearch = () => {
@@ -397,8 +389,9 @@ export function AppShell({
 
   return (
     <div className={shellClassName} style={shellStyle}>
-      <button
+      <Button
         type="button"
+        variant="ghost"
         className="sidebar-toggle"
         aria-label={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
         aria-expanded={!sidebarCollapsed}
@@ -407,7 +400,7 @@ export function AppShell({
         onClick={() => setSidebarCollapsedWithTransition((current) => !current)}
       >
         {sidebarCollapsed ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}
-      </button>
+      </Button>
       <aside className="sidebar">
         <div className="window-drag-zone" data-tauri-drag-region />
         <div className="brand-block">
@@ -429,7 +422,9 @@ export function AppShell({
             const isNewChatAction = item.id === "chat";
             return (
               <Fragment key={item.id}>
-                <button
+                <Button
+                  type="button"
+                  variant="ghost"
                   className={[
                     "nav-item",
                     isNewChatAction ? "new-chat-nav-item" : "",
@@ -450,10 +445,11 @@ export function AppShell({
                   <Icon size={17} />
                   <span>{item.label}</span>
                   {isNewChatAction ? <kbd className="nav-shortcut">⌘N</kbd> : null}
-                </button>
+                </Button>
                 {isNewChatAction ? (
-                  <button
+                  <Button
                     type="button"
+                    variant="ghost"
                     className={sessionSearchOpen ? "nav-item session-search-nav active" : "nav-item session-search-nav"}
                     aria-label="Search sessions"
                     aria-keyshortcuts="Meta+G"
@@ -464,7 +460,7 @@ export function AppShell({
                     <Search size={17} />
                     <span>Search</span>
                     <kbd className="nav-shortcut">⌘G</kbd>
-                  </button>
+                  </Button>
                 ) : null}
               </Fragment>
             );
@@ -498,24 +494,26 @@ export function AppShell({
                 <div className="profile-tree-header">
                   {renderSidebarSectionToggle("projects", "Projects", projectsSectionCollapsed)}
                   <div className="profile-tree-actions sidebar-section-actions">
-                    <button
+                    <Button
                       type="button"
+                      variant="ghost"
                       className="sidebar-icon-button"
                       onClick={onRefreshProjects}
                       title="Refresh projects"
                     >
                       <RefreshCcw size={13} />
-                    </button>
+                    </Button>
                     {renderSidebarOrganizationButton()}
-                    <button
+                    <Button
                       type="button"
+                      variant="ghost"
                       className="sidebar-icon-button"
                       onClick={openProjectCreateDialog}
                       aria-label="Create project"
                       title="Create project"
                     >
                       <Plus size={14} />
-                    </button>
+                    </Button>
                   </div>
                 </div>
                 {!projectsSectionCollapsed ? (
@@ -572,25 +570,27 @@ export function AppShell({
               <div className="profile-tree-header">
                 {renderSidebarSectionToggle("agents", "Agents", agentsSectionCollapsed)}
                 <div className="profile-tree-actions sidebar-section-actions">
-                  <button
+                  <Button
                     type="button"
+                    variant="ghost"
                     className="sidebar-icon-button"
                     onClick={() => onRefreshSessions(selectedProfile)}
                     disabled={sessionsLoading}
                     title="Refresh sessions"
                   >
                     <RefreshCcw size={13} className={sessionsLoading ? "spin" : ""} />
-                  </button>
+                  </Button>
                   {renderSidebarOrganizationButton()}
-                  <button
+                  <Button
                     type="button"
+                    variant="ghost"
                     className="sidebar-icon-button"
                     onClick={() => openProfileCreateDialog()}
                     aria-label="Create agent"
                     title="Create agent"
                   >
                     <Plus size={14} />
-                  </button>
+                  </Button>
                 </div>
               </div>
               {!agentsSectionCollapsed ? (
@@ -623,8 +623,9 @@ export function AppShell({
                     return (
                       <div key={profile.name} className="profile-node">
                         <div className="profile-node-row">
-                          <button
+                          <Button
                             type="button"
+                            variant="ghost"
                             className="profile-node-button"
                             aria-expanded={!collapsed}
                             onClick={() => {
@@ -641,22 +642,23 @@ export function AppShell({
                           >
                             <ProfileFolderIcon size={16} />
                             <span>{profile.name}</span>
-                          </button>
+                          </Button>
                           <div className="profile-row-actions">
                             <DropdownMenu onOpenChange={(open) => {
                               if (open) closeSidebarMenus();
                             }}>
                               <div className="profile-menu-wrap">
                                 <DropdownMenuTrigger asChild>
-                                  <button
+                                  <Button
                                     type="button"
+                                    variant="ghost"
                                     className="profile-row-action profile-menu-trigger"
                                     title={`More actions for ${profile.name}`}
                                     aria-label={`More actions for ${profile.name}`}
                                     onClick={(event) => event.stopPropagation()}
                                   >
                                     <Ellipsis size={17} />
-                                  </button>
+                                  </Button>
                                 </DropdownMenuTrigger>
                                 <DropdownMenuContent align="end" sideOffset={6}>
                                   <DropdownMenuGroup>
@@ -681,8 +683,9 @@ export function AppShell({
                                 </DropdownMenuContent>
                               </div>
                             </DropdownMenu>
-                            <button
+                            <Button
                               type="button"
+                              variant="ghost"
                               className="profile-row-action profile-new-chat-action"
                               title={`Start new session in ${profile.name}`}
                               aria-label={`Start new session in ${profile.name}`}
@@ -694,7 +697,7 @@ export function AppShell({
                               }}
                             >
                               <SquarePen size={16} />
-                            </button>
+                            </Button>
                           </div>
                         </div>
                         {showSessionBranch ? (
@@ -728,10 +731,10 @@ export function AppShell({
           )}
         </div>
 
-        <button className="sidebar-refresh" onClick={onRefresh} disabled={isRefreshing} title="Refresh connection">
+        <Button variant="appGhost" size="appSmall" className="sidebar-refresh" onClick={onRefresh} disabled={isRefreshing} title="Refresh connection">
           <RefreshCcw size={15} className={isRefreshing ? "spin" : ""} />
           <span>Refresh connection</span>
-        </button>
+        </Button>
         <div
           className="sidebar-resize-handle"
           role="separator"
@@ -839,8 +842,9 @@ export function AppShell({
         }}>
           <ContextMenuTrigger asChild>
             <div className="profile-node-row">
-              <button
+              <Button
                 type="button"
+                variant="ghost"
                 className="profile-node-button"
                 aria-expanded={!collapsed}
                 onClick={() => {
@@ -857,22 +861,23 @@ export function AppShell({
               >
                 <ProjectFolderIcon size={16} />
                 <span>{project.name}</span>
-              </button>
+              </Button>
               <div className="profile-row-actions">
                 <DropdownMenu onOpenChange={(open) => {
                   if (open) closeSidebarMenus();
                 }}>
                   <div className="project-menu-wrap">
                     <DropdownMenuTrigger asChild>
-                      <button
+                      <Button
                         type="button"
+                        variant="ghost"
                         className="profile-row-action profile-menu-trigger"
                         title={`More actions for ${project.name}`}
                         aria-label={`More actions for ${project.name}`}
                         onClick={(event) => event.stopPropagation()}
                       >
                         <Ellipsis size={17} />
-                      </button>
+                      </Button>
                     </DropdownMenuTrigger>
                     <DropdownMenuContent align="end" sideOffset={6}>
                       <DropdownMenuGroup>
@@ -884,8 +889,9 @@ export function AppShell({
                     </DropdownMenuContent>
                   </div>
                 </DropdownMenu>
-                <button
+                <Button
                   type="button"
+                  variant="ghost"
                   className="profile-row-action profile-new-chat-action"
                   title={`Start new session in ${project.name}`}
                   aria-label={`Start new session in ${project.name}`}
@@ -896,7 +902,7 @@ export function AppShell({
                   }}
                 >
                   <SquarePen size={16} />
-                </button>
+                </Button>
               </div>
             </div>
           </ContextMenuTrigger>
@@ -983,8 +989,9 @@ export function AppShell({
       >
         <ContextMenuTrigger asChild>
           <div className={rowClassName}>
-            <button
+            <Button
               type="button"
+              variant="ghost"
               className="sidebar-session-pin"
               aria-label={pinned ? `Unpin ${session.title}` : `Pin ${session.title}`}
               title={pinned ? "Unpin session" : "Pin session"}
@@ -994,9 +1001,10 @@ export function AppShell({
               }}
             >
               <Pin size={14} />
-            </button>
-            <button
+            </Button>
+            <Button
               type="button"
+              variant="ghost"
               className="sidebar-session"
               onClick={options.onSelect || (() => onSelectSession(profileName, session.id))}
             >
@@ -1011,7 +1019,7 @@ export function AppShell({
               >
                 {running ? <i aria-hidden="true" /> : unread ? <i aria-hidden="true" /> : rightLabel}
               </em>
-            </button>
+            </Button>
           </div>
         </ContextMenuTrigger>
         <ContextMenuContent
@@ -1078,14 +1086,12 @@ export function AppShell({
       onRefreshSessions(profile.name);
     }
     setSessionSearchQuery("");
-    setSessionSearchIndex(0);
     setSessionSearchOpen(true);
   }
 
   function closeSessionSearch() {
     setSessionSearchOpen(false);
     setSessionSearchQuery("");
-    setSessionSearchIndex(0);
   }
 
   function startSelectedProfileSession() {
@@ -1142,88 +1148,56 @@ export function AppShell({
     const loadingAnySession = Object.values(sessionsLoadingByProfile).some(Boolean);
 
     return (
-      <div className="session-search-scrim" role="presentation" onMouseDown={closeSessionSearch}>
-        <section
-          className="session-search-dialog"
-          role="dialog"
-          aria-modal="true"
+      <CommandDialog
+        open={sessionSearchOpen}
+        onOpenChange={(open) => {
+          if (!open) closeSessionSearch();
+        }}
+        title="Search sessions"
+        description="Search recent sessions"
+        commandProps={{ shouldFilter: false }}
+        showCloseButton={false}
+      >
+        <CommandInput
+          ref={sessionSearchInputRef}
+          value={sessionSearchQuery}
+          placeholder="Search sessions"
           aria-label="Search sessions"
-          onMouseDown={(event) => event.stopPropagation()}
-        >
-          <div className="session-search-input-wrap">
-            <Search size={18} />
-            <input
-              ref={sessionSearchInputRef}
-              value={sessionSearchQuery}
-              placeholder="Search sessions"
-              onChange={(event) => setSessionSearchQuery(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Escape") {
-                  event.preventDefault();
-                  closeSessionSearch();
-                }
-                if (event.key === "ArrowDown") {
-                  event.preventDefault();
-                  setSessionSearchIndex((current) =>
-                    clamp(current + 1, 0, Math.max(0, filteredSessionSearchItems.length - 1)),
-                  );
-                }
-                if (event.key === "ArrowUp") {
-                  event.preventDefault();
-                  setSessionSearchIndex((current) =>
-                    clamp(current - 1, 0, Math.max(0, filteredSessionSearchItems.length - 1)),
-                  );
-                }
-                if (event.key === "Enter" && filteredSessionSearchItems[sessionSearchIndex]) {
-                  event.preventDefault();
-                  selectSessionSearchItem(filteredSessionSearchItems[sessionSearchIndex]);
-                }
-                if ((event.metaKey || event.ctrlKey) && /^[1-9]$/.test(event.key)) {
-                  const shortcutIndex = Number(event.key) - 1;
-                  const item = filteredSessionSearchItems[shortcutIndex];
-                  if (item) {
-                    event.preventDefault();
-                    selectSessionSearchItem(item);
-                  }
-                }
-              }}
-            />
-            <button
-              type="button"
-              className="icon-button session-search-close"
-              title="Close search"
-              onClick={closeSessionSearch}
-            >
-              <X size={15} />
-            </button>
-          </div>
-          <div className="session-search-results">
-            <p className="session-search-heading">
-              {loadingAnySession && !sessionSearchItems.length ? "Loading sessions" : heading}
-            </p>
-            {filteredSessionSearchItems.length ? (
-              filteredSessionSearchItems.map((item, index) => (
-                <button
-                  type="button"
-                  key={`${item.profileName}:${item.session.id}`}
-                  className={index === sessionSearchIndex ? "session-search-row active" : "session-search-row"}
-                  onMouseEnter={() => setSessionSearchIndex(index)}
-                  onClick={() => selectSessionSearchItem(item)}
-                >
-                  <MessageSquare size={16} />
-                  <span>{item.session.title}</span>
-                  <small>{item.sourceLabel}</small>
-                  <kbd>{`⌘${index + 1}`}</kbd>
-                </button>
-              ))
-            ) : (
-              <p className="session-search-empty">
-                {loadingAnySession ? "Loading sessions..." : "No matching sessions."}
-              </p>
-            )}
-          </div>
-        </section>
-      </div>
+          onValueChange={setSessionSearchQuery}
+          onKeyDown={(event) => {
+            if ((event.metaKey || event.ctrlKey) && /^[1-9]$/.test(event.key)) {
+              const shortcutIndex = Number(event.key) - 1;
+              const item = filteredSessionSearchItems[shortcutIndex];
+              if (item) {
+                event.preventDefault();
+                selectSessionSearchItem(item);
+              }
+            }
+          }}
+        />
+        <CommandList className="max-h-[430px]">
+          <CommandGroup heading={loadingAnySession && !sessionSearchItems.length ? "Loading sessions" : heading}>
+            {filteredSessionSearchItems.map((item, index) => (
+              <CommandItem
+                key={`${item.profileName}:${item.session.id}`}
+                value={`${item.session.title} ${item.profileName} ${item.sourceLabel}`}
+                className="grid min-h-[43px] grid-cols-[auto_minmax(0,1fr)_minmax(72px,auto)_auto] gap-2.5 rounded-lg px-2.5 py-[7px] text-left text-[13px]"
+                onSelect={() => selectSessionSearchItem(item)}
+              >
+                <MessageSquare data-icon="inline-start" />
+                <span className="truncate">{item.session.title}</span>
+                <small className="truncate text-xs text-menu-muted-foreground group-data-[selected=true]:text-[#b7bfcc]">
+                  {item.sourceLabel}
+                </small>
+                <CommandShortcut>{`⌘${index + 1}`}</CommandShortcut>
+              </CommandItem>
+            ))}
+          </CommandGroup>
+          {!filteredSessionSearchItems.length ? (
+            <CommandEmpty>{loadingAnySession ? "Loading sessions..." : "No matching sessions."}</CommandEmpty>
+          ) : null}
+        </CommandList>
+      </CommandDialog>
     );
   }
 
@@ -1246,8 +1220,9 @@ export function AppShell({
   function renderSidebarSectionToggle(section: SidebarSectionId, label: string, collapsed: boolean) {
     const SectionIcon = collapsed ? ChevronRight : ChevronDown;
     return (
-      <button
+      <Button
         type="button"
+        variant="ghost"
         className="sidebar-section-toggle"
         aria-label={`${collapsed ? "Expand" : "Collapse"} ${label.toLowerCase()} section`}
         aria-expanded={!collapsed}
@@ -1257,7 +1232,7 @@ export function AppShell({
       >
         <span className="sidebar-label">{label}</span>
         <SectionIcon className="sidebar-section-chevron" size={13} />
-      </button>
+      </Button>
     );
   }
 
@@ -1267,15 +1242,16 @@ export function AppShell({
         if (open) closeSidebarMenus();
       }}>
         <DropdownMenuTrigger asChild>
-          <button
+          <Button
             type="button"
+            variant="ghost"
             className="sidebar-icon-button sidebar-organization-trigger"
             aria-label="Organize sidebar"
             title={`Organize by ${sidebarOrganization === "projects" ? "project" : "agent"}`}
             onClick={(event) => event.stopPropagation()}
           >
             <SlidersHorizontal size={14} />
-          </button>
+          </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" sideOffset={6}>
           <DropdownMenuLabel>Organize</DropdownMenuLabel>

@@ -52,8 +52,9 @@ export function AgentList({ profiles, onOpenAgent, onProfileAction }: AgentListP
             key={profile.name}
             className="agent-list-row"
           >
-            <button
+            <Button
               type="button"
+              variant="ghost"
               className="agent-list-row-open"
               onClick={() => onOpenAgent(profile.name)}
             >
@@ -79,18 +80,19 @@ export function AgentList({ profiles, onOpenAgent, onProfileAction }: AgentListP
                 <strong>{profile.skillCount}</strong>
                 <small>Skills</small>
               </span>
-            </button>
+            </Button>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <button
+                <Button
                   type="button"
+                  variant="ghost"
                   className="profile-row-action agent-list-menu-trigger"
                   aria-label={`More actions for ${profile.name}`}
                   title={`More actions for ${profile.name}`}
                   onClick={(event) => event.stopPropagation()}
                 >
                   <Ellipsis size={18} />
-                </button>
+                </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" sideOffset={6}>
                 <DropdownMenuGroup>
@@ -167,16 +169,17 @@ export function AgentList({ profiles, onOpenAgent, onProfileAction }: AgentListP
           </label>
           {error ? <p className="profile-action-error">{error}</p> : null}
           <div className="profile-action-modal-actions">
-            <button type="button" className="small-button settings-button" onClick={closeDialog}>
+            <Button type="button" variant="appNeutral" size="appSmall" onClick={closeDialog}>
               Cancel
-            </button>
-            <button
+            </Button>
+            <Button
               type="submit"
-              className={isDelete ? "small-button settings-button danger" : "small-button settings-button"}
+              variant={isDelete ? "appDanger" : "appNeutral"}
+              size="appSmall"
               disabled={disabled}
             >
               {busy ? "Working..." : submitLabel}
-            </button>
+            </Button>
           </div>
         </form>
       </div>
