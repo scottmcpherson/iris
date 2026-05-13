@@ -3,6 +3,15 @@ import { CodeEditor } from "../shared/CodeEditor";
 import type { AgentUICoreAgent } from "../lib/agentuiCore";
 import { Button } from "../shared/ui/button";
 import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "../shared/ui/dialog";
+import { Input } from "../shared/ui/input";
+import {
   Select,
   SelectContent,
   SelectGroup,
@@ -55,6 +64,11 @@ type SessionActionDialogProps = {
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
 };
 
+const dialogContentClassName = "border-menu-border bg-menu text-menu-foreground shadow-context-menu sm:max-w-[360px]";
+const projectDialogContentClassName = "border-menu-border bg-menu text-menu-foreground shadow-context-menu sm:max-w-[560px]";
+const labelClassName = "grid gap-[7px] text-xs font-[750] text-menu-muted-foreground";
+const inputClassName = "h-[38px] border-menu-border bg-secondary text-menu-hover-foreground placeholder:text-menu-muted-foreground";
+
 export function ProjectActionDialog({
   dialog,
   busy,
@@ -69,63 +83,76 @@ export function ProjectActionDialog({
   const agentOptions = projectAgentOptions(projectAgents, dialog.defaultAgentId);
 
   return (
-    <div className="profile-action-modal project-action-modal" role="dialog" aria-modal="true" aria-labelledby="project-action-title">
-      <form onSubmit={onSubmit}>
-        <div>
-          <p className="eyebrow">{isCreate ? "Project management" : "Project"}</p>
-          <h2 id="project-action-title">{isCreate ? "New project" : "Edit project"}</h2>
-        </div>
-        <label>
-          <span>Project name</span>
-          <input
-            autoFocus
-            value={dialog.name}
-            placeholder="new-project"
-            onChange={(event) => onChange({ ...dialog, name: event.target.value })}
-          />
-        </label>
-        <label>
-          <span>Default agent</span>
-          <Select
-            value={dialog.defaultAgentId}
-            onValueChange={(value) => onChange({ ...dialog, defaultAgentId: value })}
-          >
-            <SelectTrigger className="w-full">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectGroup>
-                {agentOptions.map((agent) => (
-                  <SelectItem key={agent.id} value={agent.id}>
-                    {agent.displayName || agent.runtimeProfile || agent.id}
-                  </SelectItem>
-                ))}
-              </SelectGroup>
-            </SelectContent>
-          </Select>
-        </label>
-        <div className="project-prompt-editor">
-          <span>System prompt</span>
-          <CodeEditor
-            value={dialog.systemPrompt}
-            onChange={(value) => onChange({ ...dialog, systemPrompt: value })}
-            metadata={[
-              { label: "lines", value: `${dialog.systemPrompt.split("\n").length} lines` },
-              { label: "scope", value: "project only" },
-            ]}
-          />
-        </div>
-        {error ? <p className="profile-action-error">{error}</p> : null}
-        <div className="profile-action-modal-actions">
-          <Button type="button" variant="appNeutral" size="appSmall" onClick={onCancel}>
-            Cancel
-          </Button>
-          <Button type="submit" variant="appNeutral" size="appSmall" disabled={submitDisabled}>
-            {busy ? "Working..." : isCreate ? "Create" : "Save"}
-          </Button>
-        </div>
-      </form>
-    </div>
+    <Dialog
+      open
+      onOpenChange={(open) => {
+        if (!open) onCancel();
+      }}
+    >
+      <DialogContent className={projectDialogContentClassName} showCloseButton={false}>
+        <form className="grid gap-4" onSubmit={onSubmit}>
+          <DialogHeader>
+            <DialogDescription className="text-xs font-[750] text-menu-muted-foreground">
+              {isCreate ? "Project management" : "Project"}
+            </DialogDescription>
+            <DialogTitle className="text-lg text-menu-hover-foreground">
+              {isCreate ? "New project" : "Edit project"}
+            </DialogTitle>
+          </DialogHeader>
+          <label className={labelClassName}>
+            <span>Project name</span>
+            <Input
+              autoFocus
+              className={inputClassName}
+              value={dialog.name}
+              placeholder="new-project"
+              onChange={(event) => onChange({ ...dialog, name: event.target.value })}
+            />
+          </label>
+          <label className={labelClassName}>
+            <span>Default agent</span>
+            <Select
+              value={dialog.defaultAgentId}
+              onValueChange={(value) => onChange({ ...dialog, defaultAgentId: value })}
+            >
+              <SelectTrigger className="w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectGroup>
+                  {agentOptions.map((agent) => (
+                    <SelectItem key={agent.id} value={agent.id}>
+                      {agent.displayName || agent.runtimeProfile || agent.id}
+                    </SelectItem>
+                  ))}
+                </SelectGroup>
+              </SelectContent>
+            </Select>
+          </label>
+          <div className="grid min-h-[220px] gap-[7px]">
+            <span className="text-xs font-[750] text-menu-muted-foreground">System prompt</span>
+            <CodeEditor
+              className="min-h-[190px] overflow-hidden rounded-[10px] border border-menu-border bg-background/20"
+              value={dialog.systemPrompt}
+              onChange={(value) => onChange({ ...dialog, systemPrompt: value })}
+              metadata={[
+                { label: "lines", value: `${dialog.systemPrompt.split("\n").length} lines` },
+                { label: "scope", value: "project only" },
+              ]}
+            />
+          </div>
+          {error ? <p className="text-xs leading-[1.45] text-menu-danger">{error}</p> : null}
+          <DialogFooter className="gap-2">
+            <Button type="button" variant="appNeutral" size="appSmall" onClick={onCancel}>
+              Cancel
+            </Button>
+            <Button type="submit" variant="appNeutral" size="appSmall" disabled={submitDisabled}>
+              {busy ? "Working..." : isCreate ? "Create" : "Save"}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -141,32 +168,42 @@ export function SessionActionDialog({
   const submitDisabled = busy || !inputValue.trim();
 
   return (
-    <div className="profile-action-modal" role="dialog" aria-modal="true" aria-labelledby="session-action-title">
-      <form onSubmit={onSubmit}>
-        <div>
-          <p className="eyebrow">Session</p>
-          <h2 id="session-action-title">Rename session</h2>
-        </div>
-        <label>
-          <span>Session name</span>
-          <input
-            autoFocus
-            value={inputValue}
-            placeholder="Session name"
-            onChange={(event) => onChange({ ...dialog, name: event.target.value })}
-          />
-        </label>
-        {error ? <p className="profile-action-error">{error}</p> : null}
-        <div className="profile-action-modal-actions">
-          <Button type="button" variant="appNeutral" size="appSmall" onClick={onCancel}>
-            Cancel
-          </Button>
-          <Button type="submit" variant="appNeutral" size="appSmall" disabled={submitDisabled}>
-            {busy ? "Working..." : "Rename"}
-          </Button>
-        </div>
-      </form>
-    </div>
+    <Dialog
+      open
+      onOpenChange={(open) => {
+        if (!open) onCancel();
+      }}
+    >
+      <DialogContent className={dialogContentClassName} showCloseButton={false}>
+        <form className="grid gap-4" onSubmit={onSubmit}>
+          <DialogHeader>
+            <DialogDescription className="text-xs font-[750] text-menu-muted-foreground">
+              Session
+            </DialogDescription>
+            <DialogTitle className="text-lg text-menu-hover-foreground">Rename session</DialogTitle>
+          </DialogHeader>
+          <label className={labelClassName}>
+            <span>Session name</span>
+            <Input
+              autoFocus
+              className={inputClassName}
+              value={inputValue}
+              placeholder="Session name"
+              onChange={(event) => onChange({ ...dialog, name: event.target.value })}
+            />
+          </label>
+          {error ? <p className="text-xs leading-[1.45] text-menu-danger">{error}</p> : null}
+          <DialogFooter className="gap-2">
+            <Button type="button" variant="appNeutral" size="appSmall" onClick={onCancel}>
+              Cancel
+            </Button>
+            <Button type="submit" variant="appNeutral" size="appSmall" disabled={submitDisabled}>
+              {busy ? "Working..." : "Rename"}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -192,37 +229,47 @@ export function ProfileActionDialog({
   const submitDisabled = busy || (isDelete ? inputValue.trim() !== source : !inputValue.trim());
 
   return (
-    <div className="profile-action-modal" role="dialog" aria-modal="true" aria-labelledby="profile-action-title">
-      <form onSubmit={onSubmit}>
-        <div>
-          <p className="eyebrow">{isDelete ? "Agent deletion" : "Agent management"}</p>
-          <h2 id="profile-action-title">{title}</h2>
-        </div>
-        <label>
-          <span>{label}</span>
-          <input
-            autoFocus
-            value={inputValue}
-            placeholder={isDelete ? source : "agent-name"}
-            onChange={(event) => onChange({ ...dialog, name: event.target.value })}
-          />
-        </label>
-        {error ? <p className="profile-action-error">{error}</p> : null}
-        <div className="profile-action-modal-actions">
-          <Button type="button" variant="appNeutral" size="appSmall" onClick={onCancel}>
-            Cancel
-          </Button>
-          <Button
-            type="submit"
-            variant={isDelete ? "appDanger" : "appNeutral"}
-            size="appSmall"
-            disabled={submitDisabled}
-          >
-            {busy ? "Working..." : submitLabel}
-          </Button>
-        </div>
-      </form>
-    </div>
+    <Dialog
+      open
+      onOpenChange={(open) => {
+        if (!open) onCancel();
+      }}
+    >
+      <DialogContent className={dialogContentClassName} showCloseButton={false}>
+        <form className="grid gap-4" onSubmit={onSubmit}>
+          <DialogHeader>
+            <DialogDescription className="text-xs font-[750] text-menu-muted-foreground">
+              {isDelete ? "Agent deletion" : "Agent management"}
+            </DialogDescription>
+            <DialogTitle className="text-lg text-menu-hover-foreground">{title}</DialogTitle>
+          </DialogHeader>
+          <label className={labelClassName}>
+            <span>{label}</span>
+            <Input
+              autoFocus
+              className={inputClassName}
+              value={inputValue}
+              placeholder={isDelete ? source : "agent-name"}
+              onChange={(event) => onChange({ ...dialog, name: event.target.value })}
+            />
+          </label>
+          {error ? <p className="text-xs leading-[1.45] text-menu-danger">{error}</p> : null}
+          <DialogFooter className="gap-2">
+            <Button type="button" variant="appNeutral" size="appSmall" onClick={onCancel}>
+              Cancel
+            </Button>
+            <Button
+              type="submit"
+              variant={isDelete ? "appDanger" : "appNeutral"}
+              size="appSmall"
+              disabled={submitDisabled}
+            >
+              {busy ? "Working..." : submitLabel}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
   );
 }
 

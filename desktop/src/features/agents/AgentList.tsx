@@ -11,6 +11,15 @@ import {
   DropdownMenuTrigger,
 } from "../../shared/ui/dropdown-menu";
 import { Button } from "../../shared/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "../../shared/ui/dialog";
+import { Input } from "../../shared/ui/input";
 import type { HermesProfile } from "../../types/hermes";
 
 type AgentListDialog =
@@ -23,6 +32,10 @@ type AgentListProps = {
   onOpenAgent: (profileName: string) => void;
   onProfileAction: ProfileActionHandler;
 };
+
+const dialogContentClassName = "border-menu-border bg-menu text-menu-foreground shadow-context-menu sm:max-w-[360px]";
+const labelClassName = "grid gap-[7px] text-xs font-[750] text-menu-muted-foreground";
+const inputClassName = "h-[38px] border-menu-border bg-secondary text-menu-hover-foreground placeholder:text-menu-muted-foreground";
 
 export function AgentList({ profiles, onOpenAgent, onProfileAction }: AgentListProps) {
   const [dialog, setDialog] = useState<AgentListDialog | null>(null);
@@ -152,37 +165,47 @@ export function AgentList({ profiles, onOpenAgent, onProfileAction }: AgentListP
     const disabled = busy || (isDelete ? dialog.name.trim() !== source : !dialog.name.trim());
 
     return (
-      <div className="profile-action-modal" role="dialog" aria-modal="true" aria-labelledby="agent-list-action-title">
-        <form onSubmit={submitDialog}>
-          <div>
-            <p className="eyebrow">{isDelete ? "Agent deletion" : "Agent management"}</p>
-            <h2 id="agent-list-action-title">{title}</h2>
-          </div>
-          <label>
-            <span>{label}</span>
-            <input
-              autoFocus
-              value={dialog.name}
-              placeholder={isDelete ? source : "agent-name"}
-              onChange={(event) => setDialog({ ...dialog, name: event.target.value })}
-            />
-          </label>
-          {error ? <p className="profile-action-error">{error}</p> : null}
-          <div className="profile-action-modal-actions">
-            <Button type="button" variant="appNeutral" size="appSmall" onClick={closeDialog}>
-              Cancel
-            </Button>
-            <Button
-              type="submit"
-              variant={isDelete ? "appDanger" : "appNeutral"}
-              size="appSmall"
-              disabled={disabled}
-            >
-              {busy ? "Working..." : submitLabel}
-            </Button>
-          </div>
-        </form>
-      </div>
+      <Dialog
+        open
+        onOpenChange={(open) => {
+          if (!open) closeDialog();
+        }}
+      >
+        <DialogContent className={dialogContentClassName} showCloseButton={false}>
+          <form className="grid gap-4" onSubmit={submitDialog}>
+            <DialogHeader>
+              <DialogDescription className="text-xs font-[750] text-menu-muted-foreground">
+                {isDelete ? "Agent deletion" : "Agent management"}
+              </DialogDescription>
+              <DialogTitle className="text-lg text-menu-hover-foreground">{title}</DialogTitle>
+            </DialogHeader>
+            <label className={labelClassName}>
+              <span>{label}</span>
+              <Input
+                autoFocus
+                className={inputClassName}
+                value={dialog.name}
+                placeholder={isDelete ? source : "agent-name"}
+                onChange={(event) => setDialog({ ...dialog, name: event.target.value })}
+              />
+            </label>
+            {error ? <p className="text-xs leading-[1.45] text-menu-danger">{error}</p> : null}
+            <DialogFooter className="gap-2">
+              <Button type="button" variant="appNeutral" size="appSmall" onClick={closeDialog}>
+                Cancel
+              </Button>
+              <Button
+                type="submit"
+                variant={isDelete ? "appDanger" : "appNeutral"}
+                size="appSmall"
+                disabled={disabled}
+              >
+                {busy ? "Working..." : submitLabel}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
     );
   }
 

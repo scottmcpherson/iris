@@ -17,6 +17,15 @@ import { loadJsonValue, saveJsonValue, storageKeys } from "../../app/storage";
 import { ViewHeader } from "../../shared/ViewHeader";
 import { endpointLabel, formatBytes } from "../../shared/format";
 import { Button } from "../../shared/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "../../shared/ui/dialog";
+import { Input } from "../../shared/ui/input";
 import type { HermesMemory, HermesMemoryFile, HermesMemoryHistoryEntry, HermesStatus } from "../../types/hermes";
 
 type MemoryFileKey = "memory" | "user";
@@ -282,27 +291,42 @@ export function MemoryView({
       </Button>
 
       {resetTarget ? (
-        <div className="memory-reset-modal" role="dialog" aria-modal="true">
-          <div>
-            <AlertTriangle size={18} />
-            <strong>Reset {resetTarget === "all" ? "all memory" : fileLabels[resetTarget]}</strong>
-          </div>
-          <p>This removes the selected memory file from the active agent after saving a revision snapshot.</p>
-          <input
-            autoFocus
-            value={resetText}
-            onChange={(event) => setResetText(event.target.value)}
-            placeholder="RESET MEMORY"
-          />
-          <div>
-            <Button variant="appGhost" size="appSmall" type="button" onClick={cancelReset}>
-              Cancel
-            </Button>
-            <Button variant="appDanger" size="appSmall" type="button" disabled={resetText !== "RESET MEMORY"} onClick={confirmReset}>
-              Confirm reset
-            </Button>
-          </div>
-        </div>
+        <Dialog
+          open
+          onOpenChange={(open) => {
+            if (!open) cancelReset();
+          }}
+        >
+          <DialogContent
+            className="border-menu-danger/25 bg-menu text-menu-foreground shadow-context-menu sm:max-w-[420px]"
+            showCloseButton={false}
+          >
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2 text-lg text-menu-hover-foreground">
+                <AlertTriangle size={18} />
+                Reset {resetTarget === "all" ? "all memory" : fileLabels[resetTarget]}
+              </DialogTitle>
+              <DialogDescription className="text-sm leading-[1.45] text-menu-muted-foreground">
+                This removes the selected memory file from the active agent after saving a revision snapshot.
+              </DialogDescription>
+            </DialogHeader>
+            <Input
+              autoFocus
+              className="h-[38px] border-menu-border bg-secondary text-menu-hover-foreground placeholder:text-menu-muted-foreground"
+              value={resetText}
+              onChange={(event) => setResetText(event.target.value)}
+              placeholder="RESET MEMORY"
+            />
+            <DialogFooter className="gap-2">
+              <Button variant="appGhost" size="appSmall" type="button" onClick={cancelReset}>
+                Cancel
+              </Button>
+              <Button variant="appDanger" size="appSmall" type="button" disabled={resetText !== "RESET MEMORY"} onClick={confirmReset}>
+                Confirm reset
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       ) : null}
     </div>
   );
