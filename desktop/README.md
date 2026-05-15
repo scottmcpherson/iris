@@ -47,7 +47,7 @@ Settings edits only the Iris Core URL and Core bearer token. Runtime-specific ro
 Useful environment variables:
 
 - `HERMES_DESKTOP_PYTHON`: override the Python interpreter used by the Tauri bridge.
-- `IRIS_CORE_TOKEN`: provide a bearer token for Iris Core.
+- `IRIS_TOKEN`: provide the Iris bearer token for non-loopback Core traffic.
 
 ## Production Checks
 

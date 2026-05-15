@@ -1,27 +1,27 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
-  agentUICoreAttachmentUrl,
-  cloneAgentUICoreAgent,
-  createAgentUICoreAgent,
-  createAgentUICoreAgentSkill,
-  deleteAgentUICoreAgent,
-  getAgentUICoreAgentMemory,
-  getAgentUICoreAutomationEvents,
-  getAgentUICoreAgentSkill,
-  getAgentUICoreAgentSkills,
-  getAgentUICoreEvents,
-  getAgentUICoreLatestEventCursor,
-  getAgentUICoreAttachmentDataUrl,
-  renameAgentUICoreAgent,
-  resetAgentUICoreAgentMemory,
-  saveAgentUICoreAgentMemory,
-  saveAgentUICoreAgentSkill,
-  sendAgentUICoreMessage,
-  updateAgentUICoreSession,
-  updateAgentUICoreSessionReadState,
+  irisCoreAttachmentUrl,
+  cloneIrisCoreAgent,
+  createIrisCoreAgent,
+  createIrisCoreAgentSkill,
+  deleteIrisCoreAgent,
+  getIrisCoreAgentMemory,
+  getIrisCoreAutomationEvents,
+  getIrisCoreAgentSkill,
+  getIrisCoreAgentSkills,
+  getIrisCoreEvents,
+  getIrisCoreLatestEventCursor,
+  getIrisCoreAttachmentDataUrl,
+  renameIrisCoreAgent,
+  resetIrisCoreAgentMemory,
+  saveIrisCoreAgentMemory,
+  saveIrisCoreAgentSkill,
+  sendIrisCoreMessage,
+  updateIrisCoreSession,
+  updateIrisCoreSessionReadState,
   updateIrisProject,
-  uploadAgentUICoreAttachment,
-} from "../agentuiCore";
+  uploadIrisCoreAttachment,
+} from "../irisCore";
 import { defaultRuntimeConfig } from "../../app/runtimeConfig";
 
 const invoke = vi.fn();
@@ -30,7 +30,7 @@ vi.mock("@tauri-apps/api/core", () => ({
   invoke: (...args: unknown[]) => invoke(...args),
 }));
 
-describe("agentuiCore", () => {
+describe("irisCore", () => {
   beforeEach(() => {
     invoke.mockReset();
   });
@@ -51,7 +51,7 @@ describe("agentuiCore", () => {
     );
     invoke.mockResolvedValue({ ok: true, events: [], cursor: 7 });
 
-    const result = await getAgentUICoreEvents(7, 50, defaultRuntimeConfig, "agent_default");
+    const result = await getIrisCoreEvents(7, 50, defaultRuntimeConfig, "agent_default");
 
     expect(result).toEqual({ ok: true, events: [], cursor: 7 });
     expect(invoke).toHaveBeenCalledWith("core_bridge", {
@@ -79,7 +79,7 @@ describe("agentuiCore", () => {
       }),
     );
 
-    const result = await getAgentUICoreLatestEventCursor(defaultRuntimeConfig, "agent_default");
+    const result = await getIrisCoreLatestEventCursor(defaultRuntimeConfig, "agent_default");
 
     expect(result.cursor).toBe(80);
     const query = new URL(calls[0]).searchParams;
@@ -102,7 +102,7 @@ describe("agentuiCore", () => {
       }),
     );
 
-    const result = await getAgentUICoreAutomationEvents(50, defaultRuntimeConfig, "agent_default");
+    const result = await getIrisCoreAutomationEvents(50, defaultRuntimeConfig, "agent_default");
 
     expect(result.cursor).toBe(95);
     const query = new URL(calls[0]).searchParams;
@@ -150,7 +150,7 @@ describe("agentuiCore", () => {
     }));
     vi.stubGlobal("fetch", fetch);
 
-    const result = await sendAgentUICoreMessage(
+    const result = await sendIrisCoreMessage(
       "session-1",
       { text: "hello", clientMessageId: "client-message-1" },
       defaultRuntimeConfig,
@@ -182,7 +182,7 @@ describe("agentuiCore", () => {
     );
     invoke.mockResolvedValue({ ok: true, dataUrl: "data:audio/mp4;base64,YQ==", mimeType: "audio/mp4" });
 
-    const result = await getAgentUICoreAttachmentDataUrl(
+    const result = await getIrisCoreAttachmentDataUrl(
       defaultRuntimeConfig,
       "http://127.0.0.1:8765/v1/attachments/att_1/content",
       "audio/mp4",
@@ -205,7 +205,7 @@ describe("agentuiCore", () => {
     vi.stubGlobal("fetch", fetch);
     invoke.mockResolvedValue({ ok: true, dataUrl: "data:audio/mp4;base64,YQ==", mimeType: "audio/mp4" });
 
-    const result = await getAgentUICoreAttachmentDataUrl(
+    const result = await getIrisCoreAttachmentDataUrl(
       defaultRuntimeConfig,
       "http://127.0.0.1:8765/v1/attachments/att_1/content",
       "audio/webm",
@@ -229,7 +229,7 @@ describe("agentuiCore", () => {
     vi.stubGlobal("fetch", fetch);
     invoke.mockResolvedValue({ ok: true, dataUrl: "data:audio/mp4;base64,YQ==", mimeType: "audio/mp4" });
 
-    const result = await getAgentUICoreAttachmentDataUrl(
+    const result = await getIrisCoreAttachmentDataUrl(
       defaultRuntimeConfig,
       "http://127.0.0.1:8765/v1/attachments/att_1/content",
       "application/octet-stream",
@@ -261,7 +261,7 @@ describe("agentuiCore", () => {
     );
     invoke.mockResolvedValue({ ok: true, dataUrl: "data:audio/mp4;base64,YQ==", mimeType: "audio/mp4" });
 
-    const result = await getAgentUICoreAttachmentDataUrl(
+    const result = await getIrisCoreAttachmentDataUrl(
       defaultRuntimeConfig,
       "http://127.0.0.1:8765/v1/attachments/att_1/content",
       "application/octet-stream",
@@ -290,7 +290,7 @@ describe("agentuiCore", () => {
       ),
     );
 
-    const pending = sendAgentUICoreMessage(
+    const pending = sendIrisCoreMessage(
       "session-1",
       { text: "hello", clientMessageId: "client-message-1" },
       defaultRuntimeConfig,
@@ -372,7 +372,7 @@ describe("agentuiCore", () => {
     });
     vi.stubGlobal("fetch", fetch);
 
-    const result = await uploadAgentUICoreAttachment(
+    const result = await uploadIrisCoreAttachment(
       {
         file: new File(["image-bytes"], "photo.png", { type: "image/png" }),
         name: "photo.png",
@@ -423,7 +423,7 @@ describe("agentuiCore", () => {
     });
     vi.stubGlobal("fetch", fetch);
 
-    const result = await uploadAgentUICoreAttachment(
+    const result = await uploadIrisCoreAttachment(
       {
         file: new File(["file-bytes"], filename, { type: mimeType }),
         name: filename,
@@ -440,13 +440,13 @@ describe("agentuiCore", () => {
   });
 
   it("does not rewrite browser or Tauri local preview URLs as Core paths", () => {
-    expect(agentUICoreAttachmentUrl(defaultRuntimeConfig, "asset://localhost/%2FUsers%2Fscott%2FDesktop%2Fphoto.png")).toBe(
+    expect(irisCoreAttachmentUrl(defaultRuntimeConfig, "asset://localhost/%2FUsers%2Fscott%2FDesktop%2Fphoto.png")).toBe(
       "asset://localhost/%2FUsers%2Fscott%2FDesktop%2Fphoto.png",
     );
-    expect(agentUICoreAttachmentUrl(defaultRuntimeConfig, "blob:http://localhost/local-preview")).toBe(
+    expect(irisCoreAttachmentUrl(defaultRuntimeConfig, "blob:http://localhost/local-preview")).toBe(
       "blob:http://localhost/local-preview",
     );
-    expect(agentUICoreAttachmentUrl(defaultRuntimeConfig, "data:image/png;base64,abc")).toBe("data:image/png;base64,abc");
+    expect(irisCoreAttachmentUrl(defaultRuntimeConfig, "data:image/png;base64,abc")).toBe("data:image/png;base64,abc");
   });
 
   it("routes agent resources through agent-scoped Core endpoints", async () => {
@@ -463,19 +463,19 @@ describe("agentuiCore", () => {
       }),
     );
 
-    await getAgentUICoreAgentMemory("agent_default", defaultRuntimeConfig);
-    await saveAgentUICoreAgentMemory("agent_default", "memory", { content: "notes" }, defaultRuntimeConfig);
-    await resetAgentUICoreAgentMemory("agent_default", "user", { confirm: "RESET MEMORY" }, defaultRuntimeConfig);
-    await getAgentUICoreAgentSkills("agent_default", defaultRuntimeConfig);
-    await getAgentUICoreAgentSkill("agent_default", "skill_1", defaultRuntimeConfig);
-    await createAgentUICoreAgentSkill("agent_default", { name: "Skill", category: "personal", content: "# Skill" }, defaultRuntimeConfig);
-    await saveAgentUICoreAgentSkill("agent_default", "skill_1", { name: "Skill", category: "personal", content: "# Skill" }, defaultRuntimeConfig);
-    await createAgentUICoreAgent({ name: "research" }, defaultRuntimeConfig);
-    await cloneAgentUICoreAgent("agent_default", { name: "copy" }, defaultRuntimeConfig);
-    await renameAgentUICoreAgent("agent_default", { name: "renamed" }, defaultRuntimeConfig);
-    await deleteAgentUICoreAgent("agent_default", defaultRuntimeConfig);
-    await updateAgentUICoreSession("session_123", { title: "Pinned plan" }, defaultRuntimeConfig);
-    await updateAgentUICoreSessionReadState("session_123", "read", defaultRuntimeConfig);
+    await getIrisCoreAgentMemory("agent_default", defaultRuntimeConfig);
+    await saveIrisCoreAgentMemory("agent_default", "memory", { content: "notes" }, defaultRuntimeConfig);
+    await resetIrisCoreAgentMemory("agent_default", "user", { confirm: "RESET MEMORY" }, defaultRuntimeConfig);
+    await getIrisCoreAgentSkills("agent_default", defaultRuntimeConfig);
+    await getIrisCoreAgentSkill("agent_default", "skill_1", defaultRuntimeConfig);
+    await createIrisCoreAgentSkill("agent_default", { name: "Skill", category: "personal", content: "# Skill" }, defaultRuntimeConfig);
+    await saveIrisCoreAgentSkill("agent_default", "skill_1", { name: "Skill", category: "personal", content: "# Skill" }, defaultRuntimeConfig);
+    await createIrisCoreAgent({ name: "research" }, defaultRuntimeConfig);
+    await cloneIrisCoreAgent("agent_default", { name: "copy" }, defaultRuntimeConfig);
+    await renameIrisCoreAgent("agent_default", { name: "renamed" }, defaultRuntimeConfig);
+    await deleteIrisCoreAgent("agent_default", defaultRuntimeConfig);
+    await updateIrisCoreSession("session_123", { title: "Pinned plan" }, defaultRuntimeConfig);
+    await updateIrisCoreSessionReadState("session_123", "read", defaultRuntimeConfig);
 
     expect(calls.map((call) => [call.init.method, new URL(call.url).pathname])).toEqual([
       ["GET", "/v1/agents/agent_default/memory"],

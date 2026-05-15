@@ -1,19 +1,19 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  createAgentUICoreAutomation,
-  deleteAgentUICoreAutomation,
-  getAgentUICoreAutomationEvents,
-  getAgentUICoreAgentForProfile,
-  getAgentUICoreAutomations,
-  getAgentUICoreEvents,
-  pauseAgentUICoreAutomation,
-  resumeAgentUICoreAutomation,
-  runAgentUICoreAutomation,
-  updateAgentUICoreAutomation,
-  type AgentUICoreAgent,
-  type AgentUICoreEvent,
-} from "../../lib/agentuiCore";
-import { coreEventToInboxMessage } from "../../lib/irisRuntime";
+  createIrisCoreAutomation,
+  deleteIrisCoreAutomation,
+  getIrisCoreAutomationEvents,
+  getIrisCoreAgentForProfile,
+  getIrisCoreAutomations,
+  getIrisCoreEvents,
+  pauseIrisCoreAutomation,
+  resumeIrisCoreAutomation,
+  runIrisCoreAutomation,
+  updateIrisCoreAutomation,
+  type IrisCoreAgent,
+  type IrisCoreEvent,
+} from "../../lib/irisCore";
+import { irisCoreEventToDeliveryMessage } from "../../lib/irisRuntime";
 import { rawStringValue } from "../../shared/strings";
 import type {
   HermesAutomation,
@@ -24,7 +24,6 @@ import type {
 } from "../../types/hermes";
 
 const defaultDeliveryTarget = "iris:desktop";
-const legacyDeliveryPrefix = "agentui:";
 
 export type CreateScheduledMessageInput = {
   name?: string;
@@ -65,7 +64,7 @@ export type LegacyCreateScheduledMessageInput = {
   projectId?: string | null;
 };
 
-export function useAgentUIAutomations(runtimeConfig: HermesRuntimeConfig, profile = "default", active = true) {
+export function useIrisAutomations(runtimeConfig: HermesRuntimeConfig, profile = "default", active = true) {
   const [automations, setAutomations] = useState<HermesAutomation[]>([]);
   const [deliveries, setDeliveries] = useState<HermesInboxMessage[]>([]);
   const [deliveriesLoading, setDeliveriesLoading] = useState(false);
@@ -140,7 +139,7 @@ export function useAgentUIAutomations(runtimeConfig: HermesRuntimeConfig, profil
   }
 
   async function loadJobsForAgent(agentId: string) {
-    const result = await getAgentUICoreAutomations(agentId, runtimeConfig);
+    const result = await getIrisCoreAutomations(agentId, runtimeConfig);
     if (!result.ok) throw new Error(result.error || "Could not load scheduled jobs.");
     setAutomations(normalizeJobsResult(result));
     setError(null);
@@ -153,7 +152,7 @@ export function useAgentUIAutomations(runtimeConfig: HermesRuntimeConfig, profil
       await loadRecentDeliveries(resolvedAgentId, deliveriesRequestRef.current, false, deliveriesScopeKey);
       return;
     }
-    const result = await getAgentUICoreEvents(inboxCursorRef.current, 50, runtimeConfig, resolvedAgentId);
+    const result = await getIrisCoreEvents(inboxCursorRef.current, 50, runtimeConfig, resolvedAgentId);
     if (!result.ok) return;
     inboxCursorRef.current = result.cursor || inboxCursorRef.current;
     const messages = automationDeliveryMessagesFromEvents(result.events, profile);
@@ -167,7 +166,7 @@ export function useAgentUIAutomations(runtimeConfig: HermesRuntimeConfig, profil
     scopeKey = deliveriesScopeKey,
   ) {
     if (showLoading) beginDeliveriesLoading();
-    const result = await getAgentUICoreAutomationEvents(50, runtimeConfig, agentId);
+    const result = await getIrisCoreAutomationEvents(50, runtimeConfig, agentId);
     if (requestId !== deliveriesRequestRef.current) return;
     const messages = result.ok ? sortDeliveries(automationDeliveryMessagesFromEvents(result.events, profile)) : [];
     if (result.ok) {
@@ -208,8 +207,8 @@ export function useAgentUIAutomations(runtimeConfig: HermesRuntimeConfig, profil
     deliveriesLoadingTimerRef.current = null;
   }
 
-  async function resolveAgent(): Promise<AgentUICoreAgent | null> {
-    const agentResult = await getAgentUICoreAgentForProfile(profile, runtimeConfig);
+  async function resolveAgent(): Promise<IrisCoreAgent | null> {
+    const agentResult = await getIrisCoreAgentForProfile(profile, runtimeConfig);
     if (!agentResult.ok || !agentResult.agent) {
       throw new Error(agentError(agentResult) || "Could not resolve Iris agent.");
     }
@@ -230,9 +229,9 @@ export function useAgentUIAutomations(runtimeConfig: HermesRuntimeConfig, profil
   async function createScheduledMessage(input: CreateScheduledMessageInput | LegacyCreateScheduledMessageInput) {
     const normalized = automationPayloadFromInput(input, profile);
     if (!normalized.ok) return normalized.error;
-    const agentResult = await getAgentUICoreAgentForProfile(profile, runtimeConfig);
+    const agentResult = await getIrisCoreAgentForProfile(profile, runtimeConfig);
     if (!agentResult.ok || !agentResult.agent) return agentError(agentResult) || "Could not resolve Iris agent.";
-    const result = await createAgentUICoreAutomation(
+    const result = await createIrisCoreAutomation(
       {
         agentId: agentResult.agent.id,
         ...normalized.payload,
@@ -247,7 +246,7 @@ export function useAgentUIAutomations(runtimeConfig: HermesRuntimeConfig, profil
   async function updateScheduledMessage(jobId: string, input: UpdateScheduledMessageInput) {
     const normalized = automationPayloadFromInput(input, profile);
     if (!normalized.ok) return normalized.error;
-    const result = await updateAgentUICoreAutomation(jobId, normalized.payload, runtimeConfig);
+    const result = await updateIrisCoreAutomation(jobId, normalized.payload, runtimeConfig);
     if (!result.ok) return result.error || "Could not update scheduled message.";
     await loadJobs();
     return "Automation updated.";
@@ -258,12 +257,12 @@ export function useAgentUIAutomations(runtimeConfig: HermesRuntimeConfig, profil
     try {
       const result =
         action === "pause"
-          ? await pauseAgentUICoreAutomation(jobId, runtimeConfig)
+          ? await pauseIrisCoreAutomation(jobId, runtimeConfig)
           : action === "resume"
-            ? await resumeAgentUICoreAutomation(jobId, runtimeConfig)
+            ? await resumeIrisCoreAutomation(jobId, runtimeConfig)
             : action === "run"
-              ? await runAgentUICoreAutomation(jobId, runtimeConfig)
-              : await deleteAgentUICoreAutomation(jobId, runtimeConfig);
+              ? await runIrisCoreAutomation(jobId, runtimeConfig)
+              : await deleteIrisCoreAutomation(jobId, runtimeConfig);
       if (!result.ok) throw new Error(result.error || `Could not ${action} job.`);
       await loadJobs();
       return "";
@@ -303,8 +302,6 @@ export function useAgentUIAutomations(runtimeConfig: HermesRuntimeConfig, profil
   };
 }
 
-export const useIrisAutomations = useAgentUIAutomations;
-
 export function isAutomationActivityLoading(
   active: boolean,
   loading: boolean,
@@ -314,10 +311,10 @@ export function isAutomationActivityLoading(
   return loading || (active && loadedKey !== scopeKey);
 }
 
-export function automationDeliveryMessagesFromEvents(events: AgentUICoreEvent[], profile: string) {
+export function automationDeliveryMessagesFromEvents(events: IrisCoreEvent[], profile: string) {
   return events
     .filter((event) => event.type.startsWith("message.assistant") || event.type === "message.error")
-    .map((event) => coreEventToInboxMessage(event, profile))
+    .map((event) => irisCoreEventToDeliveryMessage(event, profile))
     .filter(isAutomationDeliveryMessage);
 }
 
@@ -335,7 +332,7 @@ function sortDeliveries(messages: HermesInboxMessage[]) {
   return [...messages].sort((left, right) => right.createdAt - left.createdAt).slice(0, 50);
 }
 
-function latestEventCursor(events: AgentUICoreEvent[]) {
+function latestEventCursor(events: IrisCoreEvent[]) {
   return events.reduce((cursor, event) => Math.max(cursor, event.cursor || 0), 0);
 }
 
@@ -505,10 +502,7 @@ export function automationRequestPayload(
 }
 
 export function normalizeDeliveryTarget(value: string) {
-  const target = value.trim() || defaultDeliveryTarget;
-  return target.startsWith(legacyDeliveryPrefix)
-    ? `iris:${target.slice(legacyDeliveryPrefix.length)}`
-    : target;
+  return value.trim() || defaultDeliveryTarget;
 }
 
 function normalizeRepeat(value: number | null | undefined) {

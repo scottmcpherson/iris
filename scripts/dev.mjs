@@ -15,8 +15,8 @@ const exe = process.platform === "win32" ? ".exe" : "";
 const coreBin = join(root, "iris-core", ".venv", binDir, `iris-core${exe}`);
 const npm = process.platform === "win32" ? "npm.cmd" : "npm";
 const hermesHome = expandHome(process.env.HERMES_HOME ?? join(homedir(), ".hermes"));
-const coreHost = process.env.IRIS_CORE_HOST ?? process.env.HERMES_MGMT_HOST ?? "127.0.0.1";
-const corePort = process.env.IRIS_CORE_PORT ?? process.env.HERMES_MGMT_PORT ?? "8765";
+const coreHost = process.env.IRIS_CORE_HOST ?? "127.0.0.1";
+const corePort = process.env.IRIS_CORE_PORT ?? "8765";
 const hermesEnvPath = join(hermesHome, ".env");
 const discoveredHermesApiToken = readEnvFileValue(hermesEnvPath, "API_SERVER_KEY");
 const hermesApiToken = process.env.HERMES_API_TOKEN || discoveredHermesApiToken;
@@ -25,29 +25,15 @@ const hermesApiTokenSource = process.env.HERMES_API_TOKEN
   : discoveredHermesApiToken
     ? hermesEnvPath
     : "";
-const irisInboxToken = process.env.IRIS_INBOX_TOKEN || process.env.IRIS_TOKEN || "";
-const irisToken = process.env.IRIS_TOKEN || irisInboxToken;
-const agentuiInboxToken = process.env.AGENTUI_INBOX_TOKEN || process.env.AGENTUI_TOKEN || "";
-const agentuiToken = process.env.AGENTUI_TOKEN || agentuiInboxToken;
-const inboxToken = irisInboxToken || agentuiInboxToken;
-const platformToken = irisToken || agentuiToken || inboxToken;
-const coreToken =
-  process.env.IRIS_CORE_TOKEN ||
-  process.env.HERMES_MGMT_TOKEN ||
-  process.env.HERMES_REMOTE_TOKEN ||
-  inboxToken;
+const irisToken = process.env.IRIS_TOKEN || "";
 const devEnv = {
   IRIS_CORE_HOST: coreHost,
   IRIS_CORE_PORT: corePort,
   IRIS_CORE_API_URL: `http://${coreHost}:${corePort}`,
   ...(process.env.IRIS_CORE_STORE ? { IRIS_CORE_STORE: process.env.IRIS_CORE_STORE } : {}),
   HERMES_HOME: hermesHome,
-  HERMES_MGMT_HOST: coreHost,
-  HERMES_MGMT_PORT: corePort,
   ...(hermesApiToken ? { HERMES_API_TOKEN: hermesApiToken } : {}),
-  ...(platformToken ? { IRIS_TOKEN: platformToken, AGENTUI_TOKEN: platformToken } : {}),
-  ...(inboxToken ? { IRIS_INBOX_TOKEN: inboxToken, AGENTUI_INBOX_TOKEN: inboxToken } : {}),
-  ...(coreToken ? { IRIS_CORE_TOKEN: coreToken } : {}),
+  ...(irisToken ? { IRIS_TOKEN: irisToken } : {}),
 };
 
 function prefix(label, chunk) {
@@ -136,8 +122,8 @@ if (hermesApiTokenSource) {
 } else {
   console.log("[dev] no Hermes Jobs API token found; Iris Core runtime automation calls may require HERMES_API_TOKEN");
 }
-if (inboxToken) {
-  console.log("[dev] using Iris inbox token from environment");
+if (irisToken) {
+  console.log("[dev] using Iris token from environment");
 }
 
 async function coreIsAlreadyRunning() {

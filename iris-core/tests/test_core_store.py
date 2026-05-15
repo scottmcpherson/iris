@@ -205,7 +205,7 @@ def test_core_store_migrates_legacy_session_overlay_tables(tmp_path):
 def test_core_store_project_crud_and_session_links(tmp_path):
     store = CoreStore(tmp_path / "core.sqlite3")
     project = store.create_project(
-        name="AgentUI",
+        name="Iris",
         default_agent_id="agent_default",
         system_prompt="Use repo-local context.",
     )

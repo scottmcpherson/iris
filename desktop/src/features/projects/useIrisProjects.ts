@@ -2,14 +2,14 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { loadJsonValue, loadStringValue, saveJsonValue, saveStringValue, storageKeys } from "../../app/storage";
 import {
   createIrisProject,
-  getAgentUICoreAgents,
+  getIrisCoreAgents,
   getIrisProjectSessions,
   getIrisProjects,
   updateIrisProject,
-  type AgentUICoreAgent,
+  type IrisCoreAgent,
   type IrisProject,
-} from "../../lib/agentuiCore";
-import { coreSessionToLegacy } from "../../lib/coreLegacyCompat";
+} from "../../lib/irisCore";
+import { irisCoreSessionToHermes } from "../../lib/irisCoreMappings";
 import type { HermesSession, HermesRuntimeConfig } from "../../types/hermes";
 
 export type ProjectSessionMap = Record<string, HermesSession[]>;
@@ -24,7 +24,7 @@ export type UpdateProjectPayload = CreateProjectPayload;
 
 export function useIrisProjects(runtimeConfig: HermesRuntimeConfig) {
   const [projects, setProjects] = useState<IrisProject[]>([]);
-  const [agents, setAgents] = useState<AgentUICoreAgent[]>([]);
+  const [agents, setAgents] = useState<IrisCoreAgent[]>([]);
   const [selectedProjectId, setSelectedProjectIdState] = useState(() =>
     loadStringValue(storageKeys.selectedProjectId, ""),
   );
@@ -47,7 +47,7 @@ export function useIrisProjects(runtimeConfig: HermesRuntimeConfig) {
     try {
       const [projectResult, agentResult] = await Promise.all([
         getIrisProjects(runtimeConfig),
-        getAgentUICoreAgents(runtimeConfig),
+        getIrisCoreAgents(runtimeConfig),
       ]);
       if (projectResult.ok) {
         setProjects(projectResult.projects || []);
@@ -84,7 +84,7 @@ export function useIrisProjects(runtimeConfig: HermesRuntimeConfig) {
       }
       setSessionsByProject((current) => ({
         ...current,
-        [projectId]: (result.sessions || []).map(coreSessionToLegacy),
+        [projectId]: (result.sessions || []).map(irisCoreSessionToHermes),
       }));
       setProjectErrors((current) => ({ ...current, [projectId]: null }));
       setProjectSessionsLoaded((current) => ({ ...current, [projectId]: true }));

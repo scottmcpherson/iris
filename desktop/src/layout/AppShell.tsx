@@ -16,6 +16,7 @@ import {
   Plus,
   RefreshCcw,
   Search,
+  Settings,
   SlidersHorizontal,
   SquarePen,
   Trash2,
@@ -25,7 +26,7 @@ import { navItems, viewTitle } from "../app/navigation";
 import { loadJsonValue, saveJsonValue, storageKeys } from "../app/storage";
 import type { ProfileActionHandler, View } from "../app/types";
 import { offlineProfile } from "../app/offlineProfile";
-import type { AgentUICoreAgent, IrisProject } from "../lib/agentuiCore";
+import type { IrisCoreAgent, IrisProject } from "../lib/irisCore";
 import type { HermesSession, HermesProfile, HermesStatus } from "../types/hermes";
 import {
   SessionActionDialog,
@@ -95,7 +96,7 @@ type AppShellProps = {
   sessionsByProfile: Record<string, HermesSession[]>;
   sessionReadStates: Record<string, "read" | "unread">;
   projects: IrisProject[];
-  projectAgents: AgentUICoreAgent[];
+  projectAgents: IrisCoreAgent[];
   sessionsByProject: Record<string, HermesSession[]>;
   projectSessionsLoading: Record<string, boolean>;
   projectSessionsLoaded: Record<string, boolean>;
@@ -731,9 +732,16 @@ export function AppShell({
           )}
         </div>
 
-        <Button variant="appGhost" size="appSmall" className="sidebar-refresh" onClick={onRefresh} disabled={isRefreshing} title="Refresh connection">
-          <RefreshCcw size={15} className={isRefreshing ? "spin" : ""} />
-          <span>Refresh connection</span>
+        <Button
+          type="button"
+          variant="ghost"
+          className={activeView === "settings" ? "nav-item sidebar-settings active" : "nav-item sidebar-settings"}
+          aria-label="Settings"
+          onClick={() => onSelectView("settings")}
+          title="Settings"
+        >
+          <Settings size={17} />
+          <span>Settings</span>
         </Button>
         <div
           className="sidebar-resize-handle"

@@ -29,8 +29,9 @@ class IrisCoreHttpClient:
         url = f"{self.base_url}{path}"
         headers = {
             "Accept": "application/json",
-            "Authorization": f"Bearer {self.token}",
         }
+        if self.token:
+            headers["Authorization"] = f"Bearer {self.token}"
         if body is not None:
             headers["Content-Type"] = "application/json"
         timeout = aiohttp.ClientTimeout(total=self.timeout_seconds)  # type: ignore[union-attr]

@@ -19,7 +19,7 @@ import {
 } from "lucide-react";
 import { StickToBottom, useStickToBottomContext } from "use-stick-to-bottom";
 import type { Message, MessageAttachment } from "../../app/types";
-import type { IrisProject } from "../../lib/agentuiCore";
+import type { IrisProject } from "../../lib/irisCore";
 import type {
   HermesModelCatalog,
   HermesModelProvider,

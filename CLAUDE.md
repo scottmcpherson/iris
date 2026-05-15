@@ -52,12 +52,12 @@ Key invariants:
 - **Core owns**: devices/auth, runtime routing, automations, and short-lived session drafts. Lives in `~/.iris/core.sqlite3` (migrated from the legacy `~/.agent-ui/core.sqlite3` on startup).
 - **Tauri Python bridge** (`desktop/src-tauri/python/core_bridge.py`) is Core-only: HTTP request fallback, attachment upload-by-path, and OS credential storage. It must not inspect or mutate runtime-owned files.
 - **Terminology**: product UI says "sessions"; HTTP routes and SQLite overlay tables use `session`; Hermes-level adapter metadata may still carry `chat` identifiers — both are expected.
-- **Live deliveries**: Hermes posts to `/v1/runtime-deliveries/hermes`; clients subscribe via the in-memory `/v1/events` buffer. The `/v1/inbox/*` routes are in-memory compatibility shims for older `iris-platform` versions — they do not create a separate database.
-- **Legacy compat**: `AGENTUI_*` env vars and `agentui:` platform prefixes still work; new code should use `IRIS_*` and the `iris:` prefix. `coreLegacyCompat.ts` carries the desktop-side shims.
+- **Live deliveries**: Hermes posts to `/v1/runtime-deliveries/hermes`; clients subscribe via the in-memory `/v1/events` buffer. The old `/v1/inbox/*` compatibility routes are removed.
+- **Auth**: `IRIS_TOKEN` is the only Iris-owned bearer secret. It is optional for same-machine loopback Core/Desktop/plugin traffic and required for non-loopback traffic. Core uses `HERMES_API_TOKEN` for Hermes Jobs API calls when present, otherwise it discovers `API_SERVER_KEY` from `$HERMES_HOME/.env`.
 
 ### Desktop code layout
 
-- `src/lib/` — Core transport (`coreTransport.ts`), the main Core client (`agentuiCore.ts`), legacy shims (`coreLegacyCompat.ts`), runtime helpers (`irisRuntime.ts`).
+- `src/lib/` — Core transport (`coreTransport.ts`), the main Core client (`irisCore.ts`), Core-to-Hermes view mappings (`irisCoreMappings.ts`), runtime helpers (`irisRuntime.ts`).
 - `src/app/` — app-level state (sessions, navigation, runtime config, offline profile, storage).
 - `src/features/` — feature modules: `agents`, `chat`, `iris`, `jobs`, `memory`, `polish`, `preview`, `projects`, `settings`, `skills`. Tests sit in `__tests__/` next to the code they cover.
 - `src/layout/`, `src/shared/`, `src/types/` — chrome, shared utilities, and shared TS types (notably `types/hermes.ts`).

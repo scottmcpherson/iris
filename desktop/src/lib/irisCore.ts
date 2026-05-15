@@ -30,7 +30,7 @@ type CoreEndpointProbe = {
 type CoreRuntimeProbe = {
   gateway: CoreEndpointProbe;
   management: CoreEndpointProbe;
-  agentuiAdapter: CoreEndpointProbe;
+  irisAdapter: CoreEndpointProbe;
 };
 
 type CoreRuntimeRow = {
@@ -65,18 +65,18 @@ export type CoreRuntimeResult = {
   error?: string;
 };
 
-export type AgentUICoreSendMessageResult = {
+export type IrisCoreSendMessageResult = {
   sessionId: string;
   canonicalSessionId?: string;
   messageId: string;
   accepted: boolean;
   eventCursor: number;
   duplicate?: boolean;
-  session?: AgentUICoreSession;
+  session?: IrisCoreSession;
   runtime?: CoreRuntimeResult;
 };
 
-export type AgentUICoreModelCatalog = {
+export type IrisCoreModelCatalog = {
   profile: string;
   current: HermesModelSelection | null;
   providers: HermesModelProvider[];
@@ -85,7 +85,7 @@ export type AgentUICoreModelCatalog = {
   status?: number;
 };
 
-export type AgentUICoreSlashCommandCatalog = {
+export type IrisCoreSlashCommandCatalog = {
   commands?: Array<{
     id?: string;
     name?: string;
@@ -102,7 +102,7 @@ export type AgentUICoreSlashCommandCatalog = {
   warning?: string;
 };
 
-export type AgentUICoreAgent = {
+export type IrisCoreAgent = {
   id: string;
   runtimeId: string;
   runtimeKind: string;
@@ -112,7 +112,7 @@ export type AgentUICoreAgent = {
   metadata?: CoreMetadata;
 };
 
-export type AgentUICoreSession = {
+export type IrisCoreSession = {
   id: string;
   agentId: string;
   title: string;
@@ -125,10 +125,10 @@ export type AgentUICoreSession = {
   externalSessionId: string;
   externalChatId: string;
   origin?: CoreMetadata;
-  readState?: AgentUICoreSessionReadState;
+  readState?: IrisCoreSessionReadState;
 };
 
-export type AgentUICoreSessionReadState = {
+export type IrisCoreSessionReadState = {
   sessionId: string;
   state: "read" | "unread";
   createdAt: number | null;
@@ -148,13 +148,13 @@ export type IrisProject = {
   metadata?: CoreMetadata;
 };
 
-export type AgentUICoreMessage = HermesSessionMessage & {
+export type IrisCoreMessage = HermesSessionMessage & {
   sessionId?: string;
   createdAt?: number;
   updatedAt?: number;
 };
 
-export type AgentUICoreEvent = {
+export type IrisCoreEvent = {
   cursor: number;
   id: string;
   sessionId: string;
@@ -169,7 +169,7 @@ export type AgentUICoreEvent = {
   metadata: CoreMetadata;
 };
 
-export type AgentUICoreAutomation = {
+export type IrisCoreAutomation = {
   id: string;
   agentId: string;
   runtimeId: string;
@@ -205,7 +205,7 @@ export type AgentUICoreAutomation = {
   metadata: CoreMetadata;
 };
 
-export type AgentUICoreAttachment = {
+export type IrisCoreAttachment = {
   id: string;
   name: string;
   kind: AttachmentKind;
@@ -217,15 +217,15 @@ export type AgentUICoreAttachment = {
   downloadUrl?: string;
 };
 
-export async function getAgentUICoreAgents(runtime?: HermesRuntimeConfig) {
-  return coreRequest<{ agents: AgentUICoreAgent[] }>(runtime, "GET", "/agents");
+export async function getIrisCoreAgents(runtime?: HermesRuntimeConfig) {
+  return coreRequest<{ agents: IrisCoreAgent[] }>(runtime, "GET", "/agents");
 }
 
-export async function getAgentUICoreStatus(runtime?: HermesRuntimeConfig) {
+export async function getIrisCoreStatus(runtime?: HermesRuntimeConfig) {
   const [health, status, agents, runtimes] = await Promise.all([
     coreRequest<CoreHealthResponse>(runtime, "GET", "/health"),
     coreRequest<CoreStatusResponse>(runtime, "GET", "/status"),
-    getAgentUICoreAgents(runtime),
+    getIrisCoreAgents(runtime),
     coreRequest<{ runtimes: CoreRuntimeRow[] }>(runtime, "GET", "/runtimes"),
   ]);
   const ok = Boolean(health.ok || status.ok || agents.ok);
@@ -252,15 +252,15 @@ export async function getAgentUICoreStatus(runtime?: HermesRuntimeConfig) {
     activeApiUrl: "",
     gatewayStatus: probe.gateway,
     remoteStatus: { ok: false },
-    activeApiStatus: probe.agentuiAdapter,
+    activeApiStatus: probe.irisAdapter,
     managementStatus: coreStatus,
     runtimeStatus: probe,
     error: ok ? null : health.error || status.error || agents.error || "Could not reach Iris Core.",
   } as HermesStatus & { runtimeStatus?: CoreRuntimeProbe };
 }
 
-export async function getAgentUICoreAgentForProfile(profile = "default", runtime?: HermesRuntimeConfig) {
-  const result = await getAgentUICoreAgents(runtime);
+export async function getIrisCoreAgentForProfile(profile = "default", runtime?: HermesRuntimeConfig) {
+  const result = await getIrisCoreAgents(runtime);
   if (!result.ok) return { ...result, agent: null };
   return {
     ok: true,
@@ -272,11 +272,11 @@ export async function getAgentUICoreAgentForProfile(profile = "default", runtime
   };
 }
 
-export async function getAgentUICoreAgentMemory(agentId: string, runtime?: HermesRuntimeConfig) {
+export async function getIrisCoreAgentMemory(agentId: string, runtime?: HermesRuntimeConfig) {
   return coreRequest<HermesMemory>(runtime, "GET", `/agents/${encodeURIComponent(agentId)}/memory`);
 }
 
-export async function saveAgentUICoreAgentMemory(
+export async function saveIrisCoreAgentMemory(
   agentId: string,
   file: "memory" | "user",
   payload: { content: string; expectedUpdatedAt?: number | null },
@@ -290,7 +290,7 @@ export async function saveAgentUICoreAgentMemory(
   );
 }
 
-export async function resetAgentUICoreAgentMemory(
+export async function resetIrisCoreAgentMemory(
   agentId: string,
   file: "memory" | "user" | "all",
   payload: { confirm: string },
@@ -304,11 +304,11 @@ export async function resetAgentUICoreAgentMemory(
   );
 }
 
-export async function getAgentUICoreAgentSkills(agentId: string, runtime?: HermesRuntimeConfig) {
+export async function getIrisCoreAgentSkills(agentId: string, runtime?: HermesRuntimeConfig) {
   return coreRequest<HermesSkills>(runtime, "GET", `/agents/${encodeURIComponent(agentId)}/skills`);
 }
 
-export async function getAgentUICoreAgentSkill(agentId: string, skillId: string, runtime?: HermesRuntimeConfig) {
+export async function getIrisCoreAgentSkill(agentId: string, skillId: string, runtime?: HermesRuntimeConfig) {
   return coreRequest<HermesSkillDetail>(
     runtime,
     "GET",
@@ -316,7 +316,7 @@ export async function getAgentUICoreAgentSkill(agentId: string, skillId: string,
   );
 }
 
-export async function createAgentUICoreAgentSkill(
+export async function createIrisCoreAgentSkill(
   agentId: string,
   payload: { name: string; category: string; path?: string; content: string },
   runtime?: HermesRuntimeConfig,
@@ -329,7 +329,7 @@ export async function createAgentUICoreAgentSkill(
   );
 }
 
-export async function saveAgentUICoreAgentSkill(
+export async function saveIrisCoreAgentSkill(
   agentId: string,
   skillId: string,
   payload: { name: string; category: string; path?: string; content: string },
@@ -343,19 +343,19 @@ export async function saveAgentUICoreAgentSkill(
   );
 }
 
-export async function createAgentUICoreAgent(
+export async function createIrisCoreAgent(
   payload: { name: string; runtimeId?: string; metadata?: CoreMetadata },
   runtime?: HermesRuntimeConfig,
 ) {
-  return coreRequest<{ agent: AgentUICoreAgent }>(runtime, "POST", "/agents", payload);
+  return coreRequest<{ agent: IrisCoreAgent }>(runtime, "POST", "/agents", payload);
 }
 
-export async function cloneAgentUICoreAgent(
+export async function cloneIrisCoreAgent(
   agentId: string,
   payload: { name: string; metadata?: CoreMetadata },
   runtime?: HermesRuntimeConfig,
 ) {
-  return coreRequest<{ agent: AgentUICoreAgent }>(
+  return coreRequest<{ agent: IrisCoreAgent }>(
     runtime,
     "POST",
     `/agents/${encodeURIComponent(agentId)}/clone`,
@@ -363,12 +363,12 @@ export async function cloneAgentUICoreAgent(
   );
 }
 
-export async function renameAgentUICoreAgent(
+export async function renameIrisCoreAgent(
   agentId: string,
   payload: { name: string },
   runtime?: HermesRuntimeConfig,
 ) {
-  return coreRequest<{ agent: AgentUICoreAgent }>(
+  return coreRequest<{ agent: IrisCoreAgent }>(
     runtime,
     "PATCH",
     `/agents/${encodeURIComponent(agentId)}`,
@@ -376,8 +376,8 @@ export async function renameAgentUICoreAgent(
   );
 }
 
-export async function activateAgentUICoreAgent(agentId: string, runtime?: HermesRuntimeConfig) {
-  return coreRequest<{ agent: AgentUICoreAgent }>(
+export async function activateIrisCoreAgent(agentId: string, runtime?: HermesRuntimeConfig) {
+  return coreRequest<{ agent: IrisCoreAgent }>(
     runtime,
     "POST",
     `/agents/${encodeURIComponent(agentId)}/activate`,
@@ -385,8 +385,8 @@ export async function activateAgentUICoreAgent(agentId: string, runtime?: Hermes
   );
 }
 
-export async function deleteAgentUICoreAgent(agentId: string, runtime?: HermesRuntimeConfig) {
-  return coreRequest<{ agent: AgentUICoreAgent }>(
+export async function deleteIrisCoreAgent(agentId: string, runtime?: HermesRuntimeConfig) {
+  return coreRequest<{ agent: IrisCoreAgent }>(
     runtime,
     "DELETE",
     `/agents/${encodeURIComponent(agentId)}`,
@@ -441,7 +441,7 @@ export async function getIrisProjectSessions(
   runtime?: HermesRuntimeConfig,
 ) {
   const query = new URLSearchParams({ limit: String(limit) });
-  return coreRequest<{ sessions: AgentUICoreSession[] }>(
+  return coreRequest<{ sessions: IrisCoreSession[] }>(
     runtime,
     "GET",
     `/projects/${encodeURIComponent(projectId)}/sessions?${query}`,
@@ -453,7 +453,7 @@ export async function linkIrisProjectSession(
   sessionId: string,
   runtime?: HermesRuntimeConfig,
 ) {
-  return coreRequest<{ session: AgentUICoreSession }>(
+  return coreRequest<{ session: IrisCoreSession }>(
     runtime,
     "POST",
     `/projects/${encodeURIComponent(projectId)}/sessions`,
@@ -461,12 +461,12 @@ export async function linkIrisProjectSession(
   );
 }
 
-export async function getAgentUICoreSessions(agentId: string, limit = 80, runtime?: HermesRuntimeConfig) {
+export async function getIrisCoreSessions(agentId: string, limit = 80, runtime?: HermesRuntimeConfig) {
   const query = new URLSearchParams({ agentId, limit: String(limit) });
-  return coreRequest<{ sessions: AgentUICoreSession[] }>(runtime, "GET", `/sessions?${query}`);
+  return coreRequest<{ sessions: IrisCoreSession[] }>(runtime, "GET", `/sessions?${query}`);
 }
 
-export async function createAgentUICoreSession(
+export async function createIrisCoreSession(
   payload: {
     agentId: string;
     title: string;
@@ -477,28 +477,28 @@ export async function createAgentUICoreSession(
   },
   runtime?: HermesRuntimeConfig,
 ) {
-  return coreRequest<{ session: AgentUICoreSession }>(runtime, "POST", "/sessions", payload);
+  return coreRequest<{ session: IrisCoreSession }>(runtime, "POST", "/sessions", payload);
 }
 
-export async function getAgentUICoreSession(
+export async function getIrisCoreSession(
   sessionId: string,
   runtime?: HermesRuntimeConfig,
   reference: { externalSessionId?: string; externalChatId?: string } = {},
 ) {
   const query = sessionReferenceQuery(reference);
-  return coreRequest<{ session: AgentUICoreSession }>(
+  return coreRequest<{ session: IrisCoreSession }>(
     runtime,
     "GET",
     `/sessions/${encodeURIComponent(sessionId)}${query}`,
   );
 }
 
-export async function updateAgentUICoreSession(
+export async function updateIrisCoreSession(
   sessionId: string,
   payload: { title?: string; metadata?: CoreMetadata },
   runtime?: HermesRuntimeConfig,
 ) {
-  return coreRequest<{ session: AgentUICoreSession }>(
+  return coreRequest<{ session: IrisCoreSession }>(
     runtime,
     "PATCH",
     `/sessions/${encodeURIComponent(sessionId)}`,
@@ -506,7 +506,7 @@ export async function updateAgentUICoreSession(
   );
 }
 
-export async function deleteAgentUICoreSession(
+export async function deleteIrisCoreSession(
   sessionId: string,
   runtime?: HermesRuntimeConfig,
 ) {
@@ -517,13 +517,13 @@ export async function deleteAgentUICoreSession(
   );
 }
 
-export async function updateAgentUICoreSessionReadState(
+export async function updateIrisCoreSessionReadState(
   sessionId: string,
   state: "read" | "unread",
   runtime?: HermesRuntimeConfig,
   metadata: CoreMetadata = {},
 ) {
-  return coreRequest<{ readState: AgentUICoreSessionReadState }>(
+  return coreRequest<{ readState: IrisCoreSessionReadState }>(
     runtime,
     "PATCH",
     `/sessions/${encodeURIComponent(sessionId)}/read-state`,
@@ -531,13 +531,13 @@ export async function updateAgentUICoreSessionReadState(
   );
 }
 
-export async function getAgentUICoreSessionMessages(
+export async function getIrisCoreSessionMessages(
   sessionId: string,
   runtime?: HermesRuntimeConfig,
   reference: { externalSessionId?: string; externalChatId?: string } = {},
 ) {
   const query = sessionReferenceQuery(reference);
-  return coreRequest<{ sessionId: string; messages: AgentUICoreMessage[]; warning?: string }>(
+  return coreRequest<{ sessionId: string; messages: IrisCoreMessage[]; warning?: string }>(
     runtime,
     "GET",
     `/sessions/${encodeURIComponent(sessionId)}/messages${query}`,
@@ -552,7 +552,7 @@ function sessionReferenceQuery(reference: { externalSessionId?: string; external
   return value ? `?${value}` : "";
 }
 
-export async function sendAgentUICoreMessage(
+export async function sendIrisCoreMessage(
   sessionId: string,
   payload: {
     text: string;
@@ -563,7 +563,7 @@ export async function sendAgentUICoreMessage(
   },
   runtime?: HermesRuntimeConfig,
 ) {
-  return coreRequest<AgentUICoreSendMessageResult>(
+  return coreRequest<IrisCoreSendMessageResult>(
     runtime,
     "POST",
     `/sessions/${encodeURIComponent(sessionId)}/messages`,
@@ -572,7 +572,7 @@ export async function sendAgentUICoreMessage(
   );
 }
 
-export async function uploadAgentUICoreAttachment(
+export async function uploadIrisCoreAttachment(
   payload: {
     file?: File;
     localPath?: string;
@@ -605,33 +605,33 @@ export async function uploadAgentUICoreAttachment(
       });
       const parsed = await response.json().catch(() => ({}));
       if (!response.ok && parsed.ok !== false) {
-        return { ok: false, error: parsed.error || `HTTP ${response.status}` } as CoreResponse<{ attachment: AgentUICoreAttachment }>;
+        return { ok: false, error: parsed.error || `HTTP ${response.status}` } as CoreResponse<{ attachment: IrisCoreAttachment }>;
       }
-      return normalizeAttachmentUploadResponse(parsed as CoreResponse<{ attachment: AgentUICoreAttachment }>, runtime);
+      return normalizeAttachmentUploadResponse(parsed as CoreResponse<{ attachment: IrisCoreAttachment }>, runtime);
     } catch (error) {
       return {
         ok: false,
         error: error instanceof Error ? error.message : "Attachment upload failed.",
-      } as CoreResponse<{ attachment: AgentUICoreAttachment }>;
+      } as CoreResponse<{ attachment: IrisCoreAttachment }>;
     }
   }
 
   if (payload.localPath) {
-    const result = await invoke<CoreResponse<{ attachment: AgentUICoreAttachment }>>("core_bridge", {
+    const result = await invoke<CoreResponse<{ attachment: IrisCoreAttachment }>>("core_bridge", {
       action: "core_upload_path",
       payload: { ...payload, runtime },
     });
     return normalizeAttachmentUploadResponse(result, runtime);
   }
 
-  return { ok: false, error: "Attachment file is required." } as CoreResponse<{ attachment: AgentUICoreAttachment }>;
+  return { ok: false, error: "Attachment file is required." } as CoreResponse<{ attachment: IrisCoreAttachment }>;
 }
 
-export function agentUICoreAttachmentUrl(runtime: HermesRuntimeConfig | undefined, path: string | undefined) {
+export function irisCoreAttachmentUrl(runtime: HermesRuntimeConfig | undefined, path: string | undefined) {
   return coreAttachmentUrl(runtime, path);
 }
 
-export async function getAgentUICoreAttachmentDataUrl(
+export async function getIrisCoreAttachmentDataUrl(
   runtime: HermesRuntimeConfig | undefined,
   path: string,
   mimeType = "application/octet-stream",
@@ -687,7 +687,7 @@ function blobToDataUrl(blob: Blob) {
 }
 
 function normalizeAttachmentUploadResponse(
-  result: CoreResponse<{ attachment: AgentUICoreAttachment }>,
+  result: CoreResponse<{ attachment: IrisCoreAttachment }>,
   runtime: HermesRuntimeConfig | undefined,
 ) {
   if (!result.ok || !result.attachment) return result;
@@ -701,7 +701,7 @@ function normalizeAttachmentUploadResponse(
   };
 }
 
-function coreAgentToHermesProfile(agent: AgentUICoreAgent) {
+function coreAgentToHermesProfile(agent: IrisCoreAgent) {
   const metadata = agent.metadata || {};
   return {
     name: agent.runtimeProfile || agent.displayName,
@@ -726,7 +726,7 @@ function firstRuntimeProbe(runtimes: CoreRuntimeRow[]) {
   return {
     gateway: { ok: false },
     management: { ok: false },
-    agentuiAdapter: { ok: false },
+    irisAdapter: { ok: false },
   };
 }
 
@@ -750,7 +750,7 @@ function nullableNumberMetadata(value: unknown) {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
-export async function cancelAgentUICoreMessage(sessionId: string, runtime?: HermesRuntimeConfig) {
+export async function cancelIrisCoreMessage(sessionId: string, runtime?: HermesRuntimeConfig) {
   return coreRequest<{ sessionId: string; runtime?: CoreRuntimeResult }>(
     runtime,
     "POST",
@@ -759,7 +759,7 @@ export async function cancelAgentUICoreMessage(sessionId: string, runtime?: Herm
   );
 }
 
-export async function getAgentUICoreEvents(
+export async function getIrisCoreEvents(
   after = 0,
   limit = 200,
   runtime?: HermesRuntimeConfig,
@@ -767,10 +767,10 @@ export async function getAgentUICoreEvents(
 ) {
   const query = new URLSearchParams({ after: String(after), limit: String(limit) });
   if (agentId) query.set("agentId", agentId);
-  return coreRequest<{ events: AgentUICoreEvent[]; cursor: number }>(runtime, "GET", `/events?${query}`);
+  return coreRequest<{ events: IrisCoreEvent[]; cursor: number }>(runtime, "GET", `/events?${query}`);
 }
 
-export async function getAgentUICoreAutomationEvents(
+export async function getIrisCoreAutomationEvents(
   limit = 50,
   runtime?: HermesRuntimeConfig,
   agentId = "",
@@ -782,17 +782,17 @@ export async function getAgentUICoreAutomationEvents(
     order: "desc",
   });
   if (agentId) query.set("agentId", agentId);
-  return coreRequest<{ events: AgentUICoreEvent[]; cursor: number }>(runtime, "GET", `/events?${query}`);
+  return coreRequest<{ events: IrisCoreEvent[]; cursor: number }>(runtime, "GET", `/events?${query}`);
 }
 
-export async function getAgentUICoreLatestEventCursor(
+export async function getIrisCoreLatestEventCursor(
   runtime?: HermesRuntimeConfig,
   agentId = "",
 ) {
-  return getAgentUICoreEvents(Number.MAX_SAFE_INTEGER, 1, runtime, agentId);
+  return getIrisCoreEvents(Number.MAX_SAFE_INTEGER, 1, runtime, agentId);
 }
 
-export function agentUICoreEventStreamUrl(
+export function irisCoreEventStreamUrl(
   runtime: HermesRuntimeConfig | undefined,
   after = 0,
   limit = 200,
@@ -803,20 +803,20 @@ export function agentUICoreEventStreamUrl(
   return `${coreBaseUrl(runtime)}/events/stream?${query}`;
 }
 
-export async function getAgentUICoreModels(agentId: string, runtime?: HermesRuntimeConfig) {
-  return coreRequest<AgentUICoreModelCatalog>(runtime, "GET", `/agents/${encodeURIComponent(agentId)}/models`);
+export async function getIrisCoreModels(agentId: string, runtime?: HermesRuntimeConfig) {
+  return coreRequest<IrisCoreModelCatalog>(runtime, "GET", `/agents/${encodeURIComponent(agentId)}/models`);
 }
 
-export async function getAgentUICoreSlashCommands(agentId: string, runtime?: HermesRuntimeConfig) {
-  return coreRequest<AgentUICoreSlashCommandCatalog>(runtime, "GET", `/agents/${encodeURIComponent(agentId)}/slash-commands`);
+export async function getIrisCoreSlashCommands(agentId: string, runtime?: HermesRuntimeConfig) {
+  return coreRequest<IrisCoreSlashCommandCatalog>(runtime, "GET", `/agents/${encodeURIComponent(agentId)}/slash-commands`);
 }
 
-export async function completeAgentUICoreSlashCommand(
+export async function completeIrisCoreSlashCommand(
   agentId: string,
   text: string,
   runtime?: HermesRuntimeConfig,
 ) {
-  return coreRequest<AgentUICoreSlashCommandCatalog>(
+  return coreRequest<IrisCoreSlashCommandCatalog>(
     runtime,
     "POST",
     `/agents/${encodeURIComponent(agentId)}/slash-complete`,
@@ -824,20 +824,20 @@ export async function completeAgentUICoreSlashCommand(
   );
 }
 
-export async function getAgentUICoreAutomations(agentId: string, runtime?: HermesRuntimeConfig) {
+export async function getIrisCoreAutomations(agentId: string, runtime?: HermesRuntimeConfig) {
   const query = new URLSearchParams({ agentId });
-  return coreRequest<{ automations: AgentUICoreAutomation[] }>(runtime, "GET", `/automations?${query}`);
+  return coreRequest<{ automations: IrisCoreAutomation[] }>(runtime, "GET", `/automations?${query}`);
 }
 
-export async function getAgentUICoreAutomation(automationId: string, runtime?: HermesRuntimeConfig) {
-  return coreRequest<{ automation: AgentUICoreAutomation }>(
+export async function getIrisCoreAutomation(automationId: string, runtime?: HermesRuntimeConfig) {
+  return coreRequest<{ automation: IrisCoreAutomation }>(
     runtime,
     "GET",
     `/automations/${encodeURIComponent(automationId)}`,
   );
 }
 
-export async function createAgentUICoreAutomation(
+export async function createIrisCoreAutomation(
   payload: {
     agentId: string;
     name: string;
@@ -850,7 +850,7 @@ export async function createAgentUICoreAutomation(
   },
   runtime?: HermesRuntimeConfig,
 ) {
-  return coreRequest<{ automation: AgentUICoreAutomation; runtime?: CoreRuntimeResult }>(
+  return coreRequest<{ automation: IrisCoreAutomation; runtime?: CoreRuntimeResult }>(
     runtime,
     "POST",
     "/automations",
@@ -858,7 +858,7 @@ export async function createAgentUICoreAutomation(
   );
 }
 
-export async function updateAgentUICoreAutomation(
+export async function updateIrisCoreAutomation(
   automationId: string,
   payload: {
     name?: string;
@@ -872,7 +872,7 @@ export async function updateAgentUICoreAutomation(
   },
   runtime?: HermesRuntimeConfig,
 ) {
-  return coreRequest<{ automation: AgentUICoreAutomation; runtime?: CoreRuntimeResult }>(
+  return coreRequest<{ automation: IrisCoreAutomation; runtime?: CoreRuntimeResult }>(
     runtime,
     "PATCH",
     `/automations/${encodeURIComponent(automationId)}`,
@@ -880,7 +880,7 @@ export async function updateAgentUICoreAutomation(
   );
 }
 
-export async function deleteAgentUICoreAutomation(automationId: string, runtime?: HermesRuntimeConfig) {
+export async function deleteIrisCoreAutomation(automationId: string, runtime?: HermesRuntimeConfig) {
   return coreRequest<{ automationId: string; runtime?: CoreRuntimeResult }>(
     runtime,
     "DELETE",
@@ -888,8 +888,8 @@ export async function deleteAgentUICoreAutomation(automationId: string, runtime?
   );
 }
 
-export async function pauseAgentUICoreAutomation(automationId: string, runtime?: HermesRuntimeConfig) {
-  return coreRequest<{ automation: AgentUICoreAutomation; runtime?: CoreRuntimeResult }>(
+export async function pauseIrisCoreAutomation(automationId: string, runtime?: HermesRuntimeConfig) {
+  return coreRequest<{ automation: IrisCoreAutomation; runtime?: CoreRuntimeResult }>(
     runtime,
     "POST",
     `/automations/${encodeURIComponent(automationId)}/pause`,
@@ -897,8 +897,8 @@ export async function pauseAgentUICoreAutomation(automationId: string, runtime?:
   );
 }
 
-export async function resumeAgentUICoreAutomation(automationId: string, runtime?: HermesRuntimeConfig) {
-  return coreRequest<{ automation: AgentUICoreAutomation; runtime?: CoreRuntimeResult }>(
+export async function resumeIrisCoreAutomation(automationId: string, runtime?: HermesRuntimeConfig) {
+  return coreRequest<{ automation: IrisCoreAutomation; runtime?: CoreRuntimeResult }>(
     runtime,
     "POST",
     `/automations/${encodeURIComponent(automationId)}/resume`,
@@ -906,8 +906,8 @@ export async function resumeAgentUICoreAutomation(automationId: string, runtime?
   );
 }
 
-export async function runAgentUICoreAutomation(automationId: string, runtime?: HermesRuntimeConfig) {
-  return coreRequest<{ automation: AgentUICoreAutomation; runtime?: CoreRuntimeResult }>(
+export async function runIrisCoreAutomation(automationId: string, runtime?: HermesRuntimeConfig) {
+  return coreRequest<{ automation: IrisCoreAutomation; runtime?: CoreRuntimeResult }>(
     runtime,
     "POST",
     `/automations/${encodeURIComponent(automationId)}/run`,

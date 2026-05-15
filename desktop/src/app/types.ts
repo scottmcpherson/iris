@@ -1,6 +1,6 @@
 import type { HermesParsedEvents, HermesStreamToolEvent } from "../types/hermes";
 
-export type View = "chat" | "agents" | "jobs";
+export type View = "chat" | "agents" | "jobs" | "settings";
 
 export type Message = {
   id: string;

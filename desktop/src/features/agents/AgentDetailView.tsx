@@ -22,6 +22,7 @@ type AgentDetailViewProps = {
   onRuntimeChange: (config: HermesRuntimeConfig) => void;
   onRefresh: () => void;
   onProfileAction: ProfileActionHandler;
+  onOpenSettings: () => void;
   onSaveMemory: (file: "memory" | "user", content: string, expectedUpdatedAt?: number | null) => Promise<string>;
   onResetMemory: (file: "memory" | "user" | "all", confirm: string) => Promise<string>;
 };
@@ -37,6 +38,7 @@ export function AgentDetailView({
   onRuntimeChange,
   onRefresh,
   onProfileAction,
+  onOpenSettings,
   onSaveMemory,
   onResetMemory,
 }: AgentDetailViewProps) {
@@ -80,6 +82,7 @@ export function AgentDetailView({
             onRuntimeChange={onRuntimeChange}
             onRefresh={onRefresh}
             onProfileAction={onProfileAction}
+            onOpenSettings={onOpenSettings}
           />
         </div>
       </div>

@@ -69,7 +69,7 @@ def register_attachment_routes(app: FastAPI, require_auth: Callable[..., Any]) -
                     profile=profile or "default",
                     session_id=sessionId,
                     message_id=messageId,
-                    owner_device_id=str(getattr(getattr(request, "state", None), "agentui_device", {}).get("id", "")),
+                    owner_device_id=str(getattr(getattr(request, "state", None), "iris_device", {}).get("id", "")),
                     name=filename,
                     mime_type=mime_type,
                     kind=attachment_kind(mime_type, filename, kind),

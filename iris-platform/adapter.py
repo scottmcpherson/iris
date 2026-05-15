@@ -5,6 +5,8 @@ from __future__ import annotations
 import logging
 import time
 import asyncio
+import ipaddress
+import urllib.parse
 import uuid
 from typing import Any, Dict, Optional
 
@@ -25,7 +27,6 @@ try:
         normalize_base_url,
         safe_int,
         safe_text,
-        sync_env_alias,
     )
     from attachments import (
         inbound_payload_and_files,
@@ -49,7 +50,6 @@ except ImportError:
         normalize_base_url,
         safe_int,
         safe_text,
-        sync_env_alias,
     )
     from .attachments import (
         inbound_payload_and_files,
@@ -114,19 +114,19 @@ class IrisPlatformAdapter(BasePlatformAdapter):
         super().__init__(config=config, platform=Platform("iris"))
         extra = getattr(config, "extra", {}) or {}
         self.profile = current_profile_name()
-        self.base_url = normalize_base_url(env_value("IRIS_BASE_URL", "AGENTUI_BASE_URL") or extra.get("base_url"))
-        self.token = str(env_value("IRIS_TOKEN", "AGENTUI_TOKEN") or extra.get("token") or "").strip()
+        self.base_url = normalize_base_url(env_value("IRIS_BASE_URL") or extra.get("base_url"))
+        self.token = str(env_value("IRIS_TOKEN") or extra.get("token") or "").strip()
         self.inbound_host = str(
-            env_value("IRIS_INBOUND_HOST", "AGENTUI_INBOUND_HOST")
+            env_value("IRIS_INBOUND_HOST")
             or extra.get("inbound_host")
             or DEFAULT_INBOUND_HOST
         ).strip()
         self.inbound_port = safe_int(
-            env_value("IRIS_INBOUND_PORT", "AGENTUI_INBOUND_PORT") or extra.get("inbound_port"),
+            env_value("IRIS_INBOUND_PORT") or extra.get("inbound_port"),
             default_inbound_port(),
         )
         self.default_chat_id = str(
-            env_value("IRIS_DEFAULT_CHAT_ID", "AGENTUI_DEFAULT_CHAT_ID")
+            env_value("IRIS_DEFAULT_CHAT_ID")
             or extra.get("default_chat_id")
             or "desktop"
         ).strip()
@@ -154,18 +154,19 @@ class IrisPlatformAdapter(BasePlatformAdapter):
                 retryable=False,
             )
             return False
-        if not self.base_url or not self.token:
+        config_error = iris_config_error(self.base_url, self.token)
+        if config_error:
             self._set_fatal_error(
                 "config_missing",
-                "IRIS_BASE_URL and IRIS_TOKEN must be set. AGENTUI_BASE_URL and AGENTUI_TOKEN are still accepted for compatibility.",
+                config_error,
                 retryable=False,
             )
             return False
-        result = await self._request("GET", "/v1/inbox/health")
+        result = await self._request("GET", "/v1/health")
         if not result.get("ok"):
             self._set_fatal_error(
                 "health_failed",
-                str(result.get("error") or "Iris inbox health check failed"),
+                str(result.get("error") or "Iris health check failed"),
                 retryable=True,
             )
             return False
@@ -550,7 +551,7 @@ class IrisPlatformAdapter(BasePlatformAdapter):
             chat_id=chat_id,
             chat_name=safe_text(payload.get("chatName") or payload.get("chat_name"), chat_id, 160),
             chat_type=safe_text(payload.get("chatType") or payload.get("chat_type"), "dm", 40) or "dm",
-            user_id=safe_text(payload.get("userId") or payload.get("user_id"), "agentui-user", 160),
+            user_id=safe_text(payload.get("userId") or payload.get("user_id"), "iris-user", 160),
             user_name=safe_text(payload.get("userName") or payload.get("user_name"), "Iris User", 160),
         )
         bound_session_id = safe_text(
@@ -724,27 +725,74 @@ class IrisPlatformAdapter(BasePlatformAdapter):
         )
 
     def _authorized(self, request) -> bool:
+        if not self.token:
+            return request_remote_is_loopback(request)
         header = str(request.headers.get("Authorization") or "")
         prefix = "Bearer "
-        return bool(self.token and header.startswith(prefix) and header[len(prefix):].strip() == self.token)
+        return bool(header.startswith(prefix) and header[len(prefix):].strip() == self.token)
 
     async def _request(self, method: str, path: str, body: dict[str, Any] | None = None) -> dict[str, Any]:
         client = IrisCoreHttpClient(base_url=self.base_url, token=self.token)
         return await client.request(method, path, body)
 
 
+def url_is_loopback(url: str) -> bool:
+    parsed = urllib.parse.urlparse(str(url or ""))
+    host = (parsed.hostname or "").strip().lower()
+    if host in {"localhost", "127.0.0.1", "::1"}:
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
+def request_remote_is_loopback(request) -> bool:
+    candidates: list[str] = []
+    remote = getattr(request, "remote", None)
+    if remote:
+        candidates.append(str(remote))
+    transport = getattr(request, "transport", None)
+    if transport is not None:
+        peername = transport.get_extra_info("peername")
+        if isinstance(peername, tuple) and peername:
+            candidates.append(str(peername[0]))
+        elif isinstance(peername, str):
+            candidates.append(peername)
+    return any(host_is_loopback(candidate) for candidate in candidates)
+
+
+def host_is_loopback(host: str) -> bool:
+    value = str(host or "").strip().lower()
+    if value in {"localhost", "127.0.0.1", "::1"}:
+        return True
+    try:
+        return ipaddress.ip_address(value).is_loopback
+    except ValueError:
+        return False
+
+
+def iris_config_error(base_url: str, token: str) -> str:
+    if not base_url:
+        return "IRIS_BASE_URL must be set."
+    if token:
+        return ""
+    if url_is_loopback(base_url):
+        return ""
+    return "IRIS_TOKEN is required when IRIS_BASE_URL is not a loopback URL."
+
+
 def check_requirements() -> bool:
-    return bool(HTTP_CLIENT_AVAILABLE and env_value("IRIS_BASE_URL", "AGENTUI_BASE_URL") and env_value("IRIS_TOKEN", "AGENTUI_TOKEN"))
+    base_url = normalize_base_url(env_value("IRIS_BASE_URL"))
+    token = str(env_value("IRIS_TOKEN") or "").strip()
+    return bool(HTTP_CLIENT_AVAILABLE and base_url and not iris_config_error(base_url, token))
 
 
 def validate_config(config) -> bool:
     extra = getattr(config, "extra", {}) or {}
-    return bool(
-        HTTP_CLIENT_AVAILABLE
-        and
-        normalize_base_url(env_value("IRIS_BASE_URL", "AGENTUI_BASE_URL") or extra.get("base_url"))
-        and str(env_value("IRIS_TOKEN", "AGENTUI_TOKEN") or extra.get("token") or "").strip()
-    )
+    base_url = normalize_base_url(env_value("IRIS_BASE_URL") or extra.get("base_url"))
+    token = str(env_value("IRIS_TOKEN") or extra.get("token") or "").strip()
+    return bool(HTTP_CLIENT_AVAILABLE and base_url and not iris_config_error(base_url, token))
 
 
 def is_connected(config) -> bool:
@@ -752,8 +800,6 @@ def is_connected(config) -> bool:
 
 
 def register(ctx) -> None:
-    sync_env_alias("IRIS_ALLOWED_USERS", "AGENTUI_ALLOWED_USERS")
-    sync_env_alias("IRIS_ALLOW_ALL_USERS", "AGENTUI_ALLOW_ALL_USERS")
     ctx.register_platform(
         name="iris",
         label="Iris",
@@ -761,8 +807,8 @@ def register(ctx) -> None:
         check_fn=check_requirements,
         validate_config=validate_config,
         is_connected=is_connected,
-        required_env=["IRIS_BASE_URL", "IRIS_TOKEN"],
-        install_hint="Set IRIS_BASE_URL and IRIS_TOKEN, then restart the Hermes gateway. AGENTUI_BASE_URL and AGENTUI_TOKEN remain compatible.",
+        required_env=["IRIS_BASE_URL"],
+        install_hint="Set IRIS_BASE_URL for loopback use. Set IRIS_TOKEN as well for non-loopback Core traffic, then restart the Hermes gateway.",
         max_message_length=0,
         pii_safe=False,
         emoji="A",

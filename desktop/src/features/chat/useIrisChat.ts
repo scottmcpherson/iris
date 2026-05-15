@@ -1,25 +1,25 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Message, MessageAttachment } from "../../app/types";
 import {
-  coreEventToInboxMessage,
+  irisCoreEventToDeliveryMessage,
   deleteIrisSession,
   getIrisSessionDetail,
   getIrisSessions,
   renameIrisSession,
 } from "../../lib/irisRuntime";
 import {
-  agentUICoreEventStreamUrl,
-  cancelAgentUICoreMessage,
-  createAgentUICoreSession,
-  getAgentUICoreEvents,
-  getAgentUICoreAgentForProfile,
-  getAgentUICoreLatestEventCursor,
-  sendAgentUICoreMessage,
-  updateAgentUICoreSessionReadState,
-  type AgentUICoreEvent,
+  irisCoreEventStreamUrl,
+  cancelIrisCoreMessage,
+  createIrisCoreSession,
+  getIrisCoreEvents,
+  getIrisCoreAgentForProfile,
+  getIrisCoreLatestEventCursor,
+  sendIrisCoreMessage,
+  updateIrisCoreSessionReadState,
+  type IrisCoreEvent,
   type CoreMetadata,
-} from "../../lib/agentuiCore";
-import { coreSessionToLegacy } from "../../lib/coreLegacyCompat";
+} from "../../lib/irisCore";
+import { irisCoreSessionToHermes } from "../../lib/irisCoreMappings";
 import type {
   HermesSession,
   HermesInboxMessage,
@@ -142,7 +142,7 @@ export const STREAM_SAFETY_TIMEOUT_MS = 60_000;
 const STREAM_SAFETY_CHECK_INTERVAL_MS = 5_000;
 const STREAM_SAFETY_TIMEOUT_MESSAGE = "Iris stopped receiving stream updates before the response completed.";
 
-export function useAgentUIChat({
+export function useIrisChat({
   profile,
   runtimeConfig,
   isChatViewActive = true,
@@ -243,7 +243,7 @@ export function useAgentUIChat({
       }, hasActiveRequest ? 400 : 2000);
     };
 
-    void getAgentUICoreAgentForProfile(profile, runtimeConfig)
+    void getIrisCoreAgentForProfile(profile, runtimeConfig)
       .then(async (agentResult) => {
         if (closed || !agentResult.ok || !agentResult.agent) {
           startPollingFallback();
@@ -257,7 +257,7 @@ export function useAgentUIChat({
         }
         const cursor = eventCursorsByProfileRef.current[profile] || 0;
         const source = new EventSource(
-          agentUICoreEventStreamUrl(runtimeConfig, cursor, 200, agentResult.agent.id),
+          irisCoreEventStreamUrl(runtimeConfig, cursor, 200, agentResult.agent.id),
         );
         coreEventSourceRef.current = source;
         const onCoreEvent = (event: MessageEvent<string>) => {
@@ -475,7 +475,7 @@ export function useAgentUIChat({
       if (gatewayChatId) coreMetadata.chatId = gatewayChatId;
       if (projectId) coreMetadata.projectId = projectId;
       if (switchSelection) coreMetadata.modelSwitch = switchSelection;
-      const result = await sendAgentUICoreMessage(
+      const result = await sendIrisCoreMessage(
         sessionId,
         {
           text: displayedPrompt,
@@ -491,7 +491,7 @@ export function useAgentUIChat({
       const acceptedChatId = result.session?.externalChatId ||
         ("runtime" in result ? runtimeChatId(result.runtime) : "") ||
         gatewayChatId;
-      const acceptedSession = result.session ? coreSessionToLegacy(result.session) : null;
+      const acceptedSession = result.session ? irisCoreSessionToHermes(result.session) : null;
       if (acceptedSession) {
         setSessionsByProfile((current) => {
           const withoutPrevious = canonicalSessionId !== sessionId
@@ -988,9 +988,9 @@ export function useAgentUIChat({
     },
   ) {
     try {
-      const agentResult = await getAgentUICoreAgentForProfile(profile, runtimeConfig);
+      const agentResult = await getIrisCoreAgentForProfile(profile, runtimeConfig);
       if (!agentResult.ok || !agentResult.agent) return null;
-      const created = await createAgentUICoreSession(
+      const created = await createIrisCoreSession(
         {
           agentId: agentResult.agent.id,
           title: sessionTitleFromPrompt(promptText),
@@ -1008,7 +1008,7 @@ export function useAgentUIChat({
       if (!created.ok || !created.session) return null;
       return {
         id: created.session.id,
-        source: "agentui-core",
+        source: "iris-core",
         model,
         title: created.session.title,
         preview: compactText(promptText, 180),
@@ -1054,7 +1054,7 @@ export function useAgentUIChat({
   async function cancelMessage() {
     if (!selectedSessionId || !activeRequestId) return;
     const sessionId = selectedSessionId;
-    if (isCoreSessionId(sessionId)) await cancelAgentUICoreMessage(sessionId, runtimeConfig);
+    if (isCoreSessionId(sessionId)) await cancelIrisCoreMessage(sessionId, runtimeConfig);
     activeRequestIdsBySessionRef.current = removeActiveRequestIds(
       activeRequestIdsBySessionRef.current,
       sessionId,
@@ -1068,12 +1068,12 @@ export function useAgentUIChat({
   }
 
   async function pollCoreEvents() {
-    const agentResult = await getAgentUICoreAgentForProfile(profile, runtimeConfig);
+    const agentResult = await getIrisCoreAgentForProfile(profile, runtimeConfig);
     if (!agentResult.ok || !agentResult.agent) return;
     const bootstrapped = await bootstrapCoreEventCursor(profile, agentResult.agent.id);
     if (!bootstrapped) return;
     const cursor = eventCursorsByProfileRef.current[profile] || 0;
-    const result = await getAgentUICoreEvents(cursor, 50, runtimeConfig, agentResult.agent.id);
+    const result = await getIrisCoreEvents(cursor, 50, runtimeConfig, agentResult.agent.id);
     if (!result.ok) return;
     eventCursorsByProfileRef.current = {
       ...eventCursorsByProfileRef.current,
@@ -1082,10 +1082,10 @@ export function useAgentUIChat({
     handleCoreEvents(result.events);
   }
 
-  function handleCoreEvents(events: AgentUICoreEvent[]) {
+  function handleCoreEvents(events: IrisCoreEvent[]) {
     const deliveries = events
       .filter((event) => event.type.startsWith("message.assistant") || event.type === "message.error")
-      .map((event) => coreEventToInboxMessage(event, profile));
+      .map((event) => irisCoreEventToDeliveryMessage(event, profile));
     if (!deliveries.length) return;
     const cursor = deliveries.reduce(
       (current, delivery) => Math.max(current, delivery.cursor),
@@ -1102,7 +1102,7 @@ export function useAgentUIChat({
   async function bootstrapCoreEventCursor(profileName: string, agentId: string) {
     const bootstrapKey = `${runtimeConfig.coreApiUrl || ""}:${agentId}`;
     if (eventCursorBootstrapKeysRef.current[profileName] === bootstrapKey) return true;
-    const result = await getAgentUICoreLatestEventCursor(runtimeConfig, agentId);
+    const result = await getIrisCoreLatestEventCursor(runtimeConfig, agentId);
     if (!result.ok) return false;
     const latestCursor = result.cursor || 0;
     eventCursorsByProfileRef.current = {
@@ -1451,7 +1451,7 @@ export function useAgentUIChat({
     setSessionsByProfile((current) =>
       updateSessionReadStateForProfiles(current, sessionId, state),
     );
-    void updateAgentUICoreSessionReadState(sessionId, state, runtimeConfig, metadata);
+    void updateIrisCoreSessionReadState(sessionId, state, runtimeConfig, metadata);
   }
 
   return {
@@ -1482,5 +1482,3 @@ export function useAgentUIChat({
     startNewSession,
   };
 }
-
-export const useIrisChat = useAgentUIChat;

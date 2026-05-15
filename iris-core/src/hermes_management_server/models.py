@@ -19,13 +19,6 @@ class HealthResponse(BaseModel):
     profilesRootExists: bool
 
 
-class InboxHealthResponse(BaseModel):
-    ok: bool = True
-    checkedAt: int
-    path: str = ""
-    storage: str = "memory"
-
-
 class StatusResponse(BaseModel):
     ok: bool = True
     checkedAt: int
@@ -72,41 +65,6 @@ class AgentSkillSaveRequest(BaseModel):
     category: str = "personal"
     path: str = ""
     content: str = ""
-
-
-class InboxMessageCreateRequest(BaseModel):
-    id: str | None = None
-    source: str = "hermes-cron"
-    platform: str = "agentui"
-    profile: str = "default"
-    chatId: str = "agentui"
-    content: str
-    metadata: dict[str, Any] = Field(default_factory=dict)
-    createdAt: int | None = None
-
-
-class InboxMessage(BaseModel):
-    cursor: int
-    id: str
-    source: str
-    platform: str
-    profile: str
-    chatId: str
-    content: str
-    metadata: dict[str, Any] = Field(default_factory=dict)
-    createdAt: int
-    acknowledgedAt: int | None = None
-
-
-class InboxMessageResponse(BaseModel):
-    ok: bool = True
-    message: InboxMessage
-
-
-class InboxMessagesResponse(BaseModel):
-    ok: bool = True
-    messages: list[InboxMessage] = Field(default_factory=list)
-    cursor: int = 0
 
 
 class FileContent(BaseModel):

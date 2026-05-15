@@ -1,0 +1,1032 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Iris — Service Communication Map</title>
+<style>
+  :root {
+    --bg: #0e1116;
+    --panel: #161b22;
+    --panel-2: #1c222b;
+    --border: #30363d;
+    --text: #e6edf3;
+    --text-dim: #8b949e;
+    --text-faint: #6e7681;
+    --accent: #58a6ff;
+    --green: #3fb950;
+    --orange: #d29922;
+    --red: #f85149;
+    --purple: #a371f7;
+    --pink: #db61a2;
+    --cyan: #39c5cf;
+    --code-bg: #0a0d12;
+    --get: #3fb950;
+    --post: #58a6ff;
+    --put: #d29922;
+    --patch: #a371f7;
+    --delete: #f85149;
+    --sse: #db61a2;
+    --bridge: #39c5cf;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "SF Pro Text", system-ui, sans-serif;
+    font-size: 14px;
+    line-height: 1.55;
+  }
+  .wrap { max-width: 1280px; margin: 0 auto; padding: 32px 24px 80px; }
+  header { margin-bottom: 32px; padding-bottom: 24px; border-bottom: 1px solid var(--border); }
+  h1 { font-size: 28px; margin: 0 0 8px; font-weight: 600; }
+  .lede { color: var(--text-dim); margin: 0; max-width: 760px; }
+  .meta { color: var(--text-faint); font-size: 12px; margin-top: 12px; }
+  h2 { font-size: 20px; margin: 48px 0 16px; padding-bottom: 8px; border-bottom: 1px solid var(--border); font-weight: 600; }
+  h3 { font-size: 15px; margin: 24px 0 12px; color: var(--text); font-weight: 600; }
+  h4 { font-size: 13px; margin: 16px 0 8px; color: var(--text-dim); font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; }
+  p { margin: 0 0 12px; color: var(--text); }
+  .muted { color: var(--text-dim); }
+  code, .mono { font-family: "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace; font-size: 12.5px; }
+  code { background: var(--code-bg); padding: 1px 6px; border-radius: 4px; color: #e6edf3; border: 1px solid var(--border); }
+
+  /* Architecture diagram */
+  .arch {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 28px;
+    margin: 24px 0;
+    overflow-x: auto;
+  }
+  .arch-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr 1fr;
+    gap: 24px;
+    align-items: stretch;
+    min-width: 880px;
+  }
+  .node {
+    background: var(--panel-2);
+    border: 1.5px solid var(--border);
+    border-radius: 10px;
+    padding: 16px;
+    position: relative;
+  }
+  .node h3 { margin: 0 0 6px; font-size: 14px; color: var(--text); }
+  .node .role { font-size: 11px; color: var(--text-faint); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 10px; }
+  .node ul { margin: 8px 0 0; padding-left: 18px; color: var(--text-dim); font-size: 12.5px; }
+  .node ul li { margin-bottom: 3px; }
+  .node.desktop { border-color: var(--accent); }
+  .node.core { border-color: var(--green); }
+  .node.plugin { border-color: var(--orange); }
+  .node.hermes { border-color: var(--purple); }
+  .node-tag { display: inline-block; font-size: 10px; padding: 2px 7px; border-radius: 10px; margin-right: 4px; font-weight: 500; }
+  .tag-desktop { background: rgba(88,166,255,0.15); color: var(--accent); border: 1px solid rgba(88,166,255,0.3); }
+  .tag-core { background: rgba(63,185,80,0.15); color: var(--green); border: 1px solid rgba(63,185,80,0.3); }
+  .tag-plugin { background: rgba(210,153,34,0.15); color: var(--orange); border: 1px solid rgba(210,153,34,0.3); }
+  .tag-hermes { background: rgba(163,113,247,0.15); color: var(--purple); border: 1px solid rgba(163,113,247,0.3); }
+
+  .channels { margin: 32px 0 0; }
+  .channel-row {
+    display: grid;
+    grid-template-columns: 200px 1fr 200px;
+    gap: 16px;
+    align-items: center;
+    padding: 14px 16px;
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    margin-bottom: 10px;
+  }
+  .channel-row .end { font-weight: 600; font-size: 13px; }
+  .channel-row .end.left { text-align: right; }
+  .channel-row .arrow {
+    text-align: center;
+    color: var(--text-dim);
+    font-size: 12px;
+  }
+  .channel-row .arrow .label {
+    display: block;
+    margin-bottom: 4px;
+    color: var(--text);
+    font-weight: 500;
+  }
+  .channel-row .arrow .protocol {
+    font-family: "SF Mono", monospace;
+    font-size: 11px;
+    color: var(--text-faint);
+  }
+  .arrow-line {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    margin: 6px 0;
+  }
+  .arrow-line .line {
+    flex: 1;
+    height: 2px;
+    background: var(--accent);
+    max-width: 80px;
+  }
+  .arrow-line.bidir .line { background: linear-gradient(90deg, var(--accent), var(--orange)); }
+
+  /* Tabs */
+  .tabs {
+    display: flex;
+    gap: 2px;
+    border-bottom: 1px solid var(--border);
+    margin: 24px 0 0;
+    overflow-x: auto;
+  }
+  .tab {
+    background: transparent;
+    border: none;
+    color: var(--text-dim);
+    padding: 10px 14px;
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 13px;
+    border-bottom: 2px solid transparent;
+    white-space: nowrap;
+    transition: color 0.15s, border-color 0.15s;
+  }
+  .tab:hover { color: var(--text); }
+  .tab.active {
+    color: var(--accent);
+    border-bottom-color: var(--accent);
+    font-weight: 500;
+  }
+  .tab-panel { display: none; padding: 20px 0 0; }
+  .tab-panel.active { display: block; }
+
+  /* Endpoint table */
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 12px 0 24px;
+    font-size: 12.5px;
+  }
+  th, td {
+    text-align: left;
+    padding: 9px 10px;
+    border-bottom: 1px solid var(--border);
+    vertical-align: top;
+  }
+  th {
+    color: var(--text-dim);
+    font-weight: 500;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    background: var(--panel-2);
+  }
+  tr:hover td { background: rgba(88,166,255,0.04); }
+  td.method { width: 70px; }
+  td.path { font-family: "SF Mono", monospace; font-size: 12px; color: var(--text); width: 36%; }
+  td.purpose { color: var(--text-dim); }
+  td.cite { font-family: "SF Mono", monospace; font-size: 11px; color: var(--text-faint); width: 24%; }
+  td.cite a { color: var(--text-faint); text-decoration: none; }
+  td.cite a:hover { color: var(--accent); text-decoration: underline; }
+
+  .verb {
+    display: inline-block;
+    padding: 2px 7px;
+    border-radius: 4px;
+    font-family: "SF Mono", monospace;
+    font-size: 10.5px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    line-height: 1.4;
+    min-width: 50px;
+    text-align: center;
+  }
+  .verb.GET { background: rgba(63,185,80,0.15); color: var(--get); border: 1px solid rgba(63,185,80,0.3); }
+  .verb.POST { background: rgba(88,166,255,0.15); color: var(--post); border: 1px solid rgba(88,166,255,0.3); }
+  .verb.PUT { background: rgba(210,153,34,0.15); color: var(--put); border: 1px solid rgba(210,153,34,0.3); }
+  .verb.PATCH { background: rgba(163,113,247,0.15); color: var(--patch); border: 1px solid rgba(163,113,247,0.3); }
+  .verb.DELETE { background: rgba(248,81,73,0.15); color: var(--delete); border: 1px solid rgba(248,81,73,0.3); }
+  .verb.SSE { background: rgba(219,97,162,0.15); color: var(--sse); border: 1px solid rgba(219,97,162,0.3); }
+  .verb.IPC { background: rgba(57,197,207,0.15); color: var(--bridge); border: 1px solid rgba(57,197,207,0.3); }
+  .verb.FS { background: rgba(110,118,129,0.2); color: var(--text-dim); border: 1px solid var(--border); }
+
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 18px 20px;
+    margin: 16px 0;
+  }
+  .panel-title {
+    font-size: 13px;
+    color: var(--text);
+    font-weight: 600;
+    margin: 0 0 10px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .panel-title .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); }
+  .panel-title.green .dot { background: var(--green); }
+  .panel-title.orange .dot { background: var(--orange); }
+  .panel-title.purple .dot { background: var(--purple); }
+  .panel-title.cyan .dot { background: var(--cyan); }
+  .panel-title.pink .dot { background: var(--pink); }
+
+  pre {
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 12px 14px;
+    overflow-x: auto;
+    font-family: "SF Mono", "JetBrains Mono", Menlo, monospace;
+    font-size: 12px;
+    line-height: 1.5;
+    margin: 8px 0;
+  }
+  pre .k { color: var(--purple); }
+  pre .s { color: var(--green); }
+  pre .c { color: var(--text-faint); font-style: italic; }
+  pre .n { color: var(--orange); }
+
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; }
+  @media (max-width: 900px) {
+    .grid-2, .grid-3 { grid-template-columns: 1fr; }
+    .channel-row { grid-template-columns: 1fr; gap: 8px; }
+    .channel-row .end.left, .channel-row .end.right { text-align: left; }
+  }
+
+  .legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 14px;
+    align-items: center;
+    margin-top: 14px;
+    padding-top: 14px;
+    border-top: 1px dashed var(--border);
+    font-size: 12px;
+    color: var(--text-dim);
+  }
+  .legend .swatch { width: 12px; height: 12px; border-radius: 3px; display: inline-block; margin-right: 4px; vertical-align: middle; border: 1px solid rgba(255,255,255,0.1); }
+
+  /* Flow diagram */
+  .flow {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 20px;
+    margin: 16px 0;
+    font-family: "SF Mono", monospace;
+    font-size: 12.5px;
+    line-height: 1.7;
+    overflow-x: auto;
+  }
+  .flow .step { display: flex; gap: 12px; align-items: flex-start; padding: 4px 0; }
+  .flow .step .num {
+    flex-shrink: 0;
+    width: 22px; height: 22px;
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-radius: 50%;
+    text-align: center;
+    line-height: 20px;
+    font-size: 11px;
+    color: var(--text-dim);
+    font-family: inherit;
+  }
+  .flow .step .desc { flex: 1; color: var(--text); }
+  .flow .step .desc .src { color: var(--text-faint); font-size: 11px; margin-left: 6px; }
+  .flow .arrow-down {
+    margin-left: 11px;
+    color: var(--text-faint);
+    font-size: 14px;
+    line-height: 1;
+    padding: 2px 0 2px 4px;
+  }
+
+  .badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 10.5px;
+    font-weight: 500;
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    color: var(--text-dim);
+    margin-right: 4px;
+  }
+  .badge.warn { background: rgba(210,153,34,0.1); color: var(--orange); border-color: rgba(210,153,34,0.3); }
+  .badge.ok { background: rgba(63,185,80,0.1); color: var(--green); border-color: rgba(63,185,80,0.3); }
+
+  details { margin: 8px 0; }
+  details summary { cursor: pointer; color: var(--accent); font-size: 12.5px; padding: 4px 0; user-select: none; }
+  details summary:hover { color: #79b8ff; }
+  details[open] summary { margin-bottom: 6px; }
+
+  .toc {
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px 20px;
+    margin: 24px 0 32px;
+    font-size: 13px;
+  }
+  .toc strong { color: var(--text-dim); font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; }
+  .toc ul { margin: 8px 0 0; padding: 0; list-style: none; columns: 2; }
+  .toc li { padding: 3px 0; }
+  .toc a { color: var(--accent); text-decoration: none; }
+  .toc a:hover { text-decoration: underline; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>Iris — Service Communication Map</h1>
+  <p class="lede">Every contract, call, and stream connecting the Iris Desktop client, Iris Core (FastAPI), the Hermes runtime, and the <code>iris-platform</code> bridge plugin. Sourced directly from the codebase.</p>
+  <p class="meta">Generated 2026-05-14 · Repo: <code>agent-ui</code> · Branch: <code>main</code></p>
+</header>
+
+<div class="toc">
+  <strong>Contents</strong>
+  <ul>
+    <li><a href="#overview">1. Architecture overview</a></li>
+    <li><a href="#channels">2. Channel summary</a></li>
+    <li><a href="#desktop-core">3. Desktop ↔ Core (HTTP + SSE)</a></li>
+    <li><a href="#tauri-bridge">4. Desktop Tauri bridge</a></li>
+    <li><a href="#core-hermes">5. Core ↔ Hermes adapter</a></li>
+    <li><a href="#plugin-core">6. iris-platform plugin ↔ Core</a></li>
+    <li><a href="#flows">7. End-to-end flows</a></li>
+    <li><a href="#auth">8. Authentication map</a></li>
+  </ul>
+</div>
+
+<!-- ========================================================== -->
+<h2 id="overview">1. Architecture overview</h2>
+
+<p>Iris Desktop is a thin client that talks to <strong>one</strong> backend service: Iris Core. Core is the only component that knows about Hermes — it accesses Hermes through an in-process <em>runtime adapter</em>. The adapter has two channels into Hermes: <strong>direct filesystem reads</strong> of <code>~/.hermes</code>, and <strong>HTTP calls</strong> to the Hermes Gateway and Iris Gateway ports. The reverse channel — Hermes pushing assistant deltas, completions, errors, and cron output back to Iris — is handled by the <code>iris-platform</code> plugin loaded inside Hermes, which posts to <code>POST /v1/runtime-deliveries/hermes</code>.</p>
+
+<div class="arch">
+  <div class="arch-grid">
+    <div class="node desktop">
+      <div class="role">Tauri 2 + React 18</div>
+      <h3><span class="node-tag tag-desktop">Iris Desktop</span></h3>
+      <ul>
+        <li>React UI (Vite, port 1420)</li>
+        <li>Tauri Rust shell + tray/menu</li>
+        <li>Python bridge subprocess</li>
+        <li>macOS Keychain for token</li>
+      </ul>
+    </div>
+    <div class="node core">
+      <div class="role">FastAPI · 127.0.0.1:8765</div>
+      <h3><span class="node-tag tag-core">Iris Core</span></h3>
+      <ul>
+        <li><code>/v1/*</code> REST surface</li>
+        <li><code>/v1/events/stream</code> SSE bus</li>
+        <li>Owns: devices, automations, drafts, attachments</li>
+        <li>SQLite at <code>~/.iris/core.sqlite3</code></li>
+      </ul>
+    </div>
+    <div class="node plugin">
+      <div class="role">In-process Hermes plugin</div>
+      <h3><span class="node-tag tag-plugin">iris-platform</span></h3>
+      <ul>
+        <li>aiohttp inbound server</li>
+        <li>Receives <code>/iris/messages</code></li>
+        <li>Posts deltas/completions to Core</li>
+        <li>Forwards cron output</li>
+      </ul>
+    </div>
+    <div class="node hermes">
+      <div class="role">External — out of repo</div>
+      <h3><span class="node-tag tag-hermes">Hermes</span></h3>
+      <ul>
+        <li>Gateway HTTP (jobs/api)</li>
+        <li>Source of truth: profiles, sessions, messages, models, skills, memory</li>
+        <li><code>~/.hermes</code> on disk</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="legend">
+    <span><span class="swatch" style="background:var(--get)"></span>GET</span>
+    <span><span class="swatch" style="background:var(--post)"></span>POST</span>
+    <span><span class="swatch" style="background:var(--put)"></span>PUT</span>
+    <span><span class="swatch" style="background:var(--patch)"></span>PATCH</span>
+    <span><span class="swatch" style="background:var(--delete)"></span>DELETE</span>
+    <span><span class="swatch" style="background:var(--sse)"></span>SSE / Stream</span>
+    <span><span class="swatch" style="background:var(--bridge)"></span>Tauri IPC / Bridge</span>
+    <span><span class="swatch" style="background:#6e7681"></span>Filesystem</span>
+  </div>
+</div>
+
+<!-- ========================================================== -->
+<h2 id="channels">2. Channel summary</h2>
+
+<p>There are seven distinct communication channels. Each row below shows direction, primary protocol, and what the channel carries.</p>
+
+<div class="channels">
+
+  <div class="channel-row">
+    <div class="end left"><span class="node-tag tag-desktop">Desktop</span></div>
+    <div class="arrow">
+      <span class="label">REST API <span class="badge">~40 endpoints</span></span>
+      <div class="arrow-line"><span class="line"></span>→<span class="line"></span></div>
+      <span class="protocol">HTTP /v1/* · Bearer token · 2.5s GET / 12s POST timeout</span>
+    </div>
+    <div class="end right"><span class="node-tag tag-core">Core</span></div>
+  </div>
+
+  <div class="channel-row">
+    <div class="end left"><span class="node-tag tag-core">Core</span></div>
+    <div class="arrow">
+      <span class="label">Live event stream</span>
+      <div class="arrow-line"><span class="line" style="background:var(--sse)"></span>→<span class="line" style="background:var(--sse)"></span></div>
+      <span class="protocol">SSE /v1/events/stream · 15s heartbeat · HTTP-poll fallback</span>
+    </div>
+    <div class="end right"><span class="node-tag tag-desktop">Desktop</span></div>
+  </div>
+
+  <div class="channel-row">
+    <div class="end left"><span class="node-tag tag-desktop">React</span></div>
+    <div class="arrow">
+      <span class="label">Tauri Python bridge <span class="badge">6 actions</span></span>
+      <div class="arrow-line"><span class="line" style="background:var(--bridge)"></span>↔<span class="line" style="background:var(--bridge)"></span></div>
+      <span class="protocol">invoke("core_bridge") · auth fallback · keychain · path uploads</span>
+    </div>
+    <div class="end right"><span class="node-tag tag-core">Core</span></div>
+  </div>
+
+  <div class="channel-row">
+    <div class="end left"><span class="node-tag tag-core">Core</span></div>
+    <div class="arrow">
+      <span class="label">Runtime adapter (in-process)</span>
+      <div class="arrow-line"><span class="line"></span>→<span class="line"></span></div>
+      <span class="protocol">Python method calls · <code>HermesRuntimeAdapter</code> implements <code>RuntimeAdapter</code> protocol</span>
+    </div>
+    <div class="end right"><span class="node-tag tag-hermes">Hermes (filesystem + gateway)</span></div>
+  </div>
+
+  <div class="channel-row">
+    <div class="end left"><span class="node-tag tag-core">Adapter</span></div>
+    <div class="arrow">
+      <span class="label">Filesystem reads/writes</span>
+      <div class="arrow-line"><span class="line" style="background:#6e7681"></span>→<span class="line" style="background:#6e7681"></span></div>
+      <span class="protocol">profiles, memories, skills, sessions (.db + .json) under <code>~/.hermes/</code></span>
+    </div>
+    <div class="end right"><span class="node-tag tag-hermes">~/.hermes</span></div>
+  </div>
+
+  <div class="channel-row">
+    <div class="end left"><span class="node-tag tag-core">Adapter</span></div>
+    <div class="arrow">
+      <span class="label">Gateway HTTP</span>
+      <div class="arrow-line"><span class="line" style="background:var(--purple)"></span>→<span class="line" style="background:var(--purple)"></span></div>
+      <span class="protocol">Iris Gateway (messages, models, slash) + Hermes Gateway (jobs/automations)</span>
+    </div>
+    <div class="end right"><span class="node-tag tag-hermes">Hermes Gateway</span></div>
+  </div>
+
+  <div class="channel-row">
+    <div class="end left"><span class="node-tag tag-plugin">iris-platform</span></div>
+    <div class="arrow">
+      <span class="label">Runtime delivery callback</span>
+      <div class="arrow-line"><span class="line" style="background:var(--orange)"></span>→<span class="line" style="background:var(--orange)"></span></div>
+      <span class="protocol">POST /v1/runtime-deliveries/hermes · streaming deltas, completions, errors, cron output</span>
+    </div>
+    <div class="end right"><span class="end"><span class="node-tag tag-core">Core</span></span></div>
+  </div>
+
+</div>
+
+<!-- ========================================================== -->
+<h2 id="desktop-core">3. Desktop ↔ Core (HTTP REST + SSE)</h2>
+
+<p>The desktop client wraps every endpoint in <code>desktop/src/lib/irisCore.ts</code>. All requests go through <code>coreRequest()</code> in <code>coreTransport.ts</code>, which attempts a direct <code>fetch()</code> first and falls back to the Tauri Python bridge on auth errors (401/403) or timeouts. Most calls run from React hooks under <code>desktop/src/features/</code>.</p>
+
+<div class="tabs" data-tabs="dc">
+  <button class="tab active" data-target="dc-status">Health · Runtimes</button>
+  <button class="tab" data-target="dc-agents">Agents</button>
+  <button class="tab" data-target="dc-memory">Memory · Skills</button>
+  <button class="tab" data-target="dc-sessions">Sessions · Messages</button>
+  <button class="tab" data-target="dc-events">Events (SSE + Poll)</button>
+  <button class="tab" data-target="dc-attachments">Attachments</button>
+  <button class="tab" data-target="dc-projects">Projects</button>
+  <button class="tab" data-target="dc-automations">Automations</button>
+  <button class="tab" data-target="dc-models">Models · Slash</button>
+  <button class="tab" data-target="dc-devices">Devices · Auth</button>
+</div>
+
+<div class="tab-panel active" id="dc-status">
+  <table>
+    <thead><tr><th></th><th>Endpoint</th><th>Purpose</th><th>Caller</th></tr></thead>
+    <tbody>
+      <tr><td><span class="verb GET">GET</span></td><td class="path">/health</td><td class="purpose">Legacy health probe (loopback bypass)</td><td class="cite">irisCore.ts:226</td></tr>
+      <tr><td><span class="verb GET">GET</span></td><td class="path">/v1/health</td><td class="purpose">Core health with profiles root presence</td><td class="cite">irisCore.ts</td></tr>
+      <tr><td><span class="verb GET">GET</span></td><td class="path">/v1/status</td><td class="purpose">Active profile, profile count, core state</td><td class="cite">irisCore.ts:227</td></tr>
+      <tr><td><span class="verb GET">GET</span></td><td class="path">/v1/runtimes</td><td class="purpose">List runtime adapters; used by status sweep</td><td class="cite">irisCore.ts:229</td></tr>
+      <tr><td><span class="verb GET">GET</span></td><td class="path">/v1/runtimes/{id}</td><td class="purpose">Runtime detail</td><td class="cite">main.py:976</td></tr>
+      <tr><td><span class="verb POST">POST</span></td><td class="path">/v1/runtimes/{id}/probe</td><td class="purpose">Health probe via adapter (gateway, management, iris)</td><td class="cite">main.py:983 → hermes.py:457</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="tab-panel" id="dc-agents">
+  <table>
+    <thead><tr><th></th><th>Endpoint</th><th>Purpose</th><th>Caller</th></tr></thead>
+    <tbody>
+      <tr><td><span class="verb GET">GET</span></td><td class="path">/v1/agents</td><td class="purpose">List all agents (one per Hermes profile)</td><td class="cite">irisCore.ts:221</td></tr>
+      <tr><td><span class="verb GET">GET</span></td><td class="path">/v1/agents/{id}</td><td class="purpose">Single agent — used by agent-for-profile resolver</td><td class="cite">irisCore.ts:262</td></tr>
+      <tr><td><span class="verb POST">POST</span></td><td class="path">/v1/agents</td><td class="purpose">Create agent → adapter scaffolds Hermes profile dir</td><td class="cite">irisCore.ts:350</td></tr>
+      <tr><td><span class="verb POST">POST</span></td><td class="path">/v1/agents/{id}/clone</td><td class="purpose">Clone agent (memory + skills)</td><td class="cite">irisCore.ts:358</td></tr>
+      <tr><td><span class="verb PATCH">PATCH</span></td><td class="path">/v1/agents/{id}</td><td class="purpose">Rename — adapter renames profile directory</td><td class="cite">irisCore.ts:371</td></tr>
+      <tr><td><span class="verb POST">POST</span></td><td class="path">/v1/agents/{id}/activate</td><td class="purpose">Switch active Hermes profile</td><td class="cite">irisCore.ts:379</td></tr>
+      <tr><td><span class="verb DELETE">DELETE</span></td><td class="path">/v1/agents/{id}</td><td class="purpose">Delete — <code>shutil.rmtree(profile_dir)</code></td><td class="cite">irisCore.ts:389</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="tab-panel" id="dc-memory">
+  <h4>Agent memory (~/.hermes/{profile}/memories/)</h4>
+  <table>
+    <thead><tr><th></th><th>Endpoint</th><th>Purpose</th><th>Caller</th></tr></thead>
+    <tbody>
+      <tr><td><span class="verb GET">GET</span></td><td class="path">/v1/agents/{id}/memory</td><td class="purpose">Read MEMORY.md, USER.md (file content + mtime)</td><td class="cite">irisCore.ts:275</td></tr>
+      <tr><td><span class="verb PUT">PUT</span></td><td class="path">/v1/agents/{id}/memory/{file}</td><td class="purpose">Save w/ optimistic lock (<code>expectedUpdatedAt</code>)</td><td class="cite">irisCore.ts:285</td></tr>
+      <tr><td><span class="verb DELETE">DELETE</span></td><td class="path">/v1/agents/{id}/memory/{file}</td><td class="purpose">Reset to baseline</td><td class="cite">irisCore.ts:299</td></tr>
+      <tr><td><span class="verb POST">POST</span></td><td class="path">/v1/agents/{id}/memory/{file}/reset</td><td class="purpose">Confirmed reset (idempotent)</td><td class="cite">main.py:1095</td></tr>
+    </tbody>
+  </table>
+  <h4>Agent skills (~/.hermes/{profile}/skills/)</h4>
+  <table>
+    <thead><tr><th></th><th>Endpoint</th><th>Purpose</th><th>Caller</th></tr></thead>
+    <tbody>
+      <tr><td><span class="verb GET">GET</span></td><td class="path">/v1/agents/{id}/skills</td><td class="purpose">List installed skills (scans nested SKILL.md)</td><td class="cite">irisCore.ts:307</td></tr>
+      <tr><td><span class="verb GET">GET</span></td><td class="path">/v1/agents/{id}/skills/{skill_id}</td><td class="purpose">Skill detail incl. source</td><td class="cite">irisCore.ts:311</td></tr>
+      <tr><td><span class="verb POST">POST</span></td><td class="path">/v1/agents/{id}/skills</td><td class="purpose">Create skill (writes SKILL.md)</td><td class="cite">irisCore.ts:319</td></tr>
+      <tr><td><span class="verb PUT">PUT</span></td><td class="path">/v1/agents/{id}/skills/{skill_id}</td><td class="purpose">Update skill source</td><td class="cite">irisCore.ts:332</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="tab-panel" id="dc-sessions">
+  <table>
+    <thead><tr><th></th><th>Endpoint</th><th>Purpose</th><th>Caller</th></tr></thead>
+    <tbody>
+      <tr><td><span class="verb GET">GET</span></td><td class="path">/v1/sessions?agentId&limit&cursor</td><td class="purpose">List sessions; merged from runtime adapter</td><td class="cite">useIrisChat.ts:600</td></tr>
+      <tr><td><span class="verb POST">POST</span></td><td class="path">/v1/sessions</td><td class="purpose">Create draft (auto-generates externalChatId)</td><td class="cite">useIrisChat.ts:993</td></tr>
+      <tr><td><span class="verb GET">GET</span></td><td class="path">/v1/sessions/{id}?externalSessionId&externalChatId</td><td class="purpose">Resolve session by core or external ID</td><td class="cite">useIrisChat.ts:841</td></tr>
+      <tr><td><span class="verb PATCH">PATCH</span></td><td class="path">/v1/sessions/{id}</td><td class="purpose">Rename / update metadata</td><td class="cite">useIrisChat.ts:326</td></tr>
+      <tr><td><span class="verb DELETE">DELETE</span></td><td class="path">/v1/sessions/{id}</td><td class="purpose">Delete session + overlays</td><td class="cite">useIrisChat.ts:361</td></tr>
+      <tr><td><span class="verb GET">GET</span></td><td class="path">/v1/sessions/{id}/read-state</td><td class="purpose">Read-state lookup</td><td class="cite">main.py:1371</td></tr>
+      <tr><td><span class="verb PATCH">PATCH</span></td><td class="path">/v1/sessions/{id}/read-state</td><td class="purpose">Mark read/unread</td><td class="cite">useIrisChat.ts:1454</td></tr>
+      <tr><td><span class="verb GET">GET</span></td><td class="path">/v1/sessions/{id}/messages</td><td class="purpose">Adapter-merged messages; falls back to core events if empty</td><td class="cite">useIrisChat.ts:841</td></tr>
+      <tr><td><span class="verb POST">POST</span></td><td class="path">/v1/sessions/{id}/messages</td><td class="purpose">Send user message <span class="badge warn">Idempotency-Key, 12s timeout</span></td><td class="cite">useIrisChat.ts:478</td></tr>
+      <tr><td><span class="verb POST">POST</span></td><td class="path">/v1/sessions/{id}/cancel</td><td class="purpose">Send <code>/stop</code> to runtime</td><td class="cite">useIrisChat.ts:1057</td></tr>
+    </tbody>
+  </table>
+
+  <details>
+    <summary>POST /v1/sessions/{id}/messages — request shape</summary>
+<pre><span class="c">// CoreMessageCreateRequest</span>
+{
+  <span class="n">"text"</span>: <span class="s">"..."</span>,
+  <span class="n">"attachments"</span>: [{ <span class="n">"id"</span>: <span class="s">"att_..."</span> }],
+  <span class="n">"model"</span>: <span class="s">"claude-opus-4-7"</span>,         <span class="c">// optional</span>
+  <span class="n">"clientMessageId"</span>: <span class="s">"uuid"</span>,           <span class="c">// dedupe</span>
+  <span class="n">"metadata"</span>: { <span class="n">"projectId"</span>: <span class="s">"prj_..."</span> }
+}
+<span class="c">// Headers: Idempotency-Key: clientMessageId</span></pre>
+  </details>
+</div>
+
+<div class="tab-panel" id="dc-events">
+  <p>Iris Core publishes a single in-memory event bus (max 500 events). Clients can either poll <code>GET /v1/events</code> or subscribe via Server-Sent Events at <code>GET /v1/events/stream</code>. The desktop opens an <code>EventSource</code> per agent; if it errors, it falls back to short-poll between 400 ms (during streaming) and 2 s (idle).</p>
+  <table>
+    <thead><tr><th></th><th>Endpoint</th><th>Purpose</th><th>Caller</th></tr></thead>
+    <tbody>
+      <tr><td><span class="verb GET">GET</span></td><td class="path">/v1/events?after&limit&agentId</td><td class="purpose">Polling endpoint (max 500)</td><td class="cite">irisCore.ts:770</td></tr>
+      <tr><td><span class="verb GET">GET</span></td><td class="path">/v1/events?after=MAX&limit=1&agentId</td><td class="purpose">Bootstrap latest cursor</td><td class="cite">irisCore.ts:792</td></tr>
+      <tr><td><span class="verb GET">GET</span></td><td class="path">/v1/events?automationOnly=true&order=desc</td><td class="purpose">Automation delivery activity</td><td class="cite">irisCore.ts:785</td></tr>
+      <tr><td><span class="verb GET">GET</span></td><td class="path">/v1/sessions/{id}/events</td><td class="purpose">Session-scoped event slice</td><td class="cite">main.py:1667</td></tr>
+      <tr><td><span class="verb SSE">SSE</span></td><td class="path">/v1/events/stream?after&limit&agentId&live=true</td><td class="purpose"><strong>Live event stream.</strong> 15s heartbeat. Fallback to poll on error.</td><td class="cite">useIrisChat.ts:259-274</td></tr>
+    </tbody>
+  </table>
+
+  <h4>SSE event types (named events on the EventSource)</h4>
+  <table>
+    <thead><tr><th>Event name</th><th>Meaning</th><th>Handler</th></tr></thead>
+    <tbody>
+      <tr><td class="path">message.assistant.delta</td><td class="purpose">Streamed response chunk (append/replace)</td><td class="cite">mergeStreamDelivery — useIrisChat.ts:1224</td></tr>
+      <tr><td class="path">message.assistant.completed</td><td class="purpose">Final assistant message</td><td class="cite">mergeCompletedDelivery — useIrisChat.ts:1225</td></tr>
+      <tr><td class="path">message.assistant.error</td><td class="purpose">Generation failed</td><td class="cite">mergeErrorDelivery — useIrisChat.ts:1222</td></tr>
+      <tr><td class="path">message.error</td><td class="purpose">Non-delivery error from runtime</td><td class="cite">mergeErrorDelivery — useIrisChat.ts:1222</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="tab-panel" id="dc-attachments">
+  <table>
+    <thead><tr><th></th><th>Endpoint</th><th>Purpose</th><th>Caller</th></tr></thead>
+    <tbody>
+      <tr><td><span class="verb POST">POST</span></td><td class="path">/v1/attachments</td><td class="purpose">multipart upload (<code>file</code>, sessionId, kind, mimeType, sha256). Local-path uploads route through Tauri bridge.</td><td class="cite">chatAttachments.ts:28</td></tr>
+      <tr><td><span class="verb GET">GET</span></td><td class="path">/v1/attachments/{id}/content</td><td class="purpose">Download (FileResponse, ETag)</td><td class="cite">MessageContent.tsx:56</td></tr>
+      <tr><td><span class="verb GET">GET</span></td><td class="path">/v1/attachments/{id}/preview</td><td class="purpose">Inline image preview (image/* only)</td><td class="cite">attachment_routes.py:104</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="tab-panel" id="dc-projects">
+  <table>
+    <thead><tr><th></th><th>Endpoint</th><th>Purpose</th><th>Caller</th></tr></thead>
+    <tbody>
+      <tr><td><span class="verb GET">GET</span></td><td class="path">/v1/projects?includeArchived</td><td class="purpose">List projects</td><td class="cite">useIrisProjects.ts:45</td></tr>
+      <tr><td><span class="verb POST">POST</span></td><td class="path">/v1/projects</td><td class="purpose">Create (defaultAgentId, systemPrompt)</td><td class="cite">irisCore.ts:409</td></tr>
+      <tr><td><span class="verb GET">GET</span></td><td class="path">/v1/projects/{id}</td><td class="purpose">Detail</td><td class="cite">main.py:1177</td></tr>
+      <tr><td><span class="verb PATCH">PATCH</span></td><td class="path">/v1/projects/{id}</td><td class="purpose">Update</td><td class="cite">irisCore.ts:422</td></tr>
+      <tr><td><span class="verb DELETE">DELETE</span></td><td class="path">/v1/projects/{id}</td><td class="purpose">Archive (soft delete)</td><td class="cite">irisCore.ts:431</td></tr>
+      <tr><td><span class="verb GET">GET</span></td><td class="path">/v1/projects/{id}/sessions</td><td class="purpose">Linked sessions</td><td class="cite">irisCore.ts:444</td></tr>
+      <tr><td><span class="verb POST">POST</span></td><td class="path">/v1/projects/{id}/sessions</td><td class="purpose">Link session</td><td class="cite">irisCore.ts:456</td></tr>
+      <tr><td><span class="verb DELETE">DELETE</span></td><td class="path">/v1/projects/{pid}/sessions/{sid}</td><td class="purpose">Unlink</td><td class="cite">main.py:1241</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="tab-panel" id="dc-automations">
+  <table>
+    <thead><tr><th></th><th>Endpoint</th><th>Purpose</th><th>Caller</th></tr></thead>
+    <tbody>
+      <tr><td><span class="verb GET">GET</span></td><td class="path">/v1/automations?agentId</td><td class="purpose">List for agent</td><td class="cite">useIrisAutomations.ts:142</td></tr>
+      <tr><td><span class="verb GET">GET</span></td><td class="path">/v1/automations/{id}</td><td class="purpose">Detail</td><td class="cite">irisCore.ts:836</td></tr>
+      <tr><td><span class="verb POST">POST</span></td><td class="path">/v1/automations</td><td class="purpose">Create cron job (delegates to adapter)</td><td class="cite">irisCore.ts:853</td></tr>
+      <tr><td><span class="verb PATCH">PATCH</span></td><td class="path">/v1/automations/{id}</td><td class="purpose">Update schedule/prompt/delivery</td><td class="cite">irisCore.ts:875</td></tr>
+      <tr><td><span class="verb DELETE">DELETE</span></td><td class="path">/v1/automations/{id}</td><td class="purpose">Delete (idempotent)</td><td class="cite">irisCore.ts:884</td></tr>
+      <tr><td><span class="verb POST">POST</span></td><td class="path">/v1/automations/{id}/pause</td><td class="purpose">Pause</td><td class="cite">irisCore.ts:892</td></tr>
+      <tr><td><span class="verb POST">POST</span></td><td class="path">/v1/automations/{id}/resume</td><td class="purpose">Resume</td><td class="cite">irisCore.ts:900</td></tr>
+      <tr><td><span class="verb POST">POST</span></td><td class="path">/v1/automations/{id}/run</td><td class="purpose">Fire now</td><td class="cite">irisCore.ts:910</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="tab-panel" id="dc-models">
+  <table>
+    <thead><tr><th></th><th>Endpoint</th><th>Purpose</th><th>Caller</th></tr></thead>
+    <tbody>
+      <tr><td><span class="verb GET">GET</span></td><td class="path">/v1/agents/{id}/models</td><td class="purpose">Available LLMs + current selection (proxied via adapter → Iris Gateway)</td><td class="cite">useIrisModelCatalog.ts</td></tr>
+      <tr><td><span class="verb GET">GET</span></td><td class="path">/v1/agents/{id}/slash-commands</td><td class="purpose">Discover /commands available to agent</td><td class="cite">useIrisSlashCommands.ts</td></tr>
+      <tr><td><span class="verb POST">POST</span></td><td class="path">/v1/agents/{id}/slash-complete</td><td class="purpose">Autocomplete suggestions for typed slash text</td><td class="cite">irisCore.ts:819</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="tab-panel" id="dc-devices">
+  <table>
+    <thead><tr><th></th><th>Endpoint</th><th>Purpose</th><th>Caller</th></tr></thead>
+    <tbody>
+      <tr><td><span class="verb GET">GET</span></td><td class="path">/v1/devices</td><td class="purpose">List paired devices</td><td class="cite">main.py:855</td></tr>
+      <tr><td><span class="verb GET">GET</span></td><td class="path">/v1/devices/me</td><td class="purpose">Current device + auth metadata</td><td class="cite">main.py:859</td></tr>
+      <tr><td><span class="verb POST">POST</span></td><td class="path">/v1/devices/pair</td><td class="purpose">New pairing (returns one-time <code>agui_…</code> token)</td><td class="cite">main.py:868</td></tr>
+      <tr><td><span class="verb DELETE">DELETE</span></td><td class="path">/v1/devices/{id}</td><td class="purpose">Revoke (cannot revoke <code>management-token</code>)</td><td class="cite">main.py:884</td></tr>
+      <tr><td><span class="verb POST">POST</span></td><td class="path">/v1/devices/me/cursors</td><td class="purpose">Persist stream cursor per device</td><td class="cite">main.py:893</td></tr>
+    </tbody>
+  </table>
+  <p class="muted" style="font-size:12.5px"><span class="badge">Removed</span> The old <code>/v1/inbox/*</code> routes now return 404. Hermes output uses <code>POST /v1/runtime-deliveries/hermes</code>, and clients consume activity from <code>/v1/events</code> or <code>/v1/events/stream</code>.</p>
+</div>
+
+<!-- ========================================================== -->
+<h2 id="tauri-bridge">4. Desktop Tauri bridge (React → Rust → Python)</h2>
+
+<p>When direct <code>fetch()</code> to Core fails on auth or timeout, the React layer invokes a Rust Tauri command (<code>core_bridge</code>) that spawns a Python subprocess (<code>desktop/src-tauri/python/core_bridge.py</code>). The Python script reads the bearer token from the macOS Keychain (or env), retries the HTTP call, and returns the result. The same bridge is used for path-based file uploads (avoids loading the file into JS) and for storing/retrieving the Core token.</p>
+
+<div class="grid-2">
+  <div class="panel">
+    <div class="panel-title cyan"><span class="dot"></span>Tauri commands (Rust handlers)</div>
+    <table>
+      <thead><tr><th></th><th>Action</th><th>What it does</th></tr></thead>
+      <tbody>
+        <tr><td><span class="verb IPC">IPC</span></td><td class="path">core_request</td><td class="purpose">Re-issues the failed HTTP call w/ keychain token (auth fallback)</td></tr>
+        <tr><td><span class="verb IPC">IPC</span></td><td class="path">core_attachment_data</td><td class="purpose">Fetch attachment bytes (handles transcoding for inline preview)</td></tr>
+        <tr><td><span class="verb IPC">IPC</span></td><td class="path">core_upload_path</td><td class="purpose">Upload by absolute filesystem path (for drag-drop + paste)</td></tr>
+        <tr><td><span class="verb IPC">IPC</span></td><td class="path">remote_credential_status</td><td class="purpose">Returns <code>env</code> / <code>keychain</code> / <code>none</code></td></tr>
+        <tr><td><span class="verb IPC">IPC</span></td><td class="path">remote_credential_save</td><td class="purpose">Write token to macOS Keychain</td></tr>
+        <tr><td><span class="verb IPC">IPC</span></td><td class="path">remote_credential_delete</td><td class="purpose">Remove from Keychain</td></tr>
+      </tbody>
+    </table>
+    <p class="muted" style="font-size:12px;margin-top:10px">Sources: <code>desktop/src-tauri/src/lib.rs</code>, <code>desktop/src-tauri/python/core_bridge.py</code>, dispatched from <code>coreTransport.ts:77</code>.</p>
+  </div>
+
+  <div class="panel">
+    <div class="panel-title pink"><span class="dot"></span>Tauri events (Rust shell → React)</div>
+    <table>
+      <thead><tr><th>Event</th><th>Trigger</th><th>Effect</th></tr></thead>
+      <tbody>
+        <tr><td class="path">iris://app-command (show)</td><td class="purpose">Tray click / Show menu</td><td class="purpose">Foreground window</td></tr>
+        <tr><td class="path">iris://app-command (refresh)</td><td class="purpose">Cmd+R menu</td><td class="purpose">Run <code>refreshIris()</code></td></tr>
+        <tr><td class="path">iris://app-command (new-chat)</td><td class="purpose">Cmd+N menu</td><td class="purpose">Dispatch <code>iris://new-session</code> (window event)</td></tr>
+        <tr><td class="path">iris://app-command (command-menu)</td><td class="purpose">Cmd+K menu</td><td class="purpose">Open command palette</td></tr>
+        <tr><td class="path">iris://app-command (search)</td><td class="purpose">Cmd+G menu</td><td class="purpose">Open session finder</td></tr>
+      </tbody>
+    </table>
+    <p class="muted" style="font-size:12px;margin-top:10px">Listener at <code>desktop/src/App.tsx:92-105</code>; consumed by <code>AppShell.tsx</code>.</p>
+  </div>
+</div>
+
+<h4>Token resolution order (used by bridge before retry)</h4>
+<pre>1. <span class="n">IRIS_TOKEN</span>
+2. macOS Keychain  service=<span class="s">"Iris Desktop"</span>  account=<span class="s">"iris-core-token"</span></pre>
+
+<!-- ========================================================== -->
+<h2 id="core-hermes">5. Core ↔ Hermes adapter (in-process)</h2>
+
+<p>Core does not call any Hermes process directly from its routes. Every route that needs Hermes data resolves a runtime, looks up the adapter in <code>RuntimeRegistry</code>, and calls a method on the adapter object. The single <code>HermesRuntimeAdapter</code> implementation in <code>iris-core/src/hermes_management_server/runtime_adapters/hermes.py</code> then takes one of two paths: filesystem reads/writes against <code>~/.hermes</code>, or HTTP calls to one of the two Hermes-side ports (Hermes Gateway and Iris Gateway).</p>
+
+<div class="grid-2">
+
+  <div class="panel">
+    <div class="panel-title green"><span class="dot"></span>Filesystem channel (<code>~/.hermes</code>)</div>
+    <table>
+      <thead><tr><th>Op</th><th>Path</th><th>Adapter method</th></tr></thead>
+      <tbody>
+        <tr><td><span class="verb FS">READ</span></td><td class="path">profiles/</td><td class="cite">list_agents → HermesStore.profiles()</td></tr>
+        <tr><td><span class="verb FS">READ</span></td><td class="path">{profile}/memories/{MEMORY,USER}.md</td><td class="cite">agent_memory → HermesStore.memory_files()</td></tr>
+        <tr><td><span class="verb FS">WRITE</span></td><td class="path">{profile}/memories/{file}.md</td><td class="cite">save_agent_memory (optimistic-lock)</td></tr>
+        <tr><td><span class="verb FS">READ</span></td><td class="path">{profile}/skills/**/SKILL.md</td><td class="cite">list_agent_skills</td></tr>
+        <tr><td><span class="verb FS">WRITE</span></td><td class="path">{profile}/skills/{cat}/{name}/SKILL.md</td><td class="cite">create_agent_skill / save_agent_skill</td></tr>
+        <tr><td><span class="verb FS">READ</span></td><td class="path">{profile}/state.db (SQLite)</td><td class="cite">get_session_messages, latest_cron_session_for_job</td></tr>
+        <tr><td><span class="verb FS">READ</span></td><td class="path">{profile}/sessions/*.json</td><td class="cite">discover_sessions (fallback)</td></tr>
+        <tr><td><span class="verb FS">WRITE</span></td><td class="path">{profile}/ (mkdir, rmtree)</td><td class="cite">create_agent / rename_agent / delete_agent</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="panel">
+    <div class="panel-title purple"><span class="dot"></span>HTTP channel (gateway-side ports)</div>
+    <p class="muted" style="font-size:12px;margin-bottom:8px">Adapter targets two URLs derived from <code>connection</code> config: <code>gatewayUrl</code> (Hermes' own port) and <code>irisGatewayUrl</code> = <code>gatewayUrl + 124</code> (Iris-shaped routes inside Hermes).</p>
+    <table>
+      <thead><tr><th></th><th>URL</th><th>Adapter method</th></tr></thead>
+      <tbody>
+        <tr><td><span class="verb GET">GET</span></td><td class="path">{gateway}/</td><td class="cite">probe — gateway alive</td></tr>
+        <tr><td><span class="verb GET">GET</span></td><td class="path">{management}/health</td><td class="cite">probe — mgmt alive</td></tr>
+        <tr><td><span class="verb GET">GET</span></td><td class="path">{irisGateway}/health</td><td class="cite">probe — iris-platform plugin alive</td></tr>
+        <tr><td><span class="verb POST">POST</span></td><td class="path">{irisGateway}/iris/messages</td><td class="cite"><strong>send_message</strong> (multipart if attachments)</td></tr>
+        <tr><td><span class="verb GET">GET</span></td><td class="path">{irisGateway}/iris/models?maxModels=N</td><td class="cite">models</td></tr>
+        <tr><td><span class="verb GET">GET</span></td><td class="path">{irisGateway}/iris/slash-commands</td><td class="cite">slash_commands</td></tr>
+        <tr><td><span class="verb POST">POST</span></td><td class="path">{irisGateway}/iris/slash-complete</td><td class="cite">slash_complete</td></tr>
+        <tr><td><span class="verb GET">GET</span></td><td class="path">{gateway}/api/jobs?include_disabled=true</td><td class="cite">list_automations</td></tr>
+        <tr><td><span class="verb GET">GET</span></td><td class="path">{gateway}/api/jobs/{externalJobId}</td><td class="cite">get_automation</td></tr>
+        <tr><td><span class="verb POST">POST</span></td><td class="path">{gateway}/api/jobs</td><td class="cite">create_automation</td></tr>
+        <tr><td><span class="verb PATCH">PATCH</span></td><td class="path">{gateway}/api/jobs/{externalJobId}</td><td class="cite">update_automation</td></tr>
+        <tr><td><span class="verb DELETE">DELETE</span></td><td class="path">{gateway}/api/jobs/{externalJobId}</td><td class="cite">delete_automation</td></tr>
+        <tr><td><span class="verb POST">POST</span></td><td class="path">{gateway}/api/jobs/{externalJobId}/{action}</td><td class="cite">control_automation (pause/resume/run)</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="panel">
+  <div class="panel-title"><span class="dot"></span>Adapter contract (RuntimeAdapter protocol)</div>
+  <p class="muted" style="font-size:12px">Defined in <code>runtime_adapters/base.py</code>. Each method is what Core can ask of any runtime; Hermes is the only implementation today.</p>
+  <div class="grid-3" style="font-family:'SF Mono',monospace;font-size:11.5px;color:var(--text-dim);">
+    <div>
+      <strong style="color:var(--text);font-family:inherit;">Agents</strong><br>
+      list_agents()<br>
+      get_agent(id)<br>
+      create_agent(name, meta)<br>
+      clone_agent(src, name)<br>
+      rename_agent(agent, name)<br>
+      activate_agent(agent)<br>
+      delete_agent(agent)
+    </div>
+    <div>
+      <strong style="color:var(--text);font-family:inherit;">Memory · Skills · Sessions</strong><br>
+      agent_memory(agent)<br>
+      save_agent_memory(...)<br>
+      reset_agent_memory(...)<br>
+      list_agent_skills(agent)<br>
+      get_agent_skill(...)<br>
+      create_agent_skill(...)<br>
+      save_agent_skill(...)<br>
+      list_sessions(agent)<br>
+      get_session(...)<br>
+      get_session_messages(...)<br>
+      rename_session(...)<br>
+      delete_session(...)
+    </div>
+    <div>
+      <strong style="color:var(--text);font-family:inherit;">Messaging · Catalog · Cron</strong><br>
+      send_message(**kwargs)<br>
+      probe(profile)<br>
+      models(profile, max)<br>
+      slash_commands(profile)<br>
+      slash_complete(profile, text, limit)<br>
+      list_automations(profile)<br>
+      get_automation(extId)<br>
+      create_automation(payload)<br>
+      update_automation(extId, updates)<br>
+      delete_automation(extId)<br>
+      control_automation(extId, action)
+    </div>
+  </div>
+</div>
+
+<!-- ========================================================== -->
+<h2 id="plugin-core">6. iris-platform plugin ↔ Core (the reverse channel)</h2>
+
+<p><code>iris-platform</code> is a Hermes <strong>platform plugin</strong> that runs in-process inside Hermes. On startup it spins up an aiohttp server on <code>{IRIS_INBOUND_HOST}:{IRIS_INBOUND_PORT}</code> exposing the <code>/iris/*</code> routes that the Core adapter calls. Every assistant delta, completion, error, and cron output flows back to Core via a single endpoint: <code>POST /v1/runtime-deliveries/hermes</code>.</p>
+
+<div class="grid-2">
+  <div class="panel">
+    <div class="panel-title orange"><span class="dot"></span>Inbound to plugin (called by Core's adapter)</div>
+    <table>
+      <thead><tr><th></th><th>Path</th><th>Purpose</th></tr></thead>
+      <tbody>
+        <tr><td><span class="verb GET">GET</span></td><td class="path">/health</td><td class="purpose">Liveness</td></tr>
+        <tr><td><span class="verb POST">POST</span></td><td class="path">/iris/messages</td><td class="purpose">User message → builds <code>MessageEvent</code>, dispatches to Hermes</td></tr>
+        <tr><td><span class="verb GET">GET</span></td><td class="path">/iris/models</td><td class="purpose">Reads gateway config, returns providers + current</td></tr>
+        <tr><td><span class="verb GET">GET</span></td><td class="path">/iris/slash-commands</td><td class="purpose"><code>discover_slash_commands(profile)</code></td></tr>
+        <tr><td><span class="verb POST">POST</span></td><td class="path">/iris/slash-complete</td><td class="purpose">Returns autocomplete items</td></tr>
+      </tbody>
+    </table>
+    <p class="muted" style="font-size:12px;margin-top:10px">Routes registered in <code>iris-platform/routes.py</code>; handlers in <code>iris-platform/adapter.py:502-724</code>.</p>
+  </div>
+
+  <div class="panel">
+    <div class="panel-title green"><span class="dot"></span>Outbound from plugin (calls into Core)</div>
+    <table>
+      <thead><tr><th></th><th>Endpoint</th><th>When</th></tr></thead>
+      <tbody>
+        <tr><td><span class="verb GET">GET</span></td><td class="path">/v1/health</td><td class="purpose">Startup probe (adapter.py:164)</td></tr>
+        <tr><td><span class="verb POST">POST</span></td><td class="path">/v1/runtime-deliveries/hermes</td><td class="purpose"><strong>All assistant output:</strong> deltas, completions, errors, cron results</td></tr>
+      </tbody>
+    </table>
+    <h4 style="margin-top:14px">Source values used in deliveries</h4>
+    <table>
+      <thead><tr><th>source</th><th>Meaning</th></tr></thead>
+      <tbody>
+        <tr><td class="path">hermes-gateway</td><td class="purpose">Final completion</td></tr>
+        <tr><td class="path">hermes-gateway-stream</td><td class="purpose">Mid-stream chunk (<code>chunkOperation: append|replace</code>)</td></tr>
+        <tr><td class="path">hermes-cron</td><td class="purpose">Scheduled job output (extra cron metadata attached)</td></tr>
+        <tr><td class="path">hermes-error</td><td class="purpose">Stream failure</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<details>
+<summary>POST /v1/runtime-deliveries/hermes — typical payload</summary>
+<pre>{
+  <span class="n">"runtimeId"</span>: <span class="s">"runtime_local_hermes"</span>,
+  <span class="n">"profile"</span>: <span class="s">"default"</span>,
+  <span class="n">"chatId"</span>: <span class="s">"desktop"</span>,
+  <span class="n">"messageId"</span>: <span class="s">"iris-delivery-..."</span>,
+  <span class="n">"replyTo"</span>: <span class="s">"client-msg-..."</span>,
+  <span class="n">"source"</span>: <span class="s">"hermes-gateway-stream"</span>,
+  <span class="n">"content"</span>: <span class="s">"...partial assistant text..."</span>,
+  <span class="n">"metadata"</span>: {
+    <span class="n">"deliveredAt"</span>: 1747200000000,
+    <span class="n">"streamMessageId"</span>: <span class="s">"stream-..."</span>,
+    <span class="n">"streaming"</span>: <span class="k">true</span>,
+    <span class="n">"finalize"</span>: <span class="k">false</span>,
+    <span class="n">"chunkProtocol"</span>: <span class="s">"v2-delta"</span>,
+    <span class="n">"chunkOperation"</span>: <span class="s">"append"</span>,
+    <span class="n">"clientRequestId"</span>: <span class="s">"..."</span>
+  }
+}</pre>
+</details>
+
+<!-- ========================================================== -->
+<h2 id="flows">7. End-to-end flows</h2>
+
+<div class="panel">
+  <div class="panel-title"><span class="dot"></span>Flow A — User sends a chat message</div>
+  <div class="flow">
+    <div class="step"><div class="num">1</div><div class="desc">User types in composer; <code>useIrisChat.sendMessage()</code> uploads any local attachments<span class="src">chatAttachments.ts:28</span></div></div>
+    <div class="arrow-down">↓</div>
+    <div class="step"><div class="num">2</div><div class="desc"><span class="verb POST">POST</span> /v1/attachments (multipart, may route via Tauri bridge for path uploads)<span class="src">irisCore.ts:601</span></div></div>
+    <div class="arrow-down">↓</div>
+    <div class="step"><div class="num">3</div><div class="desc">If no Core session yet: <span class="verb POST">POST</span> /v1/sessions (auto-generates externalChatId)<span class="src">useIrisChat.ts:993</span></div></div>
+    <div class="arrow-down">↓</div>
+    <div class="step"><div class="num">4</div><div class="desc"><span class="verb POST">POST</span> /v1/sessions/{id}/messages with Idempotency-Key=clientMessageId, 12s timeout<span class="src">useIrisChat.ts:478</span></div></div>
+    <div class="arrow-down">↓</div>
+    <div class="step"><div class="num">5</div><div class="desc">Core route → adapter.send_message() → <span class="verb POST">POST</span> {irisGateway}/iris/messages on Hermes<span class="src">hermes.py:470-544</span></div></div>
+    <div class="arrow-down">↓</div>
+    <div class="step"><div class="num">6</div><div class="desc">iris-platform inbound handler converts to <code>MessageEvent</code>, dispatches into Hermes runtime<span class="src">iris-platform/adapter.py:502</span></div></div>
+    <div class="arrow-down">↓</div>
+    <div class="step"><div class="num">7</div><div class="desc">As Hermes streams: plugin posts <code>source=hermes-gateway-stream</code> chunks back to <span class="verb POST">POST</span> /v1/runtime-deliveries/hermes<span class="src">iris-platform/adapter.py:329</span></div></div>
+    <div class="arrow-down">↓</div>
+    <div class="step"><div class="num">8</div><div class="desc">Core publishes <code>message.assistant.delta</code> events on the in-memory bus<span class="src">main.py:1820</span></div></div>
+    <div class="arrow-down">↓</div>
+    <div class="step"><div class="num">9</div><div class="desc">Desktop EventSource on <span class="verb SSE">SSE</span> /v1/events/stream receives deltas; UI merges chunks<span class="src">useIrisChat.ts:1224</span></div></div>
+    <div class="arrow-down">↓</div>
+    <div class="step"><div class="num">10</div><div class="desc">Final delivery → <code>message.assistant.completed</code> → UI marks turn done; reconcile with <span class="verb GET">GET</span> /v1/sessions/{id}/messages</div></div>
+  </div>
+</div>
+
+<div class="panel">
+  <div class="panel-title green"><span class="dot"></span>Flow B — A scheduled automation fires</div>
+  <div class="flow">
+    <div class="step"><div class="num">1</div><div class="desc">Earlier: user created automation via <span class="verb POST">POST</span> /v1/automations → adapter <span class="verb POST">POST</span> {gateway}/api/jobs<span class="src">main.py:1855 → hermes.py:609</span></div></div>
+    <div class="arrow-down">↓</div>
+    <div class="step"><div class="num">2</div><div class="desc">Hermes scheduler fires the job at scheduled time, runs prompt in a cron session (id starts with <code>cron_</code>)</div></div>
+    <div class="arrow-down">↓</div>
+    <div class="step"><div class="num">3</div><div class="desc">iris-platform plugin observes completion; reads cron metadata via <code>current_cron_delivery_metadata()</code><span class="src">iris-platform/adapter.py:82</span></div></div>
+    <div class="arrow-down">↓</div>
+    <div class="step"><div class="num">4</div><div class="desc"><span class="verb POST">POST</span> /v1/runtime-deliveries/hermes with <code>source=hermes-cron</code> + <code>cronSessionId</code>, <code>cronDeliveryPlatform</code>, <code>cronDeliveryChatId</code></div></div>
+    <div class="arrow-down">↓</div>
+    <div class="step"><div class="num">5</div><div class="desc">Core resolves agent + session, emits <code>message.assistant.completed</code> with automation-tagged metadata<span class="src">main.py:1722-1838</span></div></div>
+    <div class="arrow-down">↓</div>
+    <div class="step"><div class="num">6</div><div class="desc">Desktop polls <span class="verb GET">GET</span> /v1/events?automationOnly=true&order=desc → renders delivery activity<span class="src">useIrisAutomations.ts:156</span></div></div>
+    <div class="arrow-down">↓</div>
+    <div class="step"><div class="num">7</div><div class="desc">Click → <code>openDeliveryChat()</code> → <span class="verb GET">GET</span> /v1/sessions/{id}/messages → switch to chat view</div></div>
+  </div>
+</div>
+
+<div class="panel">
+  <div class="panel-title cyan"><span class="dot"></span>Flow C — Auth fallback via Tauri bridge</div>
+  <div class="flow">
+    <div class="step"><div class="num">1</div><div class="desc">React calls <code>coreRequest()</code>; direct <code>fetch()</code> returns 401/403 or times out<span class="src">coreTransport.ts:44-56</span></div></div>
+    <div class="arrow-down">↓</div>
+    <div class="step"><div class="num">2</div><div class="desc">Falls back to <code>invoke("core_bridge", { action: "core_request", payload })</code></div></div>
+    <div class="arrow-down">↓</div>
+    <div class="step"><div class="num">3</div><div class="desc">Rust handler spawns Python subprocess <code>core_bridge.py</code></div></div>
+    <div class="arrow-down">↓</div>
+    <div class="step"><div class="num">4</div><div class="desc">Python reads token (env → Keychain) and re-issues HTTP request</div></div>
+    <div class="arrow-down">↓</div>
+    <div class="step"><div class="num">5</div><div class="desc">Result returned to React as <code>CoreResponse&lt;T&gt;</code></div></div>
+  </div>
+</div>
+
+<!-- ========================================================== -->
+<h2 id="auth">8. Authentication map</h2>
+
+<table>
+  <thead><tr><th>Direction</th><th>Token</th><th>Source env vars</th><th>Header</th><th>Notes</th></tr></thead>
+  <tbody>
+    <tr>
+      <td>Desktop → Core</td>
+      <td>Iris device token (<code>agui_…</code>)</td>
+      <td><code>IRIS_TOKEN</code></td>
+      <td><code>Authorization: Bearer …</code></td>
+      <td>Loopback bypass when no management token configured. macOS Keychain stores under service <code>Iris Desktop</code>.</td>
+    </tr>
+    <tr>
+      <td>iris-platform → Core (deliveries)</td>
+      <td>Same Iris token</td>
+      <td><code>IRIS_TOKEN</code></td>
+      <td><code>Authorization: Bearer …</code></td>
+      <td>Validated by <code>require_runtime_delivery_auth</code>. Omitted only for same-machine loopback when <code>IRIS_TOKEN</code> is unset.</td>
+    </tr>
+    <tr>
+      <td>Core adapter → iris-platform (Iris Gateway routes)</td>
+      <td>Same Iris token</td>
+      <td><code>IRIS_TOKEN</code></td>
+      <td><code>Authorization: Bearer …</code></td>
+      <td>Used by all <code>/iris/messages</code>, <code>/iris/models</code>, <code>/iris/slash-*</code> calls.</td>
+    </tr>
+    <tr>
+      <td>Core adapter → Hermes Gateway (jobs)</td>
+      <td>Hermes API token</td>
+      <td><code>HERMES_API_TOKEN</code> or Hermes <code>API_SERVER_KEY</code> from <code>$HERMES_HOME/.env</code></td>
+      <td><code>Authorization: Bearer …</code></td>
+      <td>Different token from the Iris one; only used for <code>/api/jobs/*</code>.</td>
+    </tr>
+    <tr>
+      <td>Token hash storage (Core)</td>
+      <td>SHA-256 hashed</td>
+      <td>—</td>
+      <td>—</td>
+      <td>Format: <code>v1:sha256("iris-core-device-token:v1:{token}")</code>.</td>
+    </tr>
+  </tbody>
+</table>
+
+<p class="muted" style="font-size:12px;margin-top:24px;padding-top:14px;border-top:1px dashed var(--border)">
+File citations are clickable hints — open them in your editor at the indicated <code>file:line</code>. Adapter HTTP/FS split derived from <code>iris-core/src/hermes_management_server/runtime_adapters/{base,hermes,hermes_store,hermes_sessions}.py</code>. Plugin entry point: <code>iris-platform/__init__.py</code> → <code>iris-platform/adapter.py</code>. Desktop transport: <code>desktop/src/lib/{coreTransport,irisCore,irisCoreMappings,irisRuntime}.ts</code>.
+</p>
+
+</div>
+
+<script>
+  document.querySelectorAll('.tabs').forEach(group => {
+    const buttons = group.querySelectorAll('.tab');
+    buttons.forEach(btn => {
+      btn.addEventListener('click', () => {
+        const target = btn.dataset.target;
+        const container = group.parentElement;
+        buttons.forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        container.querySelectorAll(':scope > .tab-panel').forEach(p => {
+          p.classList.toggle('active', p.id === target);
+        });
+      });
+    });
+  });
+</script>
+
+</body>
+</html>

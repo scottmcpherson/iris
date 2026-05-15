@@ -1,5 +1,5 @@
 import type { MessageAttachment } from "../../app/types";
-import { uploadAgentUICoreAttachment } from "../../lib/agentuiCore";
+import { uploadIrisCoreAttachment } from "../../lib/irisCore";
 import type { HermesRuntimeConfig } from "../../types/hermes";
 import { formatAttachmentSize } from "../../shared/files";
 import type { AttachmentUploadFailure, SendableAttachment } from "./chatTypes";
@@ -25,7 +25,7 @@ export async function uploadAttachmentsForSend(
       uploaded.push(attachment);
       continue;
     }
-    const result = await uploadAgentUICoreAttachment(
+    const result = await uploadIrisCoreAttachment(
       {
         file: attachment.file,
         localPath: attachment.localPath,

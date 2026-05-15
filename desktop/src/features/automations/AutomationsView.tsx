@@ -3,7 +3,7 @@ import type { FormEvent } from "react";
 import { AlertCircle, Check, Info, Pause, Pencil, Play, Plus, Trash2 } from "lucide-react";
 import type { CreateScheduledMessageInput, UpdateScheduledMessageInput } from "./useIrisAutomations";
 import { ProjectMenu } from "../chat/components/ProjectMenu";
-import type { IrisProject } from "../../lib/agentuiCore";
+import type { IrisProject } from "../../lib/irisCore";
 import type { HermesAutomation, HermesInboxMessage } from "../../types/hermes";
 import { Alert, AlertDescription } from "../../shared/ui/alert";
 import { Badge } from "../../shared/ui/badge";
@@ -841,7 +841,7 @@ export function matchingDeliveries(job: HermesAutomation, deliveries: HermesInbo
       jobIds.has(stringValue(metadata.jobId)) ||
       jobIds.has(stringValue(metadata.job_id)) ||
       Boolean(deliverChatId && delivery.chatId === deliverChatId) ||
-      Boolean(deliverySessionId && stringValue(metadata.agentuiSessionId) === deliverySessionId)
+      Boolean(deliverySessionId && stringValue(metadata.irisSessionId) === deliverySessionId)
     );
   });
 }

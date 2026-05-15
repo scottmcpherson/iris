@@ -35,7 +35,7 @@ import {
 } from "../chatHistory";
 import { shouldApplyDeliveryReadState } from "../chatCoreEvents";
 import { mergeUploadedAttachment } from "../chatAttachments";
-import { coreEventToInboxMessage } from "../../../lib/coreLegacyCompat";
+import { irisCoreEventToDeliveryMessage } from "../../../lib/irisCoreMappings";
 
 function inboxMessage(
   overrides: Partial<HermesInboxMessage> & { id: string; content: string },
@@ -43,7 +43,7 @@ function inboxMessage(
   return {
     cursor: 1,
     source: "hermes-gateway-stream",
-    platform: "agentui",
+    platform: "iris",
     profile: "default",
     chatId: "desktop-1",
     metadata: {},
@@ -79,7 +79,7 @@ describe("Iris chat inbox merging", () => {
     const endpoint = [
       {
         id: "session_1",
-        source: "agentui-core",
+        source: "iris-core",
         model: "",
         title: "Project chat",
         preview: "",
@@ -539,10 +539,10 @@ describe("Iris chat inbox merging", () => {
   });
 
   it("maps Core delivery events by external message id so finalized edits replace the provisional bubble", () => {
-    const completedDelivery = coreEventToInboxMessage(
+    const completedDelivery = irisCoreEventToDeliveryMessage(
       {
         cursor: 1,
-        id: "evt_delivery_agentui-delivery-1",
+        id: "evt_delivery_iris-delivery-1",
         sessionId: "session-1",
         agentId: "agent-1",
         runtimeId: "runtime-1",
@@ -550,7 +550,7 @@ describe("Iris chat inbox merging", () => {
         role: "assistant",
         content: "Hi!",
         parentEventId: "",
-        externalMessageId: "agentui-delivery-1",
+        externalMessageId: "iris-delivery-1",
         createdAt: 1,
         metadata: {
           chatId: "core-chat-1",
@@ -561,10 +561,10 @@ describe("Iris chat inbox merging", () => {
       },
       "default",
     );
-    const finalStreamEdit = coreEventToInboxMessage(
+    const finalStreamEdit = irisCoreEventToDeliveryMessage(
       {
         cursor: 2,
-        id: "evt_delivery_agentui-delivery-1:edit:2",
+        id: "evt_delivery_iris-delivery-1:edit:2",
         sessionId: "session-1",
         agentId: "agent-1",
         runtimeId: "runtime-1",
@@ -572,13 +572,13 @@ describe("Iris chat inbox merging", () => {
         role: "assistant",
         content: "Hi!",
         parentEventId: "",
-        externalMessageId: "agentui-delivery-1:edit:2",
+        externalMessageId: "iris-delivery-1:edit:2",
         createdAt: 2,
         metadata: {
           chatId: "core-chat-1",
           profile: "default",
           source: "hermes-gateway-stream",
-          streamMessageId: "agentui-delivery-1",
+          streamMessageId: "iris-delivery-1",
           streaming: false,
           finalize: true,
           clientRequestId: "user-1",
@@ -596,24 +596,24 @@ describe("Iris chat inbox merging", () => {
     const finalized = mergeStreamDelivery(
       provisional,
       finalStreamEdit,
-      "agentui-delivery-1",
+      "iris-delivery-1",
       true,
       "user-1",
     );
 
     expect(provisional[1]).toMatchObject({
-      id: "agentui-delivery-1",
+      id: "iris-delivery-1",
       role: "assistant",
       content: "Hi!",
       streaming: false,
     });
     expect(finalized).toHaveLength(2);
     expect(finalized[1]).toMatchObject({
-      id: "agentui-delivery-1",
+      id: "iris-delivery-1",
       role: "assistant",
       content: "Hi!",
       streaming: false,
-      streamMessageId: "agentui-delivery-1",
+      streamMessageId: "iris-delivery-1",
     });
   });
 
@@ -1378,7 +1378,7 @@ describe("Iris chat session loading", () => {
       [
         {
           id: "session-core-draft",
-          source: "agentui-core",
+          source: "iris-core",
           title: "Write a 4 paragraph streaming verification answer",
           preview: "",
           chatId: "core-session-core-draft",
@@ -1418,7 +1418,7 @@ describe("Iris chat session loading", () => {
       [
         {
           id: "session-core-draft",
-          source: "agentui-core",
+          source: "iris-core",
           title: "Write a 4 paragraph streaming verification answer",
           preview: "",
           chatId: "core-session-core-draft",
@@ -1443,7 +1443,7 @@ describe("Iris chat session loading", () => {
       [
         {
           id: "session-existing",
-          source: "agentui-core",
+          source: "iris-core",
           title: "Untitled session",
           preview: "",
           chatId: "chat-existing",
@@ -1458,7 +1458,7 @@ describe("Iris chat session loading", () => {
       [
         {
           id: "session-existing",
-          source: "agentui-core",
+          source: "iris-core",
           title: "Roadmap planning",
           preview: "",
           chatId: "chat-existing",
@@ -1484,7 +1484,7 @@ describe("Iris chat session loading", () => {
       [
         {
           id: "session-existing",
-          source: "agentui-core",
+          source: "iris-core",
           title: "Untitled session",
           preview: "",
           chatId: "chat-existing",
@@ -1499,7 +1499,7 @@ describe("Iris chat session loading", () => {
       [
         {
           id: "session-existing",
-          source: "agentui-core",
+          source: "iris-core",
           title: "Roadmap planning",
           preview: "",
           chatId: "chat-existing",
@@ -1820,7 +1820,7 @@ describe("Iris chat session detail loading", () => {
 function chatSession(overrides: Partial<HermesSession> = {}): HermesSession {
   return {
     id: "session_1",
-    source: "agentui-core",
+    source: "iris-core",
     model: "",
     title: "Initial",
     preview: "",

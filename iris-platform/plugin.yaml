@@ -6,4 +6,3 @@ description: >
   Receives Iris chat messages and delivers Hermes responses/jobs back to Iris.
 requires_env:
   - IRIS_BASE_URL
-  - IRIS_TOKEN

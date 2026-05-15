@@ -10,13 +10,14 @@ import type {
 import { AgentsView } from "./features/agents/AgentsView";
 import { AgentTopbar } from "./features/agents/AgentTopbar";
 import type { AgentDetailSection } from "./features/agents/types";
+import { SettingsView } from "./features/settings/SettingsView";
 import { ChatView } from "./features/chat/ChatView";
-import { useAgentUIChat } from "./features/chat/useIrisChat";
+import { useIrisChat } from "./features/chat/useIrisChat";
 import { useIrisModelCatalog } from "./features/chat/useIrisModelCatalog";
 import { useIrisSlashCommands } from "./features/chat/useIrisSlashCommands";
 import { useIrisRuntime } from "./features/iris/useIrisRuntime";
 import { AutomationsView } from "./features/automations/AutomationsView";
-import { useAgentUIAutomations } from "./features/automations/useIrisAutomations";
+import { useIrisAutomations } from "./features/automations/useIrisAutomations";
 import type { HermesInboxMessage, HermesSession } from "./types/hermes";
 import { useIrisProjects } from "./features/projects/useIrisProjects";
 import { CommandMenu } from "./features/polish/CommandMenu";
@@ -53,7 +54,7 @@ function App() {
   const projects = useIrisProjects(iris.runtimeConfig);
   const projectsRef = useRef(projects);
   projectsRef.current = projects;
-  const chat = useAgentUIChat({
+  const chat = useIrisChat({
     profile: iris.selectedProfile,
     runtimeConfig: iris.runtimeConfig,
     isChatViewActive: activeView === "chat",
@@ -61,7 +62,7 @@ function App() {
       if (projectId) void projectsRef.current.refreshProjectSessions(projectId);
     },
   });
-  const jobs = useAgentUIAutomations(iris.runtimeConfig, iris.selectedProfile, activeView === "jobs");
+  const jobs = useIrisAutomations(iris.runtimeConfig, iris.selectedProfile, activeView === "jobs");
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -160,8 +161,8 @@ function App() {
     const targetProfile = delivery.profile || iris.selectedProfile;
     const deliveryMetadata = delivery.metadata || {};
     const deliverySessionId =
-      typeof deliveryMetadata.agentuiSessionId === "string"
-        ? deliveryMetadata.agentuiSessionId
+      typeof deliveryMetadata.irisSessionId === "string"
+        ? deliveryMetadata.irisSessionId
         : typeof deliveryMetadata.sessionId === "string"
           ? deliveryMetadata.sessionId
           : "";
@@ -219,6 +220,12 @@ function App() {
         label: "Open Onboarding",
         detail: "Review first-run setup steps",
         run: () => setOnboardingOpen(true),
+      },
+      {
+        id: "view-settings",
+        label: "Open settings",
+        detail: "Configure app runtime and connection settings",
+        run: () => selectView("settings"),
       },
     ],
     [activeView],
@@ -390,9 +397,7 @@ function App() {
           connected={iris.connected}
           onClose={dismissOnboarding}
           onOpenSettings={() => {
-            setAgentDetailProfile(iris.selectedProfile);
-            setAgentSection("overview");
-            setActiveView("agents");
+            setActiveView("settings");
             dismissOnboarding();
           }}
           onRefresh={() => void refreshWithNotice()}
@@ -458,8 +463,23 @@ function App() {
           onRuntimeChange={iris.updateRuntimeConfig}
           onRefresh={() => void iris.refreshIris()}
           onProfileAction={iris.runProfileAction}
+          onOpenSettings={() => setActiveView("settings")}
           onResetMemory={iris.resetMemoryFile}
           onSaveMemory={iris.saveMemoryFile}
+        />
+      );
+    }
+    if (activeView === "settings") {
+      return (
+        <SettingsView
+          status={iris.status}
+          profile={iris.activeProfile}
+          selectedProfile={iris.selectedProfile}
+          runtimeConfig={iris.runtimeConfig}
+          mode="settings"
+          onRuntimeChange={iris.updateRuntimeConfig}
+          onRefresh={() => void iris.refreshIris()}
+          onProfileAction={iris.runProfileAction}
         />
       );
     }

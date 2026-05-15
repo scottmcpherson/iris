@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import ipaddress
 import os
 import sqlite3
 import time
@@ -28,11 +29,11 @@ from ..security import ManagementError
 
 DEFAULT_GATEWAY_URL = "http://127.0.0.1:8642"
 DEFAULT_MANAGEMENT_URL = "http://127.0.0.1:8765"
-DEFAULT_AGENTUI_GATEWAY_URL = "http://127.0.0.1:8766"
-AGENTUI_GATEWAY_PORT_OFFSET = 124
+DEFAULT_IRIS_GATEWAY_URL = "http://127.0.0.1:8766"
+IRIS_GATEWAY_PORT_OFFSET = 124
 
 
-def agentui_multipart_attachments(attachments: Any) -> list[dict[str, Any]]:
+def iris_multipart_attachments(attachments: Any) -> list[dict[str, Any]]:
     if not isinstance(attachments, list) or not attachments:
         return []
     rows: list[dict[str, Any]] = []
@@ -55,7 +56,7 @@ def agentui_multipart_attachments(attachments: Any) -> list[dict[str, Any]]:
     return rows
 
 
-def agentui_payload_attachment(attachment: dict[str, Any], field: str) -> dict[str, Any]:
+def iris_payload_attachment(attachment: dict[str, Any], field: str) -> dict[str, Any]:
     return {
         "field": field,
         "id": str(attachment.get("id") or ""),
@@ -69,7 +70,7 @@ def agentui_payload_attachment(attachment: dict[str, Any], field: str) -> dict[s
 
 def local_runtime_config(*, management_url: str | None = None) -> dict[str, Any]:
     gateway_url = os.environ.get("HERMES_GATEWAY_URL") or DEFAULT_GATEWAY_URL
-    default_agentui_url = os.environ.get("IRIS_TO_HERMES_URL") or os.environ.get("AGENTUI_TO_HERMES_URL") or DEFAULT_AGENTUI_GATEWAY_URL
+    default_iris_url = os.environ.get("IRIS_TO_HERMES_URL") or DEFAULT_IRIS_GATEWAY_URL
     return {
         "id": DEFAULT_RUNTIME_ID,
         "kind": "hermes",
@@ -77,9 +78,9 @@ def local_runtime_config(*, management_url: str | None = None) -> dict[str, Any]
         "enabled": True,
         "connection": {
             "gatewayUrl": gateway_url,
-            "managementUrl": management_url or os.environ.get("HERMES_MGMT_URL") or DEFAULT_MANAGEMENT_URL,
-            "agentuiGatewayUrls": {
-                "default": default_agentui_url,
+            "managementUrl": management_url or os.environ.get("IRIS_CORE_API_URL") or DEFAULT_MANAGEMENT_URL,
+            "irisGatewayUrls": {
+                "default": default_iris_url,
             },
             "network": "local",
         },
@@ -96,20 +97,15 @@ class HermesRuntimeAdapter:
         hermes_store: HermesStore | None = None,
         hermes_home: str | os.PathLike[str] | None = None,
         core_store: CoreStore | None = None,
-        agentui_token: str = "",
+        iris_token: str = "",
         hermes_api_token: str = "",
     ) -> None:
         self.runtime = runtime
         self.hermes_store = hermes_store
         self.hermes_home = hermes_home
         self.core_store = core_store
-        self.token = agentui_token or os.environ.get("IRIS_TOKEN") or os.environ.get("AGENTUI_TOKEN") or ""
-        self.hermes_api_token = (
-            hermes_api_token
-            or os.environ.get("HERMES_API_TOKEN")
-            or os.environ.get("HERMES_REMOTE_TOKEN")
-            or ""
-        )
+        self.token = iris_token
+        self.hermes_api_token = hermes_api_token
         self.connection = runtime.get("connection") if isinstance(runtime.get("connection"), dict) else {}
 
     def list_agents(self) -> list[dict[str, Any]]:
@@ -457,11 +453,11 @@ class HermesRuntimeAdapter:
     def probe(self, profile: str = "default") -> dict[str, Any]:
         gateway_url = str(self.connection.get("gatewayUrl") or DEFAULT_GATEWAY_URL)
         management_url = str(self.connection.get("managementUrl") or DEFAULT_MANAGEMENT_URL)
-        adapter_url = self.agentui_gateway_url(profile)
+        adapter_url = self.iris_gateway_url(profile)
         return {
             "gateway": probe_endpoint(gateway_url),
             "management": probe_endpoint(f"{management_url.rstrip('/')}/health"),
-            "agentuiAdapter": {
+            "irisAdapter": {
                 **probe_endpoint(f"{adapter_url.rstrip('/')}/health"),
                 "profile": profile,
             },
@@ -476,14 +472,15 @@ class HermesRuntimeAdapter:
         message_id: str,
         text: str,
         session_id: str = "",
-        user_id: str = "agentui-user",
+        user_id: str = "iris-user",
         user_name: str = "Iris User",
         metadata: dict[str, Any] | None = None,
         attachments: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
-        if not self.token:
-            return {"ok": False, "error": "IRIS_TOKEN or AGENTUI_TOKEN is required for Iris gateway chat."}
-        url = f"{self.agentui_gateway_url(profile).rstrip('/')}/iris/messages"
+        adapter_url = self.iris_gateway_url(profile)
+        if not self.token and not url_is_loopback(adapter_url):
+            return {"ok": False, "error": f"IRIS_TOKEN is required for non-loopback Iris gateway chat at {adapter_url}."}
+        url = f"{adapter_url.rstrip('/')}/iris/messages"
         metadata_payload = metadata if isinstance(metadata, dict) else {}
         client_request_id = str(
             metadata_payload.get("clientRequestId")
@@ -494,7 +491,7 @@ class HermesRuntimeAdapter:
         ).strip()
         if client_request_id:
             metadata_payload = {**metadata_payload, "clientRequestId": client_request_id}
-        multipart_attachments = agentui_multipart_attachments(attachments or [])
+        multipart_attachments = iris_multipart_attachments(attachments or [])
         body: dict[str, Any] = {
             "chatId": chat_id,
             "chatName": chat_name or chat_id,
@@ -511,7 +508,7 @@ class HermesRuntimeAdapter:
             payload_attachments: list[dict[str, Any]] = []
             for index, attachment in enumerate(multipart_attachments):
                 field = f"file_{index}"
-                payload_attachments.append(agentui_payload_attachment(attachment, field))
+                payload_attachments.append(iris_payload_attachment(attachment, field))
                 files.append({
                     "field": field,
                     "path": attachment["path"],
@@ -544,40 +541,43 @@ class HermesRuntimeAdapter:
         }
 
     def models(self, profile: str, max_models: int = 100) -> dict[str, Any]:
-        if not self.token:
+        adapter_url = self.iris_gateway_url(profile)
+        if not self.token and not url_is_loopback(adapter_url):
             return {
                 "ok": False,
                 "profile": profile,
                 "current": None,
                 "providers": [],
                 "generatedAt": int(time.time()),
-                "error": "IRIS_TOKEN or AGENTUI_TOKEN is required for model catalog discovery.",
+                "error": f"IRIS_TOKEN is required for non-loopback Iris gateway model catalog discovery at {adapter_url}.",
             }
         query = urllib.parse.urlencode({"maxModels": max(1, min(int(max_models), 200))})
-        url = f"{self.agentui_gateway_url(profile).rstrip('/')}/iris/models?{query}"
+        url = f"{adapter_url.rstrip('/')}/iris/models?{query}"
         return adapter_catalog_request(url, self.token, profile, fallback_key="providers")
 
     def slash_commands(self, profile: str) -> dict[str, Any]:
-        if not self.token:
+        adapter_url = self.iris_gateway_url(profile)
+        if not self.token and not url_is_loopback(adapter_url):
             return {
                 "ok": False,
                 "profile": profile,
                 "commands": [],
                 "generatedAt": int(time.time()),
-                "error": "IRIS_TOKEN or AGENTUI_TOKEN is required for slash command discovery.",
+                "error": f"IRIS_TOKEN is required for non-loopback Iris gateway slash command discovery at {adapter_url}.",
             }
-        url = f"{self.agentui_gateway_url(profile).rstrip('/')}/iris/slash-commands"
+        url = f"{adapter_url.rstrip('/')}/iris/slash-commands"
         return adapter_catalog_request(url, self.token, profile, fallback_key="commands")
 
     def slash_complete(self, profile: str, text: str, limit: int = 30) -> dict[str, Any]:
-        if not self.token:
+        adapter_url = self.iris_gateway_url(profile)
+        if not self.token and not url_is_loopback(adapter_url):
             return {
                 "ok": False,
                 "items": [],
                 "replaceFrom": 0,
-                "error": "IRIS_TOKEN or AGENTUI_TOKEN is required for slash command completion.",
+                "error": f"IRIS_TOKEN is required for non-loopback Iris gateway slash command completion at {adapter_url}.",
             }
-        url = f"{self.agentui_gateway_url(profile).rstrip('/')}/iris/slash-complete"
+        url = f"{adapter_url.rstrip('/')}/iris/slash-complete"
         result = http_json(url, method="POST", token=self.token, body={"text": text, "limit": limit})
         if not result.get("ok"):
             return {
@@ -665,17 +665,17 @@ class HermesRuntimeAdapter:
             }
         return {**parsed, "ok": True, "url": result.get("url") or url, "status": result.get("status")}
 
-    def agentui_gateway_url(self, profile: str) -> str:
-        routes = self.connection.get("agentuiGatewayUrls") if isinstance(self.connection.get("agentuiGatewayUrls"), dict) else {}
+    def iris_gateway_url(self, profile: str) -> str:
+        routes = self.connection.get("irisGatewayUrls") if isinstance(self.connection.get("irisGatewayUrls"), dict) else {}
         explicit = routes.get(profile) or routes.get("default")
         if explicit:
             return str(explicit)
         gateway_url = str(self.connection.get("gatewayUrl") or DEFAULT_GATEWAY_URL)
-        derived = derive_agentui_gateway_url(gateway_url)
-        return derived or DEFAULT_AGENTUI_GATEWAY_URL
+        derived = derive_iris_gateway_url(gateway_url)
+        return derived or DEFAULT_IRIS_GATEWAY_URL
 
 
-def derive_agentui_gateway_url(gateway_url: str) -> str:
+def derive_iris_gateway_url(gateway_url: str) -> str:
     parsed = urllib.parse.urlparse(gateway_url)
     if parsed.scheme not in {"http", "https"} or not parsed.hostname or not parsed.port:
         return ""
@@ -683,8 +683,19 @@ def derive_agentui_gateway_url(gateway_url: str) -> str:
     if ":" in host and not host.startswith("["):
         host = f"[{host}]"
     return urllib.parse.urlunparse(
-        (parsed.scheme, f"{host}:{parsed.port + AGENTUI_GATEWAY_PORT_OFFSET}", "", "", "", "")
+        (parsed.scheme, f"{host}:{parsed.port + IRIS_GATEWAY_PORT_OFFSET}", "", "", "", "")
     )
+
+
+def url_is_loopback(url: str) -> bool:
+    parsed = urllib.parse.urlparse(str(url or ""))
+    host = (parsed.hostname or "").strip().lower()
+    if host in {"localhost", "127.0.0.1", "::1"}:
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
 
 
 def probe_endpoint(url: str) -> dict[str, Any]:

@@ -9,7 +9,7 @@ from pathlib import Path
 
 DEFAULT_INBOUND_HOST = "127.0.0.1"
 DEFAULT_INBOUND_PORT = 8766
-API_TO_AGENTUI_PORT_OFFSET = 124
+API_TO_IRIS_PORT_OFFSET = 124
 
 
 def env_value(*names: str) -> str:
@@ -18,11 +18,6 @@ def env_value(*names: str) -> str:
         if value:
             return value
     return ""
-
-
-def sync_env_alias(preferred: str, legacy: str) -> None:
-    if os.getenv(preferred) and not os.getenv(legacy):
-        os.environ[legacy] = os.getenv(preferred, "")
 
 
 def normalize_base_url(value: object) -> str:
@@ -54,7 +49,7 @@ def clamp_int(value: object, default: int, minimum: int, maximum: int) -> int:
 def default_inbound_port() -> int:
     api_port = safe_int(os.getenv("API_SERVER_PORT"), 0)
     if api_port:
-        return api_port + API_TO_AGENTUI_PORT_OFFSET
+        return api_port + API_TO_IRIS_PORT_OFFSET
     return DEFAULT_INBOUND_PORT
 
 

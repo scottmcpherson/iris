@@ -66,26 +66,21 @@ npm run iris:hermes:install
 
 ```bash
 IRIS_BASE_URL=http://127.0.0.1:8765
+# Optional for loopback; required when IRIS_BASE_URL is non-loopback.
 IRIS_TOKEN=replace-with-a-local-token
 IRIS_DEFAULT_CHAT_ID=desktop
 IRIS_INBOUND_HOST=127.0.0.1
 IRIS_INBOUND_PORT=8766
-IRIS_ALLOWED_USERS=agentui-user
+IRIS_ALLOWED_USERS=iris-user
 ```
 
-Existing `AGENTUI_*` environment variables are accepted for compatibility. New Hermes delivery targets should use the `iris:` platform prefix.
+Same-machine loopback development can omit `IRIS_TOKEN`; auth headers are omitted in that mode. Remote or other non-loopback Core/plugin traffic requires `IRIS_TOKEN`. Core uses `HERMES_API_TOKEN` when set, otherwise it discovers Hermes' `API_SERVER_KEY` from `$HERMES_HOME/.env` for Jobs API calls.
 
 Enable Hermes gateway streaming in the selected Hermes profile config. This is a top-level setting, separate from `display.streaming`:
 
 ```yaml
 streaming:
   enabled: true
-```
-
-Protect the legacy Iris Core inbox compatibility routes with the same shared platform token. These routes are in-memory compatibility endpoints; they do not create a separate inbox database.
-
-```bash
-IRIS_INBOX_TOKEN=replace-with-a-local-token
 ```
 
 Restart the Hermes gateway after changing plugin config, then run Iris with:
@@ -108,8 +103,10 @@ Smoke test inbound session delivery:
 curl -X POST http://127.0.0.1:8766/iris/messages \
   -H "Authorization: Bearer $IRIS_TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"chatId":"desktop","messageId":"manual-test","userId":"agentui-user","userName":"Iris User","text":"Say hello from Iris."}'
+  -d '{"chatId":"desktop","messageId":"manual-test","userId":"iris-user","userName":"Iris User","text":"Say hello from Iris."}'
 ```
+
+Omit the `Authorization` header when both sides are using loopback and `IRIS_TOKEN` is unset. The old `/v1/inbox/*` Core routes are gone; Hermes deliveries use `POST /v1/runtime-deliveries/hermes`.
 
 ## Verification
 

@@ -7,7 +7,6 @@ import { fileURLToPath } from "node:url";
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const hermesHome = expandHome(process.env.HERMES_HOME ?? join(homedir(), ".hermes"));
 const source = join(root, "iris-platform");
-const legacyPluginName = ["agentui", "platform"].join("-");
 
 if (!existsSync(source)) {
   console.error(`Missing Iris Hermes adapter plugin source at ${source}`);
@@ -47,15 +46,10 @@ console.log("[iris-platform] enabled in Hermes profiles. Restart the Hermes gate
 function installForHermesHome(profileHome) {
   const pluginsDir = join(profileHome, "plugins");
   const destination = join(pluginsDir, "iris-platform");
-  const legacyDestination = join(pluginsDir, legacyPluginName);
   mkdirSync(pluginsDir, { recursive: true });
   rmSync(destination, { recursive: true, force: true });
   cpSync(source, destination, { recursive: true });
   console.log(`[iris-hermes-adapter] installed to ${destination}`);
-  if (existsSync(legacyDestination)) {
-    rmSync(legacyDestination, { recursive: true, force: true });
-    console.log(`[iris-hermes-adapter] removed old installed plugin at ${legacyDestination}`);
-  }
 }
 
 function discoverHermesHomes(rootHome) {

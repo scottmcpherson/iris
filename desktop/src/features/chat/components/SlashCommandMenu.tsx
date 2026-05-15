@@ -41,11 +41,11 @@ export function SlashCommandMenu({
   return (
     <Command
       id="composer-slash-menu"
-      className="absolute bottom-[calc(100%+8px)] left-0 z-[32] max-h-80 w-[min(460px,100%)] overflow-auto rounded-xl border border-menu-border bg-menu p-[7px] text-menu-foreground shadow-context-menu"
+      className="absolute bottom-[calc(100%+8px)] left-0 z-[32] h-auto max-h-80 w-[min(460px,100%)] overflow-hidden rounded-xl border border-menu-border bg-menu p-[7px] text-menu-foreground shadow-context-menu"
       aria-label="Slash commands"
       shouldFilter={false}
     >
-      <CommandList className="max-h-none overflow-visible">
+      <CommandList className="max-h-[306px] overflow-x-hidden overflow-y-auto">
         <CommandGroup className="p-0">
           {loading && !commands.length ? (
             <div className="px-[9px] py-[9px] text-[11px] font-[720] text-menu-muted-foreground">Loading commands...</div>

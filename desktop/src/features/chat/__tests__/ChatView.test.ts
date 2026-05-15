@@ -68,6 +68,19 @@ describe("composer responsive layout", () => {
     expect(appCss).not.toMatch(/\.composer-model-menu-wrap\s*{[^}]*display:\s*none/i);
     expect(appCss).toMatch(/\.composer-model-menu-wrap\s*{[^}]*display:\s*inline-flex/i);
   });
+
+  it("keeps the slash command menu taller than the textarea wrapper", async () => {
+    // @ts-expect-error The desktop tsconfig intentionally omits Node types, but Vitest runs in Node.
+    const { readFileSync } = await import("node:fs");
+    const menuSource = readFileSync(
+      new URL("../components/SlashCommandMenu.tsx", import.meta.url),
+      "utf8",
+    ) as string;
+
+    expect(menuSource).toContain("h-auto max-h-80");
+    expect(menuSource).not.toContain("max-h-none overflow-visible");
+    expect(menuSource).toContain("max-h-[306px] overflow-x-hidden overflow-y-auto");
+  });
 });
 
 describe("composer model selection", () => {

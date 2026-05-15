@@ -10,7 +10,7 @@ import {
   widthBandForWindow,
 } from "../AppShell";
 import { storageKeys } from "../../app/storage";
-import type { AgentUICoreAgent, IrisProject } from "../../lib/agentuiCore";
+import type { IrisCoreAgent, IrisProject } from "../../lib/irisCore";
 import type { HermesSession, HermesProfile, HermesStatus } from "../../types/hermes";
 
 afterEach(() => {
@@ -551,7 +551,7 @@ function projectFixture(): IrisProject {
   };
 }
 
-function agentFixture(): AgentUICoreAgent {
+function agentFixture(): IrisCoreAgent {
   return {
     id: "agent_1",
     runtimeId: "default",
@@ -565,7 +565,7 @@ function agentFixture(): AgentUICoreAgent {
 function sessionFixture(overrides: Partial<HermesSession> = {}): HermesSession {
   return {
     id: "session_1",
-    source: "agentui-core",
+    source: "iris-core",
     model: "gpt-5.5",
     title: "Chat",
     preview: "",

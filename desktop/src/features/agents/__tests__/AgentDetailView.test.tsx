@@ -24,12 +24,16 @@ describe("AgentDetailView", () => {
         onRuntimeChange: noop,
         onRefresh: noop,
         onProfileAction: async () => "",
+        onOpenSettings: noop,
         onSaveMemory: async () => "",
         onResetMemory: async () => "",
       }),
     );
 
-    expect(html).toContain("Routes and credentials");
+    expect(html).toContain("Iris Core status");
+    expect(html).toContain("Configure in Settings");
+    expect(html).not.toContain("Routes and credentials");
+    expect(html).not.toContain("Connection details are shared across the app");
     expect(html).not.toContain("Memory overview");
     expect(html).not.toContain("Skills overview");
     expect(html).not.toContain("installed skills");

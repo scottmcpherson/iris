@@ -107,6 +107,25 @@ class Config:
     }
 
 
+class LoopbackNoTokenConfig:
+    extra = {
+        "base_url": "http://127.0.0.1:8765",
+    }
+
+
+class RemoteNoTokenConfig:
+    extra = {
+        "base_url": "http://10.0.0.5:8765",
+    }
+
+
+def test_plugin_manifest_allows_loopback_without_iris_token():
+    manifest = (Path(__file__).resolve().parents[1] / "plugin.yaml").read_text(encoding="utf-8")
+
+    assert "IRIS_BASE_URL" in manifest
+    assert "IRIS_TOKEN" not in manifest
+
+
 class FakeInboundRequest:
     headers = {"Authorization": "Bearer secret-token"}
 
@@ -122,6 +141,12 @@ class FakeJsonRequest(FakeInboundRequest):
 
     async def json(self):
         return self._payload
+
+
+class FakeLoopbackRequest:
+    headers: dict[str, str] = {}
+    remote = "127.0.0.1"
+    transport = None
 
 
 @dataclass
@@ -171,6 +196,70 @@ def call_inbound_message(adapter_module, monkeypatch: pytest.MonkeyPatch, adapte
     adapter.handle_message = fake_handle_message
     response = asyncio.run(adapter._inbound_message(FakeInboundRequest()))
     return response.status, json.loads(response.text)
+
+
+def test_validate_config_allows_loopback_without_token(monkeypatch: pytest.MonkeyPatch):
+    adapter_module = load_adapter_module(monkeypatch)
+    monkeypatch.setattr(adapter_module, "HTTP_CLIENT_AVAILABLE", True)
+    monkeypatch.delenv("IRIS_BASE_URL", raising=False)
+    monkeypatch.delenv("IRIS_TOKEN", raising=False)
+
+    assert adapter_module.validate_config(LoopbackNoTokenConfig()) is True
+
+
+def test_validate_config_rejects_non_loopback_without_token(monkeypatch: pytest.MonkeyPatch):
+    adapter_module = load_adapter_module(monkeypatch)
+    monkeypatch.setattr(adapter_module, "HTTP_CLIENT_AVAILABLE", True)
+    monkeypatch.delenv("IRIS_BASE_URL", raising=False)
+    monkeypatch.delenv("IRIS_TOKEN", raising=False)
+
+    assert adapter_module.validate_config(RemoteNoTokenConfig()) is False
+
+
+def test_check_requirements_uses_iris_base_url_and_loopback_token_policy(monkeypatch: pytest.MonkeyPatch):
+    adapter_module = load_adapter_module(monkeypatch)
+    monkeypatch.setattr(adapter_module, "HTTP_CLIENT_AVAILABLE", True)
+    monkeypatch.setenv("IRIS_BASE_URL", "http://127.0.0.1:8765")
+    monkeypatch.delenv("IRIS_TOKEN", raising=False)
+
+    assert adapter_module.check_requirements() is True
+
+    monkeypatch.setenv("IRIS_BASE_URL", "http://10.0.0.5:8765")
+    assert adapter_module.check_requirements() is False
+
+    monkeypatch.setenv("IRIS_TOKEN", "secret-token")
+    assert adapter_module.check_requirements() is True
+
+
+def test_connect_probes_v1_health_and_allows_loopback_without_token(monkeypatch: pytest.MonkeyPatch):
+    adapter_module = load_adapter_module(monkeypatch)
+    monkeypatch.setattr(adapter_module, "AIOHTTP_AVAILABLE", True)
+    adapter = adapter_module.IrisPlatformAdapter(LoopbackNoTokenConfig())
+    requests: list[tuple[str, str]] = []
+
+    async def fake_request(method: str, path: str, body: dict[str, Any] | None = None):
+        del body
+        requests.append((method, path))
+        return {"ok": True}
+
+    async def fake_start_inbound_server():
+        return None
+
+    adapter._request = fake_request
+    adapter._start_inbound_server = fake_start_inbound_server
+
+    connected = asyncio.run(adapter.connect())
+
+    assert connected is True
+    assert adapter.connected is True
+    assert requests == [("GET", "/v1/health")]
+
+
+def test_inbound_auth_allows_loopback_when_token_is_unset(monkeypatch: pytest.MonkeyPatch):
+    adapter_module = load_adapter_module(monkeypatch)
+    adapter = adapter_module.IrisPlatformAdapter(LoopbackNoTokenConfig())
+
+    assert adapter._authorized(FakeLoopbackRequest()) is True
 
 
 def test_inbound_message_reserves_and_returns_session_id(monkeypatch: pytest.MonkeyPatch):

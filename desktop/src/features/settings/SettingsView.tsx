@@ -38,6 +38,7 @@ type SettingsViewProps = {
   onRuntimeChange: (config: HermesRuntimeConfig) => void;
   onRefresh: () => void;
   onProfileAction: ProfileActionHandler;
+  onOpenSettings?: () => void;
 };
 
 export function SettingsView({
@@ -49,6 +50,7 @@ export function SettingsView({
   onRuntimeChange,
   onRefresh,
   onProfileAction,
+  onOpenSettings,
 }: SettingsViewProps) {
   const [draftConfig, setDraftConfig] = useState(runtimeConfig);
   const [profileName, setProfileName] = useState("");
@@ -59,7 +61,6 @@ export function SettingsView({
   const appliedManagementApiUrl = status?.coreApiUrl || resolveCoreApiUrl(runtimeConfig);
   const draftCoreApiUrl = normalizeServerUrl(coreApiInput);
   const pendingCoreApiUrl = draftCoreApiUrl !== appliedManagementApiUrl ? draftCoreApiUrl : "";
-  const profileCount = status?.profiles?.length ?? 1;
   const checkedAt = status?.checkedAt ? formatTimestamp(status.checkedAt) : "Not checked";
   const modelDisplay = modelSummary(profile.provider, profile.model);
 
@@ -74,18 +75,6 @@ export function SettingsView({
   useEffect(() => {
     void refreshCredentialStatus();
   }, []);
-
-  function updateDraft<Key extends keyof HermesRuntimeConfig>(
-    key: Key,
-    value: HermesRuntimeConfig[Key],
-  ) {
-    setDraftConfig((current) => ({ ...current, [key]: value }));
-  }
-
-  function applyRuntimeConfig(message: string) {
-    onRuntimeChange(draftConfig);
-    setNotice(message);
-  }
 
   async function saveCoreConnection() {
     const coreUrl = normalizeServerUrl(coreApiInput);
@@ -145,9 +134,12 @@ export function SettingsView({
   }
 
   return (
-    <div className="tool-view settings-view">
+    <div className={mode === "settings" ? "tool-view settings-view settings-view-general" : "tool-view settings-view"}>
       <div className="settings-toolbar">
-        <span />
+        <div>
+          <h1>{mode === "settings" ? "Settings" : profile.name}</h1>
+          {mode === "profile" ? <span>Agent overview</span> : null}
+        </div>
         <Button variant="appNeutral" size="appSmall" onClick={onRefresh}>
           Refresh
         </Button>
@@ -156,94 +148,7 @@ export function SettingsView({
       {mode === "settings" ? (
         <>
           <SettingsSection
-            eyebrow="Application"
-            title="App settings"
-            detail="Optional provider and model overrides used by outgoing runtime requests."
-          >
-            <RuntimeTextField
-              id="provider"
-              label="Provider override"
-              value={draftConfig.provider}
-              placeholder="openai, nous, anthropic"
-              onChange={(value) => updateDraft("provider", value)}
-            />
-            <RuntimeTextField
-              id="model"
-              label="Model override"
-              value={draftConfig.model}
-              placeholder="hermes-4, gpt-5.2"
-              onChange={(value) => updateDraft("model", value)}
-            />
-            <div className="settings-actions">
-              <Button variant="appNeutral" size="appSmall" onClick={() => applyRuntimeConfig("App settings saved.")}>
-                Save app settings
-              </Button>
-            </div>
-          </SettingsSection>
-
-          <SettingsSection
-            eyebrow="Core"
             title="Iris Core connection"
-            detail="Local or private-network Core API used by Iris Desktop and future remote clients."
-          >
-            <ServiceCard
-              name="Iris Core"
-              healthy={Boolean(status?.managementStatus?.ok)}
-              statusLabel={healthLabel(status?.managementStatus)}
-              statusTitle={endpointLabel(status?.managementStatus)}
-              lastChecked={checkedAt}
-              pendingUrl={pendingCoreApiUrl}
-            >
-              <RuntimeTextField
-                id="core-api-route"
-                label="URL"
-                value={coreApiInput}
-                placeholder="http://127.0.0.1:8765"
-                onChange={setCoreApiInput}
-              />
-              <TokenField
-                id="core-api-token"
-                label="Token"
-                value={coreToken}
-                status={coreCredentialStatus}
-                onChange={setCoreToken}
-                onSave={() => void saveToken("core")}
-                onClear={() => void clearToken("core")}
-              />
-            </ServiceCard>
-            <div className="settings-actions">
-              <Button variant="appNeutral" size="appSmall" onClick={() => void saveCoreConnection()}>
-                Save Core connection
-              </Button>
-            </div>
-          </SettingsSection>
-
-          <section className="settings-section">
-            <div className="settings-section-header">
-              <div>
-                <p className="eyebrow">Agents</p>
-                <h2>{profileCount} {profileCount === 1 ? "agent" : "agents"}</h2>
-                <span>{status?.coreApiUrl || resolveCoreApiUrl(runtimeConfig)}</span>
-              </div>
-            </div>
-            <div className="usage-dashboard">
-              {(status?.profiles ?? [profile]).map((item) => (
-                <Card key={item.name} className={item.name === selectedProfile ? "usage-card active" : "usage-card"}>
-                  <span>{item.name}</span>
-                  <strong>{item.sessionCount}</strong>
-                  <small>
-                    {item.estimatedCostUsd == null ? "Cost unavailable" : `$${item.estimatedCostUsd.toFixed(4)} estimated`}
-                  </small>
-                </Card>
-              ))}
-            </div>
-          </section>
-
-        </>
-      ) : (
-        <>
-          <SettingsSection
-            title="Routes and credentials"
             variant="plain"
           >
             <Card className="core-connection-form">
@@ -258,15 +163,15 @@ export function SettingsView({
               </CardHeader>
               <CardContent className="core-connection-fields">
                 <RuntimeTextField
-                  id="profile-core-route"
+                  id="core-api-route"
                   label="URL"
                   value={coreApiInput}
                   placeholder="http://127.0.0.1:8765"
                   onChange={setCoreApiInput}
                 />
                 <TokenField
-                  id="profile-core-token"
-                  label="Token"
+                  id="core-api-token"
+                  label="Iris token"
                   value={coreToken}
                   status={coreCredentialStatus}
                   onChange={setCoreToken}
@@ -289,6 +194,44 @@ export function SettingsView({
                   Save Core connection
                 </Button>
               </div>
+            </Card>
+          </SettingsSection>
+        </>
+      ) : (
+        <>
+          <SettingsSection
+            title="Iris Core status"
+            variant="plain"
+          >
+            <Card className="core-connection-form core-status-card">
+              <CardHeader className="core-connection-heading">
+                <div className="core-connection-title">
+                  <span className={status?.managementStatus?.ok ? "service-health-dot online" : "service-health-dot offline"} />
+                  <strong>Iris Core</strong>
+                </div>
+                <Badge variant={status?.managementStatus?.ok ? "secondary" : "outline"} title={endpointLabel(status?.managementStatus)}>
+                  {healthLabel(status?.managementStatus)} · {checkedAt}
+                </Badge>
+              </CardHeader>
+              <CardContent className="settings-list compact">
+                <SettingsRow
+                  icon={<LayoutPanelLeft size={17} />}
+                  label="Endpoint"
+                  value={status?.coreApiUrl || resolveCoreApiUrl(runtimeConfig)}
+                />
+                <SettingsRow
+                  icon={<Database size={17} />}
+                  label="Credentials"
+                  value={coreCredentialStatus?.exists ? `Stored via ${coreCredentialStatus.source}` : "Not stored"}
+                />
+              </CardContent>
+              {onOpenSettings ? (
+                <div className="core-connection-actions">
+                  <Button variant="appNeutral" size="appSmall" onClick={onOpenSettings}>
+                    Configure in Settings
+                  </Button>
+                </div>
+              ) : null}
             </Card>
           </SettingsSection>
 
@@ -363,44 +306,6 @@ function ProfileWorkflows({
           Delete current
         </Button>
       </div>
-    </Card>
-  );
-}
-
-function ServiceCard({
-  name,
-  healthy,
-  statusLabel,
-  statusTitle,
-  lastChecked,
-  pendingUrl,
-  children,
-}: {
-  name: string;
-  healthy: boolean;
-  statusLabel: string;
-  statusTitle: string;
-  lastChecked: string;
-  pendingUrl: string;
-  children: ReactNode;
-}) {
-  return (
-    <Card className="service-card">
-      <CardHeader>
-        <div className="service-card-title">
-          <span className={healthy ? "service-health-dot online" : "service-health-dot offline"} />
-          <strong>{name}</strong>
-        </div>
-        <Badge variant={healthy ? "secondary" : "outline"} title={statusTitle}>
-          {statusLabel} · {lastChecked}
-        </Badge>
-      </CardHeader>
-      <CardContent className="service-card-fields">{children}</CardContent>
-      {pendingUrl ? (
-        <footer>
-          <em>Unsaved URL: {pendingUrl}</em>
-        </footer>
-      ) : null}
     </Card>
   );
 }

@@ -17,6 +17,14 @@ core_bridge = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(core_bridge)
 
 
+def restore_env(values: dict[str, str | None]) -> None:
+    for key, value in values.items():
+        if value is None:
+            os.environ.pop(key, None)
+        else:
+            os.environ[key] = value
+
+
 class IrisBridgeTests(unittest.TestCase):
     def test_remote_credentials_use_core_test_store(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -29,8 +37,7 @@ class IrisBridgeTests(unittest.TestCase):
                 self.assertEqual(saved["source"], "test-file")
                 self.assertEqual(core_bridge.test_credential_path("core").name, "iris-core-token")
 
-                legacy_kind = "side" + "car"
-                status = core_bridge.remote_credential_status({"kind": legacy_kind})
+                status = core_bridge.remote_credential_status({"kind": "core"})
                 self.assertTrue(status["exists"])
                 self.assertEqual(status["kind"], "core")
                 self.assertEqual(core_bridge.read_remote_token("core"), "secret-token")
@@ -43,6 +50,39 @@ class IrisBridgeTests(unittest.TestCase):
                     os.environ.pop("IRIS_DESKTOP_SECRET_TEST_DIR", None)
                 else:
                     os.environ["IRIS_DESKTOP_SECRET_TEST_DIR"] = old_value
+
+    def test_read_env_token_uses_iris_token(self) -> None:
+        removed_token_name = "AGENT" + "UI_TOKEN"
+        removed_core_token_name = "IRIS_" + "CORE_TOKEN"
+        old_values = {
+            "IRIS_TOKEN": os.environ.get("IRIS_TOKEN"),
+            removed_core_token_name: os.environ.get(removed_core_token_name),
+            removed_token_name: os.environ.get(removed_token_name),
+        }
+        os.environ["IRIS_TOKEN"] = "iris-env-token"
+        os.environ[removed_core_token_name] = "legacy-core-token"
+        os.environ[removed_token_name] = "legacy-agent-token"
+        try:
+            self.assertEqual(core_bridge.read_env_token("core"), "iris-env-token")
+            self.assertEqual(core_bridge.read_remote_token("core"), "iris-env-token")
+        finally:
+            restore_env(old_values)
+
+    def test_read_env_token_ignores_legacy_token_names(self) -> None:
+        removed_token_name = "AGENT" + "UI_TOKEN"
+        removed_core_token_name = "IRIS_" + "CORE_TOKEN"
+        old_values = {
+            "IRIS_TOKEN": os.environ.get("IRIS_TOKEN"),
+            removed_core_token_name: os.environ.get(removed_core_token_name),
+            removed_token_name: os.environ.get(removed_token_name),
+        }
+        os.environ.pop("IRIS_TOKEN", None)
+        os.environ[removed_core_token_name] = "legacy-core-token"
+        os.environ[removed_token_name] = "legacy-agent-token"
+        try:
+            self.assertEqual(core_bridge.read_env_token("core"), "")
+        finally:
+            restore_env(old_values)
 
     def test_core_request_uses_core_url_and_token(self) -> None:
         seen: dict[str, str] = {}

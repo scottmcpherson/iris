@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-import secrets
 import hashlib
 import ipaddress
+import secrets
 from collections.abc import Callable
 from typing import Annotated
 
@@ -29,10 +29,6 @@ def device_token_hash(token: str) -> str:
     return f"v1:{digest}"
 
 
-def legacy_device_token_hash(token: str) -> str:
-    return hashlib.sha256(f"agentui-core-device:{token}".encode("utf-8")).hexdigest()
-
-
 def host_is_loopback(host: str) -> bool:
     value = (host or "").strip().lower()
     if value in {"", "localhost", "127.0.0.1", "::1"}:
@@ -55,14 +51,14 @@ def make_auth_dependency(token_state_key: str = "management_token") -> Callable[
             if credentials is not None:
                 device = active_device_for_credentials(request, credentials)
                 if device:
-                    request.state.agentui_device = device
+                    request.state.iris_device = device
                     return
                 raise ManagementError("Bearer token is invalid.", status_code=401)
             return
         if credentials is None or credentials.scheme.lower() != "bearer":
             raise ManagementError("Bearer token is required.", status_code=401)
         if token and secrets.compare_digest(credentials.credentials, token):
-            request.state.agentui_device = {
+            request.state.iris_device = {
                 "id": "management-token",
                 "name": "Management token",
                 "kind": "admin",
@@ -70,7 +66,7 @@ def make_auth_dependency(token_state_key: str = "management_token") -> Callable[
             return
         device = active_device_for_credentials(request, credentials)
         if device:
-            request.state.agentui_device = device
+            request.state.iris_device = device
             return
         raise ManagementError("Bearer token is invalid.", status_code=401)
 
@@ -87,8 +83,6 @@ def active_device_for_credentials(
     if core_store is None:
         return None
     device = core_store.active_device_for_token_hash(device_token_hash(credentials.credentials))
-    if not device:
-        device = core_store.active_device_for_token_hash(legacy_device_token_hash(credentials.credentials))
     if device:
         core_store.touch_device(device["id"])
     return device

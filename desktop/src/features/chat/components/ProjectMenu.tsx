@@ -1,5 +1,5 @@
 import { ChevronDown, Folder } from "lucide-react";
-import type { IrisProject } from "../../../lib/agentuiCore";
+import type { IrisProject } from "../../../lib/irisCore";
 import {
   DropdownMenu,
   DropdownMenuContent,

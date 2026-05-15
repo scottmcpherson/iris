@@ -64,10 +64,6 @@ from .models import (
     DevicePairRequest,
     ErrorResponse,
     HealthResponse,
-    InboxHealthResponse,
-    InboxMessageCreateRequest,
-    InboxMessageResponse,
-    InboxMessagesResponse,
     ProjectSessionLinkRequest,
     ProjectCreateRequest,
     ProjectUpdateRequest,
@@ -318,8 +314,6 @@ class Settings:
     host: str = "127.0.0.1"
     port: int = 8765
     token: str | None = None
-    inbox_token: str | None = None
-    runtime_delivery_token: str | None = None
     core_store_path: str | None = None
     cors_origins: tuple[str, ...] = ()
 
@@ -327,19 +321,11 @@ class Settings:
     def from_env(cls) -> "Settings":
         return cls(
             hermes_home=os.environ.get("HERMES_HOME") or None,
-            host=os.environ.get("IRIS_CORE_HOST") or os.environ.get("HERMES_MGMT_HOST") or "127.0.0.1",
-            port=parse_port(os.environ.get("IRIS_CORE_PORT") or os.environ.get("HERMES_MGMT_PORT"), 8765),
-            token=os.environ.get("IRIS_CORE_TOKEN") or os.environ.get("HERMES_MGMT_TOKEN") or None,
-            inbox_token=os.environ.get("IRIS_INBOX_TOKEN") or os.environ.get("AGENTUI_INBOX_TOKEN") or None,
-            runtime_delivery_token=(
-                os.environ.get("IRIS_RUNTIME_DELIVERY_TOKEN")
-                or os.environ.get("AGENTUI_RUNTIME_DELIVERY_TOKEN")
-                or None
-            ),
-            core_store_path=os.environ.get("IRIS_CORE_STORE") or os.environ.get("AGENTUI_CORE_STORE") or None,
-            cors_origins=parse_cors_origins(
-                os.environ.get("IRIS_CORE_CORS_ORIGINS") or os.environ.get("HERMES_MGMT_CORS_ORIGINS")
-            ) or DEFAULT_CORS_ORIGINS,
+            host=os.environ.get("IRIS_CORE_HOST") or "127.0.0.1",
+            port=parse_port(os.environ.get("IRIS_CORE_PORT"), 8765),
+            token=os.environ.get("IRIS_TOKEN") or None,
+            core_store_path=os.environ.get("IRIS_CORE_STORE") or None,
+            cors_origins=parse_cors_origins(os.environ.get("IRIS_CORE_CORS_ORIGINS")) or DEFAULT_CORS_ORIGINS,
         )
 
 
@@ -370,25 +356,16 @@ async def run_runtime_call(app: FastAPI, func, *args, timeout: int = DEFAULT_RUN
             raise ManagementError("Runtime request timed out.", status_code=504) from exc
 
 
-def agentui_platform_token(hermes_home: os.PathLike[str] | str) -> str:
+def iris_token(hermes_home: os.PathLike[str] | str) -> str:
     return (
         os.environ.get("IRIS_TOKEN", "").strip()
-        or os.environ.get("AGENTUI_TOKEN", "").strip()
-        or os.environ.get("IRIS_INBOX_TOKEN", "").strip()
-        or os.environ.get("AGENTUI_INBOX_TOKEN", "").strip()
         or env_file_value(os.path.join(os.fspath(hermes_home), ".env"), "IRIS_TOKEN")
-        or env_file_value(os.path.join(os.fspath(hermes_home), ".env"), "AGENTUI_TOKEN")
-        or env_file_value(os.path.join(os.fspath(hermes_home), ".env"), "IRIS_INBOX_TOKEN")
-        or env_file_value(os.path.join(os.fspath(hermes_home), ".env"), "AGENTUI_INBOX_TOKEN")
     )
 
 
 def hermes_api_token(hermes_home: os.PathLike[str] | str) -> str:
     return (
         os.environ.get("HERMES_API_TOKEN", "").strip()
-        or os.environ.get("HERMES_REMOTE_TOKEN", "").strip()
-        or env_file_value(os.path.join(os.fspath(hermes_home), ".env"), "HERMES_API_TOKEN")
-        or env_file_value(os.path.join(os.fspath(hermes_home), ".env"), "HERMES_REMOTE_TOKEN")
         or env_file_value(os.path.join(os.fspath(hermes_home), ".env"), "API_SERVER_KEY")
     )
 
@@ -769,22 +746,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.hermes_root = hermes_root
     app.state.core_store = core_store
     app.state.settings = app_settings
-    platform_token = agentui_platform_token(hermes_root)
-    app.state.management_token = app_settings.token or ""
-    app.state.inbox_token = app_settings.inbox_token or app_settings.token or platform_token or ""
-    app.state.runtime_delivery_token = (
-        app_settings.runtime_delivery_token
-        or app_settings.inbox_token
-        or app_settings.token
-        or platform_token
-        or ""
-    )
+    resolved_iris_token = app_settings.token or iris_token(hermes_root)
+    resolved_hermes_api_token = hermes_api_token(hermes_root)
+    if not resolved_hermes_api_token:
+        hermes_env_path = os.path.join(os.fspath(hermes_root), ".env")
+        logger.warning(
+            "HERMES_API_TOKEN not set and %s has no API_SERVER_KEY; automation routes will return 503 when Hermes requires Jobs API auth.",
+            hermes_env_path,
+        )
+    app.state.management_token = resolved_iris_token
+    app.state.runtime_delivery_token = resolved_iris_token
     app.state.runtime_registry = RuntimeRegistry(
         core_store=core_store,
         hermes_home=str(hermes_root),
         management_url=f"http://{app_settings.host}:{app_settings.port}",
-        agentui_token=platform_token,
-        hermes_api_token=hermes_api_token(hermes_root),
+        iris_token=resolved_iris_token,
+        hermes_api_token=resolved_hermes_api_token,
     )
     app.state.runtime_registry.ensure_default_runtime()
     app.state.live_delivery_bus = LiveDeliveryBus(core_store=core_store)
@@ -799,7 +776,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.active_sessions = {}
     app.state.active_sessions_by_chat = {}
     app.state.accepted_client_messages = {}
-    app.state.inbox_acknowledged_at = {}
     if app_settings.cors_origins:
         app.add_middleware(
             CORSMiddleware,
@@ -828,7 +804,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return JSONResponse(status_code=500, content={"ok": False, "error": "Internal server error."})
 
     require_auth = make_auth_dependency()
-    require_inbox_auth = make_auth_dependency("inbox_token")
     require_runtime_delivery_auth = make_auth_dependency("runtime_delivery_token")
 
     @app.get("/health", response_model=HealthResponse)
@@ -858,7 +833,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/v1/devices/me")
     async def core_current_device(request: Request, _auth: None = Depends(require_auth)) -> dict[str, Any]:
-        device = getattr(request.state, "agentui_device", None)
+        device = getattr(request.state, "iris_device", None)
         return {
             "ok": True,
             "device": device if isinstance(device, dict) else None,
@@ -896,7 +871,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         request: Request,
         _auth: None = Depends(require_auth),
     ) -> dict[str, Any]:
-        device = getattr(request.state, "agentui_device", None)
+        device = getattr(request.state, "iris_device", None)
         device_id = str(device.get("id") or "") if isinstance(device, dict) else ""
         if not device_id.startswith("dev_"):
             raise ManagementError("A paired device token is required for device cursors.", status_code=401)
@@ -904,58 +879,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "ok": True,
             "cursor": core_store.upsert_device_cursor(device_id, cursor.streamName, cursor.lastCursor),
         }
-
-    @app.get("/v1/inbox/health", response_model=InboxHealthResponse)
-    async def inbox_health(
-        request: Request,
-        _auth: None = Depends(require_inbox_auth),
-    ) -> InboxHealthResponse:
-        del request
-        return InboxHealthResponse(checkedAt=checked_at(), path="", storage="memory")
-
-    @app.post("/v1/inbox/messages", response_model=InboxMessageResponse)
-    async def inbox_create_message(
-        message: InboxMessageCreateRequest,
-        request: Request,
-        _auth: None = Depends(require_inbox_auth),
-    ) -> InboxMessageResponse:
-        payload = inbox_message_from_payload(dump_model(message))
-        event = mirror_inbox_message_to_core(request.app, payload)
-        payload["cursor"] = int(event.get("cursor") or 0) if event else 0
-        return InboxMessageResponse(message=payload)
-
-    @app.get("/v1/inbox/messages", response_model=InboxMessagesResponse)
-    async def inbox_messages(
-        request: Request,
-        after: int = Query(0),
-        limit: int = Query(50),
-        profile: str | None = Query(None),
-        _auth: None = Depends(require_inbox_auth),
-    ) -> InboxMessagesResponse:
-        after = clamp_int(after, default=0, minimum=0, maximum=9_223_372_036_854_775_807)
-        limit = clamp_int(limit, default=50, minimum=1, maximum=200)
-        events = request.app.state.live_delivery_bus.list_events(after=after, limit=limit)
-        messages = [
-            inbox_message_from_event(request.app, event)
-            for event in events
-            if not profile or str(event.get("metadata", {}).get("profile") or "") == profile
-        ]
-        cursor = messages[-1]["cursor"] if messages else request.app.state.live_delivery_bus.latest_cursor()
-        return InboxMessagesResponse(messages=messages, cursor=cursor)
-
-    @app.post("/v1/inbox/messages/{message_id}/ack", response_model=InboxMessageResponse)
-    async def inbox_ack_message(
-        message_id: str,
-        request: Request,
-        _auth: None = Depends(require_inbox_auth),
-    ) -> InboxMessageResponse:
-        acknowledged_at = now()
-        request.app.state.inbox_acknowledged_at[str(message_id)] = acknowledged_at
-        message = inbox_message_for_id(request.app, message_id)
-        if not message:
-            raise ManagementError("Inbox message was not found.", status_code=404)
-        message["acknowledgedAt"] = acknowledged_at
-        return InboxMessageResponse(message=message)
 
     @app.get("/v1/status", response_model=StatusResponse)
     async def status(_auth: None = Depends(require_auth)) -> StatusResponse:
@@ -1487,7 +1410,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if project:
             runtime_metadata.update(project_runtime_metadata(project))
         runtime_metadata.update({
-                    "agentuiSessionId": session_id,
+                    "irisSessionId": session_id,
                     "clientMessageId": message_id,
                     "clientRequestId": message_id,
                     "chatId": chat_id,
@@ -1525,7 +1448,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                         "sendResult": switch_result,
                         "chatId": chat_id,
                         "profile": agent["runtimeProfile"],
-                        "source": "agentui-core-send",
+                        "source": "iris-core-send",
                     },
                 )
                 return {
@@ -1561,7 +1484,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     "sendResult": result,
                     "chatId": chat_id,
                     "profile": agent["runtimeProfile"],
-                    "source": "agentui-core-send",
+                    "source": "iris-core-send",
                 },
             )
             return {
@@ -1632,7 +1555,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             message_id=random_id("msg"),
             text="/stop",
             session_id=session.get("externalSessionId") or "",
-            metadata={"kind": "cancel", "agentuiSessionId": session_id},
+            metadata={"kind": "cancel", "irisSessionId": session_id},
         )
         return {"ok": bool(result.get("ok")), "sessionId": session_id, "runtime": result}
 
@@ -1780,7 +1703,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "profile": delivery.profile,
             "chatId": delivery.chatId,
             "source": delivery.source,
-            "agentuiSessionId": session_id,
+            "irisSessionId": session_id,
             **delivery.metadata,
         }
         if project:
@@ -2038,128 +1961,6 @@ def core_auth_payload(request_app: FastAPI) -> dict[str, Any]:
         "deviceCount": len(devices),
         "activeDeviceCount": len(active_devices),
     }
-
-
-def inbox_message_from_payload(payload: dict[str, Any]) -> dict[str, Any]:
-    content = str(payload.get("content") or "").strip()
-    if not content:
-        raise ManagementError("Message content is required.", status_code=400)
-    metadata = payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {}
-    return {
-        "cursor": 0,
-        "id": str(payload.get("id") or random_id("inbox")),
-        "source": str(payload.get("source") or "hermes-cron"),
-        "platform": str(payload.get("platform") or "agentui"),
-        "profile": str(payload.get("profile") or metadata.get("profile") or "default"),
-        "chatId": str(payload.get("chatId") or payload.get("chat_id") or "agentui"),
-        "content": content,
-        "metadata": metadata,
-        "createdAt": int(payload.get("createdAt") or payload.get("created_at") or now()),
-        "acknowledgedAt": None,
-    }
-
-
-def mirror_inbox_message_to_core(app: FastAPI, message: dict[str, Any]) -> dict[str, Any] | None:
-    runtime_id = str(message.get("metadata", {}).get("runtimeId") or DEFAULT_RUNTIME_ID)
-    profile = str(message.get("profile") or "default")
-    chat_id = str(message.get("chatId") or "agentui")
-    agent = agent_for_runtime_profile(app, runtime_id, profile)
-    if not agent:
-        return None
-    session = resolve_core_session(
-        app,
-        "",
-        runtime_id=runtime_id,
-        runtime_profile=profile,
-        external_chat_id=chat_id,
-    )
-    if not session:
-        session = draft_session(
-            agent,
-            title=f"{profile} delivery",
-            external_chat_id=chat_id,
-            metadata={"createdBy": "legacy-inbox-delivery"},
-        )
-        remember_active_session(app, session)
-    session_id = session["id"]
-    metadata = message.get("metadata") if isinstance(message.get("metadata"), dict) else {}
-    stream_message_id = str(metadata.get("streamMessageId") or metadata.get("stream_message_id") or "")
-    is_streaming = bool(metadata.get("streaming"))
-    is_final = bool(metadata.get("finalize") or metadata.get("final"))
-    event_type = "message.assistant.completed" if is_final or not is_streaming else "message.assistant.delta"
-    event_metadata = {
-        "profile": profile,
-        "chatId": chat_id,
-        "source": str(message.get("source") or "legacy-inbox"),
-        "platform": str(message.get("platform") or "agentui"),
-        **metadata,
-    }
-    event_metadata = mark_hidden_model_switch_reply(event_metadata, str(metadata.get("replyTo") or ""))
-    if stream_message_id:
-        event_metadata["streamMessageId"] = stream_message_id
-    original_content = str(message.get("content") or "")
-    event_content, event_metadata = ingest_generated_file_attachments(
-        app,
-        runtime_id=runtime_id,
-        profile=profile,
-        chat_id=chat_id,
-        session_id=session_id,
-        message_id=str(message.get("id") or ""),
-        content=original_content,
-        metadata=event_metadata,
-    )
-    persist_assistant_attachment_metadata(
-        app,
-        runtime_id=runtime_id,
-        profile=profile,
-        chat_id=chat_id,
-        message_id=str(message.get("id") or ""),
-        stream_message_id=stream_message_id,
-        content=event_content,
-        original_content=original_content,
-        metadata=event_metadata,
-    )
-    return publish_core_event(
-        app,
-        session_id=session_id,
-        agent_id=agent["id"],
-        runtime_id=runtime_id,
-        event_type=event_type,
-        role="assistant",
-        content=event_content,
-        parent_event_id=str(metadata.get("replyTo") or event_metadata.get("replyTo") or ""),
-        external_message_id=str(message.get("id") or ""),
-        metadata=event_metadata,
-        event_id=f"evt_inbox_{message.get('id')}",
-    )
-
-
-def inbox_message_from_event(app: FastAPI, event: dict[str, Any]) -> dict[str, Any]:
-    metadata = event.get("metadata") if isinstance(event.get("metadata"), dict) else {}
-    message_id = str(event.get("externalMessageId") or event.get("id") or "")
-    if message_id.startswith("evt_inbox_"):
-        message_id = message_id.removeprefix("evt_inbox_")
-    return {
-        "cursor": int(event.get("cursor") or 0),
-        "id": message_id,
-        "source": str(metadata.get("source") or "agentui-core-events"),
-        "platform": "agentui",
-        "profile": str(metadata.get("profile") or "default"),
-        "chatId": str(metadata.get("chatId") or event.get("sessionId") or "agentui"),
-        "content": str(event.get("content") or ""),
-        "metadata": metadata,
-        "createdAt": int(event.get("createdAt") or now()),
-        "acknowledgedAt": app.state.inbox_acknowledged_at.get(message_id),
-    }
-
-
-def inbox_message_for_id(app: FastAPI, message_id: str) -> dict[str, Any] | None:
-    target = str(message_id)
-    for event in app.state.live_delivery_bus.list_events(after=0, limit=500):
-        message = inbox_message_from_event(app, event)
-        if message["id"] == target:
-            return message
-    return None
 
 
 def core_event_messages_for_session(app: FastAPI, session_id: str) -> list[dict[str, Any]]:
@@ -3111,8 +2912,8 @@ def build_parser() -> argparse.ArgumentParser:
         default="serve",
         help="Command to run. Defaults to serve.",
     )
-    parser.add_argument("--host", default=None, help="Bind host. Defaults to HERMES_MGMT_HOST or 127.0.0.1.")
-    parser.add_argument("--port", type=int, default=None, help="Bind port. Defaults to HERMES_MGMT_PORT or 8765.")
+    parser.add_argument("--host", default=None, help="Bind host. Defaults to IRIS_CORE_HOST or 127.0.0.1.")
+    parser.add_argument("--port", type=int, default=None, help="Bind port. Defaults to IRIS_CORE_PORT or 8765.")
     parser.add_argument("--hermes-home", default=None, help="Hermes home path. Defaults to HERMES_HOME or ~/.hermes.")
     parser.add_argument("--backup", action="store_true", help="Create a migration backup before dropping duplicate tables.")
     return parser
@@ -3130,8 +2931,6 @@ def settings_from_args(args: argparse.Namespace) -> Settings:
         host=host,
         port=port,
         token=env_settings.token,
-        inbox_token=env_settings.inbox_token,
-        runtime_delivery_token=env_settings.runtime_delivery_token,
         core_store_path=env_settings.core_store_path,
         cors_origins=env_settings.cors_origins,
     )

@@ -12,7 +12,7 @@ import {
   automationScheduleValue,
   matchingDeliveries,
 } from "../AutomationsView";
-import type { AgentUICoreEvent, CoreMetadata } from "../../../lib/agentuiCore";
+import type { IrisCoreEvent, CoreMetadata } from "../../../lib/irisCore";
 
 describe("runtime jobs helpers", () => {
   it("treats scheduled runtime jobs as active", () => {
@@ -250,10 +250,11 @@ describe("runtime jobs helpers", () => {
     });
   });
 
-  it("normalizes legacy AgentUI delivery targets to Iris targets", () => {
-    expect(normalizeDeliveryTarget("agentui:desktop")).toBe("iris:desktop");
-    expect(normalizeDeliveryTarget(" agentui:core-chat-1 ")).toBe("iris:core-chat-1");
+  it("keeps only Iris delivery targets normalized", () => {
+    const removedPrefix = ["agent", "ui"].join("");
     expect(normalizeDeliveryTarget("iris:desktop")).toBe("iris:desktop");
+    expect(normalizeDeliveryTarget(" iris:core-chat-1 ")).toBe("iris:core-chat-1");
+    expect(normalizeDeliveryTarget(`${removedPrefix}:desktop`)).toBe(`${removedPrefix}:desktop`);
     expect(normalizeDeliveryTarget("")).toBe("iris:desktop");
   });
 
@@ -334,7 +335,7 @@ describe("runtime jobs helpers", () => {
 
   it("filters Core events down to automation delivery activity", () => {
     const events = [
-      coreEvent("evt-chat", "Chat answer", { source: "agentui-core-send" }),
+      coreEvent("evt-chat", "Chat answer", { source: "iris-core-send" }),
       coreEvent("evt-cron", "Cron answer", { source: "hermes-cron", jobId: "job-1" }),
       coreEvent("evt-automation", "Automation answer", { automationId: "job-2" }),
       coreEvent("evt-job-id", "Job answer", { job_id: "job-3" }),
@@ -365,7 +366,7 @@ function coreEvent(
   content: string,
   metadata: CoreMetadata,
   type = "message.assistant.completed",
-): AgentUICoreEvent {
+): IrisCoreEvent {
   return {
     cursor: 1,
     id,

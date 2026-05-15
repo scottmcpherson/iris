@@ -27,17 +27,19 @@ Set these values where the Hermes gateway process can read them:
 
 ```bash
 export IRIS_BASE_URL="http://<iris-tailscale-host>:8765"
-export IRIS_TOKEN="<shared Iris/Hermes platform token>"
+export IRIS_TOKEN="<iris bearer token>"
 export IRIS_DEFAULT_CHAT_ID="desktop"
 export IRIS_INBOUND_HOST="127.0.0.1"
 export IRIS_INBOUND_PORT="8766"
-export IRIS_ALLOWED_USERS="agentui-user"
+export IRIS_ALLOWED_USERS="iris-user"
 ```
 
 Then restart the Hermes gateway process or service.
 
-Legacy `AGENTUI_*` variables are accepted for compatibility. New Hermes
-delivery targets should use the `iris:` platform prefix.
+`IRIS_TOKEN` may be omitted only when `IRIS_BASE_URL` points at loopback
+(`localhost`, `127.0.0.1`, or `::1`). Non-loopback Core traffic requires
+`IRIS_TOKEN`. Explicit Hermes delivery targets should use the `iris:` platform
+prefix.
 
 Enable gateway streaming in each Hermes profile that should stream into Iris:
 
@@ -61,6 +63,9 @@ curl -X POST http://127.0.0.1:8766/iris/messages \
   -H "Content-Type: application/json" \
   -d '{"chatId":"desktop","userId":"scott","userName":"Scott","messageId":"test-1","text":"hello"}'
 ```
+
+Omit the `Authorization` header for loopback-only setups where `IRIS_TOKEN` is
+unset.
 
 The adapter converts each POST into a Hermes `MessageEvent` with
 `platform=iris`, so Hermes owns session routing, tool execution, and cron

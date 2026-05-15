@@ -5,7 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import type { ComponentProps, CSSProperties, MouseEvent as ReactMouseEvent, MutableRefObject } from "react";
 import { Streamdown, type StreamdownProps } from "streamdown";
 import type { Message, MessageAttachment } from "../../../app/types";
-import { agentUICoreAttachmentUrl, getAgentUICoreAttachmentDataUrl } from "../../../lib/agentuiCore";
+import { irisCoreAttachmentUrl, getIrisCoreAttachmentDataUrl } from "../../../lib/irisCore";
 import { attachmentTypeLabel } from "../../../shared/files";
 import { Button } from "../../../shared/ui/button";
 import type { HermesRuntimeConfig } from "../../../types/hermes";
@@ -86,18 +86,18 @@ export function MessageAttachments({
 }
 
 function attachmentPreviewUrl(attachment: MessageAttachment, runtimeConfig: HermesRuntimeConfig) {
-  if (attachment.previewUrl) return agentUICoreAttachmentUrl(runtimeConfig, attachment.previewUrl);
+  if (attachment.previewUrl) return irisCoreAttachmentUrl(runtimeConfig, attachment.previewUrl);
   if (attachment.kind === "image" && attachment.id.startsWith("att_")) {
-    return agentUICoreAttachmentUrl(runtimeConfig, `/v1/attachments/${encodeURIComponent(attachment.id)}/preview`);
+    return irisCoreAttachmentUrl(runtimeConfig, `/v1/attachments/${encodeURIComponent(attachment.id)}/preview`);
   }
   if (attachment.kind === "image" && attachment.localPath) return convertFileSrc(attachment.localPath);
   return "";
 }
 
 function attachmentContentUrl(attachment: MessageAttachment, runtimeConfig: HermesRuntimeConfig) {
-  if (attachment.downloadUrl) return agentUICoreAttachmentUrl(runtimeConfig, attachment.downloadUrl);
+  if (attachment.downloadUrl) return irisCoreAttachmentUrl(runtimeConfig, attachment.downloadUrl);
   if (attachment.id.startsWith("att_")) {
-    return agentUICoreAttachmentUrl(runtimeConfig, `/v1/attachments/${encodeURIComponent(attachment.id)}/content`);
+    return irisCoreAttachmentUrl(runtimeConfig, `/v1/attachments/${encodeURIComponent(attachment.id)}/content`);
   }
   if ((attachment.kind === "image" || attachment.kind === "audio") && attachment.localPath) return convertFileSrc(attachment.localPath);
   return "";
@@ -197,7 +197,7 @@ function AudioAttachmentPlayer({
     if (decodedBufferRef.current) return decodedBufferRef.current;
     setLoading(true);
     setError("");
-    const result = await getAgentUICoreAttachmentDataUrl(runtimeConfig, contentUrl, attachment.mimeType, attachment.name);
+    const result = await getIrisCoreAttachmentDataUrl(runtimeConfig, contentUrl, attachment.mimeType, attachment.name);
     setLoading(false);
     if (!result.ok || !result.dataUrl) {
       setError(result.error || "Could not load audio.");

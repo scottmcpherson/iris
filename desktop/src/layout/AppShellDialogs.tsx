@@ -1,6 +1,6 @@
 import type { FormEvent } from "react";
 import { CodeEditor } from "../shared/CodeEditor";
-import type { AgentUICoreAgent } from "../lib/agentuiCore";
+import type { IrisCoreAgent } from "../lib/irisCore";
 import { Button } from "../shared/ui/button";
 import {
   Dialog,
@@ -49,7 +49,7 @@ type ProjectActionDialogProps = {
   dialog: ProjectDialog;
   busy: boolean;
   error: string;
-  projectAgents: AgentUICoreAgent[];
+  projectAgents: IrisCoreAgent[];
   onCancel: () => void;
   onChange: (dialog: ProjectDialog) => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
@@ -191,7 +191,7 @@ export function SessionActionDialog({
             <Button type="button" variant="appNeutral" size="appSmall" onClick={onCancel}>
               Cancel
             </Button>
-            <Button type="submit" variant="appNeutral" size="appSmall" disabled={submitDisabled}>
+            <Button type="submit" variant="default" size="appSmall" disabled={submitDisabled}>
               {busy ? "Working..." : "Rename"}
             </Button>
           </DialogFooter>
@@ -267,7 +267,7 @@ export function ProfileActionDialog({
   );
 }
 
-function projectAgentOptions(agents: AgentUICoreAgent[], selectedAgentId: string) {
+function projectAgentOptions(agents: IrisCoreAgent[], selectedAgentId: string) {
   if (!selectedAgentId || agents.some((agent) => agent.id === selectedAgentId)) return agents;
   return [
     {

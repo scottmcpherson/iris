@@ -12,8 +12,8 @@
 - Remote agent bearer tokens are not stored in `localStorage`.
 - The Settings token field writes to the OS credential store through the bridge.
 - On macOS, the bridge uses Keychain via the `security` command.
-- CI and local automated tests use `HERMES_DESKTOP_SECRET_TEST_DIR` to exercise the credential path without touching a real keychain.
-- `HERMES_REMOTE_TOKEN` remains a read-only environment override for automation.
+- CI and local automated tests use `IRIS_DESKTOP_SECRET_TEST_DIR` to exercise the credential path without touching a real keychain.
+- `IRIS_TOKEN` is the only Iris-owned bearer secret. Hermes Jobs API calls use `HERMES_API_TOKEN`, or the Hermes `API_SERVER_KEY` discovered by Core from `$HERMES_HOME/.env`.
 
 ## Builds
 

@@ -21,7 +21,20 @@ PNG_BYTES = (
 
 def make_client(root):
     app = create_app(Settings(hermes_home=str(root), core_store_path=str(root.parent / "core.sqlite3")))
-    return TestClient(app)
+    token = env_file_value_for_test(root / ".env", "IRIS_TOKEN")
+    headers = {"Authorization": f"Bearer {token}"} if token else None
+    return TestClient(app, headers=headers)
+
+
+def env_file_value_for_test(path, key):
+    if not path.exists():
+        return ""
+    prefix = f"{key}="
+    for line in path.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if stripped.startswith(prefix):
+            return stripped[len(prefix):].strip().strip("\"'")
+    return ""
 
 
 def agent_for_profile(client, profile):
@@ -59,7 +72,7 @@ def create_core_history_db(path, *, session_id, title, user_text, assistant_text
     )
     connection.execute(
         "insert into sessions (id, source, model, started_at, ended_at, message_count, title) values (?, ?, ?, ?, ?, ?, ?)",
-        (session_id, "agentui", "gpt-5.5", 1000, 1010, 2, title),
+        (session_id, "iris", "gpt-5.5", 1000, 1010, 2, title),
     )
     connection.executemany(
         "insert into messages (message_id, session_id, role, content, timestamp) values (?, ?, ?, ?, ?)",
@@ -73,7 +86,7 @@ def create_core_history_db(path, *, session_id, title, user_text, assistant_text
     (sessions_dir / "sessions.json").write_text(
         (
             f'{{"{session_id}":{{"session_id":"{session_id}",'
-            f'"origin":{{"platform":"agentui","chat_id":"{chat_id}","user_id":"agentui-user"}}}}}}'
+            f'"origin":{{"platform":"iris","chat_id":"{chat_id}","user_id":"iris-user"}}}}}}'
         ),
         encoding="utf-8",
     )
@@ -285,190 +298,37 @@ def test_removed_profile_routes_return_structured_404(tmp_path):
     assert response.json()["error"] == "Not Found"
 
 
-def test_inbox_accepts_lists_and_acknowledges_messages_without_sqlite(tmp_path, monkeypatch):
-    home = tmp_path / "home"
-    monkeypatch.setenv("HOME", str(home))
+def test_legacy_inbox_routes_are_removed(tmp_path):
+    client = make_client(tmp_path / ".hermes")
+
+    health = client.get("/v1/inbox/health")
+    created = client.post("/v1/inbox/messages", json={"content": "hello"})
+
+    assert health.status_code == 404
+    assert created.status_code == 404
+
+
+def test_loopback_core_accepts_no_token_when_iris_token_is_unset(tmp_path):
     root = tmp_path / ".hermes"
-    (root / "profiles" / "health").mkdir(parents=True)
-    app = create_app(
-        Settings(
-            hermes_home=str(root),
-            inbox_token="inbox-token",
-            core_store_path=str(tmp_path / "core.sqlite3"),
-        )
-    )
+    app = create_app(Settings(hermes_home=str(root), host="127.0.0.1", core_store_path=str(tmp_path / "core.sqlite3")))
     client = TestClient(app)
 
-    health = client.get("/v1/inbox/health", headers={"Authorization": "Bearer inbox-token"})
-    unauthorized = client.post("/v1/inbox/messages", json={"content": "hello"})
-    created = client.post(
-        "/v1/inbox/messages",
-        headers={"Authorization": "Bearer inbox-token"},
-        json={
-            "source": "hermes-cron",
-            "platform": "agentui",
-            "profile": "health",
-            "chatId": "desktop",
-            "content": "test delivery",
-            "metadata": {"jobId": "job-1"},
-        },
-    )
-    client.post(
-        "/v1/inbox/messages",
-        headers={"Authorization": "Bearer inbox-token"},
-        json={
-            "source": "hermes-cron",
-            "platform": "agentui",
-            "profile": "default",
-            "chatId": "desktop",
-            "content": "default delivery",
-        },
-    )
-    listed = client.get("/v1/inbox/messages?profile=health", headers={"Authorization": "Bearer inbox-token"})
-    message_id = created.json()["message"]["id"]
-    acknowledged = client.post(
-        f"/v1/inbox/messages/{message_id}/ack",
-        headers={"Authorization": "Bearer inbox-token"},
-    )
+    response = client.get("/v1/health")
 
-    assert health.status_code == 200
-    assert health.json()["storage"] == "memory"
-    assert health.json()["path"] == ""
-    assert unauthorized.status_code == 401
-    assert created.status_code == 200
-    assert created.json()["message"]["profile"] == "health"
-    assert created.json()["message"]["content"] == "test delivery"
-    assert listed.status_code == 200
-    assert len(listed.json()["messages"]) == 1
-    assert listed.json()["messages"][0]["metadata"]["jobId"] == "job-1"
-    assert acknowledged.status_code == 200
-    assert acknowledged.json()["message"]["acknowledgedAt"] is not None
-    assert not (home / ".iris" / "inbox.sqlite3").exists()
+    assert response.status_code == 200
+    assert response.json()["ok"] is True
+    assert response.json()["service"] == "iris-core"
 
 
-def test_inbox_auth_accepts_configured_hermes_env_agentui_token(tmp_path):
+def test_non_loopback_core_requires_iris_token(tmp_path):
     root = tmp_path / ".hermes"
-    root.mkdir(parents=True)
-    (root / ".env").write_text("AGENTUI_TOKEN=agentui-env-token\n", encoding="utf-8")
-    app = create_app(
-        Settings(
-            hermes_home=str(root),
-            core_store_path=str(tmp_path / "core.sqlite3"),
-        )
-    )
+    app = create_app(Settings(hermes_home=str(root), host="0.0.0.0", core_store_path=str(tmp_path / "core.sqlite3")))
     client = TestClient(app)
 
-    invalid = client.post(
-        "/v1/inbox/messages",
-        headers={"Authorization": "Bearer nope"},
-        json={"content": "blocked"},
-    )
-    created = client.post(
-        "/v1/inbox/messages",
-        headers={"Authorization": "Bearer agentui-env-token"},
-        json={"content": "accepted from platform token"},
-    )
+    response = client.get("/v1/health")
 
-    assert invalid.status_code == 401
-    assert created.status_code == 200
-    assert created.json()["message"]["content"] == "accepted from platform token"
-
-
-def test_inbox_preserves_stream_update_events_append_only(tmp_path):
-    root = tmp_path / ".hermes"
-    (root / "profiles" / "health").mkdir(parents=True)
-    app = create_app(
-        Settings(
-            hermes_home=str(root),
-            inbox_token="inbox-token",
-            core_store_path=str(tmp_path / "core.sqlite3"),
-        )
-    )
-    client = TestClient(app)
-    headers = {"Authorization": "Bearer inbox-token"}
-
-    first = client.post(
-        "/v1/inbox/messages",
-        headers=headers,
-        json={
-            "id": "stream-1",
-            "source": "hermes-gateway-stream",
-            "platform": "agentui",
-            "profile": "health",
-            "chatId": "desktop-health",
-            "content": "Hel",
-            "metadata": {
-                "streamMessageId": "stream-1",
-                "streaming": True,
-                "finalize": False,
-            },
-        },
-    )
-    update = client.post(
-        "/v1/inbox/messages",
-        headers=headers,
-        json={
-            "id": "stream-1:edit:1",
-            "source": "hermes-gateway-stream",
-            "platform": "agentui",
-            "profile": "health",
-            "chatId": "desktop-health",
-            "content": "Hello",
-            "metadata": {
-                "streamMessageId": "stream-1",
-                "streaming": False,
-                "finalize": True,
-            },
-        },
-    )
-
-    listed = client.get("/v1/inbox/messages?profile=health", headers=headers)
-    messages = listed.json()["messages"]
-
-    assert first.status_code == 200
-    assert first.json()["message"]["id"] == "stream-1"
-    assert update.status_code == 200
-    assert listed.status_code == 200
-    assert [message["id"] for message in messages] == ["stream-1", "stream-1:edit:1"]
-    assert {message["metadata"]["streamMessageId"] for message in messages} == {"stream-1"}
-    assert messages[-1]["metadata"]["finalize"] is True
-
-
-def test_legacy_inbox_delivery_publishes_live_event_without_core_transcript(tmp_path):
-    root = tmp_path / ".hermes"
-    app = create_app(
-        Settings(
-            hermes_home=str(root),
-            inbox_token="inbox-token",
-            core_store_path=str(tmp_path / "core.sqlite3"),
-        )
-    )
-    client = TestClient(app)
-    agent = client.get("/v1/agents").json()["agents"][0]
-    session = client.post(
-        "/v1/sessions",
-        json={"agentId": agent["id"], "title": "Legacy inbox delivery"},
-    ).json()["session"]
-
-    delivered = client.post(
-        "/v1/inbox/messages",
-        headers={"Authorization": "Bearer inbox-token"},
-        json={
-            "source": "hermes-cron",
-            "platform": "agentui",
-            "profile": "default",
-            "chatId": session["externalChatId"],
-            "content": "Legacy inbox delivery through Core",
-            "metadata": {"jobId": "job-legacy"},
-        },
-    )
-    events = client.get(f"/v1/sessions/{session['id']}/events?after=0")
-
-    assert delivered.status_code == 200
-    assert [event["type"] for event in events.json()["events"]] == ["message.assistant.completed"]
-    assert events.json()["events"][0]["content"] == "Legacy inbox delivery through Core"
-    assert events.json()["events"][0]["metadata"]["jobId"] == "job-legacy"
-    assert "session_messages" not in client.app.state.core_store.tables()
+    assert response.status_code == 401
+    assert response.json()["error"] == "Bearer token is required."
 
 
 def test_core_session_create_can_link_existing_runtime_chat(tmp_path):
@@ -500,7 +360,7 @@ def test_project_endpoints_create_link_and_archive_without_transcript_tables(tmp
     created_project = client.post(
         "/v1/projects",
         json={
-            "name": "AgentUI",
+            "name": "Iris",
             "defaultAgentId": agent["id"],
             "systemPrompt": "Prefer repo-local evidence.",
         },
@@ -527,13 +387,13 @@ def test_project_endpoints_create_link_and_archive_without_transcript_tables(tmp
     archived = client.delete(f"/v1/projects/{project['id']}")
 
     assert created_project.status_code == 200
-    assert project["slug"] == "agentui"
+    assert project["slug"] == "iris"
     assert created_session.status_code == 200
     assert session["agentId"] == agent["id"]
     assert session["metadata"]["project"]["id"] == project["id"]
     assert listed.status_code == 200
     assert listed.json()["sessions"][0]["id"] == session["id"]
-    assert listed.json()["sessions"][0]["metadata"]["project"]["name"] == "AgentUI"
+    assert listed.json()["sessions"][0]["metadata"]["project"]["name"] == "Iris"
     assert updated.status_code == 200
     assert updated.json()["project"]["name"] == "Iris"
     assert updated.json()["project"]["defaultAgentId"] == agent["id"]
@@ -774,7 +634,7 @@ def test_core_session_delete_removes_session_json_file_and_origin(tmp_path):
         json.dumps(
             {
                 "session_id": "file-delete-session",
-                "source": "agentui",
+                "source": "iris",
                 "title": "File delete",
                 "session_start": "2026-05-03T10:00:00",
                 "messages": [{"role": "user", "content": "delete file"}],
@@ -787,7 +647,7 @@ def test_core_session_delete_removes_session_json_file_and_origin(tmp_path):
             {
                 "file-delete-session": {
                     "session_id": "file-delete-session",
-                    "origin": {"platform": "agentui", "chat_id": "file-delete-chat"},
+                    "origin": {"platform": "iris", "chat_id": "file-delete-chat"},
                 }
             }
         ),
@@ -838,96 +698,6 @@ def test_session_read_state_is_shared_core_state(tmp_path):
     assert listed.json()["sessions"][0]["readState"]["state"] == "unread"
     assert projectless_detail.json()["session"]["readState"]["state"] == "unread"
     assert read.json()["readState"]["state"] == "read"
-
-
-def test_legacy_inbox_stream_and_completed_replays_remain_live_only(tmp_path):
-    root = tmp_path / ".hermes"
-    app = create_app(
-        Settings(
-            hermes_home=str(root),
-            inbox_token="inbox-token",
-            core_store_path=str(tmp_path / "core.sqlite3"),
-        )
-    )
-    client = TestClient(app)
-    headers = {"Authorization": "Bearer inbox-token"}
-    agent = client.get("/v1/agents").json()["agents"][0]
-    session = client.post(
-        "/v1/sessions",
-        json={"agentId": agent["id"], "title": "Gateway replay"},
-    ).json()["session"]
-
-    client.post(
-        "/v1/inbox/messages",
-        headers=headers,
-        json={
-            "id": "assistant-stream-1",
-            "source": "hermes-gateway",
-            "platform": "agentui",
-            "profile": "default",
-            "chatId": session["externalChatId"],
-            "content": "Hi! What can I help you with today?",
-            "metadata": {},
-        },
-    )
-    client.post(
-        "/v1/inbox/messages",
-        headers=headers,
-        json={
-            "id": "assistant-stream-1:edit:1",
-            "source": "hermes-gateway-stream",
-            "platform": "agentui",
-            "profile": "default",
-            "chatId": session["externalChatId"],
-            "content": "Hi! What can I help you with today?",
-            "metadata": {"streamMessageId": "assistant-stream-1", "streaming": False, "finalize": True},
-        },
-    )
-    client.post(
-        "/v1/inbox/messages",
-        headers=headers,
-        json={
-            "id": "assistant-stream-1:edit:2",
-            "source": "hermes-gateway-stream",
-            "platform": "agentui",
-            "profile": "default",
-            "chatId": session["externalChatId"],
-            "content": "Hi! What can I help you with today?",
-            "metadata": {"streamMessageId": "assistant-stream-1", "streaming": True, "finalize": False},
-        },
-    )
-    client.post(
-        "/v1/inbox/messages",
-        headers=headers,
-        json={
-            "id": "assistant-completed-1",
-            "source": "hermes-gateway",
-            "platform": "agentui",
-            "profile": "default",
-            "chatId": session["externalChatId"],
-            "content": "Hi! What can I help you with today?",
-            "metadata": {"replyTo": "user-message-1"},
-        },
-    )
-    client.post(
-        "/v1/inbox/messages",
-        headers=headers,
-        json={
-            "id": "assistant-completed-2",
-            "source": "hermes-gateway",
-            "platform": "agentui",
-            "profile": "default",
-            "chatId": session["externalChatId"],
-            "content": "Hi! What can I help you with today?",
-            "metadata": {"replyTo": "user-message-1"},
-        },
-    )
-
-    events = client.get(f"/v1/sessions/{session['id']}/events?after=0").json()["events"]
-
-    assert len([event for event in events if event["type"].startswith("message.assistant")]) == 5
-    assert all(event["sessionId"] == session["id"] for event in events)
-    assert client.get(f"/v1/sessions/{session['id']}/messages").json()["messages"] == []
 
 
 def test_core_message_read_coalesces_existing_gateway_replay_rows():
@@ -1491,11 +1261,11 @@ def test_core_events_can_fetch_recent_automation_activity_without_replaying_chat
             },
         )
 
-    deliver("chat-1", "Regular chat answer", source="agentui-core-send")
+    deliver("chat-1", "Regular chat answer", source="iris-core-send")
     deliver("automation-1", "Older automation", {"jobId": "job-1"}, source="hermes-cron")
-    deliver("chat-2", "Another regular chat answer", source="agentui-core-send")
+    deliver("chat-2", "Another regular chat answer", source="iris-core-send")
     deliver("automation-2", "Newer automation", {"automationId": "job-2"}, source="hermes-gateway")
-    deliver("chat-3", "Newest regular chat answer", source="agentui-core-send")
+    deliver("chat-3", "Newest regular chat answer", source="iris-core-send")
 
     response = client.get(f"/v1/events?agentId={agent['id']}&automationOnly=true&order=desc&limit=5")
 
@@ -1505,6 +1275,62 @@ def test_core_events_can_fetch_recent_automation_activity_without_replaying_chat
         "Older automation",
     ]
     assert response.json()["cursor"] > response.json()["events"][0]["cursor"]
+
+
+def test_runtime_adapter_allows_loopback_gateway_without_iris_token(monkeypatch):
+    seen = []
+    runtime = hermes_adapter.local_runtime_config()
+    adapter = hermes_adapter.HermesRuntimeAdapter(runtime, iris_token="")
+
+    def fake_http_json(url, *, method, token, body=None):
+        seen.append({"url": url, "method": method, "token": token, "body": body})
+        return {
+            "ok": True,
+            "status": 202,
+            "url": url,
+            "json": {
+                "ok": True,
+                "accepted": True,
+                "profile": body["profile"],
+                "chatId": body["chatId"],
+                "messageId": body["messageId"],
+            },
+        }
+
+    monkeypatch.setattr(hermes_adapter, "http_json", fake_http_json)
+
+    result = adapter.send_message(
+        profile="default",
+        chat_id="desktop",
+        chat_name="Desktop",
+        message_id="client-message-1",
+        text="hello",
+    )
+
+    assert result["ok"] is True
+    assert seen[0]["token"] == ""
+    assert seen[0]["url"] == "http://127.0.0.1:8766/iris/messages"
+
+
+def test_runtime_adapter_requires_iris_token_for_non_loopback_gateway():
+    runtime = hermes_adapter.local_runtime_config()
+    runtime["connection"]["irisGatewayUrls"]["default"] = "http://10.0.0.5:8766"
+    adapter = hermes_adapter.HermesRuntimeAdapter(runtime, iris_token="")
+
+    result = adapter.models("default")
+
+    assert result["ok"] is False
+    assert "IRIS_TOKEN is required for non-loopback Iris gateway" in result["error"]
+
+
+def test_hermes_jobs_api_token_uses_api_server_key_when_env_override_is_unset(tmp_path, monkeypatch):
+    root = tmp_path / ".hermes"
+    root.mkdir()
+    (root / ".env").write_text("API_SERVER_KEY=hermes-job-token\n", encoding="utf-8")
+    monkeypatch.delenv("HERMES_API_TOKEN", raising=False)
+
+    assert os.environ.get("HERMES_API_TOKEN") is None
+    assert create_app(Settings(hermes_home=str(root), core_store_path=str(tmp_path / "core.sqlite3"))).state.runtime_registry.hermes_api_token == "hermes-job-token"
 
 
 def test_core_runtime_deliveries_publish_stream_events_without_materializing(tmp_path):
@@ -1572,7 +1398,7 @@ def test_core_automations_create_list_control_and_delete_hermes_jobs(tmp_path, m
     root = tmp_path / ".hermes"
     root.mkdir()
     (root / ".env").write_text(
-        "API_SERVER_KEY=hermes-job-token\nAGENTUI_TOKEN=agentui-local-test\n",
+        "API_SERVER_KEY=hermes-job-token\nIRIS_TOKEN=iris-local-test\n",
         encoding="utf-8",
     )
     seen = []
@@ -1843,7 +1669,7 @@ def test_core_automation_no_project_delivery_uses_unprojected_automation_session
     root = tmp_path / ".hermes"
     root.mkdir()
     (root / ".env").write_text(
-        "API_SERVER_KEY=hermes-job-token\nAGENTUI_TOKEN=agentui-local-test\n",
+        "API_SERVER_KEY=hermes-job-token\nIRIS_TOKEN=iris-local-test\n",
         encoding="utf-8",
     )
     jobs = []
@@ -1889,7 +1715,7 @@ def test_core_automation_no_project_delivery_uses_unprojected_automation_session
     )
     delivery = client.post(
         "/v1/runtime-deliveries/hermes",
-        headers={"Authorization": "Bearer agentui-local-test"},
+        headers={"Authorization": "Bearer iris-local-test"},
         json={
             "runtimeId": "runtime_local_hermes",
             "profile": "default",
@@ -1920,7 +1746,7 @@ def test_core_automation_no_project_delivery_uses_unprojected_automation_session
 def test_core_send_owns_chat_id_and_uses_env_file_token(tmp_path, monkeypatch):
     root = tmp_path / ".hermes"
     root.mkdir()
-    (root / ".env").write_text("AGENTUI_TOKEN=agentui-local-test\n", encoding="utf-8")
+    (root / ".env").write_text("IRIS_TOKEN=iris-local-test\n", encoding="utf-8")
     seen = []
 
     def fake_http_json(url, *, method, token, body):
@@ -1969,12 +1795,12 @@ def test_core_send_owns_chat_id_and_uses_env_file_token(tmp_path, monkeypatch):
     assert sent.status_code == 200
     assert sent.json()["accepted"] is True
     assert refreshed["externalChatId"].startswith("core-")
-    assert [request["token"] for request in seen] == ["agentui-local-test", "agentui-local-test"]
+    assert [request["token"] for request in seen] == ["iris-local-test", "iris-local-test"]
     assert [request["body"]["chatId"] for request in seen] == [refreshed["externalChatId"], refreshed["externalChatId"]]
     assert seen[0]["body"]["text"] == "/model gpt-5.5 --provider openai-codex"
     assert seen[0]["body"]["metadata"]["hidden"] is True
     assert seen[1]["body"]["text"] == "Reply exactly: core phase 3"
-    assert seen[1]["body"]["metadata"]["agentuiSessionId"] == session["id"]
+    assert seen[1]["body"]["metadata"]["irisSessionId"] == session["id"]
     assert seen[1]["body"]["metadata"]["clientMessageId"] == "client-message-1"
     assert stored_user_metadata["clientMessageId"] == "client-message-1"
     assert stored_user_metadata["idempotencyKey"] == "client-message-1"
@@ -1984,7 +1810,7 @@ def test_core_send_owns_chat_id_and_uses_env_file_token(tmp_path, monkeypatch):
 def test_core_send_dedupes_replayed_client_message_ids(tmp_path, monkeypatch):
     root = tmp_path / ".hermes"
     root.mkdir()
-    (root / ".env").write_text("AGENTUI_TOKEN=agentui-local-test\n", encoding="utf-8")
+    (root / ".env").write_text("IRIS_TOKEN=iris-local-test\n", encoding="utf-8")
     seen = []
 
     def fake_http_json(url, *, method, token, body):
@@ -2027,7 +1853,7 @@ def test_core_send_dedupes_replayed_client_message_ids(tmp_path, monkeypatch):
 def test_core_send_returns_and_caches_canonical_session_identity(tmp_path, monkeypatch):
     root = tmp_path / ".hermes"
     root.mkdir()
-    (root / ".env").write_text("AGENTUI_TOKEN=agentui-local-test\n", encoding="utf-8")
+    (root / ".env").write_text("IRIS_TOKEN=iris-local-test\n", encoding="utf-8")
     seen = []
 
     def fake_http_json(url, *, method, token, body):
@@ -2064,7 +1890,7 @@ def test_core_send_returns_and_caches_canonical_session_identity(tmp_path, monke
     project_sessions = client.get(f"/v1/projects/{project['id']}/sessions").json()["sessions"]
     delivery = client.post(
         "/v1/runtime-deliveries/hermes",
-        headers={"Authorization": "Bearer agentui-local-test"},
+        headers={"Authorization": "Bearer iris-local-test"},
         json={
             "runtimeId": "runtime_local_hermes",
             "profile": "default",
@@ -2104,7 +1930,7 @@ def test_core_send_returns_and_caches_canonical_session_identity(tmp_path, monke
 def test_core_send_dedupes_replayed_idempotency_header_without_client_message_id(tmp_path, monkeypatch):
     root = tmp_path / ".hermes"
     root.mkdir()
-    (root / ".env").write_text("AGENTUI_TOKEN=agentui-local-test\n", encoding="utf-8")
+    (root / ".env").write_text("IRIS_TOKEN=iris-local-test\n", encoding="utf-8")
     seen = []
 
     def fake_http_json(url, *, method, token, body):
@@ -2152,7 +1978,7 @@ def test_core_send_dedupes_replayed_idempotency_header_without_client_message_id
 def test_core_send_retries_after_failed_runtime_send_with_same_idempotency_key(tmp_path, monkeypatch):
     root = tmp_path / ".hermes"
     root.mkdir()
-    (root / ".env").write_text("AGENTUI_TOKEN=agentui-local-test\n", encoding="utf-8")
+    (root / ".env").write_text("IRIS_TOKEN=iris-local-test\n", encoding="utf-8")
     seen = []
 
     def fake_http_json(url, *, method, token, body):
@@ -2202,7 +2028,7 @@ def test_core_send_retries_after_failed_runtime_send_with_same_idempotency_key(t
 def test_core_send_persists_top_level_attachments_as_message_metadata(tmp_path, monkeypatch):
     root = tmp_path / ".hermes"
     root.mkdir(parents=True)
-    (root / ".env").write_text("AGENTUI_TOKEN=agentui-local-test\n", encoding="utf-8")
+    (root / ".env").write_text("IRIS_TOKEN=iris-local-test\n", encoding="utf-8")
     seen: list[dict] = []
 
     def fake_http_multipart(url, *, method, token, payload, files):
@@ -2288,7 +2114,7 @@ def test_core_send_persists_top_level_attachments_as_message_metadata(tmp_path, 
 def test_core_send_passes_existing_runtime_session_id_for_legacy_followup(tmp_path, monkeypatch):
     root = tmp_path / ".hermes"
     root.mkdir(parents=True)
-    (root / ".env").write_text("AGENTUI_TOKEN=agentui-local-test\n", encoding="utf-8")
+    (root / ".env").write_text("IRIS_TOKEN=iris-local-test\n", encoding="utf-8")
     connection = sqlite3.connect(root / "state.db")
     connection.executescript(
         """
@@ -2312,7 +2138,7 @@ def test_core_send_passes_existing_runtime_session_id_for_legacy_followup(tmp_pa
     )
     connection.execute(
         "insert into sessions (id, source, model, started_at, message_count, title) values (?, ?, ?, ?, ?, ?)",
-        ("legacy-session-1", "agentui", "gpt-5.5", 1000, 2, "Legacy session without chat id"),
+        ("legacy-session-1", "iris", "gpt-5.5", 1000, 2, "Legacy session without chat id"),
     )
     connection.execute(
         "insert into messages (message_id, session_id, role, content, timestamp) values (?, ?, ?, ?, ?)",

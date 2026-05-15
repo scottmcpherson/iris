@@ -16,13 +16,13 @@ class RuntimeRegistry:
         core_store: CoreStore,
         hermes_home: str | None = None,
         management_url: str,
-        agentui_token: str = "",
+        iris_token: str = "",
         hermes_api_token: str = "",
     ) -> None:
         self.core_store = core_store
         self.hermes_home = hermes_home
         self.management_url = management_url
-        self.agentui_token = agentui_token
+        self.iris_token = iris_token
         self.hermes_api_token = hermes_api_token
 
     def ensure_default_runtime(self) -> dict[str, Any]:
@@ -59,7 +59,7 @@ class RuntimeRegistry:
             runtime,
             hermes_home=self.hermes_home,
             core_store=self.core_store,
-            agentui_token=self.agentui_token,
+            iris_token=self.iris_token,
             hermes_api_token=self.hermes_api_token,
         )
 

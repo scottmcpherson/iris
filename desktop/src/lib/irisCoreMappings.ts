@@ -1,10 +1,10 @@
 import type {
-  AgentUICoreSession,
-  AgentUICoreEvent,
-  AgentUICoreMessage,
-} from "./agentuiCore";
+  IrisCoreSession,
+  IrisCoreEvent,
+  IrisCoreMessage,
+} from "./irisCore";
 
-export function coreSessionToLegacy(session: AgentUICoreSession) {
+export function irisCoreSessionToHermes(session: IrisCoreSession) {
   const origin = {
     ...(session.origin || {}),
     runtimeId: session.runtimeId,
@@ -14,7 +14,7 @@ export function coreSessionToLegacy(session: AgentUICoreSession) {
   };
   return {
     id: session.id,
-    source: "agentui-core",
+    source: "iris-core",
     model: String(session.metadata?.model || ""),
     title: session.title || session.summary || "Untitled session",
     preview: session.summary || String(session.metadata?.preview || ""),
@@ -29,7 +29,7 @@ export function coreSessionToLegacy(session: AgentUICoreSession) {
   };
 }
 
-export function coreMessageToLegacy(message: AgentUICoreMessage, sessionId: string) {
+export function irisCoreMessageToHermes(message: IrisCoreMessage, sessionId: string) {
   return {
     id: message.id,
     sessionId: sessionId,
@@ -44,13 +44,13 @@ export function coreMessageToLegacy(message: AgentUICoreMessage, sessionId: stri
   };
 }
 
-export function coreEventToInboxMessage(event: AgentUICoreEvent, fallbackProfile: string) {
+export function irisCoreEventToDeliveryMessage(event: IrisCoreEvent, fallbackProfile: string) {
   const metadata = event.metadata || {};
   return {
     cursor: event.cursor,
     id: event.externalMessageId || event.id,
-    source: String(metadata.source || "agentui-core-events"),
-    platform: "agentui",
+    source: String(metadata.source || "iris-core-events"),
+    platform: "iris",
     profile: String(metadata.profile || fallbackProfile),
     chatId: String(metadata.chatId || event.sessionId),
     content: event.content,

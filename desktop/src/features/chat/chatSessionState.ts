@@ -512,7 +512,7 @@ function metadataReferencesRequest(metadata: Record<string, unknown>, activeRequ
     "client_message_id",
     "idempotencyKey",
     "idempotency_key",
-    "agentuiMessageId",
+    "irisMessageId",
   ].some((key) => stringMetadata(metadata, key) === activeRequestId);
 }
 

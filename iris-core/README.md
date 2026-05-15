@@ -1,12 +1,12 @@
 # Iris Core
 
-Iris Core is the local-first control plane for Iris. It owns devices, auth, runtime routing, and Core-only coordination, and connects to Hermes through the Iris Hermes Adapter. Hermes itself remains untouched and remains the source of truth for Hermes profiles, sessions, messages, jobs, memory, skills, models, and command catalogs. Normal Iris sessions enter Hermes through the `agentui` compatibility platform adapter, while this service exposes normalized adapter-backed records and live delivery events over HTTP from the machine where Hermes is running.
+Iris Core is the local-first control plane for Iris. It owns devices, auth, runtime routing, and Core-only coordination, and connects to Hermes through the Iris Hermes Adapter. Hermes itself remains untouched and remains the source of truth for Hermes profiles, sessions, messages, jobs, memory, skills, models, and command catalogs. Normal Iris sessions enter Hermes through the `iris` platform adapter, while this service exposes normalized adapter-backed records and live delivery events over HTTP from the machine where Hermes is running.
 
-Product terminology uses "sessions" for user-facing work threads. Compatibility API paths, schemas, and adapter fields may still use `session` or `chat`.
+Product terminology uses "sessions" for user-facing work threads. Hermes-level adapter metadata may still carry lower-level `chat` identifiers when Hermes requires them.
 
 This service lives in the `iris-core/` workspace of the Iris monorepo.
 
-The default bind address is `127.0.0.1`. For remote use, prefer Tailscale and a bearer token over public port forwarding. Non-loopback binds require bearer auth from either `IRIS_CORE_TOKEN`, the legacy `HERMES_MGMT_TOKEN`, or an active paired device token.
+The default bind address is `127.0.0.1`. For remote use, prefer Tailscale and a bearer token over public port forwarding. Non-loopback binds require `IRIS_TOKEN` or an active paired device token.
 
 ## Install
 
@@ -56,17 +56,14 @@ Environment variables are also supported:
 export HERMES_HOME="$HOME/.hermes"
 export IRIS_CORE_HOST="127.0.0.1"
 export IRIS_CORE_PORT="8765"
-export IRIS_CORE_TOKEN="replace-with-a-long-random-token"
-export IRIS_INBOX_TOKEN="replace-with-a-long-random-token"
+export IRIS_TOKEN="replace-with-a-long-random-token"
 export IRIS_CORE_CORS_ORIGINS="http://localhost:3000"
 iris-core
 ```
 
 If `HERMES_HOME` points at a named profile such as `~/.hermes/profiles/work`, the server normalizes the root back to `~/.hermes`. The `default` profile maps to the root; named profiles map to `~/.hermes/profiles/<name>`.
 
-`IRIS_INBOX_TOKEN` protects only legacy `/v1/inbox/*` compatibility routes. If it is unset, those local routes accept unauthenticated delivery. For same-machine development this is usually fine because the default bind address is `127.0.0.1`. For Tailscale or any non-loopback bind address, set `IRIS_INBOX_TOKEN` and configure the Iris Hermes Adapter with the same value as `IRIS_TOKEN`. Legacy `AGENTUI_INBOX_TOKEN` and `AGENTUI_TOKEN` are still accepted.
-
-The legacy inbox routes are now in-memory compatibility facades over live Core delivery events. They do not create or write an inbox SQLite database.
+Same-machine loopback development can omit `IRIS_TOKEN`; auth headers are omitted in that mode. Remote or other non-loopback Core/plugin traffic requires `IRIS_TOKEN`. Core uses `HERMES_API_TOKEN` when set, otherwise it discovers Hermes' `API_SERVER_KEY` from `$HERMES_HOME/.env` for Jobs API calls. The old `/v1/inbox/*` routes are gone; Hermes deliveries use `POST /v1/runtime-deliveries/hermes`.
 
 Core-owned service state defaults to `~/.iris/core.sqlite3`. On startup, the default `~/.agent-ui/core.sqlite3` path is migrated into `~/.iris/core.sqlite3` with timestamped backups, then duplicate runtime-owned tables are removed. To run the migration manually:
 
@@ -83,14 +80,14 @@ Set `IRIS_CORE_DISABLE_SOURCE_OF_TRUTH_MIGRATION=1` only as a temporary rollback
 3. On the Hermes machine, create a temporary management token:
 
 ```bash
-export IRIS_CORE_TOKEN="$(openssl rand -base64 32)"
+export IRIS_TOKEN="$(openssl rand -base64 32)"
 ```
 
 4. Start Iris Core on the Hermes machine:
 
 ```bash
 HERMES_HOME="$HOME/.hermes" \
-IRIS_CORE_TOKEN="$IRIS_CORE_TOKEN" \
+IRIS_TOKEN="$IRIS_TOKEN" \
 iris-core --host 0.0.0.0 --port 8765
 ```
 
@@ -98,7 +95,7 @@ iris-core --host 0.0.0.0 --port 8765
 
 ```bash
 curl -X POST http://<tailscale-hostname>:8765/v1/devices/pair \
-  -H "Authorization: Bearer $IRIS_CORE_TOKEN" \
+  -H "Authorization: Bearer $IRIS_TOKEN" \
   -H "Content-Type: application/json" \
   --data '{"name":"Scott MacBook","kind":"desktop","metadata":{"network":"tailscale"}}'
 ```
@@ -134,19 +131,19 @@ curl -X POST http://127.0.0.1:8765/v1/devices/pair \
   --data '{"name":"Local desktop","kind":"desktop"}'
 ```
 
-When `IRIS_CORE_TOKEN` or legacy `HERMES_MGMT_TOKEN` is set, include it as a bearer token on the pairing request. The pairing response shows the device token once. Core stores only a token hash.
+When `IRIS_TOKEN` is set, include it as a bearer token on the pairing request. The pairing response shows the device token once. Core stores only a token hash.
 
 List devices:
 
 ```bash
-curl -H "Authorization: Bearer $IRIS_CORE_TOKEN" \
+curl -H "Authorization: Bearer $IRIS_TOKEN" \
   http://127.0.0.1:8765/v1/devices
 ```
 
 Revoke a device:
 
 ```bash
-curl -X DELETE -H "Authorization: Bearer $IRIS_CORE_TOKEN" \
+curl -X DELETE -H "Authorization: Bearer $IRIS_TOKEN" \
   http://127.0.0.1:8765/v1/devices/dev_...
 ```
 
@@ -170,7 +167,7 @@ For a durable local agent host, run Core under a service manager such as launchd
 iris-core --host 127.0.0.1 --port 8765 --hermes-home "$HOME/.hermes"
 ```
 
-For remote clients over Tailscale, bind to the Tailscale IP or `0.0.0.0`, set `IRIS_CORE_TOKEN`, pair per-device tokens, and keep CORS disabled unless a browser client has an explicit trusted origin.
+For remote clients over Tailscale, bind to the Tailscale IP or `0.0.0.0`, set `IRIS_TOKEN`, pair per-device tokens, and keep CORS disabled unless a browser client has an explicit trusted origin.
 
 ## API
 
@@ -180,7 +177,7 @@ All responses are JSON. Errors use:
 { "ok": false, "error": "..." }
 ```
 
-When `IRIS_CORE_TOKEN` is set, or when Core is bound to a non-loopback host, include either the management token or a paired device token:
+When `IRIS_TOKEN` is set, or when Core is bound to a non-loopback host, include either the Iris token or a paired device token:
 
 ```http
 Authorization: Bearer <token>
@@ -194,31 +191,12 @@ curl http://127.0.0.1:8765/health
 
 Returns `ok`, `checkedAt`, `hermesHome`, and `profilesRootExists`.
 
-### Inbox Health
+### Runtime Deliveries
 
-```bash
-curl http://127.0.0.1:8765/v1/inbox/health
-```
+Hermes adapter deliveries enter Core through `POST /v1/runtime-deliveries/hermes`.
+Clients read live delivery activity from `/v1/events` or `/v1/events/stream`.
+The old `/v1/inbox/*` routes return 404.
 
-Returns `ok`, `checkedAt`, and `storage: "memory"`. This route exists so older Iris Hermes Adapter versions can still perform their connect-time health check without creating a second database.
-
-### Inbox Messages
-
-Create a delivery:
-
-```bash
-curl -X POST http://127.0.0.1:8765/v1/inbox/messages \
-  -H "Content-Type: application/json" \
-  --data '{"source":"hermes-cron","platform":"agentui","chatId":"desktop","content":"Iris inbox smoke test","metadata":{"jobId":"manual-test"}}'
-```
-
-List recent live deliveries:
-
-```bash
-curl http://127.0.0.1:8765/v1/inbox/messages
-```
-
-When `IRIS_INBOX_TOKEN` is set, include the bearer token on these requests. Delivery listing is process-local and best effort; durable session history is read from Hermes.
 
 ### Status
 
@@ -291,4 +269,4 @@ Skill ids are URL-safe base64 encodings of the relative `SKILL.md` path under th
 - Profile names are limited to letters, numbers, dots, dashes, and underscores.
 - Memory, skill, and session reads are resolved and checked so they stay inside the selected profile directory.
 - Session discovery opens SQLite stores in read-only mode and never writes to Hermes databases or session files.
-- CORS is disabled by default. Set `HERMES_MGMT_CORS_ORIGINS` to a comma-separated allowlist when browser clients need direct access.
+- CORS is disabled by default. Set `IRIS_CORE_CORS_ORIGINS` to a comma-separated allowlist when browser clients need direct access.

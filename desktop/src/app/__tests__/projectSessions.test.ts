@@ -11,7 +11,7 @@ import type { HermesSession } from "../../types/hermes";
 function session(overrides: Partial<HermesSession> = {}): HermesSession {
   return {
     id: "session_1",
-    source: "agentui-core",
+    source: "iris-core",
     model: "",
     title: "Project chat",
     preview: "",

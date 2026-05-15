@@ -13,5 +13,6 @@ export function viewTitle(view: View) {
     chat: "Session",
     agents: "Agents",
     jobs: "Automations",
+    settings: "Settings",
   }[view];
 }
