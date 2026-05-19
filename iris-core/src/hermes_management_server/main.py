@@ -84,6 +84,7 @@ DEFAULT_CORS_ORIGINS = (
     "http://localhost:1420",
     "http://127.0.0.1:1420",
 )
+ACTIVE_SESSION_RUNTIME_MISSING_GRACE_SECONDS = 5 * 60
 DEFAULT_IRIS_INBOUND_PORT = 8766
 DEFAULT_RUNTIME_THREAD_LIMIT = 16
 DEFAULT_RUNTIME_CALL_TIMEOUT_SECONDS = 30
@@ -2151,6 +2152,15 @@ def merge_active_sessions_for_agents(
 ) -> list[dict[str, Any]]:
     agent_ids = {str(agent.get("id") or "") for agent in agents}
     seen_ids = {str(session.get("id") or "") for session in sessions}
+    seen_external_sessions = {
+        (
+            str(session.get("runtimeId") or ""),
+            str(session.get("runtimeProfile") or ""),
+            str(session.get("externalSessionId") or ""),
+        )
+        for session in sessions
+        if str(session.get("externalSessionId") or "")
+    }
     seen_chats = {
         (
             str(session.get("runtimeId") or ""),
@@ -2161,7 +2171,7 @@ def merge_active_sessions_for_agents(
         if str(session.get("externalChatId") or "")
     }
     merged = list(sessions)
-    for session in app.state.active_sessions.values():
+    for session in list(app.state.active_sessions.values()):
         if str(session.get("agentId") or "") not in agent_ids:
             continue
         session_id = str(session.get("id") or "")
@@ -2170,13 +2180,58 @@ def merge_active_sessions_for_agents(
             str(session.get("runtimeProfile") or ""),
             str(session.get("externalChatId") or ""),
         )
+        external_session_key = (
+            str(session.get("runtimeId") or ""),
+            str(session.get("runtimeProfile") or ""),
+            str(session.get("externalSessionId") or ""),
+        )
+        if active_session_runtime_backing_missing(session, seen_ids, seen_chats, seen_external_sessions):
+            if should_prune_missing_runtime_active_session(session):
+                forget_active_session(app, session_id, session)
+                continue
         if session_id in seen_ids or (chat_key[2] and chat_key in seen_chats):
+            continue
+        if external_session_key[2] and external_session_key in seen_external_sessions:
             continue
         seen_ids.add(session_id)
         if chat_key[2]:
             seen_chats.add(chat_key)
+        if external_session_key[2]:
+            seen_external_sessions.add(external_session_key)
         merged.append(session)
     return merged
+
+
+def active_session_runtime_backing_missing(
+    session: dict[str, Any],
+    seen_ids: set[str],
+    seen_chats: set[tuple[str, str, str]],
+    seen_external_sessions: set[tuple[str, str, str]],
+) -> bool:
+    external_session_id = str(session.get("externalSessionId") or "")
+    if not external_session_id:
+        return False
+    session_id = str(session.get("id") or "")
+    runtime_id = str(session.get("runtimeId") or "")
+    runtime_profile = str(session.get("runtimeProfile") or "")
+    chat_id = str(session.get("externalChatId") or "")
+    return (
+        session_id not in seen_ids
+        and (not chat_id or (runtime_id, runtime_profile, chat_id) not in seen_chats)
+        and (runtime_id, runtime_profile, external_session_id) not in seen_external_sessions
+    )
+
+
+def should_prune_missing_runtime_active_session(session: dict[str, Any]) -> bool:
+    if not str(session.get("externalSessionId") or ""):
+        return False
+    metadata = session.get("metadata") if isinstance(session.get("metadata"), dict) else {}
+    if not metadata.get("draft"):
+        return True
+    updated_at = int(session.get("updatedAt") or session.get("createdAt") or 0)
+    if updated_at <= 0:
+        return True
+    return now() - updated_at > ACTIVE_SESSION_RUNTIME_MISSING_GRACE_SECONDS
 
 
 def should_mark_session_unread(event: dict[str, Any]) -> bool:
@@ -2275,6 +2330,7 @@ def project_sessions(app: FastAPI, project: dict[str, Any]) -> list[dict[str, An
                 runtime_id=link["runtimeId"],
                 runtime_profile=link["runtimeProfile"],
                 external_chat_id=link["externalChatId"],
+                runtime_missing=True,
             )
             if active:
                 resolved_by_link_id[link["sessionId"]] = active
@@ -2319,6 +2375,7 @@ def resolve_project_session(app: FastAPI, link: dict[str, Any]) -> dict[str, Any
             runtime_id=link["runtimeId"],
             runtime_profile=link["runtimeProfile"],
             external_chat_id=link["externalChatId"],
+            runtime_missing=True,
         )
     return resolve_core_session(
         app,
@@ -2391,6 +2448,7 @@ def resolve_core_session(
             runtime_id=runtime_id,
             runtime_profile=runtime_profile,
             external_chat_id=external_chat_id,
+            runtime_missing=True,
         )
     return None
 
@@ -2402,16 +2460,24 @@ def active_core_session(
     runtime_id: str = "",
     runtime_profile: str = "",
     external_chat_id: str = "",
+    runtime_missing: bool = False,
 ) -> dict[str, Any] | None:
     active = app.state.active_sessions.get(session_id) if session_id else None
     if active:
+        if runtime_missing and should_prune_missing_runtime_active_session(active):
+            forget_active_session(app, str(active.get("id") or session_id), active)
+            return None
         return active
     if external_chat_id:
         mapped_id = app.state.active_sessions_by_chat.get(
             (runtime_id or DEFAULT_RUNTIME_ID, runtime_profile or "default", external_chat_id)
         )
         if mapped_id and mapped_id in app.state.active_sessions:
-            return app.state.active_sessions[mapped_id]
+            active = app.state.active_sessions[mapped_id]
+            if runtime_missing and should_prune_missing_runtime_active_session(active):
+                forget_active_session(app, str(active.get("id") or mapped_id), active)
+                return None
+            return active
     return None
 
 

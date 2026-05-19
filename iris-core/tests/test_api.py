@@ -609,6 +609,110 @@ def test_project_sessions_refresh_stale_active_draft_title_from_runtime(tmp_path
     assert client.app.state.active_sessions[runtime_session["id"]]["title"] == "Generated Runtime Title"
 
 
+def test_session_list_prunes_stale_active_cache_after_runtime_session_deleted(tmp_path):
+    root = tmp_path / ".hermes"
+    create_core_history_db(
+        root / "state.db",
+        session_id="deleted-outside-core",
+        title="Gone from Hermes",
+        user_text="delete this elsewhere",
+        assistant_text="removed",
+        chat_id="chat-deleted-outside-core",
+    )
+    client = make_client(root)
+    agent = client.get("/v1/agents").json()["agents"][0]
+    runtime_session = client.get(f"/v1/sessions?agentId={agent['id']}").json()["sessions"][0]
+    stale_active = {
+        **runtime_session,
+        "updatedAt": 1,
+        "metadata": {**runtime_session["metadata"], "draft": True},
+    }
+    client.app.state.active_sessions[runtime_session["id"]] = stale_active
+    chat_key = (
+        runtime_session["runtimeId"],
+        runtime_session["runtimeProfile"],
+        runtime_session["externalChatId"],
+    )
+    client.app.state.active_sessions_by_chat[chat_key] = runtime_session["id"]
+
+    with sqlite3.connect(root / "state.db") as connection:
+        connection.execute("delete from messages")
+        connection.execute("delete from sessions")
+    (root / "sessions" / "sessions.json").write_text("{}", encoding="utf-8")
+
+    listed = client.get(f"/v1/sessions?agentId={agent['id']}")
+
+    assert listed.status_code == 200
+    assert listed.json()["sessions"] == []
+    assert runtime_session["id"] not in client.app.state.active_sessions
+    assert chat_key not in client.app.state.active_sessions_by_chat
+
+
+def test_session_list_keeps_fresh_runtime_backed_draft_while_runtime_store_catches_up(tmp_path):
+    root = tmp_path / ".hermes"
+    client = make_client(root)
+    agent = client.get("/v1/agents").json()["agents"][0]
+    created = client.post(
+        "/v1/sessions",
+        json={
+            "agentId": agent["id"],
+            "title": "Fresh optimistic session",
+            "externalChatId": "chat-fresh-draft",
+            "externalSessionId": "runtime-session-not-listed-yet",
+        },
+    ).json()["session"]
+
+    listed = client.get(f"/v1/sessions?agentId={agent['id']}")
+
+    assert listed.status_code == 200
+    assert [session["id"] for session in listed.json()["sessions"]] == [created["id"]]
+    assert created["id"] in client.app.state.active_sessions
+
+
+def test_project_sessions_prune_stale_active_cache_after_runtime_session_deleted(tmp_path):
+    root = tmp_path / ".hermes"
+    create_core_history_db(
+        root / "state.db",
+        session_id="deleted-project-session",
+        title="Deleted project session",
+        user_text="delete project session elsewhere",
+        assistant_text="removed",
+        chat_id="chat-deleted-project",
+    )
+    client = make_client(root)
+    agent = client.get("/v1/agents").json()["agents"][0]
+    project = client.post(
+        "/v1/projects",
+        json={"name": "Cleanup Project", "defaultAgentId": agent["id"]},
+    ).json()["project"]
+    runtime_session = client.get(f"/v1/sessions?agentId={agent['id']}").json()["sessions"][0]
+    client.post(f"/v1/projects/{project['id']}/sessions", json={"sessionId": runtime_session["id"]})
+    stale_active = {
+        **runtime_session,
+        "updatedAt": 1,
+        "metadata": {**runtime_session["metadata"], "draft": True},
+    }
+    client.app.state.active_sessions[runtime_session["id"]] = stale_active
+    chat_key = (
+        runtime_session["runtimeId"],
+        runtime_session["runtimeProfile"],
+        runtime_session["externalChatId"],
+    )
+    client.app.state.active_sessions_by_chat[chat_key] = runtime_session["id"]
+
+    with sqlite3.connect(root / "state.db") as connection:
+        connection.execute("delete from messages")
+        connection.execute("delete from sessions")
+    (root / "sessions" / "sessions.json").write_text("{}", encoding="utf-8")
+
+    listed = client.get(f"/v1/projects/{project['id']}/sessions")
+
+    assert listed.status_code == 200
+    assert listed.json()["sessions"] == []
+    assert runtime_session["id"] not in client.app.state.active_sessions
+    assert chat_key not in client.app.state.active_sessions_by_chat
+
+
 def test_core_session_delete_removes_sqlite_session_and_core_overlays(tmp_path):
     root = tmp_path / ".hermes"
     create_core_history_db(

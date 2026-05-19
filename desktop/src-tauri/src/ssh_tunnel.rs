@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::net::TcpListener;
+use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -572,7 +573,18 @@ fn ssh_target(user: &str, host: &str) -> String {
 
 fn append_identity_args(command: &mut Command, identity_file: Option<&str>) {
     if let Some(path) = identity_file.map(str::trim).filter(|path| !path.is_empty()) {
-        command.arg("-i").arg(path);
+        command.arg("-i").arg(expand_identity_file_path(path));
+    }
+}
+
+fn expand_identity_file_path(path: &str) -> String {
+    let trimmed = path.trim();
+    let Some(rest) = trimmed.strip_prefix("~/") else {
+        return trimmed.to_string();
+    };
+    match std::env::var_os("HOME") {
+        Some(home) if !home.is_empty() => PathBuf::from(home).join(rest).to_string_lossy().to_string(),
+        _ => trimmed.to_string(),
     }
 }
 
@@ -633,6 +645,23 @@ mod tests {
             map_ssh_error("Permission denied (publickey).").0,
             "auth-failed"
         );
+    }
+
+    #[test]
+    fn expands_home_relative_identity_paths() {
+        let old_home = std::env::var_os("HOME");
+        std::env::set_var("HOME", "/Users/scott");
+
+        assert_eq!(
+            expand_identity_file_path("~/.ssh/id_ed25519"),
+            "/Users/scott/.ssh/id_ed25519"
+        );
+        assert_eq!(expand_identity_file_path("/.ssh/id_ed25519"), "/.ssh/id_ed25519");
+
+        match old_home {
+            Some(home) => std::env::set_var("HOME", home),
+            None => std::env::remove_var("HOME"),
+        }
     }
 
     #[test]

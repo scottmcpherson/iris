@@ -3572,9 +3572,9 @@ button:disabled {
 
 .connection-profile-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto auto auto;
+  grid-template-columns: minmax(0, 1fr) max-content auto;
   align-items: center;
-  gap: 8px;
+  gap: 12px;
   min-width: 0;
   padding: 10px;
   border: 1px solid rgba(255, 255, 255, 0.07);
@@ -3582,28 +3582,47 @@ button:disabled {
   background: rgba(0, 0, 0, 0.12);
 }
 
-.connection-profile-row > div {
+.connection-profile-summary {
   display: grid;
   gap: 3px;
   min-width: 0;
 }
 
-.connection-profile-row strong,
-.connection-profile-row span {
+.connection-profile-summary strong,
+.connection-profile-summary span {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.connection-profile-row strong {
+.connection-profile-summary strong {
   color: #f4efe5;
   font-size: 13px;
 }
 
-.connection-profile-row span {
+.connection-profile-summary span {
   color: #8f98a8;
   font-size: 11px;
+}
+
+.connection-switch-field {
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  min-width: 142px;
+}
+
+.connection-switch-field [data-slot="field-label"] {
+  width: auto;
+  color: #8f98a8;
+  font-size: 12px;
+  font-weight: 750;
+  white-space: nowrap;
+}
+
+.connection-profile-row[data-connected="true"] .connection-switch-field [data-slot="field-label"] {
+  color: #d6eadc;
 }
 
 .settings-empty-text {
@@ -4943,6 +4962,11 @@ button:disabled {
 
   .connection-profile-row {
     align-items: stretch;
+  }
+
+  .connection-switch-field {
+    justify-content: space-between;
+    min-width: 0;
   }
 }
 

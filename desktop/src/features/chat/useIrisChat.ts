@@ -20,7 +20,7 @@ import {
   type CoreMetadata,
 } from "../../lib/irisCore";
 import { irisCoreSessionToHermes } from "../../lib/irisCoreMappings";
-import { resolveCoreApiUrl } from "../../app/runtimeConfig";
+import { resolveCoreApiUrl, runtimeDataRouteKey } from "../../app/runtimeConfig";
 import type {
   HermesSession,
   HermesInboxMessage,
@@ -183,6 +183,12 @@ export function useIrisChat({
   const onSessionMetadataResolvedRef = useRef(onSessionMetadataResolved);
   onSessionMetadataResolvedRef.current = onSessionMetadataResolved;
   const pendingTitleResolveRef = useRef<Set<string>>(new Set());
+  const routeKey = runtimeDataRouteKey(runtimeConfig);
+  const coreApiUrl = resolveCoreApiUrl(runtimeConfig);
+  const requestKey = `${routeKey}|${coreApiUrl}`;
+  const requestKeyRef = useRef(requestKey);
+  const previousRouteKeyRef = useRef(routeKey);
+  const previousRequestKeyRef = useRef(requestKey);
   const sessions = sessionsByProfile[profile] || [];
   const sessionsLoading = Boolean(sessionsLoadingByProfile[profile]);
   const historyError = historyErrorsByProfile[profile] || null;
@@ -214,11 +220,25 @@ export function useIrisChat({
   isChatViewActiveRef.current = isChatViewActive;
   sessionChatIdsBySessionRef.current = sessionChatIdsBySession;
   sessionsByProfileRef.current = sessionsByProfile;
+  requestKeyRef.current = requestKey;
 
   useEffect(() => {
     if (!isChatViewActive || !selectedSessionId) return;
     markSessionRead(selectedSessionId, { reason: "active-selection" });
   }, [isChatViewActive, selectedSessionId]);
+
+  useEffect(() => {
+    if (previousRouteKeyRef.current === routeKey) return;
+    previousRouteKeyRef.current = routeKey;
+    resetRouteScopedChatState();
+    void refreshSessions({ profileName: profile });
+  }, [routeKey]);
+
+  useEffect(() => {
+    if (previousRequestKeyRef.current === requestKey) return;
+    previousRequestKeyRef.current = requestKey;
+    void refreshSessions({ profileName: profile, silent: true });
+  }, [requestKey]);
 
   useEffect(() => {
     const pendingSelection = pendingProfileSelectionRef.current;
@@ -236,8 +256,9 @@ export function useIrisChat({
   useEffect(() => {
     let closed = false;
     let fallbackTimer: number | null = null;
+    const effectRequestKey = requestKey;
     const startPollingFallback = () => {
-      if (closed || fallbackTimer !== null) return;
+      if (closed || fallbackTimer !== null || !isCurrentRequest(effectRequestKey)) return;
       void pollCoreEvents();
       fallbackTimer = window.setInterval(() => {
         void pollCoreEvents();
@@ -246,7 +267,7 @@ export function useIrisChat({
 
     void getIrisCoreAgentForProfile(profile, runtimeConfig)
       .then(async (agentResult) => {
-        if (closed || !agentResult.ok || !agentResult.agent) {
+        if (closed || !isCurrentRequest(effectRequestKey) || !agentResult.ok || !agentResult.agent) {
           startPollingFallback();
           return;
         }
@@ -260,6 +281,10 @@ export function useIrisChat({
         const source = new EventSource(
           irisCoreEventStreamUrl(runtimeConfig, cursor, 200, agentResult.agent.id),
         );
+        if (closed || !isCurrentRequest(effectRequestKey)) {
+          source.close();
+          return;
+        }
         coreEventSourceRef.current = source;
         const onCoreEvent = (event: MessageEvent<string>) => {
           const parsed = parseCoreEvent(event.data);
@@ -284,7 +309,7 @@ export function useIrisChat({
         coreEventSourceRef.current = null;
       }
     };
-  }, [resolveCoreApiUrl(runtimeConfig), profile, hasActiveRequest]);
+  }, [requestKey, profile, hasActiveRequest]);
 
   useEffect(() => {
     const timer = window.setInterval(() => {
@@ -593,12 +618,15 @@ export function useIrisChat({
       transientRetries?: number;
     } = {},
   ) {
+    const activeRequestKey = requestKey;
+    if (!isCurrentRequest(activeRequestKey)) return;
     const targetProfile = options.profileName || profile;
     if (!options.silent) {
       setSessionsLoadingByProfile((current) => ({ ...current, [targetProfile]: true }));
     }
     try {
       const result = await getIrisSessions(targetProfile, 80, runtimeConfig);
+      if (!isCurrentRequest(activeRequestKey)) return;
       if (targetProfile === profile) {
         setHistorySource(result.source || null);
         setHistorySchemaVersion(result.schemaVersion ?? null);
@@ -731,6 +759,7 @@ export function useIrisChat({
         setSessionsLoadedByProfile((current) => ({ ...current, [targetProfile]: true }));
       }
     } catch (error) {
+      if (!isCurrentRequest(activeRequestKey)) return;
       const message = error instanceof Error ? error.message : "Could not load Hermes sessions.";
       if (isTransientSessionLoadError(message) && (options.transientRetries ?? 3) > 0) {
         scheduleSessionRetry(targetProfile, options.selectSessionId, options.transientRetries ?? 3);
@@ -747,7 +776,7 @@ export function useIrisChat({
       }));
       setSessionsLoadedByProfile((current) => ({ ...current, [targetProfile]: true }));
     } finally {
-      if (!options.silent) {
+      if (!options.silent && isCurrentRequest(activeRequestKey)) {
         setSessionsLoadingByProfile((current) => ({ ...current, [targetProfile]: false }));
       }
     }
@@ -828,6 +857,8 @@ export function useIrisChat({
     options: { silent?: boolean; select?: boolean; reconcileActive?: boolean } = {},
   ) {
     if (!sessionId) return false;
+    const activeRequestKey = requestKey;
+    if (!isCurrentRequest(activeRequestKey)) return false;
     if (
       isOptimisticSessionId(sessionId) ||
       (activeRequestIdsBySessionRef.current[sessionId] && !options.reconcileActive)
@@ -840,6 +871,7 @@ export function useIrisChat({
     }
     try {
       const result = await getIrisSessionDetail(profileName, sessionId, runtimeConfig);
+      if (!isCurrentRequest(activeRequestKey)) return false;
       if (profileName === profile) {
         setHistorySource(result.source || null);
         setHistorySchemaVersion(result.schemaVersion ?? null);
@@ -929,13 +961,14 @@ export function useIrisChat({
       setHistoryErrorsByProfile((current) => ({ ...current, [profileName]: result.warning || null }));
       return true;
     } catch (error) {
+      if (!isCurrentRequest(activeRequestKey)) return false;
       setHistoryErrorsByProfile((current) => ({
         ...current,
         [profileName]: error instanceof Error ? error.message : "Could not load this session.",
       }));
       return false;
     } finally {
-      if (!options.silent) {
+      if (!options.silent && isCurrentRequest(activeRequestKey)) {
         setSessionsLoadingByProfile((current) => ({ ...current, [profileName]: false }));
       }
     }
@@ -976,6 +1009,46 @@ export function useIrisChat({
     setSelectedSessionId(null);
     setInput("");
     setHistoryErrorsByProfile((current) => ({ ...current, [profileName]: null }));
+  }
+
+  function resetRouteScopedChatState() {
+    coreEventSourceRef.current?.close();
+    coreEventSourceRef.current = null;
+    pendingProfileSelectionRef.current = null;
+    pendingGatewayDeliveriesRef.current = [];
+    pendingUnmappedDeliveryAttemptsRef.current = {};
+    processedInboxEventIdsRef.current = new Set();
+    eventCursorsByProfileRef.current = {};
+    eventCursorBootstrapKeysRef.current = {};
+    eventConsumerStartedAtRef.current = Math.floor(Date.now() / 1000);
+    activeDetailReconcileAtRef.current = {};
+    activeRequestIdsBySessionRef.current = {};
+    activeRequestTouchedAtRef.current = {};
+    activeSessionTitlesBySessionRef.current = {};
+    messagesBySessionRef.current = {};
+    selectedSessionIdRef.current = null;
+    sessionChatIdsBySessionRef.current = {};
+    sessionsByProfileRef.current = {};
+    sendInFlightRef.current = false;
+    pendingTitleResolveRef.current.clear();
+
+    setInput("");
+    setMessagesBySession({});
+    setActiveRequestIdsBySession({});
+    setSessionReadStates({});
+    setSessionsByProfile({});
+    setSessionsLoadedByProfile({});
+    setSelectedSessionId(null);
+    setSessionsLoadingByProfile({});
+    setHistoryErrorsByProfile({});
+    setHistorySource(null);
+    setHistorySchemaVersion(null);
+    setSessionChatIdsBySession({});
+    setModelSelectionBySession({});
+  }
+
+  function isCurrentRequest(activeRequestKey: string) {
+    return requestKeyRef.current === activeRequestKey;
   }
 
   async function createCoreSessionForPrompt(
@@ -1069,12 +1142,17 @@ export function useIrisChat({
   }
 
   async function pollCoreEvents() {
+    const activeRequestKey = requestKey;
+    if (!isCurrentRequest(activeRequestKey)) return;
     const agentResult = await getIrisCoreAgentForProfile(profile, runtimeConfig);
+    if (!isCurrentRequest(activeRequestKey)) return;
     if (!agentResult.ok || !agentResult.agent) return;
     const bootstrapped = await bootstrapCoreEventCursor(profile, agentResult.agent.id);
+    if (!isCurrentRequest(activeRequestKey)) return;
     if (!bootstrapped) return;
     const cursor = eventCursorsByProfileRef.current[profile] || 0;
     const result = await getIrisCoreEvents(cursor, 50, runtimeConfig, agentResult.agent.id);
+    if (!isCurrentRequest(activeRequestKey)) return;
     if (!result.ok) return;
     eventCursorsByProfileRef.current = {
       ...eventCursorsByProfileRef.current,
@@ -1084,6 +1162,7 @@ export function useIrisChat({
   }
 
   function handleCoreEvents(events: IrisCoreEvent[]) {
+    if (!isCurrentRequest(requestKey)) return;
     const deliveries = events
       .filter((event) => event.type.startsWith("message.assistant") || event.type === "message.error")
       .map((event) => irisCoreEventToDeliveryMessage(event, profile));
@@ -1101,9 +1180,12 @@ export function useIrisChat({
   }
 
   async function bootstrapCoreEventCursor(profileName: string, agentId: string) {
-    const bootstrapKey = `${resolveCoreApiUrl(runtimeConfig)}:${agentId}`;
+    const activeRequestKey = requestKey;
+    if (!isCurrentRequest(activeRequestKey)) return false;
+    const bootstrapKey = `${coreApiUrl}:${agentId}`;
     if (eventCursorBootstrapKeysRef.current[profileName] === bootstrapKey) return true;
     const result = await getIrisCoreLatestEventCursor(runtimeConfig, agentId);
+    if (!isCurrentRequest(activeRequestKey)) return false;
     if (!result.ok) return false;
     const latestCursor = result.cursor || 0;
     eventCursorsByProfileRef.current = {

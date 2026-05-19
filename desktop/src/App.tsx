@@ -50,6 +50,7 @@ function App() {
     () => !loadBooleanValue(storageKeys.onboardingDismissed),
   );
   const appCommandHandlerRef = useRef<(payload: string) => void>(() => {});
+  const refreshWithNoticeRef = useRef<() => Promise<void>>(async () => {});
 
   const iris = useIrisRuntime();
   const projects = useIrisProjects(iris.runtimeConfig, iris.connected ? "connected" : "offline");
@@ -75,7 +76,7 @@ function App() {
         setCommandMenuOpen(true);
       } else if (action.type === "refresh") {
         event.preventDefault();
-        void refreshWithNotice();
+        void refreshWithNoticeRef.current();
       } else if (action.type === "select-view") {
         event.preventDefault();
         selectView(action.view);
@@ -214,7 +215,7 @@ function App() {
         label: "Refresh Iris Connection",
         detail: "Retry runtime, agent, memory, and skill loading",
         shortcut: "⌘R",
-        run: () => void refreshWithNotice(),
+        run: () => void refreshWithNoticeRef.current(),
       },
       {
         id: "setup",
@@ -233,7 +234,7 @@ function App() {
   );
 
   appCommandHandlerRef.current = (payload: string) => {
-    if (payload === "refresh") void refreshWithNotice();
+    if (payload === "refresh") void refreshWithNoticeRef.current();
     if (payload === "show" || payload === "command-menu") setCommandMenuOpen(true);
     if (payload === "new-chat") {
       setCommandMenuOpen(false);
@@ -244,6 +245,7 @@ function App() {
       window.dispatchEvent(new CustomEvent("iris://open-session-search"));
     }
   };
+  refreshWithNoticeRef.current = refreshWithNotice;
 
   return (
     <>
@@ -408,12 +410,31 @@ function App() {
   );
 
   async function refreshWithNotice() {
-    await iris.refreshIris();
-    await slashCommands.refreshSlashCommands();
+    const nextStatus = await iris.refreshIris();
+    const connected = nextStatus?.connected ?? iris.status?.connected;
+    const loadedProfileNames = Object.entries(chat.sessionsLoadedByProfile)
+      .filter(([, loaded]) => loaded)
+      .map(([profileName]) => profileName);
+    const profileNamesToRefresh = new Set([iris.selectedProfile, ...loadedProfileNames]);
+    const loadedProjectIds = Object.entries(projects.projectSessionsLoaded)
+      .filter(([, loaded]) => loaded)
+      .map(([projectId]) => projectId);
+
+    await Promise.all([
+      slashCommands.refreshSlashCommands(),
+      ...(connected
+        ? [
+            ...Array.from(profileNamesToRefresh).map((profileName) =>
+              chat.refreshSessions({ profileName, silent: true }),
+            ),
+            ...loadedProjectIds.map((projectId) => projects.refreshProjectSessions(projectId)),
+          ]
+        : []),
+    ]);
     pushNotification({
-      tone: iris.status?.connected ? "success" : "info",
+      tone: connected ? "success" : "info",
       title: "Connection refreshed",
-      message: iris.status?.connected ? "Iris agent data is current." : "Iris is still waiting for a route.",
+      message: connected ? "Iris agent data is current." : "Iris is still waiting for a route.",
     });
   }
 

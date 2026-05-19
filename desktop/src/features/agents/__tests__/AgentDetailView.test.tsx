@@ -30,7 +30,8 @@ describe("AgentDetailView", () => {
       }),
     );
 
-    expect(html).toContain("Iris Core status");
+    expect(html).toContain("Iris Core");
+    expect(html).toContain("http://127.0.0.1:8765");
     expect(html).toContain("Configure in Settings");
     expect(html).not.toContain("Routes and credentials");
     expect(html).not.toContain("Connection details are shared across the app");

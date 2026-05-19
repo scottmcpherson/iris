@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { loadJsonValue, loadStringValue, saveJsonValue, saveStringValue, storageKeys } from "../../app/storage";
+import { resolveCoreApiUrl, runtimeDataRouteKey } from "../../app/runtimeConfig";
 import {
   createIrisProject,
   getIrisCoreAgents,
@@ -36,6 +37,11 @@ export function useIrisProjects(runtimeConfig: HermesRuntimeConfig, refreshKey =
   const [collapsedProjects, setCollapsedProjects] = useState<Record<string, boolean>>(
     () => loadCollapsedProjects(),
   );
+  const routeKey = runtimeDataRouteKey(runtimeConfig);
+  const requestKey = `${routeKey}|${resolveCoreApiUrl(runtimeConfig)}`;
+  const requestKeyRef = useRef(requestKey);
+  const previousRouteKeyRef = useRef(routeKey);
+  requestKeyRef.current = requestKey;
 
   const selectedProject = useMemo(
     () => projects.find((project) => project.id === selectedProjectId) || null,
@@ -43,12 +49,15 @@ export function useIrisProjects(runtimeConfig: HermesRuntimeConfig, refreshKey =
   );
 
   const refreshProjects = useCallback(async () => {
+    const activeRequestKey = requestKey;
+    if (!isCurrentRequest(requestKeyRef, activeRequestKey)) return;
     setProjectsLoading(true);
     try {
       const [projectResult, agentResult] = await Promise.all([
         getIrisProjects(runtimeConfig),
         getIrisCoreAgents(runtimeConfig),
       ]);
+      if (!isCurrentRequest(requestKeyRef, activeRequestKey)) return;
       if (projectResult.ok) {
         setProjects(projectResult.projects || []);
         setProjectErrors((current) => ({ ...current, list: null }));
@@ -60,20 +69,26 @@ export function useIrisProjects(runtimeConfig: HermesRuntimeConfig, refreshKey =
       }
       if (agentResult.ok) setAgents(agentResult.agents || []);
     } catch (error) {
+      if (!isCurrentRequest(requestKeyRef, activeRequestKey)) return;
       setProjectErrors((current) => ({
         ...current,
         list: error instanceof Error ? error.message : "Could not load projects.",
       }));
     } finally {
-      setProjectsLoading(false);
+      if (isCurrentRequest(requestKeyRef, activeRequestKey)) {
+        setProjectsLoading(false);
+      }
     }
-  }, [runtimeConfig]);
+  }, [runtimeConfig, requestKey]);
 
   const refreshProjectSessions = useCallback(async (projectId: string) => {
     if (!projectId) return;
+    const activeRequestKey = requestKey;
+    if (!isCurrentRequest(requestKeyRef, activeRequestKey)) return;
     setProjectSessionsLoading((current) => ({ ...current, [projectId]: true }));
     try {
       const result = await getIrisProjectSessions(projectId, 80, runtimeConfig);
+      if (!isCurrentRequest(requestKeyRef, activeRequestKey)) return;
       if (!result.ok) {
         setProjectErrors((current) => ({
           ...current,
@@ -89,15 +104,31 @@ export function useIrisProjects(runtimeConfig: HermesRuntimeConfig, refreshKey =
       setProjectErrors((current) => ({ ...current, [projectId]: null }));
       setProjectSessionsLoaded((current) => ({ ...current, [projectId]: true }));
     } catch (error) {
+      if (!isCurrentRequest(requestKeyRef, activeRequestKey)) return;
       setProjectErrors((current) => ({
         ...current,
         [projectId]: error instanceof Error ? error.message : "Could not load project sessions.",
       }));
       setProjectSessionsLoaded((current) => ({ ...current, [projectId]: true }));
     } finally {
-      setProjectSessionsLoading((current) => ({ ...current, [projectId]: false }));
+      if (isCurrentRequest(requestKeyRef, activeRequestKey)) {
+        setProjectSessionsLoading((current) => ({ ...current, [projectId]: false }));
+      }
     }
-  }, [runtimeConfig]);
+  }, [runtimeConfig, requestKey]);
+
+  useEffect(() => {
+    if (previousRouteKeyRef.current === routeKey) return;
+    previousRouteKeyRef.current = routeKey;
+    setProjects([]);
+    setAgents([]);
+    setSelectedProjectIdState("");
+    saveStringValue(storageKeys.selectedProjectId, "");
+    setSessionsByProject({});
+    setProjectSessionsLoading({});
+    setProjectSessionsLoaded({});
+    setProjectErrors({});
+  }, [routeKey]);
 
   useEffect(() => {
     void refreshProjects();
@@ -201,4 +232,8 @@ function loadCollapsedProjects() {
 
 function saveCollapsedProjects(value: Record<string, boolean>) {
   saveJsonValue(storageKeys.collapsedProjects, value);
+}
+
+function isCurrentRequest(ref: { current: string }, activeRequestKey: string) {
+  return ref.current === activeRequestKey;
 }

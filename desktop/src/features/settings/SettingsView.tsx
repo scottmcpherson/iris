@@ -18,10 +18,12 @@ import {
   Wrench,
 } from "lucide-react";
 import {
+  activateCoreConnection,
   activeCoreConnection,
   connectionIdFromParts,
   connectionTransport,
   defaultCorePort,
+  defaultSshPort,
   managedLocalConnectionId,
   removeCoreConnection,
   resolveCoreApiUrl,
@@ -30,7 +32,6 @@ import {
 import type { ProfileAction, ProfileActionHandler } from "../../app/types";
 import { rawStringValue } from "../../shared/strings";
 import { Alert, AlertDescription } from "../../shared/ui/alert";
-import { Badge } from "../../shared/ui/badge";
 import { Button } from "../../shared/ui/button";
 import {
   Card,
@@ -298,7 +299,7 @@ export function SettingsView({
         toast.error("Enter an SSH hostname, like mac-mini.local or scott@mac-mini.local.");
         return;
       }
-      const sshPort = savedProfile?.ssh?.port || parsePort(sshDraft.port, 22);
+      const sshPort = savedProfile?.ssh?.port || parsePort(sshDraft.port, defaultSshPort);
       const identityFile = savedProfile?.ssh?.identityFile || (sshDraft.authMode === "identity" ? sshDraft.identityFile.trim() : "");
       const baseId = savedProfile?.id || sshDraft.id || connectionIdFromParts("ssh", [endpoint.user, endpoint.host, sshPort]);
       const result = await invoke<SshTunnelStatus>("ssh_tunnel_start", {
@@ -336,7 +337,6 @@ export function SettingsView({
       commitProfile(nextProfile);
       setSshDialogOpen(false);
       toast.success(`${nextProfile.name} connected through a local SSH tunnel.`);
-      onRefresh();
     });
   }
 
@@ -344,9 +344,14 @@ export function SettingsView({
     await withBusy("ssh-disconnect", async () => {
       const target = connectionId || activeConnection.id;
       const result = await invoke<SshTunnelStatus>("ssh_tunnel_stop", { connectionId: target });
-      if (result.error) {
-        toast.error(result.error);
+      if (!result.ok) {
+        toast.error(result.error || "SSH tunnel disconnect failed.");
       } else {
+        if (target === activeConnection.id) {
+          onRuntimeChange(activateCoreConnection(runtimeConfig, managedLocalConnectionId));
+        } else {
+          onRefresh();
+        }
         toast.success("SSH tunnel disconnected.");
       }
     });
@@ -587,6 +592,8 @@ export function SettingsView({
               <ConnectionList
                 profiles={profilesByMode.ssh}
                 activeId={activeConnection.id}
+                connectedId={status?.connected ? activeConnection.id : ""}
+                busy={busyAction === "ssh-connect" || busyAction === "ssh-disconnect"}
                 onActivate={(id) => {
                   const profile = runtimeConfig.coreConnections.find((connection) => connection.id === id);
                   if (profile) void connectSsh(profile);
@@ -613,12 +620,16 @@ export function SettingsView({
 function ConnectionList({
   profiles,
   activeId,
+  connectedId,
+  busy,
   onActivate,
   onDelete,
   onDisconnect,
 }: {
   profiles: IrisCoreConnectionProfile[];
   activeId: string;
+  connectedId: string;
+  busy: boolean;
   onActivate: (connectionId: string) => void;
   onDelete: (connectionId: string) => void;
   onDisconnect?: (connectionId: string) => void;
@@ -628,28 +639,43 @@ function ConnectionList({
   }
   return (
     <div className="connection-profile-list">
-      {profiles.map((profile) => (
-        <div className="connection-profile-row" key={profile.id}>
-          <div>
-            <strong>{profile.name}</strong>
-            <span>{profileSubtitle(profile)}</span>
-          </div>
-          <Badge variant={profile.id === activeId ? "secondary" : "outline"}>{profile.id === activeId ? "Active" : profile.mode}</Badge>
-          <Button size="appSmall" onClick={() => onActivate(profile.id)}>
-            <Plug data-icon="inline-start" />
-            Connect
-          </Button>
-          {onDisconnect ? (
-            <Button variant="appNeutral" size="appSmall" onClick={() => onDisconnect(profile.id)}>
-              <Unplug data-icon="inline-start" />
-              Disconnect
+      {profiles.map((profile) => {
+        const connected = profile.id === connectedId;
+        const selected = profile.id === activeId;
+        const switchId = `connection-${profile.id}`;
+        return (
+          <div className="connection-profile-row" key={profile.id} data-connected={connected ? "true" : "false"}>
+            <div className="connection-profile-summary">
+              <strong>{profile.name}</strong>
+              <span>{profileSubtitle(profile)}</span>
+            </div>
+            <Field
+              orientation="horizontal"
+              className="connection-switch-field"
+              data-disabled={busy ? "true" : undefined}
+            >
+              <FieldLabel htmlFor={switchId}>
+                {connected ? "Connected" : selected ? "Offline" : "Disconnected"}
+              </FieldLabel>
+              <Switch
+                id={switchId}
+                checked={connected}
+                disabled={busy}
+                onCheckedChange={(checked) => {
+                  if (checked) {
+                    onActivate(profile.id);
+                  } else {
+                    onDisconnect?.(profile.id);
+                  }
+                }}
+              />
+            </Field>
+            <Button variant="appDanger" size="appSmall" onClick={() => onDelete(profile.id)}>
+              Delete
             </Button>
-          ) : null}
-          <Button variant="appDanger" size="appSmall" onClick={() => onDelete(profile.id)}>
-            Delete
-          </Button>
-        </div>
-      ))}
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -704,6 +730,7 @@ function SshConnectionDialog({
               label="SSH port"
               optional
               value={draft.port}
+              placeholder={String(defaultSshPort)}
               onChange={(port) => onDraftChange({ ...draft, port })}
             />
             {draft.authMode === "identity" ? (
@@ -711,6 +738,7 @@ function SshConnectionDialog({
                 id="ssh-identity"
                 label="Identity file path"
                 value={draft.identityFile}
+                placeholder="~/.ssh/id_ed25519"
                 onChange={(identityFile) => onDraftChange({ ...draft, identityFile })}
               />
             ) : null}
@@ -1030,7 +1058,7 @@ function sshDraftFromConfig(config: HermesRuntimeConfig): SshDraft {
     id: profile?.id || "",
     name: profile?.name || "",
     hostname: sshTargetLabel(ssh?.user || "", ssh?.host || ""),
-    port: ssh?.port && ssh.port !== 22 ? String(ssh.port) : "",
+    port: ssh?.port && ssh.port !== defaultSshPort ? String(ssh.port) : "",
     authMode,
     identityFile: ssh?.identityFile || "",
   };

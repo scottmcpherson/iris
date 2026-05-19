@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { isTauri } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import {
@@ -22,6 +22,7 @@ import {
   switchIrisAgent,
 } from "../../lib/irisRuntime";
 import type { HermesMemory, HermesRuntimeConfig, HermesSkill, HermesStatus } from "../../types/hermes";
+import { ensureActiveSshTunnel } from "./sshRuntime";
 
 export function useIrisRuntime() {
   const [status, setStatus] = useState<HermesStatus | null>(null);
@@ -30,26 +31,46 @@ export function useIrisRuntime() {
   const [selectedProfile, setSelectedProfile] = useState("default");
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [runtimeConfig, setRuntimeConfig] = useState<HermesRuntimeConfig>(() => loadRuntimeConfig());
+  const selectedProfileRef = useRef(selectedProfile);
+  const runtimeConfigRef = useRef(runtimeConfig);
 
-  async function refreshIris(profileName = selectedProfile, config = runtimeConfig) {
+  function setCurrentProfile(profile: string) {
+    selectedProfileRef.current = profile;
+    setSelectedProfile(profile);
+  }
+
+  function setCurrentRuntimeConfig(config: HermesRuntimeConfig) {
+    runtimeConfigRef.current = config;
+    setRuntimeConfig(config);
+  }
+
+  async function refreshIris(profileName = selectedProfileRef.current, config = runtimeConfigRef.current) {
     setIsRefreshing(true);
+    let activeConfig = config;
     try {
-      const nextStatus = await getIrisStatus(config, profileName);
+      activeConfig = await ensureActiveSshTunnel(config);
+      if (activeConfig !== config) {
+        setCurrentRuntimeConfig(activeConfig);
+        saveRuntimeConfig(activeConfig);
+      }
+
+      const nextStatus = await getIrisStatus(activeConfig, profileName);
       if (!nextStatus.ok) throw new Error(nextStatus.error || "Iris status failed.");
       const profile = profileName || nextStatus.activeProfile?.name || "default";
       setStatus(nextStatus);
-      setSelectedProfile(profile);
+      setCurrentProfile(profile);
 
       const [nextMemory, nextSkills] = await Promise.all([
-        getIrisMemory(profile, config),
-        getIrisSkills(profile, config),
+        getIrisMemory(profile, activeConfig),
+        getIrisSkills(profile, activeConfig),
       ]);
       if (nextMemory.ok) setMemory(nextMemory);
       if (nextSkills.ok) setSkills(nextSkills.skills);
       else setSkills([]);
+      return nextStatus;
     } catch (error) {
       const message = error instanceof Error ? error.message : "Could not reach the Tauri bridge.";
-      setStatus({
+      const offlineStatus: HermesStatus = {
         ok: false,
         connected: false,
         root: "",
@@ -58,48 +79,51 @@ export function useIrisRuntime() {
         hermesPathCandidates: [],
         version: null,
         checkedAt: Math.floor(Date.now() / 1000),
-        connectionMode: config.connectionMode,
-        activeConnectionId: config.activeConnectionId,
-        activeConnectionName: activeCoreConnection(config).name,
-        coreApiUrl: resolveCoreApiUrl(config),
+        connectionMode: activeConfig.connectionMode,
+        activeConnectionId: activeConfig.activeConnectionId,
+        activeConnectionName: activeCoreConnection(activeConfig).name,
+        coreApiUrl: resolveCoreApiUrl(activeConfig),
         activeApiUrl: "",
         error: message,
         activeProfile: offlineProfile,
         profiles: [offlineProfile],
-      });
-      setSelectedProfile("default");
+      };
+      setStatus(offlineStatus);
+      setCurrentProfile("default");
       setSkills([]);
+      return offlineStatus;
     } finally {
       setIsRefreshing(false);
     }
   }
 
   function selectProfile(profile: string) {
-    setSelectedProfile(profile);
+    setCurrentProfile(profile);
     void refreshIris(profile);
   }
 
   function updateRuntimeConfig(nextConfig: HermesRuntimeConfig) {
-    setRuntimeConfig(nextConfig);
+    setCurrentRuntimeConfig(nextConfig);
     saveRuntimeConfig(nextConfig);
-    void refreshIris(selectedProfile, nextConfig);
+    void refreshIris(selectedProfileRef.current, nextConfig);
   }
 
-  async function runProfileAction(action: ProfileAction, name: string, sourceProfile = selectedProfile) {
+  async function runProfileAction(action: ProfileAction, name: string, sourceProfile = selectedProfileRef.current) {
     const target = name.trim();
-    const source = sourceProfile || selectedProfile || "default";
+    const source = sourceProfile || selectedProfileRef.current || "default";
     if (!target && !["delete", "switch"].includes(action)) return "Enter an agent name first.";
-    const current = selectedProfile || "default";
+    const current = selectedProfileRef.current || "default";
+    const config = runtimeConfigRef.current;
     const result =
       action === "create"
-        ? await createIrisAgent(target, runtimeConfig)
+        ? await createIrisAgent(target, config)
         : action === "clone"
-          ? await cloneIrisAgent(source, target, runtimeConfig)
+          ? await cloneIrisAgent(source, target, config)
           : action === "rename"
-            ? await renameIrisAgent(source, target, runtimeConfig)
+            ? await renameIrisAgent(source, target, config)
             : action === "delete"
-              ? await deleteIrisAgent(source, runtimeConfig)
-              : await switchIrisAgent(target || current, runtimeConfig);
+              ? await deleteIrisAgent(source, config)
+              : await switchIrisAgent(target || current, config);
 
     if (!result.ok) return result.error || "Agent operation failed.";
     const nextProfile = action === "delete"
@@ -107,35 +131,35 @@ export function useIrisRuntime() {
         ? result.profile || "default"
         : current
       : result.profile || target || current;
-    setSelectedProfile(nextProfile);
+    setCurrentProfile(nextProfile);
     await refreshIris(nextProfile);
     return `Profile ${action} completed.`;
   }
 
   async function saveMemoryFile(file: "memory" | "user", content: string, expectedUpdatedAt?: number | null) {
     const result = await saveIrisMemoryFile({
-      profile: selectedProfile,
+      profile: selectedProfileRef.current,
       file,
       content,
       expectedUpdatedAt,
-      runtime: runtimeConfig,
+      runtime: runtimeConfigRef.current,
     });
     if (!result.ok) return result.error || "Memory save failed.";
     setMemory(result.memory);
-    await refreshIris(selectedProfile);
+    await refreshIris(selectedProfileRef.current);
     return "Memory saved.";
   }
 
   async function resetMemoryFile(file: "memory" | "user" | "all", confirm: string) {
     const result = await resetIrisMemoryFile({
-      profile: selectedProfile,
+      profile: selectedProfileRef.current,
       file,
       confirm,
-      runtime: runtimeConfig,
+      runtime: runtimeConfigRef.current,
     });
     if (!result.ok) return result.error || "Memory reset failed.";
     setMemory(result.memory);
-    await refreshIris(selectedProfile);
+    await refreshIris(selectedProfileRef.current);
     return "Memory reset completed.";
   }
 

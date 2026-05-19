@@ -7,6 +7,7 @@ import { loadJsonValue, saveJsonValue, storageKeys } from "./storage";
 
 export const managedLocalConnectionId = "core_local";
 export const defaultCorePort = 8765;
+export const defaultSshPort = 22;
 export const defaultCoreApiUrl = `http://127.0.0.1:${defaultCorePort}`;
 
 export const defaultManagedLocalProfile: IrisCoreConnectionProfile = {
@@ -63,6 +64,31 @@ export function activeCoreConnection(config: HermesRuntimeConfig | undefined) {
     config.coreConnections.find((connection) => connection.mode === config.connectionMode) ||
     config.coreConnections[0];
   return active || defaultManagedLocalProfile;
+}
+
+export function runtimeDataRouteKey(config: HermesRuntimeConfig | undefined) {
+  const active = activeCoreConnection(config);
+  if (active.mode === "ssh") {
+    const ssh = active.ssh;
+    return [
+      "ssh",
+      active.id,
+      ssh?.user || "",
+      ssh?.host || "",
+      ssh?.port || defaultSshPort,
+      ssh?.remoteCoreHost || "127.0.0.1",
+      ssh?.remoteCorePort || defaultCorePort,
+    ].join("|");
+  }
+  if (active.mode === "tailscale") {
+    return [
+      "tailscale",
+      active.id,
+      active.tailscale?.host || "",
+      active.tailscale?.port || defaultCorePort,
+    ].join("|");
+  }
+  return [active.mode, active.id, resolveCoreApiUrl(config)].join("|");
 }
 
 export function connectionTransport(profile: IrisCoreConnectionProfile | undefined) {
@@ -231,7 +257,7 @@ function normalizeProfile(value: unknown): IrisCoreConnectionProfile | null {
     profile.ssh = {
       user,
       host,
-      port: validPort(ssh?.port) || 22,
+      port: validPort(ssh?.port) || defaultSshPort,
       identityFile: stringValue(ssh?.identityFile) || undefined,
       remoteCoreHost: "127.0.0.1",
       remoteCorePort,

@@ -2,9 +2,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   activateCoreConnection,
   defaultRuntimeConfig,
+  defaultSshPort,
   loadRuntimeConfig,
   managedLocalConnectionId,
   resolveCoreApiUrl,
+  runtimeDataRouteKey,
   saveRuntimeConfig,
   upsertCoreConnection,
 } from "../runtimeConfig";
@@ -52,6 +54,35 @@ describe("runtimeConfig", () => {
     );
 
     expect(loadRuntimeConfig()).toEqual(defaultRuntimeConfig);
+  });
+
+  it("defaults saved SSH profiles without a port to port 22", () => {
+    localStorage.setItem(
+      "iris.desktop.runtime.v2",
+      JSON.stringify({
+        connectionMode: "ssh",
+        activeConnectionId: "ssh_mac_mini",
+        coreConnections: [
+          {
+            id: "ssh_mac_mini",
+            name: "Mac mini",
+            mode: "ssh",
+            effectiveCoreApiUrl: "http://127.0.0.1:52942",
+            ssh: {
+              user: "agent",
+              host: "agents-mac-mini",
+              remoteCorePort: 8765,
+              localForwardPort: "auto",
+            },
+          },
+        ],
+      }),
+    );
+
+    const config = loadRuntimeConfig();
+    const ssh = config.coreConnections.find((connection) => connection.id === "ssh_mac_mini");
+
+    expect(ssh?.ssh?.port).toBe(defaultSshPort);
   });
 
   it("strips /v1 from effective profile URLs", () => {
@@ -105,5 +136,42 @@ describe("runtimeConfig", () => {
 
     expect(active.connectionMode).toBe("manual-url");
     expect(resolveCoreApiUrl(active)).toBe("http://127.0.0.1:8777");
+  });
+
+  it("keys session data by the selected Core route, not just the profile name", () => {
+    const sshConfig = upsertCoreConnection(defaultRuntimeConfig, {
+      id: "ssh_mac_mini",
+      name: "Mac mini",
+      mode: "ssh",
+      effectiveCoreApiUrl: "http://127.0.0.1:52942",
+      ssh: {
+        user: "agent",
+        host: "agents-mac-mini",
+        port: 22,
+        identityFile: "~/.ssh/id_ed25519",
+        remoteCoreHost: "127.0.0.1",
+        remoteCorePort: 8765,
+        localForwardPort: "auto",
+        autoStartRemoteCore: false,
+      },
+    }, { activate: true });
+
+    const reopenedTunnelConfig = {
+      ...sshConfig,
+      coreConnections: sshConfig.coreConnections.map((connection) =>
+        connection.id === "ssh_mac_mini"
+          ? {
+              ...connection,
+              effectiveCoreApiUrl: "http://127.0.0.1:54116",
+              ssh: connection.ssh
+                ? { ...connection.ssh, localForwardPort: 54116 }
+                : connection.ssh,
+            }
+          : connection,
+      ),
+    };
+
+    expect(runtimeDataRouteKey(defaultRuntimeConfig)).not.toBe(runtimeDataRouteKey(sshConfig));
+    expect(runtimeDataRouteKey(reopenedTunnelConfig)).toBe(runtimeDataRouteKey(sshConfig));
   });
 });
