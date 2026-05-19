@@ -25,6 +25,7 @@ import { OnboardingOverlay } from "./features/polish/OnboardingOverlay";
 import { AppShell } from "./layout/AppShell";
 import { globalShortcutActionForKey } from "./app/keyboardShortcuts";
 import { loadBooleanValue, saveBooleanValue, storageKeys } from "./app/storage";
+import { resolveCoreApiUrl } from "./app/runtimeConfig";
 import {
   isProjectSession,
   mergeProjectSessionsForSidebar,
@@ -51,7 +52,7 @@ function App() {
   const appCommandHandlerRef = useRef<(payload: string) => void>(() => {});
 
   const iris = useIrisRuntime();
-  const projects = useIrisProjects(iris.runtimeConfig);
+  const projects = useIrisProjects(iris.runtimeConfig, iris.connected ? "connected" : "offline");
   const projectsRef = useRef(projects);
   projectsRef.current = projects;
   const chat = useIrisChat({
@@ -268,7 +269,7 @@ function App() {
         }
         selectedProfile={iris.selectedProfile}
         status={iris.status}
-        coreApiUrl={iris.runtimeConfig.coreApiUrl}
+        coreApiUrl={resolveCoreApiUrl(iris.runtimeConfig)}
         sessions={chat.sessions}
         sessionsByProfile={chat.sessionsByProfile}
         sessionReadStates={sidebarSessionReadStates}

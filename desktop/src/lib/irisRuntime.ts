@@ -42,6 +42,7 @@ import type {
   RemoteCredentialKind,
   RemoteCredentialStatus,
 } from "../types/hermes";
+import { resolveCoreApiUrl } from "../app/runtimeConfig";
 
 // Compatibility facade: existing desktop UI code still imports Hermes-shaped
 // functions and types, while the active read path is backed by Iris Core.
@@ -185,7 +186,7 @@ export async function getIrisSessions(
     return {
       ok: true,
       profile: agentResult.agent.runtimeProfile,
-      path: `${runtime?.coreApiUrl || "http://127.0.0.1:8765"}/v1/sessions`,
+      path: `${resolveCoreApiUrl(runtime)}/v1/sessions`,
       source: "hermes-management" as const,
       schemaVersion: null,
       sessions: result.sessions.map(irisCoreSessionToHermes),
@@ -287,7 +288,7 @@ export async function getIrisSessionDetail(
     return {
       ok: true,
       profile: sessionResult.session.runtimeProfile || profile || "default",
-      path: `${runtime?.coreApiUrl || "http://127.0.0.1:8765"}/v1/sessions/${sessionId}`,
+      path: `${resolveCoreApiUrl(runtime)}/v1/sessions/${sessionId}`,
       source: "hermes-management" as const,
       schemaVersion: null,
       session: irisCoreSessionToHermes(sessionResult.session),
@@ -463,16 +464,16 @@ export async function deleteIrisAgent(name: string, runtime?: HermesRuntimeConfi
   return profileActionResult(result);
 }
 
-export async function getRemoteCredentialStatus(kind: RemoteCredentialKind) {
-  return bridge<RemoteCredentialStatus>("remote_credential_status", { kind });
+export async function getRemoteCredentialStatus(kind: RemoteCredentialKind, connectionId = "") {
+  return bridge<RemoteCredentialStatus>("remote_credential_status", { kind, connectionId });
 }
 
-export async function saveRemoteCredential(kind: RemoteCredentialKind, token: string) {
-  return bridge<RemoteCredentialStatus>("remote_credential_save", { kind, token });
+export async function saveRemoteCredential(kind: RemoteCredentialKind, token: string, connectionId = "") {
+  return bridge<RemoteCredentialStatus>("remote_credential_save", { kind, token, connectionId });
 }
 
-export async function deleteRemoteCredential(kind: RemoteCredentialKind) {
-  return bridge<RemoteCredentialStatus>("remote_credential_delete", { kind });
+export async function deleteRemoteCredential(kind: RemoteCredentialKind, connectionId = "") {
+  return bridge<RemoteCredentialStatus>("remote_credential_delete", { kind, connectionId });
 }
 
 function emptyModelCatalog(profile: string, error: string): HermesModelCatalog {
@@ -545,7 +546,7 @@ function emptySessions(profile: string, error: string, runtime?: HermesRuntimeCo
   return {
     ok: false,
     profile,
-    path: `${runtime?.coreApiUrl || "http://127.0.0.1:8765"}/v1/sessions`,
+    path: `${resolveCoreApiUrl(runtime)}/v1/sessions`,
     source: "hermes-management",
     schemaVersion: null,
     sessions: [],
@@ -562,7 +563,7 @@ function emptySessionDetail(
   return {
     ok: false,
     profile,
-    path: `${runtime?.coreApiUrl || "http://127.0.0.1:8765"}/v1/sessions/${sessionId}`,
+    path: `${resolveCoreApiUrl(runtime)}/v1/sessions/${sessionId}`,
     source: "hermes-management",
     schemaVersion: null,
     session: null,

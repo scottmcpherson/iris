@@ -1,5 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
-import { loadRuntimeConfig, saveRuntimeConfig } from "../../app/runtimeConfig";
+import { isTauri } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
+import {
+  activeCoreConnection,
+  loadRuntimeConfig,
+  resolveCoreApiUrl,
+  saveRuntimeConfig,
+} from "../../app/runtimeConfig";
 import type { ProfileAction } from "../../app/types";
 import { offlineProfile } from "../../app/offlineProfile";
 import {
@@ -52,8 +59,9 @@ export function useIrisRuntime() {
         version: null,
         checkedAt: Math.floor(Date.now() / 1000),
         connectionMode: config.connectionMode,
-        remoteUrl: config.remoteUrl,
-        coreApiUrl: config.coreApiUrl,
+        activeConnectionId: config.activeConnectionId,
+        activeConnectionName: activeCoreConnection(config).name,
+        coreApiUrl: resolveCoreApiUrl(config),
         activeApiUrl: "",
         error: message,
         activeProfile: offlineProfile,
@@ -133,6 +141,26 @@ export function useIrisRuntime() {
 
   useEffect(() => {
     void refreshIris();
+  }, []);
+
+  useEffect(() => {
+    if (!isTauri()) return;
+    let disposed = false;
+    let disposeListener: (() => void) | null = null;
+    const unlisten = listen("iris://core-ready", () => {
+      void refreshIris();
+    }).then((dispose) => {
+      if (disposed) {
+        dispose();
+        return;
+      }
+      disposeListener = dispose;
+    });
+    return () => {
+      disposed = true;
+      disposeListener?.();
+      void unlisten;
+    };
   }, []);
 
   const activeProfile = useMemo(

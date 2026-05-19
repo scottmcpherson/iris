@@ -11,6 +11,7 @@
     "core:setup": "node scripts/setup-iris-core.mjs",
     "core:dev": "iris-core/.venv/bin/iris-core --host 127.0.0.1 --port 8765",
     "core:test": "node scripts/test-iris-core.mjs",
+    "core:build:binary": "node iris-core/scripts/build-binary.mjs",
     "iris:platform:install": "node scripts/install-iris-platform.mjs",
     "iris:hermes:install": "node scripts/install-iris-platform.mjs",
     "dev": "node scripts/dev.mjs",
@@ -19,7 +20,7 @@
     "dev:no-core": "node scripts/dev.mjs --no-core",
     "check": "npm --workspace desktop run check && npm run core:test",
     "build": "npm --workspace desktop run build",
-    "build:mac:app": "npm --workspace desktop run build:mac:app",
+    "build:mac:app": "npm run core:build:binary && npm --workspace desktop run build:mac:app",
     "package:check": "npm --workspace desktop run package:check"
   },
   "engines": {

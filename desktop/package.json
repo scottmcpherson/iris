@@ -11,8 +11,9 @@
     "test:bridge": "python3 -m unittest discover -s src-tauri/python/tests",
     "check": "npm run test && npm run test:bridge && npm run build",
     "package:check": "node scripts/package-checks.mjs",
-    "build:mac:app": "npm run tauri build -- --bundles app",
-    "release:mac": "node scripts/check-release-env.mjs && npm run tauri build -- --bundles app",
+    "stage:core-sidecar": "node scripts/stage-core-sidecar.mjs",
+    "build:mac:app": "npm run stage:core-sidecar && npm run tauri build -- --bundles app",
+    "release:mac": "node scripts/check-release-env.mjs && npm run stage:core-sidecar && npm run tauri build -- --bundles app",
     "preview": "vite preview",
     "tauri": "tauri"
   },

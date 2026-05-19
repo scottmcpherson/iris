@@ -15,6 +15,12 @@ class ErrorResponse(BaseModel):
 class HealthResponse(BaseModel):
     ok: bool = True
     checkedAt: int
+    service: str = "iris-core"
+    version: str
+    pid: int
+    managed: bool | None = None
+    bindHost: str
+    port: int
     hermesHome: str
     profilesRootExists: bool
 

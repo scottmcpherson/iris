@@ -1,0 +1,8 @@
+name: iris-platform
+kind: platform
+version: 0.1.0
+description: >
+  Bidirectional Iris platform adapter for Hermes.
+  Receives Iris chat messages and delivers Hermes responses/jobs back to Iris.
+requires_env:
+  - IRIS_BASE_URL

@@ -1,11 +1,51 @@
-export type HermesConnectionMode = "local" | "remote";
+export type IrisCoreConnectionMode =
+  | "managed-local"
+  | "ssh"
+  | "tailscale"
+  | "manual-url";
+
+export type IrisCoreConnectionProfile = {
+  id: string;
+  name: string;
+  mode: IrisCoreConnectionMode;
+  effectiveCoreApiUrl: string;
+  local?: {
+    port: number;
+    hermesHome?: string;
+    autoStart: boolean;
+    installLaunchAgent: boolean;
+    allowSshTunnel?: boolean;
+    allowTailscale?: boolean;
+    tailscaleHost?: string;
+    tailscalePort?: number;
+  };
+  ssh?: {
+    user: string;
+    host: string;
+    port: number;
+    identityFile?: string;
+    remoteCoreHost: "127.0.0.1";
+    remoteCorePort: number;
+    localForwardPort: number | "auto";
+    autoStartRemoteCore: boolean;
+  };
+  tailscale?: {
+    host: string;
+    port: number;
+    requiresToken: true;
+  };
+  manual?: {
+    url: string;
+    requiresToken: boolean;
+  };
+};
 
 export type HermesRuntimeConfig = {
-  connectionMode: HermesConnectionMode;
+  connectionMode: IrisCoreConnectionMode;
+  activeConnectionId: string;
+  coreConnections: IrisCoreConnectionProfile[];
   provider: string;
   model: string;
-  remoteUrl: string;
-  coreApiUrl: string;
 };
 
 export type HermesPathCandidate = {
@@ -113,10 +153,19 @@ export type HermesStatus = {
   activeProfile: HermesProfile;
   profiles: HermesProfile[];
   checkedAt: number;
-  connectionMode?: HermesConnectionMode;
-  remoteUrl?: string;
+  connectionMode?: IrisCoreConnectionMode;
+  activeConnectionId?: string;
+  activeConnectionName?: string;
+  transport?: "sidecar" | "ssh-tunnel" | "tailscale" | "manual-url";
+  hermesOwner?: "this-mac" | "remote-mac" | "custom";
   coreApiUrl?: string;
   activeApiUrl?: string;
+  coreVersionStatus?: {
+    ok: boolean;
+    coreVersion: string;
+    clientVersion: string;
+    reason?: "version-mismatch" | "unknown";
+  };
   gatewayStatus?: HermesEndpointStatus;
   remoteStatus?: HermesEndpointStatus;
   activeApiStatus?: HermesEndpointStatus;
@@ -375,6 +424,7 @@ export type RemoteCredentialKind = "core";
 export type RemoteCredentialStatus = {
   ok: boolean;
   kind: RemoteCredentialKind;
+  connectionId?: string;
   exists: boolean;
   source: "environment" | "macos-keychain" | "test-file" | "unavailable";
   error?: string;

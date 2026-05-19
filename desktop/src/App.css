@@ -3109,9 +3109,22 @@ button:disabled {
 }
 
 .core-connection-heading {
+  flex-wrap: wrap;
   justify-content: space-between;
   gap: 12px;
   padding: 0;
+}
+
+.core-connection-heading > div {
+  flex: 1 1 260px;
+  min-width: 0;
+}
+
+.core-connection-heading [data-slot="card-action"] {
+  display: flex;
+  flex: 0 0 auto;
+  min-width: max-content;
+  max-width: 100%;
 }
 
 .core-connection-title {
@@ -3126,16 +3139,33 @@ button:disabled {
   white-space: nowrap;
 }
 
+.core-connection-heading [data-slot="card-title"] {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: #f4efe5;
+  font-size: 14px;
+  line-height: 1.25;
+}
+
+.core-connection-heading [data-slot="card-description"] {
+  margin-top: 4px;
+  max-width: 760px;
+  color: #8f98a8;
+  line-height: 1.35;
+}
+
 .core-connection-heading [data-slot="badge"] {
-  overflow: hidden;
-  max-width: 52%;
+  flex: 0 0 auto;
+  overflow: visible;
+  width: max-content;
+  max-width: none;
   padding: 3px 7px;
   border: 1px solid rgba(255, 255, 255, 0.07);
   border-radius: 999px;
   color: #8f98a8;
   background: rgba(255, 255, 255, 0.045);
   font-size: 11px;
-  text-overflow: ellipsis;
+  text-overflow: clip;
   white-space: nowrap;
 }
 
@@ -3159,6 +3189,338 @@ button:disabled {
 
 .core-connection-actions {
   justify-content: flex-end;
+  gap: 8px;
+}
+
+.core-mode-tabs {
+  min-width: 0;
+}
+
+.core-mode-tabs [data-slot="tabs-list"] {
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.core-status-grid,
+.settings-field-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 8px;
+  min-width: 0;
+}
+
+.ssh-connection-dialog {
+  width: min(580px, calc(100vw - 56px));
+  max-height: min(86vh, 720px);
+  overflow: auto;
+  padding: 0;
+  border-color: rgba(255, 255, 255, 0.09);
+  border-radius: 8px;
+  background: #111319;
+  color: #f3eee5;
+  box-shadow: 0 28px 90px rgba(0, 0, 0, 0.52);
+}
+
+.ssh-connection-dialog [data-slot="dialog-header"] {
+  gap: 5px;
+  padding: 18px 20px 16px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+  text-align: left;
+}
+
+.ssh-connection-dialog [data-slot="dialog-title"] {
+  color: #f3eee5;
+  font-size: 20px;
+  line-height: 1.2;
+  letter-spacing: 0;
+}
+
+.ssh-connection-dialog [data-slot="dialog-description"] {
+  max-width: 460px;
+  color: #9ca4b2;
+  font-size: 13px;
+  line-height: 1.42;
+}
+
+.ssh-connection-dialog [data-slot="dialog-close"] {
+  top: 16px;
+  right: 16px;
+  color: #8f98a8;
+}
+
+.ssh-dialog-fieldset {
+  min-height: 0;
+  padding: 16px 20px 0;
+  border: 0;
+}
+
+.ssh-dialog-fields {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(132px, 0.36fr);
+  align-items: end;
+  gap: 12px;
+}
+
+.ssh-dialog-fields > [data-slot="field"]:nth-child(2),
+.ssh-dialog-fields > [data-slot="field"]:nth-child(5) {
+  grid-column: 1 / -1;
+}
+
+.ssh-dialog-fields [data-slot="field-label"] {
+  color: #8e96a5;
+  font-size: 11px;
+  font-weight: 750;
+}
+
+.ssh-dialog-fields [data-slot="input"] {
+  height: 38px;
+  border-radius: 8px;
+  font-size: 13px;
+}
+
+.field-label-muted {
+  color: #737b89;
+  font-weight: 650;
+}
+
+.ssh-auth-field {
+  grid-column: 1 / -1;
+  justify-self: center;
+  width: max-content;
+  max-width: 100%;
+}
+
+.ssh-auth-toggle {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  width: max-content;
+  min-width: min(240px, 100%);
+  height: var(--agent-topbar-control-height, 34px);
+  min-height: var(--agent-topbar-control-height, 34px);
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid var(--menu-border);
+  border-radius: 8px;
+  background: var(--secondary);
+}
+
+.ssh-auth-toggle [data-slot="toggle-group-item"] {
+  min-width: 96px;
+  height: calc(100% - 1px);
+  min-height: 0;
+  border: 0;
+  border-radius: 7px;
+  color: var(--menu-muted-foreground);
+  background: transparent;
+  font-size: 12px;
+  font-weight: 750;
+  line-height: 1;
+}
+
+.ssh-auth-toggle [data-slot="toggle-group-item"][data-state="on"] {
+  color: var(--menu-hover-foreground);
+  background: var(--menu-hover);
+  box-shadow: none;
+}
+
+.ssh-dialog-actions {
+  align-items: center;
+  flex-direction: row;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: flex-end;
+  padding: 16px 20px 18px;
+  border-top: 1px solid rgba(255, 255, 255, 0.07);
+}
+
+.ssh-dialog-actions [data-variant="appLink"] {
+  color: #9ca4b2;
+}
+
+@media (max-width: 640px) {
+  .ssh-connection-dialog {
+    width: calc(100vw - 28px);
+  }
+
+  .ssh-connection-dialog [data-slot="dialog-header"],
+  .ssh-dialog-fieldset,
+  .ssh-dialog-actions {
+    padding-right: 16px;
+    padding-left: 16px;
+  }
+
+  .ssh-dialog-fields {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .ssh-dialog-fields > [data-slot="field"] {
+    grid-column: 1 / -1;
+  }
+}
+
+.core-status-grid {
+  padding: 0;
+}
+
+.status-metric {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  min-height: 58px;
+  padding: 10px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.12);
+}
+
+.status-metric span,
+.status-metric strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.status-metric span {
+  color: #8f98a8;
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.status-metric strong {
+  color: #f4efe5;
+  font-size: 13px;
+}
+
+.settings-mode-card {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  padding: 14px;
+  border-radius: 8px;
+}
+
+.settings-mode-card [data-slot="card-header"],
+.settings-mode-card [data-slot="card-content"],
+.settings-mode-card [data-slot="card-footer"] {
+  padding: 0;
+}
+
+.settings-mode-card [data-slot="card-title"] {
+  color: #f4efe5;
+  font-size: 15px;
+}
+
+.settings-mode-card [data-slot="card-description"] {
+  max-width: 760px;
+  line-height: 1.35;
+}
+
+.settings-mode-content {
+  display: grid;
+  gap: 14px;
+}
+
+.settings-action-row {
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.settings-switch-list {
+  gap: 10px;
+}
+
+.settings-switch-field {
+  min-height: 32px;
+  align-items: center;
+}
+
+.settings-switch-field [data-slot="field-label"] {
+  color: #dce0e8;
+  font-size: 12px;
+}
+
+.settings-substatus {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 8px;
+  padding: 0;
+}
+
+.connection-profile-list {
+  display: grid;
+  gap: 8px;
+}
+
+.connection-profile-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto auto auto;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.12);
+}
+
+.connection-profile-row > div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.connection-profile-row strong,
+.connection-profile-row span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.connection-profile-row strong {
+  color: #f4efe5;
+  font-size: 13px;
+}
+
+.connection-profile-row span {
+  color: #8f98a8;
+  font-size: 11px;
+}
+
+.settings-empty-text {
+  margin: 0;
+  padding: 10px 0;
+  color: #8f98a8;
+  font-size: 12px;
+}
+
+.settings-token-notice {
+  margin-top: 2px;
+}
+
+.settings-token-notice [data-slot="alert-description"] {
+  display: grid;
+  gap: 6px;
+}
+
+.settings-token-notice span {
+  color: #8f98a8;
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.settings-token-notice code {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: #f4efe5;
+  font-size: 12px;
+}
+
+.token-input-row {
+  grid-template-columns: minmax(0, 1fr) auto;
   gap: 8px;
 }
 
@@ -4399,8 +4761,13 @@ button:disabled {
 
   .service-card-grid,
   .agent-metadata-strip,
-  .core-connection-fields {
+  .core-connection-fields,
+  .connection-profile-row {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .connection-profile-row {
+    align-items: stretch;
   }
 }
 

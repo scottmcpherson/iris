@@ -29,7 +29,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; img-src 'self' asset: http://asset.localhost data: blob: http://127.0.0.1:* http://localhost:*; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src ipc: http://ipc.localhost http://127.0.0.1:* https://*; frame-src 'self';",
+      "csp": "default-src 'self'; img-src 'self' asset: http://asset.localhost data: blob: http://127.0.0.1:* http://localhost:* http://* https://*; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src ipc: http://ipc.localhost http://127.0.0.1:* http://localhost:* http://* https://*; frame-src 'self';",
       "assetProtocol": {
         "enable": true,
         "scope": ["$HOME/**", "$TEMP/**"]
@@ -39,6 +39,9 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "externalBin": [
+      "binaries/iris-core"
+    ],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

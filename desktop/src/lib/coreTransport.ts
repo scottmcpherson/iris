@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { HermesRuntimeConfig } from "../types/hermes";
+import { activeCoreConnection, resolveCoreApiUrl } from "../app/runtimeConfig";
 
 export type CoreResponse<T> = T & {
   ok: boolean;
@@ -9,7 +10,7 @@ export type CoreResponse<T> = T & {
 type CoreMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
 
 export function coreBaseUrl(runtime?: HermesRuntimeConfig) {
-  const base = (runtime?.coreApiUrl || "http://127.0.0.1:8765").replace(/\/+$/, "");
+  const base = resolveCoreApiUrl(runtime).replace(/\/+$/, "");
   return base.endsWith("/v1") ? base : `${base}/v1`;
 }
 
@@ -81,6 +82,7 @@ function coreRequestViaBridge<T>(
       path,
       body,
       runtime,
+      connectionId: activeCoreConnection(runtime)?.id,
     },
   });
 }

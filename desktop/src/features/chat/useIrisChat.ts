@@ -20,6 +20,7 @@ import {
   type CoreMetadata,
 } from "../../lib/irisCore";
 import { irisCoreSessionToHermes } from "../../lib/irisCoreMappings";
+import { resolveCoreApiUrl } from "../../app/runtimeConfig";
 import type {
   HermesSession,
   HermesInboxMessage,
@@ -283,7 +284,7 @@ export function useIrisChat({
         coreEventSourceRef.current = null;
       }
     };
-  }, [runtimeConfig.coreApiUrl, profile, hasActiveRequest]);
+  }, [resolveCoreApiUrl(runtimeConfig), profile, hasActiveRequest]);
 
   useEffect(() => {
     const timer = window.setInterval(() => {
@@ -1100,7 +1101,7 @@ export function useIrisChat({
   }
 
   async function bootstrapCoreEventCursor(profileName: string, agentId: string) {
-    const bootstrapKey = `${runtimeConfig.coreApiUrl || ""}:${agentId}`;
+    const bootstrapKey = `${resolveCoreApiUrl(runtimeConfig)}:${agentId}`;
     if (eventCursorBootstrapKeysRef.current[profileName] === bootstrapKey) return true;
     const result = await getIrisCoreLatestEventCursor(runtimeConfig, agentId);
     if (!result.ok) return false;

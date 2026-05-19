@@ -33,6 +33,12 @@ iris-core = "hermes_management_server.main:cli"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+hermes_management_server = [
+  "payload/iris-platform/*",
+  "payload/iris-platform/tests/*",
+]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"

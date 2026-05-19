@@ -44,9 +44,19 @@ function noop() {}
 
 function runtimeConfigFixture(): HermesRuntimeConfig {
   return {
-    connectionMode: "local",
-    remoteUrl: "",
-    coreApiUrl: "http://127.0.0.1:8765",
+    connectionMode: "managed-local",
+    activeConnectionId: "core_local",
+    coreConnections: [{
+      id: "core_local",
+      name: "Local",
+      mode: "managed-local",
+      effectiveCoreApiUrl: "http://127.0.0.1:8765",
+      local: {
+        port: 8765,
+        autoStart: true,
+        installLaunchAgent: false,
+      },
+    }],
     provider: "",
     model: "",
   };

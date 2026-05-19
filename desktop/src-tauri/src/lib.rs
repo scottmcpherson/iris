@@ -1,3 +1,7 @@
+mod connection_profiles;
+mod core_process;
+mod ssh_tunnel;
+
 use serde_json::Value;
 use std::fs::{create_dir_all, OpenOptions};
 use std::io::Write;
@@ -18,7 +22,10 @@ async fn core_bridge(action: String, payload: Value) -> Result<Value, String> {
 fn run_python_bridge(action: &str, payload: Value) -> Result<Value, String> {
     let script = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("python/core_bridge.py");
     if !script.exists() {
-        return Err(format!("Core bridge script not found at {}", script.display()));
+        return Err(format!(
+            "Core bridge script not found at {}",
+            script.display()
+        ));
     }
 
     let payload_text = serde_json::to_string(&payload)
@@ -75,14 +82,23 @@ fn python_candidates() -> Vec<String> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let core_state = core_process::CoreProcessState::default();
+    let ssh_state = ssh_tunnel::SshTunnelState::default();
+    let app = tauri::Builder::default()
+        .manage(core_state.clone())
+        .manage(ssh_state.clone())
         .plugin(tauri_plugin_opener::init())
-        .setup(|app| {
+        .setup(move |app| {
             #[cfg(target_os = "macos")]
             app.set_activation_policy(tauri::ActivationPolicy::Regular);
 
             install_crash_logging(app.handle().clone());
             install_app_menu(app)?;
+            let app_handle = app.handle().clone();
+            let startup_core_state = core_state.clone();
+            tauri::async_runtime::spawn(async move {
+                core_process::startup_managed_core(app_handle, startup_core_state).await;
+            });
 
             let show = MenuItem::with_id(app, "show", "Show Iris", true, None::<&str>)?;
             let refresh =
@@ -107,7 +123,16 @@ pub fn run() {
                     show_main_window(app);
                     let _ = app.emit("iris://app-command", "refresh");
                 }
-                "quit" => app.exit(0),
+                "quit" => {
+                    let core = app
+                        .state::<core_process::CoreProcessState>()
+                        .inner()
+                        .clone();
+                    let ssh = app.state::<ssh_tunnel::SshTunnelState>().inner().clone();
+                    core_process::stop_core_now(&core);
+                    ssh_tunnel::stop_all_tunnels(&ssh);
+                    app.exit(0);
+                }
                 _ => {}
             })
             .on_tray_icon_event(|tray: &TrayIcon<tauri::Wry>, event| {
@@ -127,9 +152,44 @@ pub fn run() {
 
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![core_bridge])
-        .run(tauri::generate_context!())
-        .unwrap_or_else(|err| eprintln!("Iris desktop exited with an unrecoverable Tauri error: {err}"));
+        .invoke_handler(tauri::generate_handler![
+            core_bridge,
+            core_process::core_sidecar_status,
+            core_process::core_sidecar_start,
+            core_process::core_sidecar_stop,
+            core_process::core_sidecar_restart,
+            connection_profiles::core_install_hermes_plugin,
+            connection_profiles::core_service_install,
+            connection_profiles::core_service_uninstall,
+            connection_profiles::core_service_status,
+            connection_profiles::open_core_logs,
+            ssh_tunnel::ssh_connection_probe,
+            ssh_tunnel::ssh_tunnel_start,
+            ssh_tunnel::ssh_tunnel_stop,
+            ssh_tunnel::ssh_tunnel_status
+        ])
+        .build(tauri::generate_context!())
+        .unwrap_or_else(|err| {
+            eprintln!("Iris desktop exited with an unrecoverable Tauri error: {err}");
+            std::process::exit(1);
+        });
+
+    app.run(|app, event| match event {
+        tauri::RunEvent::ExitRequested { .. } | tauri::RunEvent::Exit => {
+            cleanup_managed_processes(app);
+        }
+        _ => {}
+    });
+}
+
+fn cleanup_managed_processes(app: &tauri::AppHandle) {
+    let core = app
+        .state::<core_process::CoreProcessState>()
+        .inner()
+        .clone();
+    let ssh = app.state::<ssh_tunnel::SshTunnelState>().inner().clone();
+    core_process::stop_core_now(&core);
+    ssh_tunnel::stop_all_tunnels(&ssh);
 }
 
 fn install_app_menu(app: &mut tauri::App) -> tauri::Result<()> {
@@ -156,12 +216,27 @@ fn install_app_menu(app: &mut tauri::App) -> tauri::Result<()> {
     )?;
 
     let new_chat = MenuItem::with_id(app, "new-chat", "New Chat", true, Some("CmdOrCtrl+KeyN"))?;
-    let command_menu =
-        MenuItem::with_id(app, "command-menu", "Command Palette", true, Some("CmdOrCtrl+KeyK"))?;
-    let search_chats =
-        MenuItem::with_id(app, "search-chats", "Search Chats", true, Some("CmdOrCtrl+KeyG"))?;
-    let refresh =
-        MenuItem::with_id(app, "refresh", "Refresh Connection", true, Some("CmdOrCtrl+KeyR"))?;
+    let command_menu = MenuItem::with_id(
+        app,
+        "command-menu",
+        "Command Palette",
+        true,
+        Some("CmdOrCtrl+KeyK"),
+    )?;
+    let search_chats = MenuItem::with_id(
+        app,
+        "search-chats",
+        "Search Chats",
+        true,
+        Some("CmdOrCtrl+KeyG"),
+    )?;
+    let refresh = MenuItem::with_id(
+        app,
+        "refresh",
+        "Refresh Connection",
+        true,
+        Some("CmdOrCtrl+KeyR"),
+    )?;
     let file_separator_one = PredefinedMenuItem::separator(app)?;
     let file_separator_two = PredefinedMenuItem::separator(app)?;
     let close = PredefinedMenuItem::close_window(app, None)?;

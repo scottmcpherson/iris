@@ -26,25 +26,27 @@ def restore_env(values: dict[str, str | None]) -> None:
 
 
 class IrisBridgeTests(unittest.TestCase):
-    def test_remote_credentials_use_core_test_store(self) -> None:
+    def test_remote_credentials_use_profile_scoped_core_test_store(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             old_value = os.environ.get("IRIS_DESKTOP_SECRET_TEST_DIR")
             os.environ["IRIS_DESKTOP_SECRET_TEST_DIR"] = directory
             try:
-                saved = core_bridge.remote_credential_save({"kind": "core", "token": "secret-token"})
+                saved = core_bridge.remote_credential_save({"kind": "core", "connectionId": "profile_1", "token": "secret-token"})
                 self.assertTrue(saved["ok"])
                 self.assertEqual(saved["kind"], "core")
+                self.assertEqual(saved["connectionId"], "profile_1")
                 self.assertEqual(saved["source"], "test-file")
-                self.assertEqual(core_bridge.test_credential_path("core").name, "iris-core-token")
+                self.assertEqual(core_bridge.test_credential_path("core", connection_id="profile_1").name, "iris-core-token:profile_1")
 
-                status = core_bridge.remote_credential_status({"kind": "core"})
+                status = core_bridge.remote_credential_status({"kind": "core", "connectionId": "profile_1"})
                 self.assertTrue(status["exists"])
                 self.assertEqual(status["kind"], "core")
-                self.assertEqual(core_bridge.read_remote_token("core"), "secret-token")
+                self.assertEqual(core_bridge.read_remote_token("core", connection_id="profile_1"), "secret-token")
+                self.assertEqual(core_bridge.read_remote_token("core", connection_id="profile_2"), "")
 
-                deleted = core_bridge.remote_credential_delete({"kind": "core"})
+                deleted = core_bridge.remote_credential_delete({"kind": "core", "connectionId": "profile_1"})
                 self.assertTrue(deleted["ok"])
-                self.assertFalse(core_bridge.remote_credential_status({"kind": "core"})["exists"])
+                self.assertFalse(core_bridge.remote_credential_status({"kind": "core", "connectionId": "profile_1"})["exists"])
             finally:
                 if old_value is None:
                     os.environ.pop("IRIS_DESKTOP_SECRET_TEST_DIR", None)
@@ -107,12 +109,22 @@ class IrisBridgeTests(unittest.TestCase):
             old_value = os.environ.get("IRIS_DESKTOP_SECRET_TEST_DIR")
             os.environ["IRIS_DESKTOP_SECRET_TEST_DIR"] = directory
             try:
-                core_bridge.remote_credential_save({"kind": "core", "token": "core-token"})
+                core_bridge.remote_credential_save({"kind": "core", "connectionId": "manual_test", "token": "core-token"})
                 result = core_bridge.core_request(
                     {
                         "method": "GET",
                         "path": "/health",
-                        "runtime": {"coreApiUrl": f"http://127.0.0.1:{server.server_port}"},
+                        "connectionId": "manual_test",
+                        "runtime": {
+                            "activeConnectionId": "manual_test",
+                            "coreConnections": [
+                                {
+                                    "id": "manual_test",
+                                    "mode": "manual-url",
+                                    "effectiveCoreApiUrl": f"http://127.0.0.1:{server.server_port}",
+                                }
+                            ],
+                        },
                     }
                 )
             finally:
@@ -161,11 +173,21 @@ class IrisBridgeTests(unittest.TestCase):
             old_value = os.environ.get("IRIS_DESKTOP_SECRET_TEST_DIR")
             os.environ["IRIS_DESKTOP_SECRET_TEST_DIR"] = directory
             try:
-                core_bridge.remote_credential_save({"kind": "core", "token": "core-token"})
+                core_bridge.remote_credential_save({"kind": "core", "connectionId": "manual_test", "token": "core-token"})
                 result = core_bridge.core_attachment_data(
                     {
                         "path": "/v1/attachments/att_1/content",
-                        "runtime": {"coreApiUrl": f"http://127.0.0.1:{server.server_port}"},
+                        "connectionId": "manual_test",
+                        "runtime": {
+                            "activeConnectionId": "manual_test",
+                            "coreConnections": [
+                                {
+                                    "id": "manual_test",
+                                    "mode": "manual-url",
+                                    "effectiveCoreApiUrl": f"http://127.0.0.1:{server.server_port}",
+                                }
+                            ],
+                        },
                     }
                 )
             finally:

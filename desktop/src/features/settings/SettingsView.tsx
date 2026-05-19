@@ -1,32 +1,71 @@
-import { useEffect, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
+import { useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import {
-  Cpu,
   Database,
-  Layers3,
+  FileText,
   LayoutPanelLeft,
+  Plug,
+  RefreshCw,
+  RotateCw,
+  Server,
+  Terminal,
+  Unplug,
+  Wrench,
 } from "lucide-react";
-import { resolveCoreApiUrl } from "../../app/runtimeConfig";
-import type { ProfileAction, ProfileActionHandler } from "../../app/types";
 import {
-  deleteRemoteCredential,
-  getRemoteCredentialStatus,
-  saveRemoteCredential,
-} from "../../lib/irisRuntime";
+  activeCoreConnection,
+  connectionIdFromParts,
+  connectionTransport,
+  defaultCorePort,
+  hermesOwner,
+  managedLocalConnectionId,
+  removeCoreConnection,
+  resolveCoreApiUrl,
+  upsertCoreConnection,
+} from "../../app/runtimeConfig";
+import type { ProfileAction, ProfileActionHandler } from "../../app/types";
 import { endpointLabel } from "../../shared/format";
 import { rawStringValue } from "../../shared/strings";
 import { Alert, AlertDescription } from "../../shared/ui/alert";
 import { Badge } from "../../shared/ui/badge";
 import { Button } from "../../shared/ui/button";
-import { Card, CardContent, CardHeader } from "../../shared/ui/card";
+import {
+  Card,
+  CardAction,
+  CardContent,
+  CardDescription,
+  CardFooter,
+  CardHeader,
+  CardTitle,
+} from "../../shared/ui/card";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "../../shared/ui/collapsible";
-import { Field, FieldDescription, FieldLabel } from "../../shared/ui/field";
+import {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "../../shared/ui/dialog";
+import {
+  Field,
+  FieldContent,
+  FieldGroup,
+  FieldLabel,
+  FieldSet,
+} from "../../shared/ui/field";
 import { Input } from "../../shared/ui/input";
+import { Switch } from "../../shared/ui/switch";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../shared/ui/tabs";
+import { ToggleGroup, ToggleGroupItem } from "../../shared/ui/toggle-group";
 import type {
   HermesProfile,
   HermesRuntimeConfig,
   HermesStatus,
-  RemoteCredentialStatus,
+  IrisCoreConnectionMode,
+  IrisCoreConnectionProfile,
 } from "../../types/hermes";
 
 type SettingsViewProps = {
@@ -41,6 +80,59 @@ type SettingsViewProps = {
   onOpenSettings?: () => void;
 };
 
+type CoreSidecarStatus = {
+  ok: boolean;
+  running: boolean;
+  ready: boolean;
+  startedByApp: boolean;
+  version: string;
+  clientVersion: string;
+  bindHost: string;
+  port: number;
+  pid?: number;
+  url: string;
+  logPath: string;
+  error: string;
+};
+
+type SshTunnelStatus = {
+  ok: boolean;
+  connectionId: string;
+  running: boolean;
+  localPort: number;
+  effectiveCoreApiUrl: string;
+  errorKind: string;
+  error: string;
+};
+
+type CoreCliResult = {
+  ok: boolean;
+  stdout: string;
+  stderr: string;
+  error: string;
+};
+
+type LocalDraft = {
+  port: string;
+  hermesHome: string;
+  autoStart: boolean;
+  installLaunchAgent: boolean;
+  allowSshTunnel: boolean;
+};
+
+type SshAuthMode = "none" | "identity";
+
+type SshDraft = {
+  id: string;
+  name: string;
+  hostname: string;
+  port: string;
+  authMode: SshAuthMode;
+  identityFile: string;
+};
+
+type SettingsConnectionTab = "managed-local" | "ssh";
+
 export function SettingsView({
   status,
   profile,
@@ -52,54 +144,184 @@ export function SettingsView({
   onProfileAction,
   onOpenSettings,
 }: SettingsViewProps) {
-  const [draftConfig, setDraftConfig] = useState(runtimeConfig);
+  const activeConnection = activeCoreConnection(runtimeConfig);
+  const [modeTab, setModeTab] = useState<SettingsConnectionTab>(() => settingsTabFromMode(runtimeConfig.connectionMode));
   const [profileName, setProfileName] = useState("");
   const [notice, setNotice] = useState("");
-  const [coreToken, setCoreToken] = useState("");
-  const [coreCredentialStatus, setCoreCredentialStatus] = useState<RemoteCredentialStatus | null>(null);
-  const [coreApiInput, setCoreApiInput] = useState("");
-  const appliedManagementApiUrl = status?.coreApiUrl || resolveCoreApiUrl(runtimeConfig);
-  const draftCoreApiUrl = normalizeServerUrl(coreApiInput);
-  const pendingCoreApiUrl = draftCoreApiUrl !== appliedManagementApiUrl ? draftCoreApiUrl : "";
+  const [localDraft, setLocalDraft] = useState(() => localDraftFromProfile(activeConnection));
+  const [sshDraft, setSshDraft] = useState(() => sshDraftFromConfig(runtimeConfig));
+  const [sshDialogOpen, setSshDialogOpen] = useState(false);
+  const [sidecarStatus, setSidecarStatus] = useState<CoreSidecarStatus | null>(null);
+  const [busyAction, setBusyAction] = useState("");
   const checkedAt = status?.checkedAt ? formatTimestamp(status.checkedAt) : "Not checked";
   const modelDisplay = modelSummary(profile.provider, profile.model);
+  const statusConnection = status?.activeConnectionName || activeConnection.name;
+  const profilesByMode = useMemo(
+    () => ({
+      ssh: runtimeConfig.coreConnections.filter((connection) => connection.mode === "ssh"),
+    }),
+    [runtimeConfig.coreConnections],
+  );
 
   useEffect(() => {
-    setDraftConfig(runtimeConfig);
+    const connection = activeCoreConnection(runtimeConfig);
+    setModeTab(settingsTabFromMode(runtimeConfig.connectionMode));
+    setLocalDraft(localDraftFromProfile(connection.mode === "managed-local" ? connection : managedProfile(runtimeConfig)));
+    setSshDraft(sshDraftFromConfig(runtimeConfig));
   }, [runtimeConfig]);
 
   useEffect(() => {
-    setCoreApiInput(serverUrlInput(runtimeConfig.coreApiUrl));
-  }, [runtimeConfig.coreApiUrl]);
-
-  useEffect(() => {
-    void refreshCredentialStatus();
+    void refreshSidecarStatus();
   }, []);
 
-  async function saveCoreConnection() {
-    const coreUrl = normalizeServerUrl(coreApiInput);
-    if (!coreUrl) {
-      setNotice("Enter a full Iris Core URL with protocol and port, like http://127.0.0.1:8765.");
-      return;
+  async function refreshSidecarStatus() {
+    try {
+      const result = await invoke<CoreSidecarStatus>("core_sidecar_status");
+      setSidecarStatus(result);
+    } catch {
+      setSidecarStatus(null);
     }
-    const nextConfig = { ...draftConfig, coreApiUrl: coreUrl };
-    setDraftConfig(nextConfig);
+  }
+
+  async function withBusy(action: string, run: () => Promise<void>) {
+    setBusyAction(action);
+    setNotice("");
+    try {
+      await run();
+    } finally {
+      setBusyAction("");
+    }
+  }
+
+  function commitProfile(profile: IrisCoreConnectionProfile, activate = true) {
+    const nextConfig = upsertCoreConnection(runtimeConfig, profile, { activate });
     onRuntimeChange(nextConfig);
+    setNotice(`${profile.name} saved.`);
+    return nextConfig;
+  }
 
-    const token = coreToken.trim();
-    if (!token) {
-      setNotice("Iris Core connection saved.");
-      return;
-    }
+  function deleteProfile(connectionId: string) {
+    const nextConfig = removeCoreConnection(runtimeConfig, connectionId);
+    onRuntimeChange(nextConfig);
+    setNotice("Connection profile removed.");
+  }
 
-    const result = await saveRemoteCredential("core", token);
-    setCoreCredentialStatus(result);
-    if (result.ok) {
-      setCoreToken("");
-      setNotice("Iris Core connection and token saved.");
-      return;
-    }
-    setNotice(result.error || "Iris Core URL saved, but token save failed.");
+  async function saveLocalProfile() {
+    const port = parsePort(localDraft.port, defaultCorePort);
+    const profile: IrisCoreConnectionProfile = {
+      id: managedLocalConnectionId,
+      name: "Local",
+      mode: "managed-local",
+      effectiveCoreApiUrl: `http://127.0.0.1:${port}`,
+      local: {
+        port,
+        hermesHome: localDraft.hermesHome.trim() || undefined,
+        autoStart: localDraft.autoStart,
+        installLaunchAgent: localDraft.installLaunchAgent,
+        allowSshTunnel: localDraft.allowSshTunnel,
+      },
+    };
+    commitProfile(profile);
+  }
+
+  async function startOrRestartCore(restart = false) {
+    await withBusy(restart ? "core-restart" : "core-start", async () => {
+      const config = localCoreConfig(localDraft);
+      const result = await invoke<CoreSidecarStatus>(restart ? "core_sidecar_restart" : "core_sidecar_start", { config });
+      setSidecarStatus(result);
+      setNotice(result.ready ? "Managed Iris Core is running." : result.error || "Managed Iris Core is not ready.");
+      onRefresh();
+    });
+  }
+
+  async function installHermesPlugin() {
+    await withBusy("plugin-install", async () => {
+      const result = await invoke<CoreCliResult>("core_install_hermes_plugin", { config: localCoreConfig(localDraft) });
+      setNotice(result.ok ? "Iris installed the Hermes plugin. Restart Hermes gateway." : result.error || result.stderr || "Plugin install failed.");
+    });
+  }
+
+  async function installCoreService() {
+    await withBusy("service-install", async () => {
+      const result = await invoke<CoreCliResult>("core_service_install", {
+        config: localServiceConfig(localDraft),
+        replace: true,
+      });
+      setNotice(result.ok ? "Iris Core will run at login locally." : result.error || result.stderr || "Core service install failed.");
+    });
+  }
+
+  async function uninstallCoreService() {
+    await withBusy("service-uninstall", async () => {
+      const result = await invoke<CoreCliResult>("core_service_uninstall", { config: localCoreConfig(localDraft) });
+      setNotice(result.ok ? "Iris Core login service removed." : result.error || result.stderr || "Core service uninstall failed.");
+    });
+  }
+
+  async function openLogs() {
+    await withBusy("open-logs", async () => {
+      await invoke("open_core_logs");
+      setNotice("Opened the Iris Core log location.");
+    });
+  }
+
+  async function connectSsh(savedProfile?: IrisCoreConnectionProfile) {
+    await withBusy("ssh-connect", async () => {
+      const endpoint = savedProfile?.ssh
+        ? { user: savedProfile.ssh.user, host: savedProfile.ssh.host }
+        : parseSshHostname(sshDraft.hostname);
+      if (!endpoint.host) {
+        setNotice("Enter an SSH hostname, like mac-mini.local or scott@mac-mini.local.");
+        return;
+      }
+      const sshPort = savedProfile?.ssh?.port || parsePort(sshDraft.port, 22);
+      const identityFile = savedProfile?.ssh?.identityFile || (sshDraft.authMode === "identity" ? sshDraft.identityFile.trim() : "");
+      const baseId = savedProfile?.id || sshDraft.id || connectionIdFromParts("ssh", [endpoint.user, endpoint.host, sshPort]);
+      const result = await invoke<SshTunnelStatus>("ssh_tunnel_start", {
+        config: {
+          connectionId: baseId,
+          user: endpoint.user,
+          host: endpoint.host,
+          port: sshPort,
+          identityFile: identityFile || undefined,
+          remoteCoreHost: "127.0.0.1",
+          remoteCorePort: defaultCorePort,
+          autoStartRemoteCore: true,
+        },
+      });
+      if (!result.ok) {
+        setNotice(result.error);
+        return;
+      }
+      const nextProfile: IrisCoreConnectionProfile = {
+        id: baseId,
+        name: savedProfile?.name || sshDraft.name.trim() || endpoint.host || "Remote Mac",
+        mode: "ssh",
+        effectiveCoreApiUrl: result.effectiveCoreApiUrl,
+        ssh: {
+          user: endpoint.user,
+          host: endpoint.host,
+          port: sshPort,
+          identityFile: identityFile || undefined,
+          remoteCoreHost: "127.0.0.1",
+          remoteCorePort: defaultCorePort,
+          localForwardPort: result.localPort || "auto",
+          autoStartRemoteCore: true,
+        },
+      };
+      commitProfile(nextProfile);
+      setSshDialogOpen(false);
+      setNotice(`${nextProfile.name} connected through a local SSH tunnel.`);
+      onRefresh();
+    });
+  }
+
+  async function disconnectSsh(connectionId = sshDraft.id) {
+    await withBusy("ssh-disconnect", async () => {
+      const target = connectionId || activeConnection.id;
+      const result = await invoke<SshTunnelStatus>("ssh_tunnel_stop", { connectionId: target });
+      setNotice(result.error || "SSH tunnel disconnected.");
+    });
   }
 
   async function runProfileAction(action: ProfileAction) {
@@ -108,165 +330,383 @@ export function SettingsView({
     if (action !== "switch") setProfileName("");
   }
 
-  async function refreshCredentialStatus() {
-    const unavailable: RemoteCredentialStatus = { ok: false, kind: "core", exists: false, source: "unavailable" };
-    try {
-      const coreResult = await getRemoteCredentialStatus("core");
-      setCoreCredentialStatus(coreResult);
-    } catch {
-      setCoreCredentialStatus(unavailable);
-    }
-  }
+  if (mode === "profile") {
+    return (
+      <div className="tool-view settings-view">
+        <div className="settings-toolbar">
+          <div>
+            <h1>{profile.name}</h1>
+            <span>Agent overview</span>
+          </div>
+          <Button variant="appNeutral" size="appSmall" onClick={onRefresh}>
+            <RefreshCw data-icon="inline-start" />
+            Refresh
+          </Button>
+        </div>
 
-  async function saveToken(kind: "core") {
-    const token = coreToken;
-    const result = await saveRemoteCredential(kind, token);
-    setCoreCredentialStatus(result);
-    if (result.ok) setCoreToken("");
-    setNotice(result.ok ? `${credentialLabel(kind)} token saved to the OS credential store.` : result.error || "Token save failed.");
-  }
+        <SettingsSection title="Iris Core status" variant="plain">
+          <Card className="core-connection-form core-status-card">
+            <CardHeader className="core-connection-heading">
+              <CardTitle className="core-connection-title">
+                <span className={status?.managementStatus?.ok ? "service-health-dot online" : "service-health-dot offline"} />
+                Iris Core
+              </CardTitle>
+              <CardAction>
+                <Badge variant={status?.managementStatus?.ok ? "secondary" : "outline"} title={endpointLabel(status?.managementStatus)}>
+                  {healthLabel(status?.managementStatus)} · {checkedAt}
+                </Badge>
+              </CardAction>
+            </CardHeader>
+            <CardContent className="settings-list compact">
+              <SettingsRow icon={<LayoutPanelLeft />} label="Endpoint" value={status?.coreApiUrl || resolveCoreApiUrl(runtimeConfig)} />
+              <SettingsRow icon={<Database />} label="Transport" value={transportLabel(activeConnection)} />
+            </CardContent>
+            {onOpenSettings ? (
+              <CardFooter className="core-connection-actions">
+                <Button size="appSmall" onClick={onOpenSettings}>
+                  <Wrench data-icon="inline-start" />
+                  Configure in Settings
+                </Button>
+              </CardFooter>
+            ) : null}
+          </Card>
+        </SettingsSection>
 
-  async function clearToken(kind: "core") {
-    const result = await deleteRemoteCredential(kind);
-    setCoreCredentialStatus(result);
-    setCoreToken("");
-    setNotice(result.ok ? `${credentialLabel(kind)} token cleared.` : result.error || "Token clear failed.");
+        <section className="settings-section model-section">
+          <div className="settings-section-header">
+            <div>
+              <h2>Runtime configuration</h2>
+            </div>
+          </div>
+          <ModelCard summary={modelDisplay} rawModel={profile.model} provider={profile.provider} />
+        </section>
+
+        <div className="agent-metadata-strip">
+          <SettingsRow icon={<LayoutPanelLeft />} label="Runtime" value={selectedProfile} />
+          <SettingsRow icon={<Database />} label="Estimated cost" value={profile.estimatedCostUsd == null ? "Unavailable" : `$${profile.estimatedCostUsd.toFixed(4)}`} />
+        </div>
+        <ProfileWorkflows profileName={profileName} onProfileNameChange={setProfileName} onProfileAction={runProfileAction} />
+        {notice ? <Notice message={notice} /> : null}
+      </div>
+    );
   }
 
   return (
-    <div className={mode === "settings" ? "tool-view settings-view settings-view-general" : "tool-view settings-view"}>
+    <div className="tool-view settings-view settings-view-general">
       <div className="settings-toolbar">
         <div>
-          <h1>{mode === "settings" ? "Settings" : profile.name}</h1>
-          {mode === "profile" ? <span>Agent overview</span> : null}
+          <h1>Settings</h1>
         </div>
         <Button variant="appNeutral" size="appSmall" onClick={onRefresh}>
+          <RefreshCw data-icon="inline-start" />
           Refresh
         </Button>
       </div>
 
-      {mode === "settings" ? (
-        <>
-          <SettingsSection
-            title="Iris Core connection"
-            variant="plain"
-          >
-            <Card className="core-connection-form">
-              <CardHeader className="core-connection-heading">
-                <div className="core-connection-title">
-                  <span className={status?.managementStatus?.ok ? "service-health-dot online" : "service-health-dot offline"} />
-                  <strong>Iris Core</strong>
-                </div>
-                <Badge variant={status?.managementStatus?.ok ? "secondary" : "outline"} title={endpointLabel(status?.managementStatus)}>
-                  {healthLabel(status?.managementStatus)} · {checkedAt}
-                </Badge>
-              </CardHeader>
-              <CardContent className="core-connection-fields">
-                <RuntimeTextField
-                  id="core-api-route"
-                  label="URL"
-                  value={coreApiInput}
-                  placeholder="http://127.0.0.1:8765"
-                  onChange={setCoreApiInput}
-                />
-                <TokenField
-                  id="core-api-token"
-                  label="Iris token"
-                  value={coreToken}
-                  status={coreCredentialStatus}
-                  onChange={setCoreToken}
-                  onSave={() => void saveToken("core")}
-                  onClear={() => void clearToken("core")}
-                  actions="none"
-                />
-              </CardContent>
-              {pendingCoreApiUrl ? <em className="core-connection-pending">Unsaved URL: {pendingCoreApiUrl}</em> : null}
-              <div className="core-connection-actions">
-                <Button
-                  type="button"
-                  variant="appLink"
-                  disabled={!coreCredentialStatus?.exists}
-                  onClick={() => void clearToken("core")}
-                >
-                  Clear stored token
-                </Button>
-                <Button variant="appNeutral" size="appSmall" onClick={() => void saveCoreConnection()}>
-                  Save Core connection
-                </Button>
-              </div>
-            </Card>
-          </SettingsSection>
-        </>
-      ) : (
-        <>
-          <SettingsSection
-            title="Iris Core status"
-            variant="plain"
-          >
-            <Card className="core-connection-form core-status-card">
-              <CardHeader className="core-connection-heading">
-                <div className="core-connection-title">
-                  <span className={status?.managementStatus?.ok ? "service-health-dot online" : "service-health-dot offline"} />
-                  <strong>Iris Core</strong>
-                </div>
-                <Badge variant={status?.managementStatus?.ok ? "secondary" : "outline"} title={endpointLabel(status?.managementStatus)}>
-                  {healthLabel(status?.managementStatus)} · {checkedAt}
-                </Badge>
-              </CardHeader>
-              <CardContent className="settings-list compact">
-                <SettingsRow
-                  icon={<LayoutPanelLeft size={17} />}
-                  label="Endpoint"
-                  value={status?.coreApiUrl || resolveCoreApiUrl(runtimeConfig)}
-                />
-                <SettingsRow
-                  icon={<Database size={17} />}
-                  label="Credentials"
-                  value={coreCredentialStatus?.exists ? `Stored via ${coreCredentialStatus.source}` : "Not stored"}
-                />
-              </CardContent>
-              {onOpenSettings ? (
-                <div className="core-connection-actions">
-                  <Button variant="appNeutral" size="appSmall" onClick={onOpenSettings}>
-                    Configure in Settings
-                  </Button>
-                </div>
-              ) : null}
-            </Card>
-          </SettingsSection>
-
-          <section className="settings-section model-section">
-            <div className="settings-section-header">
-              <div>
-                <h2>Runtime configuration</h2>
-              </div>
+      <SettingsSection title="Iris Core" variant="plain">
+        <Card className="core-connection-form">
+          <CardHeader className="core-connection-heading">
+            <div>
+              <CardTitle className="core-connection-title">
+                <span className={status?.connected ? "service-health-dot online" : "service-health-dot offline"} />
+                {statusConnection}
+              </CardTitle>
+              <CardDescription>{modeStatusCopy(activeConnection)}</CardDescription>
             </div>
-            <ModelCard summary={modelDisplay} rawModel={profile.model} provider={profile.provider} />
-          </section>
+            <CardAction>
+              <Badge variant={status?.connected ? "secondary" : "outline"}>
+                {status?.connected ? "Connected" : "Offline"} · {checkedAt}
+              </Badge>
+            </CardAction>
+          </CardHeader>
+          <CardContent className="core-status-grid">
+            <StatusMetric label="Core version" value={status?.version || "Unknown"} />
+            <StatusMetric label="Hermes host" value={ownerLabel(status?.hermesOwner || hermesOwner(activeConnection))} />
+            <StatusMetric label="Transport" value={transportLabel(activeConnection)} />
+            <StatusMetric label="Endpoint" value={status?.coreApiUrl || resolveCoreApiUrl(runtimeConfig)} />
+          </CardContent>
+        </Card>
+      </SettingsSection>
 
-          <div className="agent-metadata-strip">
-            <SettingsRow icon={<LayoutPanelLeft size={17} />} label="Runtime" value={selectedProfile} />
-            <SettingsRow icon={<Layers3 size={17} />} label="Sessions" value={`${profile.sessionCount} sessions`} />
-            <SettingsRow
-              icon={<Database size={17} />}
-              label="Estimated cost"
-              value={profile.estimatedCostUsd == null ? "Unavailable" : `$${profile.estimatedCostUsd.toFixed(4)}`}
-            />
-          </div>
-          <ProfileWorkflows
-            profileName={profileName}
-            onProfileNameChange={setProfileName}
-            onProfileAction={runProfileAction}
-          />
-        </>
-      )}
-
-      {notice ? (
+      {status?.coreVersionStatus && !status.coreVersionStatus.ok ? (
         <Alert className="settings-notice">
-          <AlertDescription>{notice}</AlertDescription>
+          <AlertDescription>{status.error || "Version mismatch. Update the other Mac so Iris Desktop and Iris Core match."}</AlertDescription>
         </Alert>
       ) : null}
+
+      <Tabs value={modeTab} onValueChange={(value) => setModeTab(value as SettingsConnectionTab)} className="core-mode-tabs">
+        <TabsList>
+          <TabsTrigger value="managed-local">
+            <Server data-icon="inline-start" />
+            Local
+          </TabsTrigger>
+          <TabsTrigger value="ssh">
+            <Terminal data-icon="inline-start" />
+            SSH
+          </TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="managed-local">
+          <Card className="settings-mode-card">
+            <CardHeader>
+              <CardTitle>Local</CardTitle>
+              <CardDescription>Iris Core runs locally and uses local Hermes.</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <FieldSet>
+                <FieldGroup className="settings-field-grid">
+                  <TextField id="local-port" label="Core port" value={localDraft.port} onChange={(port) => setLocalDraft({ ...localDraft, port })} />
+                  <TextField id="local-hermes-home" label="Hermes home" value={localDraft.hermesHome} placeholder="~/.hermes" onChange={(hermesHome) => setLocalDraft({ ...localDraft, hermesHome })} />
+                </FieldGroup>
+                <FieldGroup className="settings-switch-list">
+                  <SwitchField id="local-autostart" label="Start managed Core when Iris opens" checked={localDraft.autoStart} onCheckedChange={(autoStart) => setLocalDraft({ ...localDraft, autoStart })} />
+                  <SwitchField id="local-login" label="Run Core at login" checked={localDraft.installLaunchAgent} onCheckedChange={(installLaunchAgent) => setLocalDraft({ ...localDraft, installLaunchAgent })} />
+                </FieldGroup>
+              </FieldSet>
+            </CardContent>
+            <CardFooter className="settings-action-row">
+              <Button size="appSmall" onClick={() => void saveLocalProfile()}>
+                <Plug data-icon="inline-start" />
+                Save
+              </Button>
+              <Button variant="appNeutral" size="appSmall" disabled={busyAction === "core-restart"} onClick={() => void startOrRestartCore(true)}>
+                <RotateCw data-icon="inline-start" />
+                Restart Core
+              </Button>
+              <Button variant="appNeutral" size="appSmall" disabled={busyAction === "plugin-install"} onClick={() => void installHermesPlugin()}>
+                <Wrench data-icon="inline-start" />
+                Install plugin
+              </Button>
+              <Button variant="appNeutral" size="appSmall" disabled={busyAction === "service-install"} onClick={() => void installCoreService()}>
+                <Server data-icon="inline-start" />
+                Install service
+              </Button>
+              <Button variant="appNeutral" size="appSmall" disabled={busyAction === "service-uninstall"} onClick={() => void uninstallCoreService()}>
+                <Unplug data-icon="inline-start" />
+                Remove service
+              </Button>
+              <Button variant="appNeutral" size="appSmall" disabled={busyAction === "open-logs"} onClick={() => void openLogs()}>
+                <FileText data-icon="inline-start" />
+                Logs
+              </Button>
+            </CardFooter>
+            {sidecarStatus ? (
+              <CardContent className="settings-substatus">
+                <StatusMetric label="Managed Core" value={sidecarStatus.ready ? "Running" : sidecarStatus.error || "Offline"} />
+                <StatusMetric label="Sidecar version" value={sidecarStatus.version || "Unknown"} />
+              </CardContent>
+            ) : null}
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="ssh">
+          <Card className="settings-mode-card">
+            <CardHeader>
+              <div>
+                <CardTitle>SSH connections</CardTitle>
+                <CardDescription>Use any SSH hostname, including a Tailscale MagicDNS name.</CardDescription>
+              </div>
+              <CardAction>
+                <Button size="appSmall" onClick={() => setSshDialogOpen(true)}>
+                  <Terminal data-icon="inline-start" />
+                  Add SSH connection
+                </Button>
+              </CardAction>
+            </CardHeader>
+            <CardContent className="settings-mode-content">
+              <ConnectionList
+                profiles={profilesByMode.ssh}
+                activeId={activeConnection.id}
+                onActivate={(id) => {
+                  const profile = runtimeConfig.coreConnections.find((connection) => connection.id === id);
+                  if (profile) void connectSsh(profile);
+                }}
+                onDelete={deleteProfile}
+                onDisconnect={(id) => void disconnectSsh(id)}
+              />
+            </CardContent>
+          </Card>
+          <SshConnectionDialog
+            open={sshDialogOpen}
+            draft={sshDraft}
+            busy={busyAction === "ssh-connect"}
+            onOpenChange={setSshDialogOpen}
+            onDraftChange={setSshDraft}
+            onSave={() => void connectSsh()}
+          />
+        </TabsContent>
+      </Tabs>
+
+      {notice ? <Notice message={notice} /> : null}
     </div>
+  );
+}
+
+function ConnectionList({
+  profiles,
+  activeId,
+  onActivate,
+  onDelete,
+  onDisconnect,
+}: {
+  profiles: IrisCoreConnectionProfile[];
+  activeId: string;
+  onActivate: (connectionId: string) => void;
+  onDelete: (connectionId: string) => void;
+  onDisconnect?: (connectionId: string) => void;
+}) {
+  if (!profiles.length) {
+    return <p className="settings-empty-text">No saved profiles.</p>;
+  }
+  return (
+    <div className="connection-profile-list">
+      {profiles.map((profile) => (
+        <div className="connection-profile-row" key={profile.id}>
+          <div>
+            <strong>{profile.name}</strong>
+            <span>{profileSubtitle(profile)}</span>
+          </div>
+          <Badge variant={profile.id === activeId ? "secondary" : "outline"}>{profile.id === activeId ? "Active" : profile.mode}</Badge>
+          <Button size="appSmall" onClick={() => onActivate(profile.id)}>
+            <Plug data-icon="inline-start" />
+            Connect
+          </Button>
+          {onDisconnect ? (
+            <Button variant="appNeutral" size="appSmall" onClick={() => onDisconnect(profile.id)}>
+              <Unplug data-icon="inline-start" />
+              Disconnect
+            </Button>
+          ) : null}
+          <Button variant="appDanger" size="appSmall" onClick={() => onDelete(profile.id)}>
+            Delete
+          </Button>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function SshConnectionDialog({
+  open,
+  draft,
+  busy,
+  onOpenChange,
+  onDraftChange,
+  onSave,
+}: {
+  open: boolean;
+  draft: SshDraft;
+  busy: boolean;
+  onOpenChange: (open: boolean) => void;
+  onDraftChange: (draft: SshDraft) => void;
+  onSave: () => void;
+}) {
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="ssh-connection-dialog">
+        <DialogHeader>
+          <DialogTitle>Add SSH connection</DialogTitle>
+          <DialogDescription>Connect to another Mac using an SSH hostname and optional identity file.</DialogDescription>
+        </DialogHeader>
+        <FieldSet className="ssh-dialog-fieldset">
+          <FieldGroup className="ssh-dialog-fields">
+            <Field className="ssh-auth-field">
+              <ToggleGroup
+                type="single"
+                className="ssh-auth-toggle"
+                value={draft.authMode}
+                onValueChange={(value) => {
+                  if (value === "none" || value === "identity") onDraftChange({ ...draft, authMode: value });
+                }}
+              >
+                <ToggleGroupItem value="none">No Auth</ToggleGroupItem>
+                <ToggleGroupItem value="identity">Identity</ToggleGroupItem>
+              </ToggleGroup>
+            </Field>
+            <TextField id="ssh-name" label="Display name" value={draft.name} onChange={(name) => onDraftChange({ ...draft, name })} />
+            <TextField
+              id="ssh-hostname"
+              label="Hostname"
+              value={draft.hostname}
+              placeholder="host.com or user@host.com"
+              onChange={(hostname) => onDraftChange({ ...draft, hostname })}
+            />
+            <TextField
+              id="ssh-port"
+              label="SSH port"
+              optional
+              value={draft.port}
+              onChange={(port) => onDraftChange({ ...draft, port })}
+            />
+            {draft.authMode === "identity" ? (
+              <TextField
+                id="ssh-identity"
+                label="Identity file path"
+                value={draft.identityFile}
+                onChange={(identityFile) => onDraftChange({ ...draft, identityFile })}
+              />
+            ) : null}
+          </FieldGroup>
+        </FieldSet>
+        <DialogFooter className="ssh-dialog-actions">
+          <DialogClose asChild>
+            <Button variant="appLink">Cancel</Button>
+          </DialogClose>
+          <Button disabled={busy} onClick={onSave}>
+            Save
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function TextField({
+  id,
+  label,
+  value,
+  placeholder = "",
+  type = "text",
+  optional = false,
+  onChange,
+}: {
+  id: string;
+  label: string;
+  value: string;
+  placeholder?: string;
+  type?: "text" | "password";
+  optional?: boolean;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <Field>
+      <FieldLabel htmlFor={id}>
+        {label}
+        {optional ? <span className="field-label-muted"> optional</span> : null}
+      </FieldLabel>
+      <Input id={id} type={type} value={value} placeholder={placeholder} onChange={(event) => onChange(event.target.value)} />
+    </Field>
+  );
+}
+
+function SwitchField({
+  id,
+  label,
+  checked,
+  onCheckedChange,
+}: {
+  id: string;
+  label: string;
+  checked: boolean;
+  onCheckedChange: (checked: boolean) => void;
+}) {
+  return (
+    <Field orientation="horizontal" className="settings-switch-field">
+      <Switch id={id} checked={checked} onCheckedChange={onCheckedChange} />
+      <FieldContent>
+        <FieldLabel htmlFor={id}>{label}</FieldLabel>
+      </FieldContent>
+    </Field>
   );
 }
 
@@ -281,31 +721,19 @@ function ProfileWorkflows({
 }) {
   return (
     <Card className="profile-workflows">
-      <div>
-        <h2>Agent management</h2>
-      </div>
-      <Input
-        value={profileName}
-        placeholder="new-agent-name"
-        onChange={(event) => onProfileNameChange(event.target.value)}
-      />
-      <div className="profile-actions">
-        <Button variant="appNeutral" size="appSmall" onClick={() => void onProfileAction("create")}>
-          Create
-        </Button>
-        <Button variant="appNeutral" size="appSmall" onClick={() => void onProfileAction("clone")}>
-          Clone
-        </Button>
-        <Button variant="appNeutral" size="appSmall" onClick={() => void onProfileAction("rename")}>
-          Rename
-        </Button>
-        <Button variant="appNeutral" size="appSmall" onClick={() => void onProfileAction("switch")}>
-          Switch
-        </Button>
-        <Button variant="appDanger" size="appSmall" onClick={() => void onProfileAction("delete")}>
-          Delete current
-        </Button>
-      </div>
+      <CardHeader>
+        <CardTitle>Agent management</CardTitle>
+      </CardHeader>
+      <CardContent>
+        <Input value={profileName} placeholder="new-agent-name" onChange={(event) => onProfileNameChange(event.target.value)} />
+      </CardContent>
+      <CardFooter className="profile-actions">
+        <Button variant="appNeutral" size="appSmall" onClick={() => void onProfileAction("create")}>Create</Button>
+        <Button variant="appNeutral" size="appSmall" onClick={() => void onProfileAction("clone")}>Clone</Button>
+        <Button variant="appNeutral" size="appSmall" onClick={() => void onProfileAction("rename")}>Rename</Button>
+        <Button variant="appNeutral" size="appSmall" onClick={() => void onProfileAction("switch")}>Switch</Button>
+        <Button variant="appDanger" size="appSmall" onClick={() => void onProfileAction("delete")}>Delete current</Button>
+      </CardFooter>
     </Card>
   );
 }
@@ -323,7 +751,7 @@ function ModelCard({
   return (
     <Collapsible open={open} onOpenChange={setOpen} className="model-card">
       <CollapsibleTrigger className="model-card-summary">
-        <Cpu size={17} />
+        <Server />
         <span>
           <strong>{summary.model}</strong>
           <small>{summary.provider}</small>
@@ -337,61 +765,12 @@ function ModelCard({
   );
 }
 
-function TokenField({
-  id,
-  label,
-  value,
-  status,
-  onChange,
-  onSave,
-  onClear,
-  actions = "inline",
-}: {
-  id: string;
-  label: string;
-  value: string;
-  status: RemoteCredentialStatus | null;
-  onChange: (value: string) => void;
-  onSave: () => void;
-  onClear: () => void;
-  actions?: "inline" | "none";
-}) {
-  const storedLabel = status?.exists ? `Stored via ${status.source}` : "Not stored";
-  return (
-    <Field className="runtime-field wide token-field">
-      <FieldLabel htmlFor={id}>{label}</FieldLabel>
-      <div className="token-input-row">
-        <Input
-          id={id}
-          type="password"
-          value={value}
-          placeholder={status?.exists ? storedLabel : "Bearer token"}
-          onChange={(event) => onChange(event.target.value)}
-        />
-      </div>
-      {actions === "inline" ? (
-        <div className="token-actions-row">
-          <Button variant="appNeutral" size="appSmall" disabled={!value.trim()} onClick={onSave}>
-            Save
-          </Button>
-          <Button variant="appNeutral" size="appSmall" disabled={!status?.exists} onClick={onClear}>
-            Clear
-          </Button>
-        </div>
-      ) : null}
-      <FieldDescription>{storedLabel}</FieldDescription>
-    </Field>
-  );
-}
-
 function SettingsSection({
-  eyebrow,
   title,
   detail,
   variant = "panel",
   children,
 }: {
-  eyebrow?: string;
   title: string;
   detail?: string;
   variant?: "panel" | "plain";
@@ -401,42 +780,12 @@ function SettingsSection({
     <section className="settings-section">
       <div className="settings-section-header">
         <div>
-          {eyebrow ? <p className="eyebrow">{eyebrow}</p> : null}
           <h2>{title}</h2>
           {detail ? <span>{detail}</span> : null}
         </div>
       </div>
       {variant === "panel" ? <Card className="runtime-panel">{children}</Card> : children}
     </section>
-  );
-}
-
-function RuntimeTextField({
-  id,
-  label,
-  value,
-  placeholder,
-  type = "text",
-  onChange,
-}: {
-  id: string;
-  label: string;
-  value: string;
-  placeholder: string;
-  type?: "text" | "password";
-  onChange: (value: string) => void;
-}) {
-  return (
-    <Field className="runtime-field wide">
-      <FieldLabel htmlFor={id}>{label}</FieldLabel>
-      <Input
-        id={id}
-        type={type}
-        value={value}
-        placeholder={placeholder}
-        onChange={(event) => onChange(event.target.value)}
-      />
-    </Field>
   );
 }
 
@@ -450,10 +799,54 @@ function SettingsRow({ icon, label, value }: { icon: ReactNode; label: string; v
   );
 }
 
+function StatusMetric({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="status-metric">
+      <span>{label}</span>
+      <strong>{value}</strong>
+    </div>
+  );
+}
+
+function Notice({ message }: { message: string }) {
+  return (
+    <Alert className="settings-notice">
+      <AlertDescription>{message}</AlertDescription>
+    </Alert>
+  );
+}
+
 function healthLabel(status: HermesStatus["activeApiStatus"]) {
   if (!status) return "Not checked";
   if (status.ok) return "Healthy";
   return "Offline";
+}
+
+function modeStatusCopy(connection: IrisCoreConnectionProfile) {
+  if (connection.mode === "ssh") return `SSH: Iris is connected to Core on ${connection.name} through a local SSH tunnel.`;
+  if (connection.mode === "tailscale") return `SSH: Iris can use a Tailscale hostname for ${connection.name}.`;
+  return "Local: Iris Core runs locally and uses local Hermes.";
+}
+
+function transportLabel(connection: IrisCoreConnectionProfile) {
+  const transport = connectionTransport(connection);
+  if (transport === "ssh-tunnel") return "SSH tunnel";
+  if (transport === "tailscale") return "SSH";
+  return "Sidecar";
+}
+
+function ownerLabel(owner: ReturnType<typeof hermesOwner>) {
+  if (owner === "remote-mac") return "Remote Mac";
+  if (owner === "custom") return "Custom";
+  return "Local";
+}
+
+function profileSubtitle(profile: IrisCoreConnectionProfile) {
+  if (profile.mode === "ssh") {
+    const target = sshTargetLabel(profile.ssh?.user || "", profile.ssh?.host || "");
+    return target || profile.effectiveCoreApiUrl;
+  }
+  return profile.effectiveCoreApiUrl;
 }
 
 function modelSummary(provider: string, model: string) {
@@ -470,7 +863,6 @@ function modelSummary(provider: string, model: string) {
 function parseModelConfig(model: string): Record<string, unknown> | null {
   const trimmed = model.trim();
   if (!trimmed.startsWith("{") || !trimmed.endsWith("}")) return null;
-
   try {
     return JSON.parse(trimmed);
   } catch {
@@ -494,40 +886,79 @@ function formatTimestamp(value: number) {
   }).format(new Date(value * 1000));
 }
 
-function serverUrlInput(apiUrl: string) {
-  const trimmed = apiUrl.trim();
-  if (!trimmed) return "";
-
-  try {
-    const url = new URL(trimmed);
-    const path = normalizePathname(url.pathname);
-    if (!path || path === "/" || path === "/v1") return url.origin;
-  } catch {
-    return trimmed;
-  }
-
-  return trimmed;
+function managedProfile(config: HermesRuntimeConfig) {
+  return config.coreConnections.find((connection) => connection.mode === "managed-local") || activeCoreConnection(config);
 }
 
-function normalizeServerUrl(value: string) {
+function settingsTabFromMode(mode: IrisCoreConnectionMode): SettingsConnectionTab {
+  return mode === "managed-local" ? "managed-local" : "ssh";
+}
+
+function localDraftFromProfile(profile: IrisCoreConnectionProfile): LocalDraft {
+  const local = profile.local;
+  return {
+    port: String(local?.port || defaultCorePort),
+    hermesHome: local?.hermesHome || "",
+    autoStart: local?.autoStart !== false,
+    installLaunchAgent: Boolean(local?.installLaunchAgent),
+    allowSshTunnel: local?.allowSshTunnel !== false,
+  };
+}
+
+function sshDraftFromConfig(config: HermesRuntimeConfig): SshDraft {
+  const profile = activeCoreConnection(config).mode === "ssh"
+    ? activeCoreConnection(config)
+    : config.coreConnections.find((connection) => connection.mode === "ssh");
+  const ssh = profile?.ssh;
+  const authMode: SshAuthMode = ssh?.identityFile ? "identity" : "none";
+  return {
+    id: profile?.id || "",
+    name: profile?.name || "",
+    hostname: sshTargetLabel(ssh?.user || "", ssh?.host || ""),
+    port: ssh?.port && ssh.port !== 22 ? String(ssh.port) : "",
+    authMode,
+    identityFile: ssh?.identityFile || "",
+  };
+}
+
+function localCoreConfig(draft: LocalDraft) {
+  return {
+    host: "127.0.0.1",
+    port: parsePort(draft.port, defaultCorePort),
+    hermesHome: draft.hermesHome.trim() || undefined,
+    autoStart: draft.autoStart,
+  };
+}
+
+function localServiceConfig(draft: LocalDraft) {
+  return {
+    host: "127.0.0.1",
+    port: parsePort(draft.port, defaultCorePort),
+    hermesHome: draft.hermesHome.trim() || undefined,
+    autoStart: draft.autoStart,
+  };
+}
+
+function parsePort(value: string, fallback: number) {
+  const parsed = Number.parseInt(value, 10);
+  return Number.isInteger(parsed) && parsed > 0 && parsed <= 65535 ? parsed : fallback;
+}
+
+function parseSshHostname(value: string) {
   const trimmed = value.trim();
-  if (!trimmed) return "";
-  try {
-    const url = new URL(trimmed);
-    if (!["http:", "https:"].includes(url.protocol) || !url.hostname || !url.port) return "";
-    const path = normalizePathname(url.pathname);
-    if (path && path !== "/" && path !== "/v1") return "";
-    return url.origin;
-  } catch {
-    return "";
+  const at = trimmed.lastIndexOf("@");
+  if (at > 0 && at < trimmed.length - 1) {
+    return {
+      user: trimmed.slice(0, at).trim(),
+      host: trimmed.slice(at + 1).trim(),
+    };
   }
+  return { user: "", host: trimmed };
 }
 
-function normalizePathname(pathname: string) {
-  const normalized = pathname.replace(/\/+$/, "");
-  return normalized || "/";
-}
-
-function credentialLabel(_kind: "core") {
-  return "Iris Core";
+function sshTargetLabel(user: string, host: string) {
+  const cleanUser = user.trim();
+  const cleanHost = host.trim();
+  if (!cleanHost) return "";
+  return cleanUser ? `${cleanUser}@${cleanHost}` : cleanHost;
 }

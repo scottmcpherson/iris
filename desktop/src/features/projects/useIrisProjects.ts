@@ -22,7 +22,7 @@ export type CreateProjectPayload = {
 
 export type UpdateProjectPayload = CreateProjectPayload;
 
-export function useIrisProjects(runtimeConfig: HermesRuntimeConfig) {
+export function useIrisProjects(runtimeConfig: HermesRuntimeConfig, refreshKey = "") {
   const [projects, setProjects] = useState<IrisProject[]>([]);
   const [agents, setAgents] = useState<IrisCoreAgent[]>([]);
   const [selectedProjectId, setSelectedProjectIdState] = useState(() =>
@@ -101,7 +101,7 @@ export function useIrisProjects(runtimeConfig: HermesRuntimeConfig) {
 
   useEffect(() => {
     void refreshProjects();
-  }, [refreshProjects]);
+  }, [refreshProjects, refreshKey]);
 
   useEffect(() => {
     if (Object.values(projectSessionsLoading).some(Boolean)) return;

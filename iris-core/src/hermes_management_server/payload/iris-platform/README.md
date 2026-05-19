@@ -10,14 +10,6 @@ responses and scheduled job output back into Iris Core.
 On the machine running Hermes:
 
 ```bash
-iris-core install-hermes-plugin --hermes-home ~/.hermes --host 127.0.0.1 --port 8765
-```
-
-Iris Desktop exposes the same action in Settings -> This Mac -> Install plugin. The installer copies the version-matched plugin bundled with Iris Core, enables `iris-platform` when the Hermes CLI is available, writes Iris env hints, and then requires a Hermes gateway restart.
-
-Manual installation remains useful for plugin development:
-
-```bash
 mkdir -p ~/.hermes/plugins
 cp -R iris-platform ~/.hermes/plugins/iris-platform
 hermes plugins enable iris-platform
@@ -60,10 +52,6 @@ streaming:
 message edits.
 
 Use a private network address such as Tailscale for remote delivery. Keep Iris Core bound to `127.0.0.1` for local-only use, or to a private interface when Hermes runs elsewhere.
-
-For MacBook -> Mac mini over SSH, keep Iris Core and this plugin on the Mac mini. Core can remain bound to `127.0.0.1`; Iris Desktop reaches it through an SSH tunnel, so the plugin can also use loopback config.
-
-For Tailscale, bind Iris Core to the Mac mini's selected Tailscale/private IP and use a paired device token for non-loopback Core traffic. Do not expose Core on a public interface.
 
 ## Chat Inbound
 

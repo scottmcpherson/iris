@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { resolveCoreApiUrl } from "../../app/runtimeConfig";
 import { getIrisSlashCommands } from "../../lib/irisRuntime";
 import type {
   HermesRuntimeConfig,
@@ -76,7 +77,7 @@ export function useIrisSlashCommands({
 }
 
 function slashCommandRouteKey(runtimeConfig: HermesRuntimeConfig, profile: string) {
-  return [runtimeConfig.coreApiUrl, profile].join("|");
+  return [resolveCoreApiUrl(runtimeConfig), profile].join("|");
 }
 
 function normalizeSlashCommandsResult(

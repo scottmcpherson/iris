@@ -21,7 +21,7 @@ from typing import Any
 
 
 DEFAULT_CORE_URL = "http://127.0.0.1:8765"
-IRIS_CORE_TOKEN_ACCOUNT = "iris-core-token"
+IRIS_CORE_TOKEN_ACCOUNT_PREFIX = "iris-core-token"
 REMOTE_TOKEN_SERVICE = "Iris Desktop"
 DEFAULT_MAX_ATTACHMENT_SIZE_MB = 250
 
@@ -193,7 +193,7 @@ def core_raw_request(
     headers: dict[str, str],
     timeout: int,
 ) -> dict[str, Any]:
-    token = str(payload.get("coreToken") or "").strip() or read_remote_token("core")
+    token = str(payload.get("coreToken") or "").strip() or read_remote_token("core", connection_id=connection_id_from_payload(payload))
     request_headers = dict(headers)
     if token:
         request_headers["Authorization"] = f"Bearer {token}"
@@ -218,7 +218,7 @@ def core_raw_request(
 
 
 def core_bytes_request(url: str, payload: dict[str, Any], *, timeout: int) -> dict[str, Any]:
-    token = str(payload.get("coreToken") or "").strip() or read_remote_token("core")
+    token = str(payload.get("coreToken") or "").strip() or read_remote_token("core", connection_id=connection_id_from_payload(payload))
     request_headers = {"Accept": "*/*"}
     if token:
         request_headers["Authorization"] = f"Bearer {token}"
@@ -309,7 +309,7 @@ def first_existing_executable(candidates: list[str]) -> str:
 
 def core_base_url(payload: dict[str, Any]) -> str:
     runtime = payload.get("runtime") if isinstance(payload.get("runtime"), dict) else {}
-    value = str(runtime.get("coreApiUrl") or payload.get("coreApiUrl") or DEFAULT_CORE_URL).strip()
+    value = str(active_runtime_url(runtime) or payload.get("coreApiUrl") or DEFAULT_CORE_URL).strip()
     return value or DEFAULT_CORE_URL
 
 
@@ -358,27 +358,29 @@ def multipart_body(
 
 def remote_credential_status(payload: dict[str, Any]) -> dict[str, Any]:
     kind = credential_kind(payload.get("kind"))
-    return {"ok": True, "kind": kind, **read_remote_token_status(kind)}
+    connection_id = connection_id_from_payload(payload)
+    return {"ok": True, "kind": kind, "connectionId": connection_id, **read_remote_token_status(kind, connection_id=connection_id)}
 
 
 def remote_credential_save(payload: dict[str, Any]) -> dict[str, Any]:
     kind = credential_kind(payload.get("kind"))
+    connection_id = connection_id_from_payload(payload)
     token = str(payload.get("token") or "").strip()
     if not token:
-        return {"ok": False, "kind": kind, "error": "API token is empty."}
+        return {"ok": False, "kind": kind, "connectionId": connection_id, "error": "API token is empty."}
     backend = credential_backend()
     if backend == "test-file":
-        test_credential_path(kind).write_text(token, encoding="utf-8")
-        return {"ok": True, "kind": kind, "exists": True, "source": backend}
+        test_credential_path(kind, connection_id=connection_id).write_text(token, encoding="utf-8")
+        return {"ok": True, "kind": kind, "connectionId": connection_id, "exists": True, "source": backend}
     if backend == "macos-keychain":
-        delete_keychain_token(credential_account(kind))
+        delete_keychain_token(credential_account(kind, connection_id=connection_id))
         result = subprocess.run(
             [
                 "security",
                 "add-generic-password",
                 "-U",
                 "-a",
-                credential_account(kind),
+                credential_account(kind, connection_id=connection_id),
                 "-s",
                 REMOTE_TOKEN_SERVICE,
                 "-w",
@@ -388,43 +390,45 @@ def remote_credential_save(payload: dict[str, Any]) -> dict[str, Any]:
             text=True,
         )
         if result.returncode == 0:
-            return {"ok": True, "kind": kind, "exists": True, "source": backend}
-        return {"ok": False, "kind": kind, "error": (result.stderr or result.stdout or "macOS Keychain rejected the token.").strip()}
-    return {"ok": False, "kind": kind, "error": "No supported OS credential store is available."}
+            return {"ok": True, "kind": kind, "connectionId": connection_id, "exists": True, "source": backend}
+        return {"ok": False, "kind": kind, "connectionId": connection_id, "error": (result.stderr or result.stdout or "macOS Keychain rejected the token.").strip()}
+    return {"ok": False, "kind": kind, "connectionId": connection_id, "error": "No supported OS credential store is available."}
 
 
 def remote_credential_delete(payload: dict[str, Any]) -> dict[str, Any]:
     kind = credential_kind(payload.get("kind"))
+    connection_id = connection_id_from_payload(payload)
     backend = credential_backend()
     if backend == "test-file":
-        path = test_credential_path(kind)
+        path = test_credential_path(kind, connection_id=connection_id)
         if path.exists():
             path.unlink()
-        return {"ok": True, "kind": kind, "exists": False, "source": backend}
+        return {"ok": True, "kind": kind, "connectionId": connection_id, "exists": False, "source": backend}
     if backend == "macos-keychain":
-        delete_keychain_token(credential_account(kind))
-    return {"ok": True, "kind": kind, "exists": False, "source": backend}
+        delete_keychain_token(credential_account(kind, connection_id=connection_id))
+    return {"ok": True, "kind": kind, "connectionId": connection_id, "exists": False, "source": backend}
 
 
-def read_remote_token_status(kind: str = "core") -> dict[str, Any]:
+def read_remote_token_status(kind: str = "core", *, connection_id: str = "") -> dict[str, Any]:
     if read_env_token(kind):
         return {"exists": True, "source": "environment"}
-    token = read_remote_token(kind, include_env=False)
+    token = read_remote_token(kind, connection_id=connection_id, include_env=False)
     return {"exists": bool(token), "source": credential_backend()}
 
 
-def read_remote_token(kind: str = "core", *, include_env: bool = True) -> str:
+def read_remote_token(kind: str = "core", *, connection_id: str = "", include_env: bool = True) -> str:
     kind = credential_kind(kind)
+    connection_id = normalize_connection_id(connection_id)
     if include_env:
         env_token = read_env_token(kind)
         if env_token:
             return env_token
     if os.environ.get("IRIS_DESKTOP_SECRET_TEST_DIR"):
-        path = test_credential_path(kind)
+        path = test_credential_path(kind, connection_id=connection_id)
         return path.read_text(encoding="utf-8").strip() if path.exists() else ""
     if credential_backend() != "macos-keychain":
         return ""
-    return read_keychain_token(credential_account(kind))
+    return read_keychain_token(credential_account(kind, connection_id=connection_id))
 
 
 def read_env_token(_kind: str) -> str:
@@ -453,8 +457,9 @@ def credential_kind(value: Any) -> str:
     return "core" if raw in {"", "core"} else "core"
 
 
-def credential_account(kind: str) -> str:
-    return IRIS_CORE_TOKEN_ACCOUNT
+def credential_account(kind: str, *, connection_id: str = "") -> str:
+    credential_kind(kind)
+    return f"{IRIS_CORE_TOKEN_ACCOUNT_PREFIX}:{normalize_connection_id(connection_id)}"
 
 
 def credential_backend() -> str:
@@ -467,15 +472,46 @@ def credential_backend() -> str:
     return "unavailable"
 
 
-def test_credential_path(kind: str = "core") -> Path:
+def test_credential_path(kind: str = "core", *, connection_id: str = "") -> Path:
     base = Path(os.environ["IRIS_DESKTOP_SECRET_TEST_DIR"]).expanduser()
     base.mkdir(parents=True, exist_ok=True)
-    path = base / credential_account(kind)
+    path = base / credential_account(kind, connection_id=connection_id).replace("/", "_")
     try:
         base.chmod(0o700)
     except OSError:
         pass
     return path
+
+
+def active_runtime_url(runtime: dict[str, Any]) -> str:
+    active_id = str(runtime.get("activeConnectionId") or "").strip()
+    connections = runtime.get("coreConnections")
+    if isinstance(connections, list):
+        first_url = ""
+        for connection in connections:
+            if not isinstance(connection, dict):
+                continue
+            if not first_url:
+                first_url = str(connection.get("effectiveCoreApiUrl") or "").strip()
+            if str(connection.get("id") or "") != active_id:
+                continue
+            return str(connection.get("effectiveCoreApiUrl") or "").strip()
+        if first_url:
+            return first_url
+    return str(runtime.get("coreApiUrl") or "").strip()
+
+
+def connection_id_from_payload(payload: dict[str, Any]) -> str:
+    explicit = str(payload.get("connectionId") or "").strip()
+    if explicit:
+        return normalize_connection_id(explicit)
+    runtime = payload.get("runtime") if isinstance(payload.get("runtime"), dict) else {}
+    return normalize_connection_id(str(runtime.get("activeConnectionId") or "core_this_mac"))
+
+
+def normalize_connection_id(value: str) -> str:
+    cleaned = "".join(char if char.isalnum() or char in "._:-" else "_" for char in str(value or "").strip())
+    return cleaned[:96] or "core_this_mac"
 
 
 def api_error_text(text: str) -> str:

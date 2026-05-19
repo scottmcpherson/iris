@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { loadJsonValue, saveJsonValue, storageKeys } from "../../app/storage";
+import { resolveCoreApiUrl } from "../../app/runtimeConfig";
 import { getIrisModelCatalog } from "../../lib/irisRuntime";
 import { stringValue } from "../../shared/strings";
 import type {
@@ -137,7 +138,7 @@ export function modelSelectionLabel(selection: HermesModelSelection | null) {
 }
 
 function modelCatalogRouteKey(runtimeConfig: HermesRuntimeConfig, profile: string) {
-  return [runtimeConfig.coreApiUrl, profile].join("|");
+  return [resolveCoreApiUrl(runtimeConfig), profile].join("|");
 }
 
 function selectionFromProfile(profile?: HermesProfile): HermesModelSelection | null {

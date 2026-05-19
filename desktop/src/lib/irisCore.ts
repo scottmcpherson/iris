@@ -5,6 +5,12 @@ import type {
   HermesModelSelection,
   HermesRuntimeConfig,
 } from "../types/hermes";
+import {
+  activeCoreConnection,
+  connectionTransport,
+  hermesOwner,
+} from "../app/runtimeConfig";
+import desktopPackage from "../../package.json";
 import type {
   HermesMemory,
   HermesMemorySaveResult,
@@ -49,6 +55,12 @@ type CoreStatusResponse = {
 
 type CoreHealthResponse = CoreStatusResponse & {
   status?: string;
+  service?: string;
+  version?: string;
+  pid?: number;
+  managed?: boolean | null;
+  bindHost?: string;
+  port?: number;
 };
 
 export type CoreMessageAttachmentRef = {
@@ -217,11 +229,42 @@ export type IrisCoreAttachment = {
   downloadUrl?: string;
 };
 
+export type IrisCoreDevice = {
+  id: string;
+  name: string;
+  kind: string;
+  createdAt?: number;
+  lastSeenAt?: number | null;
+  revokedAt?: number | null;
+  metadata?: CoreMetadata;
+};
+
 export async function getIrisCoreAgents(runtime?: HermesRuntimeConfig) {
   return coreRequest<{ agents: IrisCoreAgent[] }>(runtime, "GET", "/agents");
 }
 
+export async function pairIrisCoreDevice(
+  payload: { name: string; kind: string; metadata?: CoreMetadata },
+  runtime?: HermesRuntimeConfig,
+) {
+  return coreRequest<{ device: IrisCoreDevice; token: string; tokenShownOnce: boolean }>(
+    runtime,
+    "POST",
+    "/devices/pair",
+    payload,
+  );
+}
+
+export async function revokeIrisCoreDevice(deviceId: string, runtime?: HermesRuntimeConfig) {
+  return coreRequest<{ device: IrisCoreDevice }>(
+    runtime,
+    "DELETE",
+    `/devices/${encodeURIComponent(deviceId)}`,
+  );
+}
+
 export async function getIrisCoreStatus(runtime?: HermesRuntimeConfig) {
+  const connection = activeCoreConnection(runtime);
   const [health, status, agents, runtimes] = await Promise.all([
     coreRequest<CoreHealthResponse>(runtime, "GET", "/health"),
     coreRequest<CoreStatusResponse>(runtime, "GET", "/status"),
@@ -235,27 +278,46 @@ export async function getIrisCoreStatus(runtime?: HermesRuntimeConfig) {
   const runtimeRows = runtimes.ok ? runtimes.runtimes || [] : [];
   const probe = firstRuntimeProbe(runtimeRows);
   const coreStatus = endpointFromResponse(status, coreBaseUrl(runtime));
+  const coreVersion = typeof health.version === "string" ? health.version : "";
+  const clientVersion = String(desktopPackage.version || "");
+  const versionOk = Boolean(coreVersion && clientVersion && coreVersion === clientVersion);
+  const coreVersionStatus = {
+    ok: versionOk,
+    coreVersion,
+    clientVersion,
+    reason: versionOk ? undefined : coreVersion ? "version-mismatch" as const : "unknown" as const,
+  };
+  const versionMismatch = ok && !coreVersionStatus.ok;
+  const connected = ok && !versionMismatch;
   return {
     ok,
-    connected: ok,
+    connected,
     root: "",
     hermesPath: null,
     hermesPathSource: null,
     hermesPathCandidates: [],
-    version: null,
+    version: coreVersion || null,
     activeProfile: activeAgent ? coreAgentToHermesProfile(activeAgent) : profiles[0] || null,
     profiles,
     checkedAt: Math.floor(Date.now() / 1000),
-    connectionMode: runtime?.connectionMode || "local",
-    remoteUrl: runtime?.remoteUrl || "",
+    connectionMode: connection.mode,
+    activeConnectionId: connection.id,
+    activeConnectionName: connection.name,
+    transport: connectionTransport(connection),
+    hermesOwner: hermesOwner(connection),
     coreApiUrl: coreBaseUrl(runtime).replace(/\/v1$/, ""),
     activeApiUrl: "",
+    coreVersionStatus,
     gatewayStatus: probe.gateway,
     remoteStatus: { ok: false },
     activeApiStatus: probe.irisAdapter,
     managementStatus: coreStatus,
     runtimeStatus: probe,
-    error: ok ? null : health.error || status.error || agents.error || "Could not reach Iris Core.",
+    error: versionMismatch
+      ? versionMismatchMessage(connection.mode, coreVersionStatus.coreVersion, coreVersionStatus.clientVersion)
+      : ok
+        ? null
+        : health.error || status.error || agents.error || "Could not reach Iris Core.",
   } as HermesStatus & { runtimeStatus?: CoreRuntimeProbe };
 }
 
@@ -619,7 +681,7 @@ export async function uploadIrisCoreAttachment(
   if (payload.localPath) {
     const result = await invoke<CoreResponse<{ attachment: IrisCoreAttachment }>>("core_bridge", {
       action: "core_upload_path",
-      payload: { ...payload, runtime },
+      payload: { ...payload, runtime, connectionId: activeCoreConnection(runtime)?.id },
     });
     return normalizeAttachmentUploadResponse(result, runtime);
   }
@@ -660,7 +722,7 @@ export async function getIrisCoreAttachmentDataUrl(
 
   return invoke<CoreResponse<{ dataUrl: string; mimeType: string; localPath?: string }>>("core_bridge", {
     action: "core_attachment_data",
-    payload: { path, mimeType: bridgeMimeType, filename, runtime },
+    payload: { path, mimeType: bridgeMimeType, filename, runtime, connectionId: activeCoreConnection(runtime)?.id },
   });
 }
 
@@ -736,6 +798,18 @@ function endpointFromResponse(response: CoreResponse<CoreStatusResponse | CoreHe
     url,
     error: response.ok ? undefined : response.error,
   };
+}
+
+function versionMismatchMessage(mode: HermesRuntimeConfig["connectionMode"], coreVersion: string, clientVersion: string) {
+  const coreLabel = coreVersion || "unknown";
+  const clientLabel = clientVersion || "unknown";
+  if (mode === "managed-local") {
+    return `Version mismatch: bundled Iris Core is ${coreLabel}, but Iris Desktop is ${clientLabel}. Rebuild or reinstall Iris locally.`;
+  }
+  if (mode === "ssh" || mode === "tailscale") {
+    return `Version mismatch: the remote Mac is running Iris Core ${coreLabel}, but local Iris Desktop is ${clientLabel}. Update the other Mac so both Iris installs match.`;
+  }
+  return `Version mismatch: Iris Core is ${coreLabel}, but Iris Desktop is ${clientLabel}. Use matching Iris builds.`;
 }
 
 function stringMetadata(value: unknown) {

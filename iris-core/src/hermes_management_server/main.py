@@ -9,6 +9,8 @@ import logging
 import os
 import re
 import secrets
+import shutil
+import sys
 import tempfile
 import threading
 import time
@@ -74,6 +76,7 @@ from .models import (
 from .runtime_registry import RuntimeRegistry
 from .runtime_adapters.hermes_store import checked_at, normalize_hermes_home
 from .security import ManagementError, device_token_hash, host_is_loopback, make_auth_dependency
+from . import __version__
 
 
 DEFAULT_CORS_ORIGINS = (
@@ -81,6 +84,7 @@ DEFAULT_CORS_ORIGINS = (
     "http://localhost:1420",
     "http://127.0.0.1:1420",
 )
+DEFAULT_IRIS_INBOUND_PORT = 8766
 DEFAULT_RUNTIME_THREAD_LIMIT = 16
 DEFAULT_RUNTIME_CALL_TIMEOUT_SECONDS = 30
 
@@ -810,6 +814,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def health(_auth: None = Depends(require_auth)) -> HealthResponse:
         return HealthResponse(
             checkedAt=checked_at(),
+            version=__version__,
+            pid=os.getpid(),
+            managed=managed_flag(),
+            bindHost=app_settings.host,
+            port=app_settings.port,
             hermesHome=str(hermes_root),
             profilesRootExists=(hermes_root / "profiles").is_dir(),
         )
@@ -820,6 +829,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "ok": True,
             "checkedAt": checked_at(),
             "service": "iris-core",
+            "version": __version__,
+            "pid": os.getpid(),
+            "managed": managed_flag(),
+            "bindHost": app_settings.host,
+            "port": app_settings.port,
             "hermesHome": str(hermes_root),
             "profilesRootExists": (hermes_root / "profiles").is_dir(),
             "core": core_store.health(),
@@ -2871,6 +2885,210 @@ def json_dumps(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
 
 
+def install_hermes_plugin(
+    hermes_home: str,
+    *,
+    host: str,
+    port: int,
+    token: str = "",
+    inbound_port: int = DEFAULT_IRIS_INBOUND_PORT,
+) -> dict[str, Any]:
+    source = bundled_iris_platform_path()
+    if not source.is_dir():
+        raise SystemExit(f"Bundled iris-platform payload was not found at {source}")
+    target_home = Path(hermes_home).expanduser()
+    destination = target_home / "plugins" / "iris-platform"
+    if destination.exists():
+        shutil.rmtree(destination)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copytree(source, destination, ignore=shutil.ignore_patterns("__pycache__", ".pytest_cache", "*.pyc"))
+    update_plugin_env_hints(
+        target_home / ".env",
+        {
+            "IRIS_BASE_URL": f"http://{host}:{port}",
+            "IRIS_INBOUND_HOST": host,
+            "IRIS_INBOUND_PORT": str(inbound_port),
+            **({"IRIS_TOKEN": token} if token else {}),
+        },
+    )
+    hermes_result = run_hermes_plugin_enable(target_home)
+    result = {
+        "ok": True,
+        "hermesHome": str(target_home),
+        "pluginPath": str(destination),
+        "enabled": hermes_result["ok"],
+        "enableError": hermes_result.get("error", ""),
+        "restartRequired": True,
+    }
+    print(json.dumps(result, indent=2, sort_keys=True))
+    print("Restart Hermes gateway so the updated iris-platform plugin is loaded.")
+    if not hermes_result["ok"]:
+        print(
+            f"Plugin files were copied, but Hermes CLI did not enable it. Run: HERMES_HOME={target_home} hermes plugins enable iris-platform",
+            file=sys.stderr,
+        )
+    return result
+
+
+def bundled_iris_platform_path() -> Path:
+    return Path(__file__).resolve().parent / "payload" / "iris-platform"
+
+
+def update_plugin_env_hints(path: Path, values: dict[str, str]) -> None:
+    existing: list[str] = []
+    if path.exists():
+        existing = path.read_text(encoding="utf-8").splitlines()
+    managed_keys = set(values)
+    next_lines = [
+        line
+        for line in existing
+        if not any(line.startswith(f"{key}=") for key in managed_keys)
+    ]
+    for key, value in values.items():
+        if value:
+            next_lines.append(f"{key}={shell_env_value(value)}")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("\n".join(next_lines).rstrip() + "\n", encoding="utf-8")
+
+
+def shell_env_value(value: str) -> str:
+    if re.fullmatch(r"[A-Za-z0-9_./:@-]+", value):
+        return value
+    return json.dumps(value)
+
+
+def run_hermes_plugin_enable(hermes_home: Path) -> dict[str, Any]:
+    hermes = shutil.which("hermes")
+    if not hermes:
+        return {"ok": False, "error": "Hermes CLI was not found in PATH."}
+    result = subprocess_run(
+        [hermes, "plugins", "enable", "iris-platform"],
+        env={**os.environ, "HERMES_HOME": str(hermes_home)},
+    )
+    if result["returncode"] == 0:
+        return {"ok": True}
+    return {"ok": False, "error": result["stderr"] or result["stdout"] or "Hermes CLI failed."}
+
+
+def subprocess_run(command: list[str], *, env: dict[str, str] | None = None) -> dict[str, Any]:
+    import subprocess
+
+    completed = subprocess.run(command, capture_output=True, text=True, env=env)
+    return {
+        "returncode": completed.returncode,
+        "stdout": completed.stdout.strip(),
+        "stderr": completed.stderr.strip(),
+    }
+
+
+def service_install(settings: Settings, *, replace: bool = False) -> dict[str, Any]:
+    if sys.platform != "darwin":
+        raise SystemExit("Iris Core service install is currently supported on macOS only.")
+    plist_path = launch_agent_path()
+    if plist_path.exists() and not replace:
+        raise SystemExit(f"LaunchAgent already exists at {plist_path}. Re-run with --replace to update it.")
+    logs_dir = Path.home() / "Library" / "Logs" / "Iris"
+    logs_dir.mkdir(parents=True, exist_ok=True)
+    binary = iris_core_executable_path()
+    plist = launch_agent_plist(
+        binary=binary,
+        host=settings.host,
+        port=settings.port,
+        hermes_home=str(normalize_hermes_home(settings.hermes_home)),
+        stdout_log=str(logs_dir / "core-launchagent.out.log"),
+        stderr_log=str(logs_dir / "core-launchagent.err.log"),
+    )
+    plist_path.parent.mkdir(parents=True, exist_ok=True)
+    plist_path.write_text(plist, encoding="utf-8")
+    result = launchctl("bootstrap", f"gui/{os.getuid()}", str(plist_path))
+    if result["returncode"] != 0 and "Service is already loaded" not in (result["stderr"] + result["stdout"]):
+        # Try the older launchctl interface on older macOS variants.
+        result = launchctl("load", "-w", str(plist_path))
+    payload = {"ok": result["returncode"] == 0, "plistPath": str(plist_path), **result}
+    print(json.dumps(payload, indent=2, sort_keys=True))
+    return payload
+
+
+def service_uninstall() -> dict[str, Any]:
+    if sys.platform != "darwin":
+        raise SystemExit("Iris Core service uninstall is currently supported on macOS only.")
+    plist_path = launch_agent_path()
+    bootout = launchctl("bootout", f"gui/{os.getuid()}", str(plist_path))
+    if bootout["returncode"] != 0:
+        bootout = launchctl("unload", "-w", str(plist_path))
+    if plist_path.exists():
+        plist_path.unlink()
+    payload = {"ok": True, "plistPath": str(plist_path), "launchctl": bootout}
+    print(json.dumps(payload, indent=2, sort_keys=True))
+    return payload
+
+
+def service_status() -> dict[str, Any]:
+    plist_path = launch_agent_path()
+    result = launchctl("print", f"gui/{os.getuid()}/com.nousresearch.iris-core") if sys.platform == "darwin" else {"returncode": 1, "stdout": "", "stderr": "unsupported platform"}
+    payload = {
+        "ok": result["returncode"] == 0,
+        "installed": plist_path.exists(),
+        "loaded": result["returncode"] == 0,
+        "plistPath": str(plist_path),
+        "detail": result["stdout"] or result["stderr"],
+    }
+    print(json.dumps(payload, indent=2, sort_keys=True))
+    return payload
+
+
+def launch_agent_path() -> Path:
+    return Path.home() / "Library" / "LaunchAgents" / "com.nousresearch.iris-core.plist"
+
+
+def iris_core_executable_path() -> str:
+    if getattr(sys, "frozen", False):
+        return sys.executable
+    return shutil.which("iris-core") or sys.argv[0]
+
+
+def launchctl(*args: str) -> dict[str, Any]:
+    if sys.platform != "darwin":
+        return {"returncode": 1, "stdout": "", "stderr": "unsupported platform"}
+    return subprocess_run(["launchctl", *args])
+
+
+def launch_agent_plist(
+    *,
+    binary: str,
+    host: str,
+    port: int,
+    hermes_home: str,
+    stdout_log: str,
+    stderr_log: str,
+) -> str:
+    import plistlib
+
+    payload = {
+        "Label": "com.nousresearch.iris-core",
+        "ProgramArguments": [
+            binary,
+            "serve",
+            "--host",
+            host,
+            "--port",
+            str(port),
+            "--hermes-home",
+            hermes_home,
+        ],
+        "EnvironmentVariables": {
+            "IRIS_CORE_MANAGED": "0",
+            "HERMES_HOME": hermes_home,
+        },
+        "RunAtLoad": True,
+        "KeepAlive": True,
+        "StandardOutPath": stdout_log,
+        "StandardErrorPath": stderr_log,
+        "WorkingDirectory": str(Path.home()),
+    }
+    return plistlib.dumps(payload, sort_keys=False).decode("utf-8")
+
+
 def is_automation_activity_event(event: dict[str, Any]) -> bool:
     event_type = str(event.get("type") or "")
     if not (event_type.startswith("message.assistant") or event_type == "message.error"):
@@ -2903,19 +3121,41 @@ def dump_model(model):
     return model.dict()
 
 
+def managed_flag() -> bool | None:
+    value = os.environ.get("IRIS_CORE_MANAGED", "").strip().lower()
+    if value in {"1", "true", "yes"}:
+        return True
+    if value in {"0", "false", "no"}:
+        return False
+    return None
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Run the Iris Core server.")
     parser.add_argument(
         "command",
         nargs="?",
-        choices=("serve", "migrate-source-of-truth"),
+        choices=("serve", "migrate-source-of-truth", "install-hermes-plugin", "service"),
         default="serve",
         help="Command to run. Defaults to serve.",
     )
+    parser.add_argument(
+        "service_action",
+        nargs="?",
+        choices=("install", "uninstall", "status"),
+        help="Service action when command is service.",
+    )
     parser.add_argument("--host", default=None, help="Bind host. Defaults to IRIS_CORE_HOST or 127.0.0.1.")
     parser.add_argument("--port", type=int, default=None, help="Bind port. Defaults to IRIS_CORE_PORT or 8765.")
+    parser.add_argument(
+        "--inbound-port",
+        type=int,
+        default=None,
+        help="Hermes plugin inbound listener port for install-hermes-plugin. Defaults to IRIS_INBOUND_PORT or 8766.",
+    )
     parser.add_argument("--hermes-home", default=None, help="Hermes home path. Defaults to HERMES_HOME or ~/.hermes.")
     parser.add_argument("--backup", action="store_true", help="Create a migration backup before dropping duplicate tables.")
+    parser.add_argument("--replace", action="store_true", help="Replace an existing Iris Core service definition.")
     return parser
 
 
@@ -2944,6 +3184,31 @@ def cli() -> None:
         store = CoreStore(settings.core_store_path, auto_migrate=False)
         result = store.migrate_source_of_truth_schema(backup=bool(args.backup))
         print(json.dumps(result, indent=2, sort_keys=True))
+        return
+    if args.command == "install-hermes-plugin":
+        inbound_port = (
+            args.inbound_port
+            if args.inbound_port is not None
+            else parse_port(os.environ.get("IRIS_INBOUND_PORT"), DEFAULT_IRIS_INBOUND_PORT)
+        )
+        if inbound_port < 1 or inbound_port > 65535:
+            raise SystemExit(f"Inbound port must be between 1 and 65535: {inbound_port}")
+        install_hermes_plugin(
+            settings.hermes_home or str(normalize_hermes_home(None)),
+            host=settings.host,
+            port=settings.port,
+            token=settings.token or "",
+            inbound_port=inbound_port,
+        )
+        return
+    if args.command == "service":
+        action = args.service_action or "status"
+        if action == "install":
+            service_install(settings, replace=bool(args.replace))
+        elif action == "uninstall":
+            service_uninstall()
+        else:
+            service_status()
         return
     uvicorn.run(create_app(settings), host=settings.host, port=settings.port)
 

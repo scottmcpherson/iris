@@ -14,6 +14,7 @@ import {
   type IrisCoreEvent,
 } from "../../lib/irisCore";
 import { irisCoreEventToDeliveryMessage } from "../../lib/irisRuntime";
+import { resolveCoreApiUrl } from "../../app/runtimeConfig";
 import { rawStringValue } from "../../shared/strings";
 import type {
   HermesAutomation,
@@ -82,7 +83,7 @@ export function useIrisAutomations(runtimeConfig: HermesRuntimeConfig, profile =
     [automations],
   );
   const pausedAutomations = useMemo(() => automations.filter((automation) => automation.status === "paused"), [automations]);
-  const deliveriesScopeKey = `${profile}:${runtimeConfig.coreApiUrl || ""}`;
+  const deliveriesScopeKey = `${profile}:${resolveCoreApiUrl(runtimeConfig)}`;
 
   useEffect(() => {
     if (!active) return;

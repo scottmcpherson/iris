@@ -73,25 +73,75 @@ iris-core migrate-source-of-truth --backup
 
 Set `IRIS_CORE_DISABLE_SOURCE_OF_TRUTH_MIGRATION=1` only as a temporary rollback guard.
 
-## Tailscale Setup
+## Bundled Desktop Sidecar
+
+Release builds package Iris Core as a standalone sidecar binary inside `Iris.app`. Build it from the monorepo root:
+
+```bash
+npm run core:build:binary
+```
+
+The output is `iris-core/dist/iris-core`. The desktop build stages that binary into Tauri's `externalBin` location before bundling:
+
+```bash
+npm run build:mac:app
+```
+
+When Iris Desktop opens, Tauri probes `127.0.0.1:8765/v1/health`. If a version-matched Iris Core is already running, the app uses it. If nothing is listening, the app starts the bundled sidecar with `IRIS_CORE_MANAGED=1` and writes logs to `~/Library/Logs/Iris/core.log`. If another service or a mismatched Core owns the port, Settings surfaces the conflict instead of silently switching ports.
+
+Health responses include `service`, `version`, `pid`, `managed`, `bindHost`, and `port` so Desktop can fail loudly when Core and Desktop versions differ.
+
+## Hermes Plugin Installer
+
+The Core binary carries a version-matched `iris-platform` payload and can install or update it:
+
+```bash
+iris-core install-hermes-plugin --hermes-home ~/.hermes --host 127.0.0.1 --port 8765
+```
+
+The command copies the bundled plugin to `$HERMES_HOME/plugins/iris-platform`, runs `hermes plugins enable iris-platform` when the Hermes CLI is available, updates `.env` hints for `IRIS_BASE_URL`, `IRIS_TOKEN` when set, `IRIS_INBOUND_HOST`, and `IRIS_INBOUND_PORT` (default `8766`), then prints a reminder to restart the Hermes gateway. Use `--inbound-port` if the Hermes plugin listener needs a non-default port.
+
+## Remote Mac Setup
+
+### SSH Mode
+
+SSH mode keeps Core private on the Hermes Mac:
+
+```text
+MacBook Iris -> 127.0.0.1:<local-forward-port> -> ssh -> Mac mini 127.0.0.1:8765
+```
+
+Run Core on the Mac that owns Hermes, preferably through Iris Desktop or the LaunchAgent service below. On the client Mac, Settings -> Iris Core -> SSH uses system OpenSSH with `BatchMode=yes`, the user's normal `~/.ssh/config`, `known_hosts`, and ssh-agent. Host-key and auth failures should be fixed in Terminal first, for example:
+
+```bash
+ssh user@mac-mini.local true
+```
+
+Core remains bound to `127.0.0.1` on the remote Mac, and the default SSH tunnel path does not require a Core bearer token.
+
+### Tailscale Mode
 
 1. Install Tailscale on the Hermes machine and on the Iris client machine.
 2. Sign in to the same tailnet on both machines.
-3. On the Hermes machine, create a temporary management token:
+3. On the Hermes machine, open Iris Settings -> This Mac, enable Tailscale connections, enter the Tailscale IP or MagicDNS name, and create a pairing token.
+4. Install or update the Core login service bound to the selected Tailscale/private address.
+5. On the client Mac, open Settings -> Tailscale, enter the same host and port, paste the paired device token, and connect.
+
+CLI-only setup is also possible. On the Hermes machine, create a temporary management token:
 
 ```bash
 export IRIS_TOKEN="$(openssl rand -base64 32)"
 ```
 
-4. Start Iris Core on the Hermes machine:
+Start Iris Core on the Hermes machine:
 
 ```bash
 HERMES_HOME="$HOME/.hermes" \
 IRIS_TOKEN="$IRIS_TOKEN" \
-iris-core --host 0.0.0.0 --port 8765
+iris-core --host 100.x.y.z --port 8765
 ```
 
-5. Pair each remote client and copy the returned `token` once:
+Pair each remote client and copy the returned `token` once:
 
 ```bash
 curl -X POST http://<tailscale-hostname>:8765/v1/devices/pair \
@@ -113,7 +163,7 @@ curl -H "Authorization: Bearer <paired-device-token>" \
   http://<tailscale-hostname>:8765/v1/agents
 ```
 
-You can bind to a specific Tailscale IP instead of `0.0.0.0`:
+Do not default to public interfaces such as `0.0.0.0`. Prefer a specific `100.x.y.z` address:
 
 ```bash
 iris-core --host 100.x.y.z --port 8765
@@ -159,15 +209,19 @@ curl -H "Authorization: Bearer <paired-device-token>" \
 
 The second client needs only the Core URL and paired device token. It should not read `~/.hermes`, Hermes SQLite files, or the Iris Core SQLite file directly.
 
-## Service Install Notes
+## LaunchAgent Service
 
-For a durable local agent host, run Core under a service manager such as launchd on macOS. Keep the bind address loopback for same-machine desktop use:
+For a durable local agent host on macOS, install Core as a LaunchAgent:
 
 ```bash
-iris-core --host 127.0.0.1 --port 8765 --hermes-home "$HOME/.hermes"
+iris-core service install --replace --host 127.0.0.1 --port 8765 --hermes-home "$HOME/.hermes"
+iris-core service status
+iris-core service uninstall
 ```
 
-For remote clients over Tailscale, bind to the Tailscale IP or `0.0.0.0`, set `IRIS_TOKEN`, pair per-device tokens, and keep CORS disabled unless a browser client has an explicit trusted origin.
+The service label is `com.nousresearch.iris-core`. The plist lives at `~/Library/LaunchAgents/com.nousresearch.iris-core.plist`, with logs under `~/Library/Logs/Iris/`.
+
+For SSH access from another Mac, keep the service bound to `127.0.0.1`. For Tailscale access, bind to the selected Tailscale/private IP, pair per-device tokens, and keep CORS disabled unless a browser client has an explicit trusted origin.
 
 ## API
 
@@ -190,6 +244,7 @@ curl http://127.0.0.1:8765/health
 ```
 
 Returns `ok`, `checkedAt`, `hermesHome`, and `profilesRootExists`.
+`/v1/health` also returns Core identity fields used by Desktop: `service`, `version`, `pid`, `managed`, `bindHost`, and `port`.
 
 ### Runtime Deliveries
 

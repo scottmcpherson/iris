@@ -12,7 +12,9 @@ import {
   getIrisCoreEvents,
   getIrisCoreLatestEventCursor,
   getIrisCoreAttachmentDataUrl,
+  pairIrisCoreDevice,
   renameIrisCoreAgent,
+  revokeIrisCoreDevice,
   resetIrisCoreAgentMemory,
   saveIrisCoreAgentMemory,
   saveIrisCoreAgentSkill,
@@ -61,6 +63,7 @@ describe("irisCore", () => {
         path: "/events?after=7&limit=50&agentId=agent_default",
         body: undefined,
         runtime: defaultRuntimeConfig,
+        connectionId: "core_local",
       },
     });
   });
@@ -196,6 +199,7 @@ describe("irisCore", () => {
         mimeType: "audio/mp4",
         filename: "",
         runtime: defaultRuntimeConfig,
+        connectionId: "core_local",
       },
     });
   });
@@ -220,6 +224,7 @@ describe("irisCore", () => {
         mimeType: "audio/webm",
         filename: "",
         runtime: defaultRuntimeConfig,
+        connectionId: "core_local",
       },
     });
   });
@@ -245,6 +250,7 @@ describe("irisCore", () => {
         mimeType: "application/octet-stream",
         filename: "dictation.webm",
         runtime: defaultRuntimeConfig,
+        connectionId: "core_local",
       },
     });
   });
@@ -275,6 +281,7 @@ describe("irisCore", () => {
         mimeType: "audio/webm",
         filename: "",
         runtime: defaultRuntimeConfig,
+        connectionId: "core_local",
       },
     });
   });
@@ -471,6 +478,8 @@ describe("irisCore", () => {
     await createIrisCoreAgentSkill("agent_default", { name: "Skill", category: "personal", content: "# Skill" }, defaultRuntimeConfig);
     await saveIrisCoreAgentSkill("agent_default", "skill_1", { name: "Skill", category: "personal", content: "# Skill" }, defaultRuntimeConfig);
     await createIrisCoreAgent({ name: "research" }, defaultRuntimeConfig);
+    await pairIrisCoreDevice({ name: "MacBook", kind: "desktop", metadata: { network: "tailscale" } }, defaultRuntimeConfig);
+    await revokeIrisCoreDevice("dev_123", defaultRuntimeConfig);
     await cloneIrisCoreAgent("agent_default", { name: "copy" }, defaultRuntimeConfig);
     await renameIrisCoreAgent("agent_default", { name: "renamed" }, defaultRuntimeConfig);
     await deleteIrisCoreAgent("agent_default", defaultRuntimeConfig);
@@ -486,6 +495,8 @@ describe("irisCore", () => {
       ["POST", "/v1/agents/agent_default/skills"],
       ["PUT", "/v1/agents/agent_default/skills/skill_1"],
       ["POST", "/v1/agents"],
+      ["POST", "/v1/devices/pair"],
+      ["DELETE", "/v1/devices/dev_123"],
       ["POST", "/v1/agents/agent_default/clone"],
       ["PATCH", "/v1/agents/agent_default"],
       ["DELETE", "/v1/agents/agent_default"],

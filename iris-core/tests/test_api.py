@@ -7,7 +7,8 @@ from concurrent.futures import ThreadPoolExecutor
 
 from fastapi.testclient import TestClient
 
-from hermes_management_server.main import LiveDeliveryBus, Settings, coalesce_core_messages, create_app
+from hermes_management_server import __version__
+from hermes_management_server.main import LiveDeliveryBus, Settings, coalesce_core_messages, create_app, install_hermes_plugin
 from hermes_management_server.runtime_adapters import hermes as hermes_adapter
 
 PNG_BYTES = (
@@ -133,6 +134,11 @@ def test_health_and_status(tmp_path):
 
     assert health.status_code == 200
     assert health.json()["profilesRootExists"] is True
+    assert health.json()["service"] == "iris-core"
+    assert health.json()["version"] == __version__
+    assert health.json()["bindHost"] == "127.0.0.1"
+    assert health.json()["port"] == 8765
+    assert isinstance(health.json()["pid"], int)
     assert status.status_code == 200
     assert status.json()["activeProfile"] == "research"
     assert status.json()["profileCount"] == 2
@@ -161,6 +167,21 @@ def test_core_cors_preflight_allows_idempotency_key(tmp_path):
     assert response.status_code == 200
     assert response.headers["access-control-allow-origin"] == "tauri://localhost"
     assert "Idempotency-Key" in response.headers["access-control-allow-headers"]
+
+
+def test_install_hermes_plugin_copies_payload_and_env_hints(tmp_path, monkeypatch):
+    monkeypatch.setattr("hermes_management_server.main.run_hermes_plugin_enable", lambda _home: {"ok": True})
+    hermes_home = tmp_path / ".hermes"
+
+    result = install_hermes_plugin(str(hermes_home), host="127.0.0.1", port=8765, token="iris-token")
+
+    assert result["ok"] is True
+    assert (hermes_home / "plugins" / "iris-platform" / "plugin.yaml").is_file()
+    env_text = (hermes_home / ".env").read_text(encoding="utf-8")
+    assert "IRIS_BASE_URL=http://127.0.0.1:8765" in env_text
+    assert "IRIS_INBOUND_HOST=127.0.0.1" in env_text
+    assert "IRIS_INBOUND_PORT=8766" in env_text
+    assert "IRIS_TOKEN=iris-token" in env_text
 
 
 def test_agent_memory_and_skills_endpoints(tmp_path):

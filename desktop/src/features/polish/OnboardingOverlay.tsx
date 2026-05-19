@@ -38,7 +38,7 @@ export function OnboardingOverlay({
         </div>
         <DialogHeader className="onboarding-heading">
           <p className="eyebrow">First run</p>
-          <DialogTitle>Set up Iris for this Mac.</DialogTitle>
+          <DialogTitle>Set up Iris locally.</DialogTitle>
           <DialogDescription className="onboarding-copy">
             Connect Iris Desktop to a local or remote Hermes runtime.
           </DialogDescription>

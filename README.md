@@ -10,6 +10,10 @@ Iris is a monorepo for local-first agent control surfaces, including Iris Deskto
 
 ## First-Time Setup
 
+For a normal same-machine install, build or install `Iris.app` and open it. The packaged app includes a version-matched Iris Core sidecar and starts it on `127.0.0.1:8765` automatically; users do not need to run `npm run core:setup`, a Python virtualenv, or a separate Core process.
+
+Developer setup still uses the monorepo tools:
+
 ```bash
 npm run bootstrap
 ```
@@ -46,6 +50,17 @@ npm run core:dev
 
 The desktop Vite server runs on `http://127.0.0.1:1420/`. Iris Core defaults to `http://127.0.0.1:8765/v1`.
 
+## Remote Mac Connections
+
+Iris Desktop always talks to Iris Core, and Core must run on the Mac that owns Hermes. Use Settings -> Iris Core to choose one of four connection modes:
+
+- `This Mac`: the packaged app manages the bundled local Core sidecar.
+- `SSH`: Iris opens a local tunnel to `127.0.0.1:<core-port>` on another Mac. Core stays private on that Mac and no Core bearer token is required for the default loopback tunnel path.
+- `Tailscale`: Core binds to a selected private tailnet address, and the client stores a paired device token in Keychain.
+- `Manual URL`: advanced/development mode for custom private Core URLs.
+
+For a reliable MacBook -> Mac mini setup, open Iris on the Mac mini, install/update the Hermes plugin from Settings, and optionally install the Core login service. Then connect from the MacBook with SSH or Tailscale from Settings.
+
 ## Iris Core API
 
 Iris Core is the local-first control plane for Iris at `http://127.0.0.1:8765/v1`. It owns devices, auth, runtime routing, and Core-only coordination, and connects to Hermes through the Iris Hermes Adapter.
@@ -57,6 +72,13 @@ Product terminology uses "sessions" for user-facing work threads. Core API route
 ## Iris Hermes Adapter
 
 Install or update the bidirectional Iris platform plugin into the local Hermes home:
+
+```bash
+npm run core:build:binary
+iris-core/dist/iris-core install-hermes-plugin --hermes-home ~/.hermes
+```
+
+For monorepo development, the older Node installer is still available:
 
 ```bash
 npm run iris:hermes:install
@@ -116,7 +138,7 @@ npm run package:check
 npm run build:mac:app
 ```
 
-`npm run check` runs the desktop TypeScript/Vitest/build checks, the desktop Python bridge tests, and the Iris Core pytest suite. `npm run build:mac:app` delegates to the desktop Tauri app build.
+`npm run check` runs the desktop TypeScript/Vitest/build checks, the desktop Python bridge tests, and the Iris Core pytest suite. `npm run build:mac:app` builds the standalone Iris Core binary, stages it as the Tauri sidecar, and creates the macOS app bundle.
 
 ## More Detail
 
