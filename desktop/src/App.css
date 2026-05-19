@@ -3398,7 +3398,10 @@ button:disabled {
   gap: 12px;
   min-width: 0;
   padding: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.07);
   border-radius: 8px;
+  background: rgba(255, 255, 255, 0.04);
+  box-shadow: none;
 }
 
 .settings-mode-card [data-slot="card-header"],
@@ -3424,7 +3427,12 @@ button:disabled {
 
 .settings-action-row {
   flex-wrap: wrap;
+  align-items: center;
   gap: 8px;
+}
+
+.settings-action-spacer {
+  flex: 1 1 auto;
 }
 
 .settings-switch-list {
@@ -3446,6 +3454,115 @@ button:disabled {
   grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
   gap: 8px;
   padding: 0;
+}
+
+.core-status-strip {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 2px 0;
+}
+
+.core-status-strip .service-health-dot {
+  flex: 0 0 auto;
+}
+
+.core-status-strip-name {
+  color: #f4efe5;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.core-status-strip-sep {
+  color: #4b515d;
+  font-size: 12px;
+}
+
+.core-status-strip-field {
+  min-width: 0;
+  overflow: hidden;
+  color: #8f98a8;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.core-status-strip-field strong {
+  color: #f4efe5;
+  font-weight: 500;
+}
+
+.core-status-strip-spacer {
+  flex: 1 1 auto;
+}
+
+.core-status-strip-checked {
+  color: #8f98a8;
+  font-size: 11.5px;
+  white-space: nowrap;
+}
+
+.settings-form-group {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+}
+
+.settings-form-group-title {
+  margin: 0;
+  color: #8f98a8;
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.settings-runtime-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 0 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.07);
+  font-size: 12px;
+}
+
+.settings-runtime-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 9px 2px 7px;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.04);
+  color: #dce0e8;
+  font-size: 11.5px;
+}
+
+.settings-runtime-pill.online {
+  border-color: rgba(74, 222, 128, 0.35);
+  background: rgba(74, 222, 128, 0.08);
+  color: #c5ecd3;
+}
+
+.settings-runtime-pill .service-health-dot {
+  width: 7px;
+  height: 7px;
+  box-shadow: none;
+}
+
+.settings-runtime-field {
+  color: #8f98a8;
+  font-size: 12px;
+}
+
+.settings-runtime-field strong {
+  color: #f4efe5;
+  font-weight: 500;
 }
 
 .connection-profile-list {
@@ -4450,6 +4567,59 @@ button:disabled {
   letter-spacing: 0;
 }
 
+.profile-workflows-content {
+  display: grid;
+  gap: 12px;
+}
+
+.profile-workflows-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.profile-workflows-input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.profile-workflows-secondary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.profile-workflows-danger {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(255, 255, 255, 0.07);
+}
+
+.profile-workflows-danger-text {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.profile-workflows-danger-text strong {
+  color: #f4efe5;
+  font-size: 13px;
+}
+
+.profile-workflows-danger-text span {
+  color: #8f98a8;
+  font-size: 12px;
+}
+
+.profile-overview-meta {
+  margin-top: 2px;
+}
+
 .profile-actions {
   display: flex;
   flex-wrap: wrap;
@@ -4459,8 +4629,13 @@ button:disabled {
 
 .settings-notice {
   margin: 2px 0 0;
+  padding: 10px 14px;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.04);
   color: #aeb5c1;
   font-size: 13px;
+  box-shadow: none;
 }
 
 .agents-workspace {
