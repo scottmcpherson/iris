@@ -56,6 +56,8 @@
   --button-primary-bg: #f4f1ea;
   --button-primary-bg-hover: #ffffff;
   --button-primary-fg: #0a0d13;
+  --top-glow-noise: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140' viewBox='0 0 140 140'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.78' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23noise)' opacity='0.024'/%3E%3C/svg%3E");
+  --top-glow-gradient: radial-gradient(ellipse 80% 58% at 50% 0%, rgba(255, 255, 255, 0.04), transparent 62%);
   --radius: 8px;
   --background: #07080b;
   --foreground: #f5f2ea;
@@ -608,8 +610,13 @@ button:disabled {
   height: 100%;
   overflow: hidden;
   background:
-    radial-gradient(circle at 50% 0%, rgba(255, 255, 255, 0.045), transparent 34%),
+    var(--top-glow-noise),
+    var(--top-glow-gradient),
     transparent;
+  background-size:
+    140px 140px,
+    auto,
+    auto;
 }
 
 .primary-pane.chat-primary-pane {
@@ -634,8 +641,13 @@ button:disabled {
   grid-template-rows: minmax(0, 1fr) auto;
   overflow: hidden;
   background:
-    radial-gradient(circle at 50% 0%, rgba(255, 255, 255, 0.045), transparent 34%),
+    var(--top-glow-noise),
+    var(--top-glow-gradient),
     transparent;
+  background-size:
+    140px 140px,
+    auto,
+    auto;
 }
 
 .chat-pane.new-chat {
