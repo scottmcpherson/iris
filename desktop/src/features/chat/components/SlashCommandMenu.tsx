@@ -1,5 +1,5 @@
 import { Command as CommandIcon, Sparkles } from "lucide-react";
-import type { MutableRefObject } from "react";
+import { useLayoutEffect, useRef, type MutableRefObject } from "react";
 import {
   Command,
   CommandEmpty,
@@ -31,6 +31,8 @@ export function SlashCommandMenu({
   onActiveIndex,
   onSelect,
 }: SlashCommandMenuProps) {
+  const activeCommand = commands[activeIndex] || commands[0];
+  const listRef = useRef<HTMLDivElement | null>(null);
   const rowClassName = cn(
     "group grid h-[50px] w-full min-w-0 grid-cols-[22px_minmax(0,1fr)_auto] items-center gap-[9px] overflow-hidden rounded-lg px-[9px] py-0 text-left text-[12px] font-[inherit] leading-none text-menu-foreground",
     "hover:bg-menu-hover hover:text-menu-hover-foreground",
@@ -38,14 +40,35 @@ export function SlashCommandMenu({
   );
   const iconClassName = "inline-flex size-[22px] items-center justify-center rounded-[7px] bg-secondary text-composer-icon-foreground group-hover:text-menu-hover-foreground group-data-[active=true]:bg-accent group-data-[active=true]:text-menu-hover-foreground";
 
+  useLayoutEffect(() => {
+    if (!activeCommand) return;
+    const list = listRef.current;
+    const item = commandRefs.current[activeCommand.id];
+    if (!list || !item) return;
+
+    const padding = 7;
+    const listRect = list.getBoundingClientRect();
+    const itemRect = item.getBoundingClientRect();
+    if (itemRect.top < listRect.top + padding) {
+      list.scrollTop -= listRect.top + padding - itemRect.top;
+    } else if (itemRect.bottom > listRect.bottom - padding) {
+      list.scrollTop += itemRect.bottom - (listRect.bottom - padding);
+    }
+  }, [activeCommand, commandRefs]);
+
   return (
     <Command
       id="composer-slash-menu"
       className="absolute bottom-[calc(100%+8px)] left-0 z-[32] h-auto max-h-80 w-[min(460px,100%)] overflow-hidden rounded-xl border border-menu-border bg-menu p-[7px] text-menu-foreground shadow-context-menu"
       aria-label="Slash commands"
       shouldFilter={false}
+      value={activeCommand?.id || ""}
+      onValueChange={(value) => {
+        const nextIndex = commands.findIndex((command) => command.id === value);
+        if (nextIndex >= 0) onActiveIndex(nextIndex);
+      }}
     >
-      <CommandList className="max-h-[306px] overflow-x-hidden overflow-y-auto">
+      <CommandList ref={listRef} className="max-h-[306px] scroll-py-[7px] overflow-x-hidden overflow-y-auto">
         <CommandGroup className="p-0">
           {loading && !commands.length ? (
             <div className="px-[9px] py-[9px] text-[11px] font-[720] text-menu-muted-foreground">Loading commands...</div>

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   chatTranscriptScrollKey,
   composerModelSelection,
+  slashCommandArrowDirection,
   shouldLockComposerModelSelection,
   shouldRenderMessageBody,
   shouldShowChatEmptyState,
@@ -79,7 +80,21 @@ describe("composer responsive layout", () => {
 
     expect(menuSource).toContain("h-auto max-h-80");
     expect(menuSource).not.toContain("max-h-none overflow-visible");
-    expect(menuSource).toContain("max-h-[306px] overflow-x-hidden overflow-y-auto");
+    expect(menuSource).toContain("max-h-[306px] scroll-py-[7px] overflow-x-hidden overflow-y-auto");
+    expect(menuSource).toContain("value={activeCommand?.id || \"\"}");
+    expect(menuSource).toContain("onValueChange={(value) =>");
+    expect(menuSource).toContain("const listRef = useRef<HTMLDivElement | null>(null)");
+    expect(menuSource).toContain("list.scrollTop +=");
+  });
+});
+
+describe("slash command keyboard navigation", () => {
+  it("accepts browser and platform arrow key names", () => {
+    expect(slashCommandArrowDirection("ArrowDown")).toBe(1);
+    expect(slashCommandArrowDirection("Down")).toBe(1);
+    expect(slashCommandArrowDirection("ArrowUp")).toBe(-1);
+    expect(slashCommandArrowDirection("Up")).toBe(-1);
+    expect(slashCommandArrowDirection("Tab")).toBe(0);
   });
 });
 

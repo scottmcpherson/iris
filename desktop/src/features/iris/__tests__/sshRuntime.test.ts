@@ -46,7 +46,7 @@ describe("sshRuntime", () => {
       identityFile: "~/.ssh/id_ed25519",
       remoteCoreHost: "127.0.0.1",
       remoteCorePort: defaultCorePort,
-      autoStartRemoteCore: true,
+      autoStartRemoteCore: false,
     });
     expect(startPayload.config).not.toHaveProperty("localForwardPort");
   });

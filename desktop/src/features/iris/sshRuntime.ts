@@ -111,7 +111,7 @@ function startSshTunnel(
       identityFile: ssh.identityFile || undefined,
       remoteCoreHost: ssh.remoteCoreHost || "127.0.0.1",
       remoteCorePort: ssh.remoteCorePort || defaultCorePort,
-      autoStartRemoteCore: ssh.autoStartRemoteCore,
+      autoStartRemoteCore: false,
     },
   }).finally(() => {
     startingTunnels.delete(connection.id);

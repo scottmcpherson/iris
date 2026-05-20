@@ -365,8 +365,8 @@ function hostnameFromUrl(value: string) {
 }
 
 function defaultNameForMode(mode: IrisCoreConnectionMode) {
-  if (mode === "ssh") return "Remote Mac over SSH";
-  if (mode === "tailscale") return "Remote Mac over Tailscale";
+  if (mode === "ssh") return "Remote host over SSH";
+  if (mode === "tailscale") return "Remote host over Tailscale";
   if (mode === "manual-url") return "Manual URL";
   return "Local";
 }

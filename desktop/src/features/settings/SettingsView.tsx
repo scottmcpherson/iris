@@ -18,12 +18,9 @@ import {
   Wrench,
 } from "lucide-react";
 import {
-  activateCoreConnection,
   activeCoreConnection,
-  connectionIdFromParts,
   connectionTransport,
   defaultCorePort,
-  defaultSshPort,
   managedLocalConnectionId,
   removeCoreConnection,
   resolveCoreApiUrl,
@@ -70,7 +67,6 @@ import {
 import { Input } from "../../shared/ui/input";
 import { Switch } from "../../shared/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../shared/ui/tabs";
-import { ToggleGroup, ToggleGroupItem } from "../../shared/ui/toggle-group";
 import type {
   HermesProfile,
   HermesRuntimeConfig,
@@ -78,6 +74,9 @@ import type {
   IrisCoreConnectionMode,
   IrisCoreConnectionProfile,
 } from "../../types/hermes";
+import { SshConnectionDialog } from "../iris/SshConnectionDialog";
+import { sshTargetLabel } from "../iris/sshConnectionDraft";
+import { useSshConnectionManager } from "../iris/useSshConnectionManager";
 
 type SettingsViewProps = {
   status: HermesStatus | null;
@@ -106,16 +105,6 @@ type CoreSidecarStatus = {
   error: string;
 };
 
-type SshTunnelStatus = {
-  ok: boolean;
-  connectionId: string;
-  running: boolean;
-  localPort: number;
-  effectiveCoreApiUrl: string;
-  errorKind: string;
-  error: string;
-};
-
 type CoreCliResult = {
   ok: boolean;
   stdout: string;
@@ -129,17 +118,6 @@ type LocalDraft = {
   autoStart: boolean;
   installLaunchAgent: boolean;
   allowSshTunnel: boolean;
-};
-
-type SshAuthMode = "none" | "identity";
-
-type SshDraft = {
-  id: string;
-  name: string;
-  hostname: string;
-  port: string;
-  authMode: SshAuthMode;
-  identityFile: string;
 };
 
 type SettingsConnectionTab = "managed-local" | "ssh";
@@ -159,10 +137,10 @@ export function SettingsView({
   const [modeTab, setModeTab] = useState<SettingsConnectionTab>(() => settingsTabFromMode(runtimeConfig.connectionMode));
   const [profileName, setProfileName] = useState("");
   const [localDraft, setLocalDraft] = useState(() => localDraftFromProfile(activeConnection));
-  const [sshDraft, setSshDraft] = useState(() => sshDraftFromConfig(runtimeConfig));
   const [sshDialogOpen, setSshDialogOpen] = useState(false);
   const [sidecarStatus, setSidecarStatus] = useState<CoreSidecarStatus | null>(null);
   const [busyAction, setBusyAction] = useState("");
+  const sshManager = useSshConnectionManager({ runtimeConfig, onRuntimeChange, onRefresh });
   const checkedAt = status?.checkedAt ? formatTimestamp(status.checkedAt) : "Not checked";
   const modelDisplay = modelSummary(profile.provider, profile.model);
   const statusConnection = status?.activeConnectionName || activeConnection.name;
@@ -177,7 +155,6 @@ export function SettingsView({
     const connection = activeCoreConnection(runtimeConfig);
     setModeTab(settingsTabFromMode(runtimeConfig.connectionMode));
     setLocalDraft(localDraftFromProfile(connection.mode === "managed-local" ? connection : managedProfile(runtimeConfig)));
-    setSshDraft(sshDraftFromConfig(runtimeConfig));
   }, [runtimeConfig]);
 
   useEffect(() => {
@@ -287,73 +264,6 @@ export function SettingsView({
     await withBusy("open-logs", async () => {
       await invoke("open_core_logs");
       toast.success("Opened the Iris Core log location.");
-    });
-  }
-
-  async function connectSsh(savedProfile?: IrisCoreConnectionProfile) {
-    await withBusy("ssh-connect", async () => {
-      const endpoint = savedProfile?.ssh
-        ? { user: savedProfile.ssh.user, host: savedProfile.ssh.host }
-        : parseSshHostname(sshDraft.hostname);
-      if (!endpoint.host) {
-        toast.error("Enter an SSH hostname, like mac-mini.local or scott@mac-mini.local.");
-        return;
-      }
-      const sshPort = savedProfile?.ssh?.port || parsePort(sshDraft.port, defaultSshPort);
-      const identityFile = savedProfile?.ssh?.identityFile || (sshDraft.authMode === "identity" ? sshDraft.identityFile.trim() : "");
-      const baseId = savedProfile?.id || sshDraft.id || connectionIdFromParts("ssh", [endpoint.user, endpoint.host, sshPort]);
-      const result = await invoke<SshTunnelStatus>("ssh_tunnel_start", {
-        config: {
-          connectionId: baseId,
-          user: endpoint.user,
-          host: endpoint.host,
-          port: sshPort,
-          identityFile: identityFile || undefined,
-          remoteCoreHost: "127.0.0.1",
-          remoteCorePort: defaultCorePort,
-          autoStartRemoteCore: true,
-        },
-      });
-      if (!result.ok) {
-        toast.error(result.error);
-        return;
-      }
-      const nextProfile: IrisCoreConnectionProfile = {
-        id: baseId,
-        name: savedProfile?.name || sshDraft.name.trim() || endpoint.host || "Remote Mac",
-        mode: "ssh",
-        effectiveCoreApiUrl: result.effectiveCoreApiUrl,
-        ssh: {
-          user: endpoint.user,
-          host: endpoint.host,
-          port: sshPort,
-          identityFile: identityFile || undefined,
-          remoteCoreHost: "127.0.0.1",
-          remoteCorePort: defaultCorePort,
-          localForwardPort: result.localPort || "auto",
-          autoStartRemoteCore: true,
-        },
-      };
-      commitProfile(nextProfile);
-      setSshDialogOpen(false);
-      toast.success(`${nextProfile.name} connected through a local SSH tunnel.`);
-    });
-  }
-
-  async function disconnectSsh(connectionId = sshDraft.id) {
-    await withBusy("ssh-disconnect", async () => {
-      const target = connectionId || activeConnection.id;
-      const result = await invoke<SshTunnelStatus>("ssh_tunnel_stop", { connectionId: target });
-      if (!result.ok) {
-        toast.error(result.error || "SSH tunnel disconnect failed.");
-      } else {
-        if (target === activeConnection.id) {
-          onRuntimeChange(activateCoreConnection(runtimeConfig, managedLocalConnectionId));
-        } else {
-          onRefresh();
-        }
-        toast.success("SSH tunnel disconnected.");
-      }
     });
   }
 
@@ -470,7 +380,7 @@ export function SettingsView({
 
       {status?.coreVersionStatus && !status.coreVersionStatus.ok ? (
         <Alert className="settings-notice">
-          <AlertDescription>{status.error || "Version mismatch. Update the other Mac so Iris Desktop and Iris Core match."}</AlertDescription>
+          <AlertDescription>{status.error || "Version mismatch. Update the remote host so Iris Desktop and Iris Core match."}</AlertDescription>
         </Alert>
       ) : null}
 
@@ -593,23 +503,27 @@ export function SettingsView({
                 profiles={profilesByMode.ssh}
                 activeId={activeConnection.id}
                 connectedId={status?.connected ? activeConnection.id : ""}
-                busy={busyAction === "ssh-connect" || busyAction === "ssh-disconnect"}
+                busy={sshManager.busyAction === "ssh-connect" || sshManager.busyAction === "ssh-disconnect"}
                 onActivate={(id) => {
                   const profile = runtimeConfig.coreConnections.find((connection) => connection.id === id);
-                  if (profile) void connectSsh(profile);
+                  if (profile) void sshManager.connectSsh(profile);
                 }}
                 onDelete={deleteProfile}
-                onDisconnect={(id) => void disconnectSsh(id)}
+                onDisconnect={(id) => void sshManager.disconnectSsh(id)}
               />
             </CardContent>
           </Card>
           <SshConnectionDialog
             open={sshDialogOpen}
-            draft={sshDraft}
-            busy={busyAction === "ssh-connect"}
+            draft={sshManager.draft}
+            busy={sshManager.busyAction === "ssh-connect"}
             onOpenChange={setSshDialogOpen}
-            onDraftChange={setSshDraft}
-            onSave={() => void connectSsh()}
+            onDraftChange={sshManager.setDraft}
+            onSave={() => {
+              void sshManager.connectSsh().then((result) => {
+                if (result.ok) setSshDialogOpen(false);
+              });
+            }}
           />
         </TabsContent>
       </Tabs>
@@ -677,83 +591,6 @@ function ConnectionList({
         );
       })}
     </div>
-  );
-}
-
-function SshConnectionDialog({
-  open,
-  draft,
-  busy,
-  onOpenChange,
-  onDraftChange,
-  onSave,
-}: {
-  open: boolean;
-  draft: SshDraft;
-  busy: boolean;
-  onOpenChange: (open: boolean) => void;
-  onDraftChange: (draft: SshDraft) => void;
-  onSave: () => void;
-}) {
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="ssh-connection-dialog">
-        <DialogHeader>
-          <DialogTitle>Add SSH connection</DialogTitle>
-          <DialogDescription>Connect to another Mac using an SSH hostname and optional identity file.</DialogDescription>
-        </DialogHeader>
-        <FieldSet className="ssh-dialog-fieldset">
-          <FieldGroup className="ssh-dialog-fields">
-            <Field className="ssh-auth-field">
-              <ToggleGroup
-                type="single"
-                className="ssh-auth-toggle"
-                value={draft.authMode}
-                onValueChange={(value) => {
-                  if (value === "none" || value === "identity") onDraftChange({ ...draft, authMode: value });
-                }}
-              >
-                <ToggleGroupItem value="none">No Auth</ToggleGroupItem>
-                <ToggleGroupItem value="identity">Identity</ToggleGroupItem>
-              </ToggleGroup>
-            </Field>
-            <TextField id="ssh-name" label="Display name" value={draft.name} onChange={(name) => onDraftChange({ ...draft, name })} />
-            <TextField
-              id="ssh-hostname"
-              label="Hostname"
-              value={draft.hostname}
-              placeholder="host.com or user@host.com"
-              onChange={(hostname) => onDraftChange({ ...draft, hostname })}
-            />
-            <TextField
-              id="ssh-port"
-              label="SSH port"
-              optional
-              value={draft.port}
-              placeholder={String(defaultSshPort)}
-              onChange={(port) => onDraftChange({ ...draft, port })}
-            />
-            {draft.authMode === "identity" ? (
-              <TextField
-                id="ssh-identity"
-                label="Identity file path"
-                value={draft.identityFile}
-                placeholder="~/.ssh/id_ed25519"
-                onChange={(identityFile) => onDraftChange({ ...draft, identityFile })}
-              />
-            ) : null}
-          </FieldGroup>
-        </FieldSet>
-        <DialogFooter className="ssh-dialog-actions">
-          <DialogClose asChild>
-            <Button variant="appLink">Cancel</Button>
-          </DialogClose>
-          <Button disabled={busy} onClick={onSave}>
-            Save
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
   );
 }
 
@@ -1048,22 +885,6 @@ function localDraftFromProfile(profile: IrisCoreConnectionProfile): LocalDraft {
   };
 }
 
-function sshDraftFromConfig(config: HermesRuntimeConfig): SshDraft {
-  const profile = activeCoreConnection(config).mode === "ssh"
-    ? activeCoreConnection(config)
-    : config.coreConnections.find((connection) => connection.mode === "ssh");
-  const ssh = profile?.ssh;
-  const authMode: SshAuthMode = ssh?.identityFile ? "identity" : "none";
-  return {
-    id: profile?.id || "",
-    name: profile?.name || "",
-    hostname: sshTargetLabel(ssh?.user || "", ssh?.host || ""),
-    port: ssh?.port && ssh.port !== defaultSshPort ? String(ssh.port) : "",
-    authMode,
-    identityFile: ssh?.identityFile || "",
-  };
-}
-
 function localCoreConfig(draft: LocalDraft) {
   return {
     host: "127.0.0.1",
@@ -1085,23 +906,4 @@ function localServiceConfig(draft: LocalDraft) {
 function parsePort(value: string, fallback: number) {
   const parsed = Number.parseInt(value, 10);
   return Number.isInteger(parsed) && parsed > 0 && parsed <= 65535 ? parsed : fallback;
-}
-
-function parseSshHostname(value: string) {
-  const trimmed = value.trim();
-  const at = trimmed.lastIndexOf("@");
-  if (at > 0 && at < trimmed.length - 1) {
-    return {
-      user: trimmed.slice(0, at).trim(),
-      host: trimmed.slice(at + 1).trim(),
-    };
-  }
-  return { user: "", host: trimmed };
-}
-
-function sshTargetLabel(user: string, host: string) {
-  const cleanUser = user.trim();
-  const cleanHost = host.trim();
-  if (!cleanHost) return "";
-  return cleanUser ? `${cleanUser}@${cleanHost}` : cleanHost;
 }

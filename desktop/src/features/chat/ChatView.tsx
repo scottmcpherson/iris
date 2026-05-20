@@ -269,12 +269,6 @@ export function ChatView({
   }, [filteredSlashCommands.length, slashMenuOpen]);
 
   useEffect(() => {
-    if (!slashMenuOpen) return;
-    const activeCommand = filteredSlashCommands[activeSlashIndex];
-    if (activeCommand) slashCommandRefs.current[activeCommand.id]?.scrollIntoView({ block: "nearest" });
-  }, [activeSlashIndex, filteredSlashCommands, slashMenuOpen]);
-
-  useEffect(() => {
     if (profileSelectionDisabled) setProfileMenuOpen(false);
   }, [profileSelectionDisabled]);
 
@@ -504,10 +498,11 @@ export function ChatView({
         setDismissedSlashToken(slashTokenKey);
         return;
       }
-      if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      const slashArrowDirection = slashCommandArrowDirection(event.key);
+      if (slashArrowDirection) {
         event.preventDefault();
         setActiveSlashIndex((current) =>
-          moveSlashCommandIndex(current, event.key === "ArrowDown" ? 1 : -1, filteredSlashCommands.length),
+          moveSlashCommandIndex(current, slashArrowDirection, filteredSlashCommands.length),
         );
         return;
       }
@@ -1002,6 +997,12 @@ function voiceRecordingFilename(mimeType: string) {
 
 function pointInRect(x: number, y: number, rect: DOMRect) {
   return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
+}
+
+export function slashCommandArrowDirection(key: string): 1 | -1 | 0 {
+  if (key === "ArrowDown" || key === "Down") return 1;
+  if (key === "ArrowUp" || key === "Up") return -1;
+  return 0;
 }
 
 function shouldRenderMessage(message: Message) {

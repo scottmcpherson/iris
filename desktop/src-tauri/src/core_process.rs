@@ -189,7 +189,7 @@ fn start_core_blocking(
                 status.ok = false;
                 status.ready = false;
                 status.error = format!(
-                    "Version mismatch: Iris Core is {}, but Iris Desktop is {}. Update the other Mac or rebuild Iris.",
+                    "Version mismatch: Iris Core is {}, but Iris Desktop is {}. Update the remote host or rebuild Iris.",
                     status.version, status.client_version
                 );
             }

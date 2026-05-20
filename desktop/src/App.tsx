@@ -398,12 +398,15 @@ function App() {
       {onboardingOpen ? (
         <OnboardingOverlay
           connected={iris.connected}
+          status={iris.status}
+          runtimeConfig={iris.runtimeConfig}
           onClose={dismissOnboarding}
           onOpenSettings={() => {
             setActiveView("settings");
             dismissOnboarding();
           }}
           onRefresh={() => void refreshWithNotice()}
+          onRuntimeChange={iris.updateRuntimeConfig}
         />
       ) : null}
     </>

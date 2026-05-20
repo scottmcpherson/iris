@@ -807,7 +807,7 @@ function versionMismatchMessage(mode: HermesRuntimeConfig["connectionMode"], cor
     return `Version mismatch: bundled Iris Core is ${coreLabel}, but Iris Desktop is ${clientLabel}. Rebuild or reinstall Iris locally.`;
   }
   if (mode === "ssh" || mode === "tailscale") {
-    return `Version mismatch: the remote Mac is running Iris Core ${coreLabel}, but local Iris Desktop is ${clientLabel}. Update the other Mac so both Iris installs match.`;
+    return `Version mismatch: the remote host is running Iris Core ${coreLabel}, but local Iris Desktop is ${clientLabel}. Update the remote host so both Iris installs match.`;
   }
   return `Version mismatch: Iris Core is ${coreLabel}, but Iris Desktop is ${clientLabel}. Use matching Iris builds.`;
 }

@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::io::Read;
 use std::net::TcpListener;
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
@@ -18,6 +19,11 @@ struct ManagedSshTunnel {
     config: SshTunnelConfig,
     status: SshTunnelStatus,
     restart_attempt: usize,
+}
+
+struct TunnelStartError {
+    kind: String,
+    message: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -180,7 +186,7 @@ fn probe_blocking(config: SshConnectionConfig) -> Result<SshProbeResult, String>
             core_ok: false,
             remote_core_version: String::new(),
             error_kind: "core-offline".to_string(),
-            error: "SSH works, but Iris Core is not running on the remote Mac.".to_string(),
+            error: "SSH works, but Iris Core is not running on the remote host.".to_string(),
             stdout: remote_stdout,
             stderr: remote_stderr,
         });
@@ -213,10 +219,6 @@ fn start_tunnel_blocking(
         return Err("SSH connection id is required.".to_string());
     }
     let _ = stop_tunnel_blocking(state, connection_id.clone());
-    if config.auto_start_remote_core.unwrap_or(false) {
-        let _ = open_remote_iris(&config);
-        let _ = wait_for_remote_core(&config, Duration::from_secs(10));
-    }
     let (child, mut stable_config, status) = match spawn_verified_tunnel(&config, &connection_id) {
         Ok(result) => result,
         Err(error) => {
@@ -229,8 +231,8 @@ fn start_tunnel_blocking(
                 pid: None,
                 reconnecting: false,
                 restart_attempt: 0,
-                error_kind: "tunnel-failed".to_string(),
-                error,
+                error_kind: error.kind,
+                error: error.message,
             });
         }
     };
@@ -328,12 +330,15 @@ fn status_tunnel_blocking(
 fn spawn_verified_tunnel(
     config: &SshTunnelConfig,
     connection_id: &str,
-) -> Result<(Child, SshTunnelConfig, SshTunnelStatus), String> {
-    let mut last_error = String::new();
+) -> Result<(Child, SshTunnelConfig, SshTunnelStatus), TunnelStartError> {
+    let mut last_error: Option<TunnelStartError> = None;
     for _ in 0..5 {
         let local_port = match config.local_forward_port {
             Some(port) if port > 0 => port,
-            _ => allocate_local_port()?,
+            _ => allocate_local_port().map_err(|message| TunnelStartError {
+                kind: "tunnel-failed".to_string(),
+                message,
+            })?,
         };
         let remote_host = config
             .remote_core_host
@@ -364,8 +369,22 @@ fn spawn_verified_tunnel(
             .stdout(Stdio::null())
             .stderr(Stdio::piped())
             .spawn()
-            .map_err(|err| format!("Could not run system ssh: {err}"))?;
+            .map_err(|err| TunnelStartError {
+                kind: "ssh-failed".to_string(),
+                message: format!("Could not run system ssh: {err}"),
+            })?;
         std::thread::sleep(Duration::from_millis(450));
+        let mut child = child;
+        if let Ok(Some(exit)) = child.try_wait() {
+            let stderr = read_child_stderr(&mut child);
+            let (kind, mapped) = map_ssh_error(&stderr);
+            let message = if stderr.trim().is_empty() {
+                format!("SSH tunnel exited with {exit}.")
+            } else {
+                mapped
+            };
+            return Err(TunnelStartError { kind, message });
+        }
         match probe_core_health("127.0.0.1", local_port, Duration::from_millis(900)) {
             Ok(_) => {
                 let status = SshTunnelStatus {
@@ -383,21 +402,38 @@ fn spawn_verified_tunnel(
                 return Ok((child, config.clone(), status));
             }
             Err(error) => {
-                last_error = error;
-                let mut failed_child = child;
-                let _ = failed_child.kill();
-                let _ = failed_child.wait();
+                last_error = Some(TunnelStartError {
+                    kind: "core-offline".to_string(),
+                    message: format!(
+                        "SSH connected, but Iris Core is not reachable on the remote host at {}:{}. Start Iris Core on the remote host, then retry. {error}",
+                        config
+                            .remote_core_host
+                            .clone()
+                            .unwrap_or_else(|| "127.0.0.1".to_string()),
+                        config.remote_core_port
+                    ),
+                });
+                let _ = child.kill();
+                let _ = child.wait();
                 if config.local_forward_port.is_some() {
                     break;
                 }
             }
         }
     }
-    Err(if last_error.is_empty() {
-        "Iris could not open the SSH tunnel. The local port may be in use.".to_string()
-    } else {
-        format!("Iris could not open the SSH tunnel: {last_error}")
-    })
+    Err(last_error.unwrap_or_else(|| TunnelStartError {
+        kind: "tunnel-failed".to_string(),
+        message: "Iris could not open the SSH tunnel. The local port may be in use.".to_string(),
+    }))
+}
+
+fn read_child_stderr(child: &mut Child) -> String {
+    let Some(mut stderr) = child.stderr.take() else {
+        return String::new();
+    };
+    let mut buffer = String::new();
+    let _ = stderr.read_to_string(&mut buffer);
+    buffer.trim().to_string()
 }
 
 fn spawn_tunnel_monitor(state: SshTunnelState, connection_id: String) {
@@ -473,8 +509,8 @@ fn spawn_tunnel_monitor(state: SshTunnelState, connection_id: String) {
                     tunnel.status.reconnecting = true;
                     tunnel.status.pid = None;
                     tunnel.status.restart_attempt = attempt;
-                    tunnel.status.error_kind = "tunnel-reconnect-failed".to_string();
-                    tunnel.status.error = error;
+                    tunnel.status.error_kind = error.kind;
+                    tunnel.status.error = error.message;
                 } else {
                     break;
                 }
@@ -497,58 +533,6 @@ fn allocate_local_port() -> Result<u16, String> {
         .port();
     drop(listener);
     Ok(port)
-}
-
-fn open_remote_iris(config: &SshTunnelConfig) -> Result<(), String> {
-    validate_endpoint(&config.user, &config.host)?;
-    let mut command = Command::new("ssh");
-    command
-        .arg("-o")
-        .arg("BatchMode=yes")
-        .arg("-o")
-        .arg("ConnectTimeout=5")
-        .arg("-p")
-        .arg(config.port.to_string());
-    append_identity_args(&mut command, config.identity_file.as_deref());
-    let result = command
-        .arg(ssh_target(&config.user, &config.host))
-        .arg("open -gj -a Iris >/dev/null 2>&1 || true")
-        .output()
-        .map_err(|err| format!("Could not ask the remote Mac to open Iris: {err}"))?;
-    if result.status.success() {
-        Ok(())
-    } else {
-        Err(String::from_utf8_lossy(&result.stderr).trim().to_string())
-    }
-}
-
-fn wait_for_remote_core(config: &SshTunnelConfig, timeout: Duration) -> Result<(), String> {
-    let deadline = std::time::Instant::now() + timeout;
-    loop {
-        let mut command = Command::new("ssh");
-        command
-            .arg("-o")
-            .arg("BatchMode=yes")
-            .arg("-o")
-            .arg("ConnectTimeout=5")
-            .arg("-p")
-            .arg(config.port.to_string());
-        append_identity_args(&mut command, config.identity_file.as_deref());
-        let result = command
-            .arg(ssh_target(&config.user, &config.host))
-            .arg(format!(
-                "curl -fsS http://127.0.0.1:{}/v1/health",
-                config.remote_core_port
-            ))
-            .output();
-        if matches!(result, Ok(output) if output.status.success()) {
-            return Ok(());
-        }
-        if std::time::Instant::now() >= deadline {
-            return Err("Remote Iris Core did not become ready after opening Iris.".to_string());
-        }
-        std::thread::sleep(Duration::from_millis(500));
-    }
 }
 
 fn validate_endpoint(user: &str, host: &str) -> Result<(), String> {
@@ -606,7 +590,7 @@ fn map_ssh_error(stderr: &str) -> (String, String) {
     if lower.contains("host key verification failed") || lower.contains("no hostkey alg") {
         return (
             "unknown-host-key".to_string(),
-            "macOS has not trusted this SSH host yet. Connect once in Terminal with ssh user@host, then retry.".to_string(),
+            "This SSH host is not trusted yet. Connect once in Terminal with ssh user@host, then retry.".to_string(),
         );
     }
     if lower.contains("permission denied")
