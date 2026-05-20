@@ -364,6 +364,13 @@ function agentSubtitle(profile: HermesProfile) {
 }
 
 function gatewaySummary(profile: HermesProfile, selectedProfile: string, runtimeReadiness: RuntimeReadiness) {
+  if (runtimeReadiness === "offline") {
+    return {
+      label: "Core offline",
+      tone: "stopped" as const,
+      action: null,
+    };
+  }
   if (!profile.gatewayRunning) {
     return {
       label: "Gateway stopped",

@@ -69,6 +69,27 @@ describe("AgentList", () => {
 
     expect(html).toContain("Starting gateway...");
   });
+
+  it("does not offer gateway recovery while Core is offline", () => {
+    const html = renderToStaticMarkup(
+      createElement(AgentList, {
+        profiles: [profileFixture({ name: "health", gatewayRunning: false })],
+        selectedProfile: "health",
+        runtimeReadiness: "offline",
+        gatewayActionBusy: false,
+        gatewayActionBusyAction: null,
+        gatewayActionBusyProfile: "",
+        adapterInstallBusyProfile: "",
+        onOpenAgent: noop,
+        onProfileAction: noopProfileAction,
+        onGatewayAction: noop,
+        onInstallAdapter: noop,
+      }),
+    );
+
+    expect(html).toContain("Core offline");
+    expect(html).not.toContain("Start gateway");
+  });
 });
 
 function noop() {}
