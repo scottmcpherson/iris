@@ -233,9 +233,11 @@ export function ProfileActionDialog({
       <DialogContent className={dialogContentClassName} showCloseButton={false}>
         <form className="grid gap-4" onSubmit={onSubmit}>
           <DialogHeader>
-            <DialogDescription className="text-xs font-[750] text-menu-muted-foreground">
-              {isDelete ? "Agent deletion" : "Agent management"}
-            </DialogDescription>
+            {isDelete ? (
+              <DialogDescription className="text-xs font-[750] text-menu-muted-foreground">
+                Agent deletion
+              </DialogDescription>
+            ) : null}
             <DialogTitle className="text-lg text-menu-hover-foreground">{title}</DialogTitle>
           </DialogHeader>
           <label className={labelClassName}>

@@ -69,6 +69,18 @@ const SIDEBAR_STANDARD_WIDTH = 252;
 const SIDEBAR_COLLAPSED_WIDTH = 0;
 const SIDEBAR_MAX_WIDTH = 440;
 
+export function sidebarConnectionStatusLabel(connected: boolean, status: HermesStatus | null) {
+  if (!connected) return "Iris Core offline";
+
+  const connectionName = status?.activeConnectionName?.trim();
+  if (connectionName) return `${connectionName} connected`;
+
+  if (status?.connectionMode === "ssh") return "SSH connected";
+  if (status?.connectionMode === "tailscale") return "Tailscale connected";
+  if (status?.connectionMode === "manual-url") return "Remote Core connected";
+  return "Local connected";
+}
+
 type SidebarWidthBand = "compact" | "regular";
 
 type SessionSearchItem = {
@@ -412,7 +424,7 @@ export function AppShell({
             <p className="brand-name">Iris</p>
             <p className="brand-status">
               <span className={connected ? "status-dot connected" : "status-dot"} />
-              {connected ? "Session route online" : "Route offline"}
+              <span className="brand-status-text">{sidebarConnectionStatusLabel(connected, status)}</span>
             </p>
           </div>
         </div>
@@ -1189,7 +1201,7 @@ export function AppShell({
             {filteredSessionSearchItems.map((item, index) => (
               <CommandItem
                 key={`${item.profileName}:${item.session.id}`}
-                value={`${item.session.title} ${item.profileName} ${item.sourceLabel}`}
+                value={sessionSearchCommandValue(item)}
                 className="grid min-h-[43px] grid-cols-[auto_minmax(0,1fr)_minmax(72px,auto)_auto] gap-2.5 rounded-lg px-2.5 py-[7px] text-left text-[13px]"
                 onSelect={() => selectSessionSearchItem(item)}
               >
@@ -1287,14 +1299,14 @@ export function AppShell({
 
   function openProfileCreateDialog() {
     setProfileActionError("");
-    setProfileDialog({ action: "create", name: nextProfileName("new-agent", profiles) });
+    setProfileDialog({ action: "create", name: "" });
   }
 
   function openProjectCreateDialog() {
     setProjectActionError("");
     setProjectDialog({
       action: "create",
-      name: nextProjectName("new-project", projects),
+      name: "",
       defaultAgentId: projectAgents[0]?.id || "",
       systemPrompt: "",
     });
@@ -1511,16 +1523,6 @@ function nextProfileName(base: string, profiles: HermesProfile[]) {
   return `${base}-${Date.now()}`;
 }
 
-function nextProjectName(base: string, projects: IrisProject[]) {
-  const names = new Set(projects.map((project) => project.name));
-  if (!names.has(base)) return base;
-  for (let index = 2; index < 100; index += 1) {
-    const candidate = `${base}-${index}`;
-    if (!names.has(candidate)) return candidate;
-  }
-  return `${base}-${Date.now()}`;
-}
-
 function clamp(value: number, minimum: number, maximum: number) {
   return Math.max(minimum, Math.min(value, maximum));
 }
@@ -1668,6 +1670,10 @@ export function buildSessionSearchItems({
 
 function sessionSearchIdentityKey(profileName: string, sessionId: string) {
   return `${profileName}:${sessionId}`;
+}
+
+export function sessionSearchCommandValue(item: SessionSearchItem) {
+  return `${item.session.id} ${item.session.title} ${item.profileName} ${item.sourceLabel}`;
 }
 
 function legacySessionPinKey(profileName: string, sessionId: string) {

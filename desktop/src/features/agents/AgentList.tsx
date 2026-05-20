@@ -134,7 +134,7 @@ export function AgentList({ profiles, onOpenAgent, onProfileAction }: AgentListP
 
   function openCreateDialog() {
     setError("");
-    setDialog({ action: "create", name: nextProfileName("new-agent", profiles) });
+    setDialog({ action: "create", name: "" });
   }
 
   function openCloneDialog(source: string) {
@@ -175,9 +175,11 @@ export function AgentList({ profiles, onOpenAgent, onProfileAction }: AgentListP
         <DialogContent className={dialogContentClassName} showCloseButton={false}>
           <form className="grid gap-4" onSubmit={submitDialog}>
             <DialogHeader>
-              <DialogDescription className="text-xs font-[750] text-menu-muted-foreground">
-                {isDelete ? "Agent deletion" : "Agent management"}
-              </DialogDescription>
+              {isDelete ? (
+                <DialogDescription className="text-xs font-[750] text-menu-muted-foreground">
+                  Agent deletion
+                </DialogDescription>
+              ) : null}
               <DialogTitle className="text-lg text-menu-hover-foreground">{title}</DialogTitle>
             </DialogHeader>
             <label className={labelClassName}>

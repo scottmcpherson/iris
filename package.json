@@ -14,6 +14,7 @@
     "core:build:binary": "node iris-core/scripts/build-binary.mjs",
     "iris:platform:install": "node scripts/install-iris-platform.mjs",
     "iris:hermes:install": "node scripts/install-iris-platform.mjs",
+    "iris:reset": "node scripts/reset-iris-environment.mjs",
     "dev": "node scripts/dev.mjs",
     "dev:web": "node scripts/dev.mjs --web",
     "dev:desktop": "node scripts/dev.mjs",

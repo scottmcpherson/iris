@@ -1,0 +1,2099 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Skills page — redesign mockups</title>
+<style>
+  :root {
+    --bg: #07080b;
+    --fg: #f5f2ea;
+    --muted: #8e96a5;
+    --dim: #6f7784;
+    --card: #0d0f14;
+    --surface: rgba(255, 255, 255, 0.04);
+    --surface-strong: rgba(255, 255, 255, 0.07);
+    --border: rgba(255, 255, 255, 0.08);
+    --border-strong: rgba(255, 255, 255, 0.14);
+    --primary-bg: #f4f1ea;
+    --primary-fg: #0a0d13;
+    --gold: #d7c58e;
+    --accent: rgba(142, 215, 255, 0.08);
+    --accent-border: rgba(142, 215, 255, 0.22);
+    --mono: "SF Mono", ui-monospace, Menlo, Consolas, monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", Arial, sans-serif;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    padding: 40px 32px 80px;
+    background: var(--bg);
+    color: var(--fg);
+    font-family: var(--sans);
+    font-size: 13px;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  h1 {
+    margin: 0 0 6px;
+    font-size: 22px;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+  }
+
+  .lede {
+    margin: 0 0 36px;
+    max-width: 680px;
+    color: var(--muted);
+    font-size: 14px;
+    line-height: 1.55;
+  }
+
+  .variant {
+    margin-bottom: 56px;
+  }
+
+  .variant-label {
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+    margin-bottom: 14px;
+    padding-left: 4px;
+  }
+
+  .variant-label h2 {
+    margin: 0;
+    font-size: 14px;
+    font-weight: 750;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+    color: var(--gold);
+  }
+
+  .variant-label span {
+    color: var(--muted);
+    font-size: 13px;
+  }
+
+  .frame {
+    position: relative;
+    height: 720px;
+    overflow: hidden;
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    background: var(--bg);
+    box-shadow: 0 18px 38px rgba(0, 0, 0, 0.45);
+  }
+
+  .traffic {
+    position: absolute;
+    top: 14px;
+    left: 16px;
+    display: flex;
+    gap: 6px;
+    z-index: 5;
+  }
+  .traffic span {
+    width: 11px;
+    height: 11px;
+    border-radius: 50%;
+  }
+  .traffic .r { background: #ec6b5e; }
+  .traffic .y { background: #f4bf4f; }
+  .traffic .g { background: #61c454; }
+
+  .app {
+    display: grid;
+    grid-template-columns: 230px minmax(0, 1fr);
+    height: 100%;
+  }
+
+  .sidebar {
+    padding: 44px 14px 14px;
+    border-right: 1px solid var(--border);
+    background: #0a0c11;
+  }
+
+  .sidebar-profile {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 8px 16px;
+  }
+  .sidebar-profile .avatar {
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, #9c8a5e, #2a2519);
+  }
+  .sidebar-profile .name {
+    font-size: 13px;
+    font-weight: 600;
+  }
+  .sidebar-profile .status {
+    margin-top: 2px;
+    color: var(--muted);
+    font-size: 11px;
+  }
+  .sidebar-profile .status::before {
+    content: "";
+    display: inline-block;
+    width: 6px;
+    height: 6px;
+    margin-right: 6px;
+    border-radius: 50%;
+    background: #5fc275;
+    vertical-align: 1px;
+  }
+
+  .sidebar-nav {
+    margin-top: 4px;
+    display: grid;
+    gap: 2px;
+  }
+  .sidebar-item {
+    padding: 8px 10px;
+    border-radius: 7px;
+    color: var(--muted);
+    font-size: 13px;
+  }
+  .sidebar-item.active {
+    background: var(--surface-strong);
+    color: var(--fg);
+  }
+
+  .topbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 18px;
+    border-bottom: 1px solid var(--border);
+  }
+  .crumb {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .crumb .back {
+    width: 28px;
+    height: 28px;
+    border: 1px solid var(--border);
+    border-radius: 7px;
+    background: var(--surface);
+    display: grid;
+    place-items: center;
+    color: var(--muted);
+  }
+  .crumb .path {
+    color: var(--muted);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  .crumb .page {
+    margin-top: 2px;
+    font-size: 17px;
+    font-weight: 600;
+  }
+  .tabs {
+    display: flex;
+    gap: 4px;
+    padding: 3px;
+    border: 1px solid var(--border);
+    border-radius: 9px;
+    background: var(--surface);
+  }
+  .tabs button {
+    padding: 5px 12px;
+    border: 0;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--muted);
+    font: inherit;
+    font-size: 12px;
+    cursor: pointer;
+  }
+  .tabs button.active {
+    background: var(--primary-bg);
+    color: var(--primary-fg);
+  }
+
+  .content {
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr);
+    height: calc(100% - 0px);
+  }
+
+  .workspace {
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr);
+    gap: 12px;
+    padding: 18px 24px 22px;
+    min-height: 0;
+  }
+
+  .workspace.tight {
+    padding: 14px 14px 16px;
+  }
+
+  .toolbar {
+    display: grid;
+    grid-template-columns: minmax(220px, 1fr) 160px 160px auto;
+    gap: 8px;
+  }
+
+  .pill {
+    height: 34px;
+    padding: 0 12px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    border: 1px solid var(--border);
+    border-radius: 9px;
+    background: var(--surface);
+    color: var(--muted);
+    font-size: 13px;
+  }
+  .pill.input { color: var(--dim); }
+  .pill.select { justify-content: space-between; }
+
+  .btn {
+    height: 34px;
+    padding: 0 14px;
+    border: 0;
+    border-radius: 9px;
+    background: var(--primary-bg);
+    color: var(--primary-fg);
+    font-weight: 600;
+    font-size: 13px;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    cursor: pointer;
+  }
+  .btn.ghost {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    color: var(--fg);
+  }
+  .btn.sm { height: 30px; padding: 0 11px; font-size: 12px; }
+
+  .browser {
+    display: grid;
+    gap: 12px;
+    min-height: 0;
+  }
+
+  /* === CURRENT === */
+  .browser.current {
+    grid-template-columns: minmax(270px, 34%) minmax(0, 1fr);
+  }
+
+  /* === OPTION A === */
+  .browser.narrow {
+    grid-template-columns: 220px minmax(0, 1fr);
+  }
+
+  /* === OPTION B (narrow + tight) === */
+  .browser.narrow-tight {
+    grid-template-columns: 220px minmax(0, 1fr);
+    gap: 14px;
+  }
+
+  .list {
+    display: grid;
+    gap: 6px;
+    align-content: start;
+    min-height: 0;
+    overflow: hidden;
+  }
+  .list-heading {
+    color: var(--muted);
+    font-size: 11px;
+    font-weight: 700;
+    padding: 0 4px 4px;
+  }
+
+  .row {
+    display: grid;
+    grid-template-columns: 28px minmax(0, 1fr) auto;
+    gap: 10px;
+    align-items: center;
+    padding: 10px;
+    border: 1px solid transparent;
+    border-radius: 9px;
+    cursor: pointer;
+  }
+  .row .icon {
+    width: 28px;
+    height: 28px;
+    border-radius: 7px;
+    background: linear-gradient(135deg, #f3eedf, #d2c8ad);
+    display: grid;
+    place-items: center;
+    color: #2a2519;
+    font-size: 12px;
+    font-weight: 700;
+  }
+  .row .title {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 13px;
+    font-weight: 600;
+  }
+  .row .desc {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--muted);
+    font-size: 11px;
+  }
+  .row .pill-tag {
+    padding: 2px 8px;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    background: var(--surface);
+    color: var(--gold);
+    font-size: 10px;
+    text-transform: capitalize;
+  }
+  .row.active {
+    background: var(--accent);
+    border-color: var(--accent-border);
+  }
+
+  /* Variant A/B row: icon + name only */
+  .row.compact {
+    grid-template-columns: 24px minmax(0, 1fr);
+    gap: 9px;
+    padding: 8px 10px;
+  }
+  .row.compact .icon {
+    width: 22px;
+    height: 22px;
+    border-radius: 6px;
+    font-size: 11px;
+  }
+  .row.compact .desc,
+  .row.compact .pill-tag {
+    display: none;
+  }
+  .row.compact .title {
+    font-size: 12.5px;
+    font-weight: 500;
+  }
+  .row.compact.active .title {
+    font-weight: 600;
+  }
+
+  /* Grouped list (Option C) */
+  .list.grouped {
+    gap: 2px;
+  }
+  .group-header {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto auto;
+    align-items: center;
+    gap: 8px;
+    padding: 14px 6px 6px;
+    color: var(--fg);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.01em;
+    cursor: pointer;
+    user-select: none;
+  }
+  .group-header:first-of-type {
+    padding-top: 4px;
+  }
+  .group-header .label {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .group-header .caret {
+    color: var(--muted);
+    font-size: 13px;
+    line-height: 1;
+    opacity: 0;
+    transform: rotate(90deg);
+    transition: opacity 120ms ease, transform 120ms ease;
+  }
+  .group-header:hover .caret,
+  .group-header.collapsed .caret {
+    opacity: 1;
+  }
+  .group-header.collapsed .caret {
+    transform: rotate(0deg);
+  }
+  .group-header .count {
+    color: var(--dim);
+    font-weight: 600;
+    font-size: 11px;
+    letter-spacing: 0;
+  }
+  .group-body {
+    display: grid;
+    gap: 2px;
+  }
+  .group-header.collapsed + .group-body {
+    display: none;
+  }
+
+  /* Toolbar variant with no category filter */
+  .toolbar.no-category {
+    grid-template-columns: minmax(220px, 1fr) 160px auto;
+  }
+
+  /* Toolbar variant with segmented source control (Option D) */
+  .toolbar.with-segment {
+    grid-template-columns: minmax(220px, 1fr) auto auto;
+  }
+
+  /* Toolbar variant with only search + new (Option E) */
+  .toolbar.lean {
+    grid-template-columns: minmax(220px, 1fr) auto;
+  }
+
+  /* Segmented control */
+  .segment {
+    display: inline-flex;
+    align-items: center;
+    padding: 3px;
+    border: 1px solid var(--border);
+    border-radius: 9px;
+    background: var(--surface);
+  }
+  .segment-item {
+    padding: 5px 12px;
+    border: 0;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--muted);
+    font: inherit;
+    font-size: 12px;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .segment-item.active {
+    background: var(--surface-strong);
+    color: var(--fg);
+    box-shadow: inset 0 0 0 1px var(--border);
+  }
+
+  /* List-attached source tabs (Option E) */
+  .list-tabs {
+    display: flex;
+    align-items: baseline;
+    flex-wrap: wrap;
+    gap: 0;
+    padding: 0 4px 4px;
+    color: var(--muted);
+    font-size: 12px;
+  }
+  .list-tab {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 4px;
+    padding: 4px 8px;
+    border-radius: 6px;
+    color: var(--muted);
+    cursor: pointer;
+  }
+  .list-tab .num {
+    color: var(--dim);
+    font-size: 11px;
+    font-weight: 600;
+  }
+  .list-tab:hover {
+    color: var(--fg);
+  }
+  .list-tab.active {
+    color: var(--fg);
+    background: var(--surface);
+  }
+  .list-tab.active .num {
+    color: var(--gold);
+  }
+  .list-tab-sep {
+    color: var(--dim);
+    font-size: 11px;
+    padding: 0 2px;
+  }
+
+  /* Option F — controls live inside the list column header */
+  .browser.no-toolbar {
+    grid-template-columns: 220px minmax(0, 1fr);
+    gap: 14px;
+  }
+  .list-controls {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 0 4px 8px;
+  }
+  .pill.search-compact {
+    flex: 1 1 auto;
+    height: 30px;
+    padding: 0 10px;
+    font-size: 12.5px;
+    border-radius: 8px;
+  }
+  .icon-pill {
+    flex: 0 0 auto;
+    width: 30px;
+    height: 30px;
+    display: grid;
+    place-items: center;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--surface);
+    color: var(--muted);
+    cursor: pointer;
+  }
+  .icon-pill:hover {
+    color: var(--fg);
+    background: var(--surface-strong);
+  }
+  .btn.primary-compact {
+    height: 30px;
+    padding: 0 11px;
+    font-size: 12.5px;
+    border-radius: 8px;
+  }
+
+  /* Icon-only "+" primary button */
+  .icon-pill.primary {
+    background: var(--primary-bg);
+    color: var(--primary-fg);
+    border-color: transparent;
+    font-weight: 700;
+  }
+  .icon-pill.primary:hover {
+    background: #ffffff;
+    color: var(--primary-fg);
+  }
+
+  /* Search-expanded mode */
+  .list-controls.searching {
+    gap: 6px;
+  }
+  .pill.search-expanded {
+    flex: 1 1 auto;
+    height: 30px;
+    padding: 0 10px;
+    border: 1px solid var(--accent-border);
+    border-radius: 8px;
+    background: var(--card);
+    color: var(--fg);
+    font-size: 12.5px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .pill.search-expanded .ph {
+    flex: 1 1 auto;
+    color: var(--fg);
+  }
+  .pill.search-expanded .cursor {
+    width: 1.5px;
+    height: 14px;
+    background: var(--fg);
+    animation: blink 1s steps(2) infinite;
+  }
+  @keyframes blink { 50% { opacity: 0; } }
+
+  .detail {
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr) auto;
+    gap: 12px;
+    min-height: 0;
+  }
+
+  .detail-header {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: start;
+    gap: 14px;
+  }
+  .detail-header .eyebrow {
+    margin: 0;
+    color: var(--muted);
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  .detail-header h2 {
+    margin: 4px 0 2px;
+    font-size: 20px;
+    font-weight: 700;
+    letter-spacing: -0.005em;
+  }
+  .detail-header .path {
+    display: block;
+    color: var(--muted);
+    font-family: var(--mono);
+    font-size: 11px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* Variant A/B: name + category sit in the header */
+  .header-fields {
+    display: grid;
+    grid-template-columns: 1fr 140px;
+    gap: 8px;
+    margin-top: 10px;
+  }
+  .header-field {
+    display: grid;
+    gap: 4px;
+  }
+  .header-field label {
+    color: var(--muted);
+    font-size: 10px;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  .header-field input {
+    height: 30px;
+    padding: 0 10px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--surface);
+    color: var(--fg);
+    font: inherit;
+    font-size: 12.5px;
+  }
+  .header-field.locked input {
+    color: var(--muted);
+  }
+
+  .editor-shell {
+    display: grid;
+    grid-template-rows: auto auto minmax(0, 1fr);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    overflow: hidden;
+    background: rgba(0, 0, 0, 0.22);
+    min-height: 0;
+  }
+
+  /* current variant has the form-row inside the shell */
+  .editor-form {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 180px;
+    gap: 8px;
+    padding: 10px;
+    border-bottom: 1px solid var(--border);
+  }
+  .editor-form .field {
+    display: grid;
+    gap: 5px;
+  }
+  .editor-form label {
+    color: var(--muted);
+    font-size: 10px;
+    font-weight: 800;
+    text-transform: uppercase;
+  }
+  .editor-form input {
+    height: 30px;
+    padding: 0 10px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--surface);
+    color: var(--fg);
+    font: inherit;
+    font-size: 12.5px;
+  }
+
+  .editor-meta {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--border);
+    color: var(--muted);
+    font-size: 11px;
+  }
+  .editor-meta .dot {
+    width: 4px;
+    height: 4px;
+    border-radius: 50%;
+    background: var(--dim);
+  }
+
+  .editor-body {
+    padding: 14px 18px;
+    overflow: auto;
+    font-family: var(--mono);
+    font-size: 12px;
+    line-height: 1.65;
+    color: #c6cbd6;
+    background:
+      linear-gradient(to right, rgba(255,255,255,0.025) 32px, transparent 32px),
+      transparent;
+  }
+  .editor-body .ln { display: inline-block; width: 22px; color: var(--dim); text-align: right; margin-right: 14px; user-select: none; }
+  .editor-body .k { color: #c8cdfa; }
+  .editor-body .s { color: #d7c58e; }
+  .editor-body .h { color: #9fd7c0; }
+
+  .detail-footer {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 12px;
+  }
+  .notice {
+    padding: 8px 12px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--surface);
+    color: var(--muted);
+    font-size: 12px;
+  }
+  .footer-spacer { min-width: 0; }
+
+  .annotate {
+    margin-top: 10px;
+    color: var(--muted);
+    font-size: 12.5px;
+    line-height: 1.55;
+    padding-left: 4px;
+    max-width: 880px;
+  }
+  .annotate b { color: var(--fg); font-weight: 600; }
+
+  .legend-grid {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 6px 12px;
+    margin-top: 6px;
+    color: var(--muted);
+    font-size: 12px;
+  }
+  .legend-grid b { color: var(--fg); font-weight: 600; }
+</style>
+</head>
+<body>
+
+<h1>Skills page — redesign mockups</h1>
+<p class="lede">Three layouts for the Agents → Skills page. The "Current" frame at the top reproduces today's layout so you can compare directly. Each frame is the same height; what changes is how horizontal space is distributed.</p>
+
+<!-- ============================================================ -->
+<!-- CURRENT (baseline) -->
+<!-- ============================================================ -->
+<div class="variant">
+  <div class="variant-label">
+    <h2>Current</h2>
+    <span>list ~34% width, Name + Category inside the editor shell</span>
+  </div>
+  <div class="frame">
+    <div class="traffic"><span class="r"></span><span class="y"></span><span class="g"></span></div>
+    <div class="app">
+      <aside class="sidebar">
+        <div class="sidebar-profile">
+          <div class="avatar"></div>
+          <div>
+            <div class="name">Iris</div>
+            <div class="status">Session route online</div>
+          </div>
+        </div>
+        <nav class="sidebar-nav">
+          <div class="sidebar-item">New session</div>
+          <div class="sidebar-item">Search</div>
+          <div class="sidebar-item active">Agents</div>
+          <div class="sidebar-item">Automations</div>
+        </nav>
+      </aside>
+      <div>
+        <div class="topbar">
+          <div class="crumb">
+            <div class="back">←</div>
+            <div>
+              <div class="path">Agents / Default</div>
+              <div class="page">default</div>
+            </div>
+          </div>
+          <div class="tabs">
+            <button>Overview</button>
+            <button>Memory</button>
+            <button class="active">Skills</button>
+          </div>
+        </div>
+        <div class="workspace">
+          <div class="toolbar">
+            <div class="pill input">⌕ &nbsp; Search skills, tags, or categories</div>
+            <div class="pill select">⛁ all <span>▾</span></div>
+            <div class="pill select">⛀ all sources <span>▾</span></div>
+            <button class="btn">+ New skill</button>
+          </div>
+          <div class="browser current">
+            <aside class="list">
+              <div class="list-heading">83 skills</div>
+              <div class="row active">
+                <div class="icon">⌗</div>
+                <div>
+                  <div class="title">apple-notes</div>
+                  <div class="desc">Manage Apple N…</div>
+                </div>
+                <div class="pill-tag">Installed</div>
+              </div>
+              <div class="row">
+                <div class="icon">⌗</div>
+                <div>
+                  <div class="title">apple-remind…</div>
+                  <div class="desc">Apple Reminder…</div>
+                </div>
+                <div class="pill-tag">Installed</div>
+              </div>
+              <div class="row">
+                <div class="icon">⌗</div>
+                <div>
+                  <div class="title">findmy</div>
+                  <div class="desc">Track Apple devi…</div>
+                </div>
+                <div class="pill-tag">Installed</div>
+              </div>
+              <div class="row">
+                <div class="icon">⌗</div>
+                <div>
+                  <div class="title">imessage</div>
+                  <div class="desc">Send and receiv…</div>
+                </div>
+                <div class="pill-tag">Installed</div>
+              </div>
+              <div class="row">
+                <div class="icon">⌗</div>
+                <div>
+                  <div class="title">macos-comp…</div>
+                  <div class="desc">Drive the macOS…</div>
+                </div>
+                <div class="pill-tag">Installed</div>
+              </div>
+              <div class="row">
+                <div class="icon">⌗</div>
+                <div>
+                  <div class="title">claude-code</div>
+                  <div class="desc">Delegate coding…</div>
+                </div>
+                <div class="pill-tag">Installed</div>
+              </div>
+            </aside>
+            <section class="detail">
+              <header class="detail-header">
+                <div>
+                  <p class="eyebrow">Skill detail</p>
+                  <h2>apple-notes</h2>
+                  <span class="path">/Users/agent/.hermes/skills/apple/apple-notes/SKILL.md</span>
+                </div>
+              </header>
+              <div class="editor-shell">
+                <div class="editor-form">
+                  <div class="field">
+                    <label>Name</label>
+                    <input value="apple-notes" />
+                  </div>
+                  <div class="field">
+                    <label>Category</label>
+                    <input value="apple" />
+                  </div>
+                </div>
+                <div class="editor-meta">
+                  <span>frontmatter detect…</span>
+                  <span class="dot"></span>
+                  <span>91 lin…</span>
+                  <span class="dot"></span>
+                  <span>Manage Apple Notes via memo CLI: create, sea…</span>
+                </div>
+                <div class="editor-body">
+                  <div><span class="ln">1</span>---</div>
+                  <div><span class="ln">2</span><span class="k">name</span>: apple-notes</div>
+                  <div><span class="ln">3</span><span class="k">description</span>: <span class="s">"Manage Apple Notes via memo CLI: create, search, edit."</span></div>
+                  <div><span class="ln">4</span><span class="k">version</span>: 1.0.0</div>
+                  <div><span class="ln">5</span><span class="k">author</span>: Hermes Agent</div>
+                  <div><span class="ln">6</span><span class="k">platforms</span>: [macos]</div>
+                  <div><span class="ln">7</span>---</div>
+                  <div><span class="ln">8</span></div>
+                  <div><span class="ln">9</span><span class="h"># Apple Notes</span></div>
+                  <div><span class="ln">10</span></div>
+                  <div><span class="ln">11</span>Use `memo` to manage Apple Notes directly from the terminal.</div>
+                </div>
+              </div>
+              <div class="detail-footer">
+                <div class="footer-spacer"></div>
+                <button class="btn sm">💾 Save</button>
+              </div>
+            </section>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <p class="annotate">
+    <b>What's loud:</b> the row description preview eats half the list column for content that's already truncated, the Name + Category fields claim a full row above the markdown, and the editor still wraps mid-token (line 3).
+  </p>
+</div>
+
+<!-- ============================================================ -->
+<!-- OPTION A -->
+<!-- ============================================================ -->
+<div class="variant">
+  <div class="variant-label">
+    <h2>Option A — narrow list, lifted header fields</h2>
+    <span>list collapses to ~220px (icon + name only); Name + Category move under the title</span>
+  </div>
+  <div class="frame">
+    <div class="traffic"><span class="r"></span><span class="y"></span><span class="g"></span></div>
+    <div class="app">
+      <aside class="sidebar">
+        <div class="sidebar-profile">
+          <div class="avatar"></div>
+          <div>
+            <div class="name">Iris</div>
+            <div class="status">Session route online</div>
+          </div>
+        </div>
+        <nav class="sidebar-nav">
+          <div class="sidebar-item">New session</div>
+          <div class="sidebar-item">Search</div>
+          <div class="sidebar-item active">Agents</div>
+          <div class="sidebar-item">Automations</div>
+        </nav>
+      </aside>
+      <div>
+        <div class="topbar">
+          <div class="crumb">
+            <div class="back">←</div>
+            <div>
+              <div class="path">Agents / Default</div>
+              <div class="page">default</div>
+            </div>
+          </div>
+          <div class="tabs">
+            <button>Overview</button>
+            <button>Memory</button>
+            <button class="active">Skills</button>
+          </div>
+        </div>
+        <div class="workspace">
+          <div class="toolbar">
+            <div class="pill input">⌕ &nbsp; Search skills, tags, or categories</div>
+            <div class="pill select">⛁ all <span>▾</span></div>
+            <div class="pill select">⛀ all sources <span>▾</span></div>
+            <button class="btn">+ New skill</button>
+          </div>
+          <div class="browser narrow">
+            <aside class="list">
+              <div class="list-heading">83 skills</div>
+              <div class="row compact active">
+                <div class="icon">⌗</div>
+                <div class="title">apple-notes</div>
+              </div>
+              <div class="row compact">
+                <div class="icon">⌗</div>
+                <div class="title">apple-reminders</div>
+              </div>
+              <div class="row compact">
+                <div class="icon">⌗</div>
+                <div class="title">findmy</div>
+              </div>
+              <div class="row compact">
+                <div class="icon">⌗</div>
+                <div class="title">imessage</div>
+              </div>
+              <div class="row compact">
+                <div class="icon">⌗</div>
+                <div class="title">macos-computer-use</div>
+              </div>
+              <div class="row compact">
+                <div class="icon">⌗</div>
+                <div class="title">claude-code</div>
+              </div>
+              <div class="row compact">
+                <div class="icon">⌗</div>
+                <div class="title">codex</div>
+              </div>
+              <div class="row compact">
+                <div class="icon">⌗</div>
+                <div class="title">hermes-agent</div>
+              </div>
+              <div class="row compact">
+                <div class="icon">⌗</div>
+                <div class="title">kanban-codex</div>
+              </div>
+            </aside>
+            <section class="detail">
+              <header class="detail-header">
+                <div>
+                  <p class="eyebrow">Skill detail</p>
+                  <h2>apple-notes</h2>
+                  <span class="path">/Users/agent/.hermes/skills/apple/apple-notes/SKILL.md</span>
+                  <div class="header-fields">
+                    <div class="header-field">
+                      <label>Name</label>
+                      <input value="apple-notes" />
+                    </div>
+                    <div class="header-field">
+                      <label>Category</label>
+                      <input value="apple" />
+                    </div>
+                  </div>
+                </div>
+              </header>
+              <div class="editor-shell">
+                <div class="editor-meta">
+                  <span>frontmatter detected</span>
+                  <span class="dot"></span>
+                  <span>91 lines</span>
+                  <span class="dot"></span>
+                  <span>Manage Apple Notes via memo CLI: create, search, edit.</span>
+                </div>
+                <div class="editor-body">
+                  <div><span class="ln">1</span>---</div>
+                  <div><span class="ln">2</span><span class="k">name</span>: apple-notes</div>
+                  <div><span class="ln">3</span><span class="k">description</span>: <span class="s">"Manage Apple Notes via memo CLI: create, search, edit."</span></div>
+                  <div><span class="ln">4</span><span class="k">version</span>: 1.0.0</div>
+                  <div><span class="ln">5</span><span class="k">author</span>: Hermes Agent</div>
+                  <div><span class="ln">6</span><span class="k">license</span>: MIT</div>
+                  <div><span class="ln">7</span><span class="k">platforms</span>: [macos]</div>
+                  <div><span class="ln">8</span><span class="k">metadata</span>:</div>
+                  <div><span class="ln">9</span>&nbsp;&nbsp;<span class="k">hermes</span>:</div>
+                  <div><span class="ln">10</span>&nbsp;&nbsp;&nbsp;&nbsp;<span class="k">tags</span>: [Notes, Apple, macOS, note-taking]</div>
+                  <div><span class="ln">11</span>---</div>
+                  <div><span class="ln">12</span></div>
+                  <div><span class="ln">13</span><span class="h"># Apple Notes</span></div>
+                  <div><span class="ln">14</span></div>
+                  <div><span class="ln">15</span>Use `memo` to manage Apple Notes directly from the terminal.</div>
+                </div>
+              </div>
+              <div class="detail-footer">
+                <div class="footer-spacer"></div>
+                <button class="btn sm">💾 Save</button>
+              </div>
+            </section>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <p class="annotate">
+    <b>What's different:</b> list shrinks to a quiet directory (icon + name; the "Installed" pill goes away because everything in this list is installed by default — community items still get a pill); Name + Category move under the title where they belong with the path; the editor body inherits the freed width and lines stop wrapping. The metadata strip stays but stops truncating.
+  </p>
+</div>
+
+<!-- ============================================================ -->
+<!-- OPTION B -->
+<!-- ============================================================ -->
+<div class="variant">
+  <div class="variant-label">
+    <h2>Option B — Option A plus tighter page margins</h2>
+    <span>same structure, workspace padding trimmed from 18/24px to 14/14px</span>
+  </div>
+  <div class="frame">
+    <div class="traffic"><span class="r"></span><span class="y"></span><span class="g"></span></div>
+    <div class="app">
+      <aside class="sidebar">
+        <div class="sidebar-profile">
+          <div class="avatar"></div>
+          <div>
+            <div class="name">Iris</div>
+            <div class="status">Session route online</div>
+          </div>
+        </div>
+        <nav class="sidebar-nav">
+          <div class="sidebar-item">New session</div>
+          <div class="sidebar-item">Search</div>
+          <div class="sidebar-item active">Agents</div>
+          <div class="sidebar-item">Automations</div>
+        </nav>
+      </aside>
+      <div>
+        <div class="topbar">
+          <div class="crumb">
+            <div class="back">←</div>
+            <div>
+              <div class="path">Agents / Default</div>
+              <div class="page">default</div>
+            </div>
+          </div>
+          <div class="tabs">
+            <button>Overview</button>
+            <button>Memory</button>
+            <button class="active">Skills</button>
+          </div>
+        </div>
+        <div class="workspace tight">
+          <div class="toolbar">
+            <div class="pill input">⌕ &nbsp; Search skills, tags, or categories</div>
+            <div class="pill select">⛁ all <span>▾</span></div>
+            <div class="pill select">⛀ all sources <span>▾</span></div>
+            <button class="btn">+ New skill</button>
+          </div>
+          <div class="browser narrow-tight">
+            <aside class="list">
+              <div class="list-heading">83 skills</div>
+              <div class="row compact active">
+                <div class="icon">⌗</div>
+                <div class="title">apple-notes</div>
+              </div>
+              <div class="row compact">
+                <div class="icon">⌗</div>
+                <div class="title">apple-reminders</div>
+              </div>
+              <div class="row compact">
+                <div class="icon">⌗</div>
+                <div class="title">findmy</div>
+              </div>
+              <div class="row compact">
+                <div class="icon">⌗</div>
+                <div class="title">imessage</div>
+              </div>
+              <div class="row compact">
+                <div class="icon">⌗</div>
+                <div class="title">macos-computer-use</div>
+              </div>
+              <div class="row compact">
+                <div class="icon">⌗</div>
+                <div class="title">claude-code</div>
+              </div>
+              <div class="row compact">
+                <div class="icon">⌗</div>
+                <div class="title">codex</div>
+              </div>
+              <div class="row compact">
+                <div class="icon">⌗</div>
+                <div class="title">hermes-agent</div>
+              </div>
+              <div class="row compact">
+                <div class="icon">⌗</div>
+                <div class="title">kanban-codex</div>
+              </div>
+            </aside>
+            <section class="detail">
+              <header class="detail-header">
+                <div>
+                  <p class="eyebrow">Skill detail</p>
+                  <h2>apple-notes</h2>
+                  <span class="path">/Users/agent/.hermes/skills/apple/apple-notes/SKILL.md</span>
+                  <div class="header-fields">
+                    <div class="header-field">
+                      <label>Name</label>
+                      <input value="apple-notes" />
+                    </div>
+                    <div class="header-field">
+                      <label>Category</label>
+                      <input value="apple" />
+                    </div>
+                  </div>
+                </div>
+              </header>
+              <div class="editor-shell">
+                <div class="editor-meta">
+                  <span>frontmatter detected</span>
+                  <span class="dot"></span>
+                  <span>91 lines</span>
+                  <span class="dot"></span>
+                  <span>Manage Apple Notes via memo CLI: create, search, edit.</span>
+                </div>
+                <div class="editor-body">
+                  <div><span class="ln">1</span>---</div>
+                  <div><span class="ln">2</span><span class="k">name</span>: apple-notes</div>
+                  <div><span class="ln">3</span><span class="k">description</span>: <span class="s">"Manage Apple Notes via memo CLI: create, search, edit."</span></div>
+                  <div><span class="ln">4</span><span class="k">version</span>: 1.0.0</div>
+                  <div><span class="ln">5</span><span class="k">author</span>: Hermes Agent</div>
+                  <div><span class="ln">6</span><span class="k">license</span>: MIT</div>
+                  <div><span class="ln">7</span><span class="k">platforms</span>: [macos]</div>
+                  <div><span class="ln">8</span><span class="k">metadata</span>:</div>
+                  <div><span class="ln">9</span>&nbsp;&nbsp;<span class="k">hermes</span>:</div>
+                  <div><span class="ln">10</span>&nbsp;&nbsp;&nbsp;&nbsp;<span class="k">tags</span>: [Notes, Apple, macOS, note-taking]</div>
+                  <div><span class="ln">11</span>&nbsp;&nbsp;&nbsp;&nbsp;<span class="k">related_skills</span>: [obsidian]</div>
+                  <div><span class="ln">12</span>---</div>
+                  <div><span class="ln">13</span></div>
+                  <div><span class="ln">14</span><span class="h"># Apple Notes</span></div>
+                  <div><span class="ln">15</span></div>
+                  <div><span class="ln">16</span>Use `memo` to manage Apple Notes directly from the terminal.</div>
+                </div>
+              </div>
+              <div class="detail-footer">
+                <div class="footer-spacer"></div>
+                <button class="btn sm">💾 Save</button>
+              </div>
+            </section>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <p class="annotate">
+    <b>What's different vs A:</b> just less workspace padding (14px/14px instead of 18px/24px). Squeezes a few more characters per editor line and shows one extra row in the list. Visible, but a smaller delta than the structural changes in A.
+  </p>
+</div>
+
+<!-- ============================================================ -->
+<!-- OPTION C — grouped list, no category dropdown -->
+<!-- ============================================================ -->
+<div class="variant">
+  <div class="variant-label">
+    <h2>Option C — grouped list, category dropdown removed</h2>
+    <span>category becomes structure (collapsible sections in the list); toolbar keeps Search + Source + New skill</span>
+  </div>
+  <div class="frame">
+    <div class="traffic"><span class="r"></span><span class="y"></span><span class="g"></span></div>
+    <div class="app">
+      <aside class="sidebar">
+        <div class="sidebar-profile">
+          <div class="avatar"></div>
+          <div>
+            <div class="name">Iris</div>
+            <div class="status">Session route online</div>
+          </div>
+        </div>
+        <nav class="sidebar-nav">
+          <div class="sidebar-item">New session</div>
+          <div class="sidebar-item">Search</div>
+          <div class="sidebar-item active">Agents</div>
+          <div class="sidebar-item">Automations</div>
+        </nav>
+      </aside>
+      <div>
+        <div class="topbar">
+          <div class="crumb">
+            <div class="back">←</div>
+            <div>
+              <div class="path">Agents / Default</div>
+              <div class="page">default</div>
+            </div>
+          </div>
+          <div class="tabs">
+            <button>Overview</button>
+            <button>Memory</button>
+            <button class="active">Skills</button>
+          </div>
+        </div>
+        <div class="workspace tight">
+          <div class="toolbar no-category">
+            <div class="pill input">⌕ &nbsp; Search skills, tags, or categories</div>
+            <div class="pill select">⛀ all sources <span>▾</span></div>
+            <button class="btn">+ New skill</button>
+          </div>
+          <div class="browser narrow-tight">
+            <aside class="list grouped">
+              <div class="group-header">
+                <span class="label">Apple</span>
+                <span class="caret">›</span>
+                <span class="count">4</span>
+              </div>
+              <div class="group-body">
+                <div class="row compact active">
+                  <div class="icon">⌗</div>
+                  <div class="title">apple-notes</div>
+                </div>
+                <div class="row compact">
+                  <div class="icon">⌗</div>
+                  <div class="title">apple-reminders</div>
+                </div>
+                <div class="row compact">
+                  <div class="icon">⌗</div>
+                  <div class="title">findmy</div>
+                </div>
+                <div class="row compact">
+                  <div class="icon">⌗</div>
+                  <div class="title">imessage</div>
+                </div>
+              </div>
+
+              <div class="group-header">
+                <span class="label">Coding</span>
+                <span class="caret">›</span>
+                <span class="count">3</span>
+              </div>
+              <div class="group-body">
+                <div class="row compact">
+                  <div class="icon">⌗</div>
+                  <div class="title">claude-code</div>
+                </div>
+                <div class="row compact">
+                  <div class="icon">⌗</div>
+                  <div class="title">codex</div>
+                </div>
+                <div class="row compact">
+                  <div class="icon">⌗</div>
+                  <div class="title">kanban-codex</div>
+                </div>
+              </div>
+
+              <div class="group-header">
+                <span class="label">Desktop &amp; OS</span>
+                <span class="caret">›</span>
+                <span class="count">2</span>
+              </div>
+              <div class="group-body">
+                <div class="row compact">
+                  <div class="icon">⌗</div>
+                  <div class="title">macos-computer-use</div>
+                </div>
+                <div class="row compact">
+                  <div class="icon">⌗</div>
+                  <div class="title">hermes-agent</div>
+                </div>
+              </div>
+
+              <div class="group-header collapsed">
+                <span class="label">Research</span>
+                <span class="caret">›</span>
+                <span class="count">6</span>
+              </div>
+              <div class="group-body"></div>
+
+              <div class="group-header collapsed">
+                <span class="label">Productivity</span>
+                <span class="caret">›</span>
+                <span class="count">9</span>
+              </div>
+              <div class="group-body"></div>
+
+              <div class="group-header collapsed">
+                <span class="label">Media &amp; Creative</span>
+                <span class="caret">›</span>
+                <span class="count">5</span>
+              </div>
+              <div class="group-body"></div>
+            </aside>
+            <section class="detail">
+              <header class="detail-header">
+                <div>
+                  <p class="eyebrow">Skill detail</p>
+                  <h2>apple-notes</h2>
+                  <span class="path">/Users/agent/.hermes/skills/apple/apple-notes/SKILL.md</span>
+                  <div class="header-fields">
+                    <div class="header-field">
+                      <label>Name</label>
+                      <input value="apple-notes" />
+                    </div>
+                    <div class="header-field">
+                      <label>Category</label>
+                      <input value="apple" />
+                    </div>
+                  </div>
+                </div>
+              </header>
+              <div class="editor-shell">
+                <div class="editor-meta">
+                  <span>frontmatter detected</span>
+                  <span class="dot"></span>
+                  <span>91 lines</span>
+                  <span class="dot"></span>
+                  <span>Manage Apple Notes via memo CLI: create, search, edit.</span>
+                </div>
+                <div class="editor-body">
+                  <div><span class="ln">1</span>---</div>
+                  <div><span class="ln">2</span><span class="k">name</span>: apple-notes</div>
+                  <div><span class="ln">3</span><span class="k">description</span>: <span class="s">"Manage Apple Notes via memo CLI: create, search, edit."</span></div>
+                  <div><span class="ln">4</span><span class="k">version</span>: 1.0.0</div>
+                  <div><span class="ln">5</span><span class="k">author</span>: Hermes Agent</div>
+                  <div><span class="ln">6</span><span class="k">license</span>: MIT</div>
+                  <div><span class="ln">7</span><span class="k">platforms</span>: [macos]</div>
+                  <div><span class="ln">8</span><span class="k">metadata</span>:</div>
+                  <div><span class="ln">9</span>&nbsp;&nbsp;<span class="k">hermes</span>:</div>
+                  <div><span class="ln">10</span>&nbsp;&nbsp;&nbsp;&nbsp;<span class="k">tags</span>: [Notes, Apple, macOS, note-taking]</div>
+                  <div><span class="ln">11</span>&nbsp;&nbsp;&nbsp;&nbsp;<span class="k">related_skills</span>: [obsidian]</div>
+                  <div><span class="ln">12</span>---</div>
+                  <div><span class="ln">13</span></div>
+                  <div><span class="ln">14</span><span class="h"># Apple Notes</span></div>
+                  <div><span class="ln">15</span></div>
+                  <div><span class="ln">16</span>Use `memo` to manage Apple Notes directly from the terminal.</div>
+                </div>
+              </div>
+              <div class="detail-footer">
+                <div class="footer-spacer"></div>
+                <button class="btn sm">💾 Save</button>
+              </div>
+            </section>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <p class="annotate">
+    <b>What's different vs A/B:</b> the category dropdown is gone from the toolbar — toolbar collapses to Search + Source + New skill (three controls instead of four). Categories now live as collapsible sections in the list, with counts on the right. Active section stays open by default; the rest collapse so the list reads as a clean directory at first glance. Search still filters across all groups (matching groups auto-expand). Assumes a category cleanup pass to reduce the 22 current tags down to ~6–8 broader groupings (e.g. <i>Coding</i> covers <code>software-development</code>/<code>devops</code>; <i>Apple</i> covers <code>apple</code>/<code>smart-home</code>; brand/maintainer tags like <code>dogfood</code>, <code>yuanbao</code> move to source metadata).
+  </p>
+</div>
+
+<!-- ============================================================ -->
+<!-- OPTION D — Option C + source as segmented control in the toolbar -->
+<!-- ============================================================ -->
+<div class="variant">
+  <div class="variant-label">
+    <h2>Option D — source as a segmented control in the toolbar</h2>
+    <span>direct dropdown → segmented swap; toolbar stays at three slots</span>
+  </div>
+  <div class="frame">
+    <div class="traffic"><span class="r"></span><span class="y"></span><span class="g"></span></div>
+    <div class="app">
+      <aside class="sidebar">
+        <div class="sidebar-profile">
+          <div class="avatar"></div>
+          <div>
+            <div class="name">Iris</div>
+            <div class="status">Session route online</div>
+          </div>
+        </div>
+        <nav class="sidebar-nav">
+          <div class="sidebar-item">New session</div>
+          <div class="sidebar-item">Search</div>
+          <div class="sidebar-item active">Agents</div>
+          <div class="sidebar-item">Automations</div>
+        </nav>
+      </aside>
+      <div>
+        <div class="topbar">
+          <div class="crumb">
+            <div class="back">←</div>
+            <div>
+              <div class="path">Agents / Default</div>
+              <div class="page">default</div>
+            </div>
+          </div>
+          <div class="tabs">
+            <button>Overview</button>
+            <button>Memory</button>
+            <button class="active">Skills</button>
+          </div>
+        </div>
+        <div class="workspace tight">
+          <div class="toolbar with-segment">
+            <div class="pill input">⌕ &nbsp; Search skills, tags, or categories</div>
+            <div class="segment">
+              <button class="segment-item active">All</button>
+              <button class="segment-item">Installed</button>
+              <button class="segment-item">Bundled</button>
+              <button class="segment-item">Community</button>
+            </div>
+            <button class="btn">+ New skill</button>
+          </div>
+          <div class="browser narrow-tight">
+            <aside class="list grouped">
+              <div class="group-header">
+                <span class="label">Apple</span>
+                <span class="caret">›</span>
+                <span class="count">4</span>
+              </div>
+              <div class="group-body">
+                <div class="row compact active">
+                  <div class="icon">⌗</div>
+                  <div class="title">apple-notes</div>
+                </div>
+                <div class="row compact">
+                  <div class="icon">⌗</div>
+                  <div class="title">apple-reminders</div>
+                </div>
+                <div class="row compact">
+                  <div class="icon">⌗</div>
+                  <div class="title">findmy</div>
+                </div>
+                <div class="row compact">
+                  <div class="icon">⌗</div>
+                  <div class="title">imessage</div>
+                </div>
+              </div>
+              <div class="group-header">
+                <span class="label">Coding</span>
+                <span class="caret">›</span>
+                <span class="count">3</span>
+              </div>
+              <div class="group-body">
+                <div class="row compact">
+                  <div class="icon">⌗</div>
+                  <div class="title">claude-code</div>
+                </div>
+                <div class="row compact">
+                  <div class="icon">⌗</div>
+                  <div class="title">codex</div>
+                </div>
+                <div class="row compact">
+                  <div class="icon">⌗</div>
+                  <div class="title">kanban-codex</div>
+                </div>
+              </div>
+              <div class="group-header collapsed">
+                <span class="label">Desktop &amp; OS</span>
+                <span class="caret">›</span>
+                <span class="count">2</span>
+              </div>
+              <div class="group-body"></div>
+              <div class="group-header collapsed">
+                <span class="label">Research</span>
+                <span class="caret">›</span>
+                <span class="count">6</span>
+              </div>
+              <div class="group-body"></div>
+              <div class="group-header collapsed">
+                <span class="label">Productivity</span>
+                <span class="caret">›</span>
+                <span class="count">9</span>
+              </div>
+              <div class="group-body"></div>
+            </aside>
+            <section class="detail">
+              <header class="detail-header">
+                <div>
+                  <p class="eyebrow">Skill detail</p>
+                  <h2>apple-notes</h2>
+                  <span class="path">/Users/agent/.hermes/skills/apple/apple-notes/SKILL.md</span>
+                  <div class="header-fields">
+                    <div class="header-field">
+                      <label>Name</label>
+                      <input value="apple-notes" />
+                    </div>
+                    <div class="header-field">
+                      <label>Category</label>
+                      <input value="apple" />
+                    </div>
+                  </div>
+                </div>
+              </header>
+              <div class="editor-shell">
+                <div class="editor-meta">
+                  <span>frontmatter detected</span>
+                  <span class="dot"></span>
+                  <span>91 lines</span>
+                  <span class="dot"></span>
+                  <span>Manage Apple Notes via memo CLI: create, search, edit.</span>
+                </div>
+                <div class="editor-body">
+                  <div><span class="ln">1</span>---</div>
+                  <div><span class="ln">2</span><span class="k">name</span>: apple-notes</div>
+                  <div><span class="ln">3</span><span class="k">description</span>: <span class="s">"Manage Apple Notes via memo CLI: create, search, edit."</span></div>
+                  <div><span class="ln">4</span><span class="k">version</span>: 1.0.0</div>
+                  <div><span class="ln">5</span><span class="k">author</span>: Hermes Agent</div>
+                  <div><span class="ln">6</span><span class="k">license</span>: MIT</div>
+                  <div><span class="ln">7</span><span class="k">platforms</span>: [macos]</div>
+                  <div><span class="ln">8</span><span class="k">metadata</span>:</div>
+                  <div><span class="ln">9</span>&nbsp;&nbsp;<span class="k">hermes</span>:</div>
+                  <div><span class="ln">10</span>&nbsp;&nbsp;&nbsp;&nbsp;<span class="k">tags</span>: [Notes, Apple, macOS, note-taking]</div>
+                  <div><span class="ln">11</span>---</div>
+                  <div><span class="ln">12</span></div>
+                  <div><span class="ln">13</span><span class="h"># Apple Notes</span></div>
+                </div>
+              </div>
+              <div class="detail-footer">
+                <div class="footer-spacer"></div>
+                <button class="btn sm">💾 Save</button>
+              </div>
+            </section>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <p class="annotate">
+    <b>Tradeoffs:</b> all source modes visible at all times → most discoverable. Uses ~280px of toolbar width that the dropdown previously hid. Visual register is similar to the page tabs (Overview / Memory / Skills) above — readable but creates a faint "tabs near tabs" effect; I kept the segment lighter than the page tabs to keep the hierarchy clear.
+  </p>
+</div>
+
+<!-- ============================================================ -->
+<!-- OPTION E — source tabs attached to the list, with counts -->
+<!-- ============================================================ -->
+<div class="variant">
+  <div class="variant-label">
+    <h2>Option E — source tabs attached to the list, with counts</h2>
+    <span>toolbar shrinks to Search + New skill; source pivot lives where the "83 skills" count used to</span>
+  </div>
+  <div class="frame">
+    <div class="traffic"><span class="r"></span><span class="y"></span><span class="g"></span></div>
+    <div class="app">
+      <aside class="sidebar">
+        <div class="sidebar-profile">
+          <div class="avatar"></div>
+          <div>
+            <div class="name">Iris</div>
+            <div class="status">Session route online</div>
+          </div>
+        </div>
+        <nav class="sidebar-nav">
+          <div class="sidebar-item">New session</div>
+          <div class="sidebar-item">Search</div>
+          <div class="sidebar-item active">Agents</div>
+          <div class="sidebar-item">Automations</div>
+        </nav>
+      </aside>
+      <div>
+        <div class="topbar">
+          <div class="crumb">
+            <div class="back">←</div>
+            <div>
+              <div class="path">Agents / Default</div>
+              <div class="page">default</div>
+            </div>
+          </div>
+          <div class="tabs">
+            <button>Overview</button>
+            <button>Memory</button>
+            <button class="active">Skills</button>
+          </div>
+        </div>
+        <div class="workspace tight">
+          <div class="toolbar lean">
+            <div class="pill input">⌕ &nbsp; Search skills, tags, or categories</div>
+            <button class="btn">+ New skill</button>
+          </div>
+          <div class="browser narrow-tight">
+            <aside class="list grouped">
+              <div class="list-tabs">
+                <span class="list-tab active">All <span class="num">83</span></span>
+                <span class="list-tab-sep">·</span>
+                <span class="list-tab">Installed <span class="num">12</span></span>
+                <span class="list-tab-sep">·</span>
+                <span class="list-tab">Bundled <span class="num">1</span></span>
+                <span class="list-tab-sep">·</span>
+                <span class="list-tab">Community <span class="num">2</span></span>
+              </div>
+              <div class="group-header">
+                <span class="label">Apple</span>
+                <span class="caret">›</span>
+                <span class="count">4</span>
+              </div>
+              <div class="group-body">
+                <div class="row compact active">
+                  <div class="icon">⌗</div>
+                  <div class="title">apple-notes</div>
+                </div>
+                <div class="row compact">
+                  <div class="icon">⌗</div>
+                  <div class="title">apple-reminders</div>
+                </div>
+                <div class="row compact">
+                  <div class="icon">⌗</div>
+                  <div class="title">findmy</div>
+                </div>
+                <div class="row compact">
+                  <div class="icon">⌗</div>
+                  <div class="title">imessage</div>
+                </div>
+              </div>
+              <div class="group-header">
+                <span class="label">Coding</span>
+                <span class="caret">›</span>
+                <span class="count">3</span>
+              </div>
+              <div class="group-body">
+                <div class="row compact">
+                  <div class="icon">⌗</div>
+                  <div class="title">claude-code</div>
+                </div>
+                <div class="row compact">
+                  <div class="icon">⌗</div>
+                  <div class="title">codex</div>
+                </div>
+                <div class="row compact">
+                  <div class="icon">⌗</div>
+                  <div class="title">kanban-codex</div>
+                </div>
+              </div>
+              <div class="group-header collapsed">
+                <span class="label">Desktop &amp; OS</span>
+                <span class="caret">›</span>
+                <span class="count">2</span>
+              </div>
+              <div class="group-body"></div>
+              <div class="group-header collapsed">
+                <span class="label">Research</span>
+                <span class="caret">›</span>
+                <span class="count">6</span>
+              </div>
+              <div class="group-body"></div>
+              <div class="group-header collapsed">
+                <span class="label">Productivity</span>
+                <span class="caret">›</span>
+                <span class="count">9</span>
+              </div>
+              <div class="group-body"></div>
+            </aside>
+            <section class="detail">
+              <header class="detail-header">
+                <div>
+                  <p class="eyebrow">Skill detail</p>
+                  <h2>apple-notes</h2>
+                  <span class="path">/Users/agent/.hermes/skills/apple/apple-notes/SKILL.md</span>
+                  <div class="header-fields">
+                    <div class="header-field">
+                      <label>Name</label>
+                      <input value="apple-notes" />
+                    </div>
+                    <div class="header-field">
+                      <label>Category</label>
+                      <input value="apple" />
+                    </div>
+                  </div>
+                </div>
+              </header>
+              <div class="editor-shell">
+                <div class="editor-meta">
+                  <span>frontmatter detected</span>
+                  <span class="dot"></span>
+                  <span>91 lines</span>
+                  <span class="dot"></span>
+                  <span>Manage Apple Notes via memo CLI: create, search, edit.</span>
+                </div>
+                <div class="editor-body">
+                  <div><span class="ln">1</span>---</div>
+                  <div><span class="ln">2</span><span class="k">name</span>: apple-notes</div>
+                  <div><span class="ln">3</span><span class="k">description</span>: <span class="s">"Manage Apple Notes via memo CLI: create, search, edit."</span></div>
+                  <div><span class="ln">4</span><span class="k">version</span>: 1.0.0</div>
+                  <div><span class="ln">5</span><span class="k">author</span>: Hermes Agent</div>
+                  <div><span class="ln">6</span><span class="k">license</span>: MIT</div>
+                  <div><span class="ln">7</span><span class="k">platforms</span>: [macos]</div>
+                  <div><span class="ln">8</span><span class="k">metadata</span>:</div>
+                  <div><span class="ln">9</span>&nbsp;&nbsp;<span class="k">hermes</span>:</div>
+                  <div><span class="ln">10</span>&nbsp;&nbsp;&nbsp;&nbsp;<span class="k">tags</span>: [Notes, Apple, macOS, note-taking]</div>
+                  <div><span class="ln">11</span>---</div>
+                  <div><span class="ln">12</span></div>
+                  <div><span class="ln">13</span><span class="h"># Apple Notes</span></div>
+                </div>
+              </div>
+              <div class="detail-footer">
+                <div class="footer-spacer"></div>
+                <button class="btn sm">💾 Save</button>
+              </div>
+            </section>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <p class="annotate">
+    <b>Tradeoffs:</b> source filter merges with the count line — one row carries both "where am I" and "what's here" at a glance. Toolbar collapses to two controls and feels emptier. Visually farther from the page-level tabs, so no "tabs near tabs" tension. Slightly less discoverable since it lives lower on the page, but in a two-column layout the eye lands on the list anyway.
+  </p>
+</div>
+
+<!-- ============================================================ -->
+<!-- OPTION F — top toolbar removed, controls live above the list -->
+<!-- ============================================================ -->
+<div class="variant">
+  <div class="variant-label">
+    <h2>Option F — controls inside the list column header</h2>
+    <span>top toolbar row removed; Search + Source + New skill compress into a row above the groups</span>
+  </div>
+  <div class="frame">
+    <div class="traffic"><span class="r"></span><span class="y"></span><span class="g"></span></div>
+    <div class="app">
+      <aside class="sidebar">
+        <div class="sidebar-profile">
+          <div class="avatar"></div>
+          <div>
+            <div class="name">Iris</div>
+            <div class="status">Session route online</div>
+          </div>
+        </div>
+        <nav class="sidebar-nav">
+          <div class="sidebar-item">New session</div>
+          <div class="sidebar-item">Search</div>
+          <div class="sidebar-item active">Agents</div>
+          <div class="sidebar-item">Automations</div>
+        </nav>
+      </aside>
+      <div>
+        <div class="topbar">
+          <div class="crumb">
+            <div class="back">←</div>
+            <div>
+              <div class="path">Agents / Default</div>
+              <div class="page">default</div>
+            </div>
+          </div>
+          <div class="tabs">
+            <button>Overview</button>
+            <button>Memory</button>
+            <button class="active">Skills</button>
+          </div>
+        </div>
+        <div class="workspace tight">
+          <div class="browser no-toolbar">
+            <aside class="list grouped">
+              <div class="list-controls">
+                <div class="icon-pill" title="Search">⌕</div>
+                <div class="icon-pill" title="Source">⛀</div>
+                <div class="footer-spacer"></div>
+                <div class="icon-pill primary" title="New skill">+</div>
+              </div>
+              <div class="group-header">
+                <span class="label">Apple</span>
+                <span class="caret">›</span>
+                <span class="count">4</span>
+              </div>
+              <div class="group-body">
+                <div class="row compact active">
+                  <div class="icon">⌗</div>
+                  <div class="title">apple-notes</div>
+                </div>
+                <div class="row compact">
+                  <div class="icon">⌗</div>
+                  <div class="title">apple-reminders</div>
+                </div>
+                <div class="row compact">
+                  <div class="icon">⌗</div>
+                  <div class="title">findmy</div>
+                </div>
+                <div class="row compact">
+                  <div class="icon">⌗</div>
+                  <div class="title">imessage</div>
+                </div>
+              </div>
+              <div class="group-header">
+                <span class="label">Coding</span>
+                <span class="caret">›</span>
+                <span class="count">3</span>
+              </div>
+              <div class="group-body">
+                <div class="row compact">
+                  <div class="icon">⌗</div>
+                  <div class="title">claude-code</div>
+                </div>
+                <div class="row compact">
+                  <div class="icon">⌗</div>
+                  <div class="title">codex</div>
+                </div>
+                <div class="row compact">
+                  <div class="icon">⌗</div>
+                  <div class="title">kanban-codex</div>
+                </div>
+              </div>
+              <div class="group-header collapsed">
+                <span class="label">Desktop &amp; OS</span>
+                <span class="caret">›</span>
+                <span class="count">2</span>
+              </div>
+              <div class="group-body"></div>
+              <div class="group-header collapsed">
+                <span class="label">Research</span>
+                <span class="caret">›</span>
+                <span class="count">6</span>
+              </div>
+              <div class="group-body"></div>
+              <div class="group-header collapsed">
+                <span class="label">Productivity</span>
+                <span class="caret">›</span>
+                <span class="count">9</span>
+              </div>
+              <div class="group-body"></div>
+              <div class="group-header collapsed">
+                <span class="label">Media &amp; Creative</span>
+                <span class="caret">›</span>
+                <span class="count">5</span>
+              </div>
+              <div class="group-body"></div>
+            </aside>
+            <section class="detail">
+              <header class="detail-header">
+                <div>
+                  <p class="eyebrow">Skill detail</p>
+                  <h2>apple-notes</h2>
+                  <span class="path">/Users/agent/.hermes/skills/apple/apple-notes/SKILL.md</span>
+                  <div class="header-fields">
+                    <div class="header-field">
+                      <label>Name</label>
+                      <input value="apple-notes" />
+                    </div>
+                    <div class="header-field">
+                      <label>Category</label>
+                      <input value="apple" />
+                    </div>
+                  </div>
+                </div>
+              </header>
+              <div class="editor-shell">
+                <div class="editor-meta">
+                  <span>frontmatter detected</span>
+                  <span class="dot"></span>
+                  <span>91 lines</span>
+                  <span class="dot"></span>
+                  <span>Manage Apple Notes via memo CLI: create, search, edit.</span>
+                </div>
+                <div class="editor-body">
+                  <div><span class="ln">1</span>---</div>
+                  <div><span class="ln">2</span><span class="k">name</span>: apple-notes</div>
+                  <div><span class="ln">3</span><span class="k">description</span>: <span class="s">"Manage Apple Notes via memo CLI: create, search, edit."</span></div>
+                  <div><span class="ln">4</span><span class="k">version</span>: 1.0.0</div>
+                  <div><span class="ln">5</span><span class="k">author</span>: Hermes Agent</div>
+                  <div><span class="ln">6</span><span class="k">license</span>: MIT</div>
+                  <div><span class="ln">7</span><span class="k">platforms</span>: [macos]</div>
+                  <div><span class="ln">8</span><span class="k">metadata</span>:</div>
+                  <div><span class="ln">9</span>&nbsp;&nbsp;<span class="k">hermes</span>:</div>
+                  <div><span class="ln">10</span>&nbsp;&nbsp;&nbsp;&nbsp;<span class="k">tags</span>: [Notes, Apple, macOS, note-taking]</div>
+                  <div><span class="ln">11</span>---</div>
+                  <div><span class="ln">12</span></div>
+                  <div><span class="ln">13</span><span class="h"># Apple Notes</span></div>
+                  <div><span class="ln">14</span></div>
+                  <div><span class="ln">15</span>Use `memo` to manage Apple Notes directly from the terminal.</div>
+                </div>
+              </div>
+              <div class="detail-footer">
+                <div class="footer-spacer"></div>
+                <button class="btn sm">💾 Save</button>
+              </div>
+            </section>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <p class="annotate">
+    <b>Resting state.</b> Top toolbar row eliminated. List column header carries three icon buttons: Search (left), Source (left), New (right, distinguished as a primary-styled "+"). Tooltips on hover for all three. Editor reclaims the full toolbar row above; list column stays narrow (~220px). Source filter and New action sacrifice their text labels in exchange for a much quieter resting state. Tradeoff: "+" alone is less self-explanatory than "+ New skill" — recognition rests on tooltip + the primary visual treatment to read as "the main action."
+  </p>
+</div>
+
+<!-- ============================================================ -->
+<!-- OPTION F (search active) — search expanded; Source + New hidden -->
+<!-- ============================================================ -->
+<div class="variant">
+  <div class="variant-label">
+    <h2>Option F — search mode</h2>
+    <span>tapping the search icon expands it across the row; Source &amp; New hide; ✕ on the right dismisses</span>
+  </div>
+  <div class="frame">
+    <div class="traffic"><span class="r"></span><span class="y"></span><span class="g"></span></div>
+    <div class="app">
+      <aside class="sidebar">
+        <div class="sidebar-profile">
+          <div class="avatar"></div>
+          <div>
+            <div class="name">Iris</div>
+            <div class="status">Session route online</div>
+          </div>
+        </div>
+        <nav class="sidebar-nav">
+          <div class="sidebar-item">New session</div>
+          <div class="sidebar-item">Search</div>
+          <div class="sidebar-item active">Agents</div>
+          <div class="sidebar-item">Automations</div>
+        </nav>
+      </aside>
+      <div>
+        <div class="topbar">
+          <div class="crumb">
+            <div class="back">←</div>
+            <div>
+              <div class="path">Agents / Default</div>
+              <div class="page">default</div>
+            </div>
+          </div>
+          <div class="tabs">
+            <button>Overview</button>
+            <button>Memory</button>
+            <button class="active">Skills</button>
+          </div>
+        </div>
+        <div class="workspace tight">
+          <div class="browser no-toolbar">
+            <aside class="list grouped">
+              <div class="list-controls searching">
+                <div class="pill search-expanded">
+                  ⌕
+                  <span class="ph">apple</span>
+                  <span class="cursor"></span>
+                </div>
+                <div class="icon-pill" title="Close search">✕</div>
+              </div>
+              <div class="group-header">
+                <span class="label">Apple</span>
+                <span class="caret">›</span>
+                <span class="count">4</span>
+              </div>
+              <div class="group-body">
+                <div class="row compact active">
+                  <div class="icon">⌗</div>
+                  <div class="title">apple-notes</div>
+                </div>
+                <div class="row compact">
+                  <div class="icon">⌗</div>
+                  <div class="title">apple-reminders</div>
+                </div>
+              </div>
+              <div class="group-header">
+                <span class="label">Productivity</span>
+                <span class="caret">›</span>
+                <span class="count">1</span>
+              </div>
+              <div class="group-body">
+                <div class="row compact">
+                  <div class="icon">⌗</div>
+                  <div class="title">apple-shortcuts</div>
+                </div>
+              </div>
+            </aside>
+            <section class="detail">
+              <header class="detail-header">
+                <div>
+                  <p class="eyebrow">Skill detail</p>
+                  <h2>apple-notes</h2>
+                  <span class="path">/Users/agent/.hermes/skills/apple/apple-notes/SKILL.md</span>
+                  <div class="header-fields">
+                    <div class="header-field">
+                      <label>Name</label>
+                      <input value="apple-notes" />
+                    </div>
+                    <div class="header-field">
+                      <label>Category</label>
+                      <input value="apple" />
+                    </div>
+                  </div>
+                </div>
+              </header>
+              <div class="editor-shell">
+                <div class="editor-meta">
+                  <span>frontmatter detected</span>
+                  <span class="dot"></span>
+                  <span>91 lines</span>
+                  <span class="dot"></span>
+                  <span>Manage Apple Notes via memo CLI: create, search, edit.</span>
+                </div>
+                <div class="editor-body">
+                  <div><span class="ln">1</span>---</div>
+                  <div><span class="ln">2</span><span class="k">name</span>: apple-notes</div>
+                  <div><span class="ln">3</span><span class="k">description</span>: <span class="s">"Manage Apple Notes via memo CLI: create, search, edit."</span></div>
+                  <div><span class="ln">4</span><span class="k">version</span>: 1.0.0</div>
+                  <div><span class="ln">5</span><span class="k">author</span>: Hermes Agent</div>
+                  <div><span class="ln">6</span><span class="k">license</span>: MIT</div>
+                  <div><span class="ln">7</span><span class="k">platforms</span>: [macos]</div>
+                  <div><span class="ln">8</span><span class="k">metadata</span>:</div>
+                  <div><span class="ln">9</span>&nbsp;&nbsp;<span class="k">hermes</span>:</div>
+                  <div><span class="ln">10</span>&nbsp;&nbsp;&nbsp;&nbsp;<span class="k">tags</span>: [Notes, Apple, macOS, note-taking]</div>
+                  <div><span class="ln">11</span>---</div>
+                  <div><span class="ln">12</span></div>
+                  <div><span class="ln">13</span><span class="h"># Apple Notes</span></div>
+                </div>
+              </div>
+              <div class="detail-footer">
+                <div class="footer-spacer"></div>
+                <button class="btn sm">💾 Save</button>
+              </div>
+            </section>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <p class="annotate">
+    <b>Search active.</b> Tapping the search icon expands it into a full-width input across the list column; Source and New collapse out and ✕ takes their place on the right. Matching groups auto-expand (here, "Apple" stays open and "Productivity" reveals <code>apple-shortcuts</code>). Pressing ✕ or hitting <kbd>Esc</kbd> restores the resting state. Auto-focus on expand; query persists until dismissed.
+  </p>
+</div>
+
+<div class="legend-grid">
+  <b>Notes</b>
+  <span>The "Installed" pill on every row in the current design is redundant noise — in Option A it only appears on community/bundled items. If you want it back in A I'll keep it but right-align it on hover only.</span>
+  <b>Path field</b>
+  <span>In A/B the path sits under the title; if it's long it truncates with ellipsis. Hover would show full path in a tooltip.</span>
+  <b>Save button</b>
+  <span>Stays in the footer (per the change we just made). The notice would appear to its left.</span>
+</div>
+
+</body>
+</html>

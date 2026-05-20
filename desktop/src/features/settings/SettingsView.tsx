@@ -431,11 +431,6 @@ export function SettingsView({
               </FieldSet>
             </CardContent>
             <CardFooter className="settings-action-row">
-              <Button size="appSmall" onClick={() => void saveLocalProfile()}>
-                <Plug data-icon="inline-start" />
-                Save
-              </Button>
-              <span className="settings-action-spacer" />
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <Button variant="appNeutral" size="appSmall">
@@ -444,7 +439,7 @@ export function SettingsView({
                     <ChevronDown data-icon="inline-end" />
                   </Button>
                 </DropdownMenuTrigger>
-                <DropdownMenuContent align="end" sideOffset={6} className="min-w-[208px]">
+                <DropdownMenuContent align="start" sideOffset={6} className="min-w-[208px]">
                   <DropdownMenuItem disabled={busyAction === "core-restart"} onSelect={() => void startOrRestartCore(true)}>
                     <RotateCw />
                     Restart Core
@@ -464,6 +459,11 @@ export function SettingsView({
                   </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
+              <span className="settings-action-spacer" />
+              <Button size="appSmall" onClick={() => void saveLocalProfile()}>
+                <Plug data-icon="inline-start" />
+                Save
+              </Button>
             </CardFooter>
             {sidecarStatus ? (
               <div className="settings-runtime-row">

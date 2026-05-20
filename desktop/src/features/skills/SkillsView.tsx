@@ -1,11 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
 import {
+  ChevronDown,
+  ChevronRight,
   FileCode2,
-  Filter,
   Plus,
   Save,
   Search,
   Store,
+  X,
 } from "lucide-react";
 import { getIrisSkillDetail, saveIrisSkill } from "../../lib/irisRuntime";
 import { CodeEditor } from "../../shared/CodeEditor";
@@ -15,13 +17,12 @@ import { Button } from "../../shared/ui/button";
 import { Field, FieldLabel } from "../../shared/ui/field";
 import { Input } from "../../shared/ui/input";
 import {
-  Select,
-  SelectContent,
-  SelectGroup,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "../../shared/ui/select";
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuTrigger,
+} from "../../shared/ui/dropdown-menu";
 import type { HermesRuntimeConfig, HermesSkill, HermesSkillDetail } from "../../types/hermes";
 
 type SkillSource = HermesSkill["source"];
@@ -73,7 +74,6 @@ export function SkillsView({
   const installedSkills = skills.length ? skills : fallbackSkills;
   const allSkills = useMemo(() => [...installedSkills, ...communitySkills], [installedSkills]);
   const [query, setQuery] = useState("");
-  const [categoryFilter, setCategoryFilter] = useState("all");
   const [sourceFilter, setSourceFilter] = useState<SkillSource | "all">("all");
   const [selectedKey, setSelectedKey] = useState("");
   const [detail, setDetail] = useState<HermesSkillDetail | null>(null);
@@ -82,11 +82,8 @@ export function SkillsView({
   const [draftContent, setDraftContent] = useState("");
   const [isSaving, setIsSaving] = useState(false);
   const [notice, setNotice] = useState("");
-
-  const categories = useMemo(
-    () => ["all", ...Array.from(new Set(allSkills.map((skill) => skill.category))).sort()],
-    [allSkills],
-  );
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
+  const [isSearchExpanded, setIsSearchExpanded] = useState(false);
 
   const visibleSkills = useMemo(() => {
     const needle = query.trim().toLowerCase();
@@ -94,11 +91,24 @@ export function SkillsView({
       const haystack = `${skill.name} ${skill.description} ${skill.category} ${skill.tags.join(" ")}`.toLowerCase();
       return (
         (!needle || haystack.includes(needle)) &&
-        (categoryFilter === "all" || skill.category === categoryFilter) &&
         (sourceFilter === "all" || skill.source === sourceFilter)
       );
     });
-  }, [allSkills, categoryFilter, query, sourceFilter]);
+  }, [allSkills, query, sourceFilter]);
+
+  const groupedSkills = useMemo(() => {
+    const map = new Map<string, HermesSkill[]>();
+    for (const skill of visibleSkills) {
+      const list = map.get(skill.category) ?? [];
+      list.push(skill);
+      map.set(skill.category, list);
+    }
+    return Array.from(map.entries())
+      .map(([category, items]) => ({ category, skills: items }))
+      .sort((a, b) => a.category.localeCompare(b.category));
+  }, [visibleSkills]);
+
+  const isSearching = query.trim().length > 0;
 
   const selectedSkill = allSkills.find((skill) => skillKey(skill) === selectedKey);
   const draftMeta = useMemo(() => extractDraftMetadata(draftContent), [draftContent]);
@@ -119,6 +129,38 @@ export function SkillsView({
       setSelectedKey(visibleSkills[0] ? skillKey(visibleSkills[0]) : "");
     }
   }, [selectedKey, visibleSkills]);
+
+  useEffect(() => {
+    if (!selectedSkill) return;
+    setExpandedGroups((prev) => {
+      if (prev.has(selectedSkill.category)) return prev;
+      const next = new Set(prev);
+      next.add(selectedSkill.category);
+      return next;
+    });
+  }, [selectedSkill]);
+
+  function toggleGroup(category: string) {
+    setExpandedGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(category)) next.delete(category);
+      else next.add(category);
+      return next;
+    });
+  }
+
+  function isGroupExpanded(category: string) {
+    return isSearching || expandedGroups.has(category);
+  }
+
+  function openSearch() {
+    setIsSearchExpanded(true);
+  }
+
+  function closeSearch() {
+    setIsSearchExpanded(false);
+    setQuery("");
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -205,96 +247,140 @@ export function SkillsView({
 
   return (
     <div className="tool-view skills-workspace">
-      <div className="skills-toolbar">
-        <label className="skill-search">
-          <Search aria-hidden="true" />
-          <Input
-            className="pl-9"
-            value={query}
-            placeholder="Search skills, tags, or categories"
-            onChange={(event) => setQuery(event.target.value)}
-          />
-        </label>
-        <label className="skill-select">
-          <Select value={categoryFilter} onValueChange={setCategoryFilter}>
-            <SelectTrigger className="w-full min-w-0">
-              <Filter aria-hidden="true" />
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectGroup>
-                {categories.map((category) => (
-                  <SelectItem key={category} value={category}>
-                    {category}
-                  </SelectItem>
-                ))}
-              </SelectGroup>
-            </SelectContent>
-          </Select>
-        </label>
-        <label className="skill-select">
-          <Select
-            value={sourceFilter}
-            onValueChange={(value) => setSourceFilter(value as SkillSource | "all")}
-          >
-            <SelectTrigger className="w-full min-w-0">
-              <Store aria-hidden="true" />
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectGroup>
-                <SelectItem value="all">all sources</SelectItem>
-                <SelectItem value="installed">installed</SelectItem>
-                <SelectItem value="bundled">bundled</SelectItem>
-                <SelectItem value="community">community</SelectItem>
-              </SelectGroup>
-            </SelectContent>
-          </Select>
-        </label>
-        <Button className="skills-toolbar-action" size="appSmall" type="button" onClick={createNewSkill}>
-          <Plus data-icon="inline-start" />
-          New skill
-        </Button>
-      </div>
-
       <div className="skills-browser">
         <aside className="skill-list-panel">
-          <div className="skill-list-heading">
-            <span>{visibleSkills.length} skills</span>
+          <div className={`skill-list-controls ${isSearchExpanded ? "is-searching" : ""}`}>
+            {isSearchExpanded ? (
+              <>
+                <div className="skill-search-expanded">
+                  <Search aria-hidden="true" size={14} />
+                  <Input
+                    autoFocus
+                    value={query}
+                    placeholder="Search skills, tags, or categories"
+                    onChange={(event) => setQuery(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Escape") closeSearch();
+                    }}
+                  />
+                </div>
+                <Button
+                  type="button"
+                  variant="appIcon"
+                  size="icon-sm"
+                  aria-label="Close search"
+                  title="Close search"
+                  onClick={closeSearch}
+                >
+                  <X />
+                </Button>
+              </>
+            ) : (
+              <>
+                <h2 className="skill-list-title">Skills</h2>
+                <div className="skill-list-actions">
+                  <Button
+                    type="button"
+                    variant="appIcon"
+                    size="icon-sm"
+                    aria-label="Search"
+                    title="Search"
+                    onClick={openSearch}
+                  >
+                    <Search />
+                  </Button>
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button
+                        type="button"
+                        variant="appIcon"
+                        size="icon-sm"
+                        className="skill-list-source-trigger"
+                        aria-label="Source filter"
+                        title="Source"
+                      >
+                        <Store />
+                        {sourceFilter !== "all" ? (
+                          <span className="skill-source-dot" aria-hidden="true" />
+                        ) : null}
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end">
+                      <DropdownMenuRadioGroup
+                        value={sourceFilter}
+                        onValueChange={(value) => setSourceFilter(value as SkillSource | "all")}
+                      >
+                        <DropdownMenuRadioItem value="all">all sources</DropdownMenuRadioItem>
+                        <DropdownMenuRadioItem value="installed">installed</DropdownMenuRadioItem>
+                        <DropdownMenuRadioItem value="bundled">bundled</DropdownMenuRadioItem>
+                        <DropdownMenuRadioItem value="community">community</DropdownMenuRadioItem>
+                      </DropdownMenuRadioGroup>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                  <Button
+                    type="button"
+                    size="icon-sm"
+                    aria-label="New skill"
+                    title="New skill"
+                    onClick={createNewSkill}
+                  >
+                    <Plus />
+                  </Button>
+                </div>
+              </>
+            )}
           </div>
           <div className="skill-grid">
-            {visibleSkills.map((skill) => (
-              <Button
-                key={skillKey(skill)}
-                type="button"
-                variant="ghost"
-                className={`skill-row ${skillKey(skill) === selectedKey ? "active" : ""}`}
-                onClick={() => setSelectedKey(skillKey(skill))}
-              >
-                <div className="skill-icon">
-                  <FileCode2 size={18} />
+            {groupedSkills.map(({ category, skills: groupSkills }) => {
+              const expanded = isGroupExpanded(category);
+              const ChevronIcon = expanded ? ChevronDown : ChevronRight;
+              return (
+                <div key={category} className="skill-group">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    className="skill-group-toggle"
+                    aria-expanded={expanded}
+                    onClick={() => toggleGroup(category)}
+                  >
+                    <span className="skill-group-label">{category}</span>
+                    <ChevronIcon className="skill-group-chevron" size={13} />
+                    <span className="skill-group-count">{groupSkills.length}</span>
+                  </Button>
+                  {expanded ? (
+                    <div className="skill-group-body">
+                      {groupSkills.map((skill) => (
+                        <Button
+                          key={skillKey(skill)}
+                          type="button"
+                          variant="ghost"
+                          className={`skill-row ${skillKey(skill) === selectedKey ? "active" : ""}`}
+                          onClick={() => setSelectedKey(skillKey(skill))}
+                        >
+                          <div className="skill-icon">
+                            <FileCode2 size={18} />
+                          </div>
+                          <div className="skill-row-copy">
+                            <p className="skill-row-title">{skill.name}</p>
+                            <span className="skill-row-description">{skill.description}</span>
+                          </div>
+                          <Badge variant="secondary" className={`source-pill ${skill.source}`}>{skill.source}</Badge>
+                        </Button>
+                      ))}
+                    </div>
+                  ) : null}
                 </div>
-                <div className="skill-row-copy">
-                  <p className="skill-row-title">{skill.name}</p>
-                  <span className="skill-row-description">{skill.description}</span>
-                </div>
-                <Badge variant="secondary" className={`source-pill ${skill.source}`}>{skill.source}</Badge>
-              </Button>
-            ))}
+              );
+            })}
           </div>
         </aside>
 
         <section className="skill-detail-panel">
           <div className="skill-detail-header">
             <div>
-              <p className="eyebrow">Skill detail</p>
               <h2>{detail?.name || "Select a skill"}</h2>
               <span>{detail?.path || "No skill selected"}</span>
             </div>
-            <Button size="appSmall" disabled={!canSave || isSaving} onClick={() => void saveSkill()}>
-              <Save data-icon="inline-start" />
-              {isSaving ? "Saving" : isVirtualPath(detail?.path || "") ? "Install" : "Save"}
-            </Button>
           </div>
 
           <div className="skill-editor-shell">
@@ -311,11 +397,19 @@ export function SkillsView({
             <CodeEditor value={draftContent} onChange={setDraftContent} metadata={editorMetadata} />
           </div>
 
-          {notice ? (
-            <Alert className="settings-notice">
-              <AlertDescription>{notice}</AlertDescription>
-            </Alert>
-          ) : null}
+          <div className="skill-detail-footer">
+            {notice ? (
+              <Alert className="settings-notice skill-detail-notice">
+                <AlertDescription>{notice}</AlertDescription>
+              </Alert>
+            ) : (
+              <span className="skill-detail-footer-spacer" aria-hidden="true" />
+            )}
+            <Button size="appSmall" disabled={!canSave || isSaving} onClick={() => void saveSkill()}>
+              <Save data-icon="inline-start" />
+              {isSaving ? "Saving" : isVirtualPath(detail?.path || "") ? "Install" : "Save"}
+            </Button>
+          </div>
         </section>
       </div>
     </div>

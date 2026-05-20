@@ -5,7 +5,9 @@ import {
   AppShell,
   SIDEBAR_AUTO_COLLAPSE_WIDTH,
   buildSessionSearchItems,
+  sidebarConnectionStatusLabel,
   sidebarResponsiveResizeDecision,
+  sessionSearchCommandValue,
   unpinnedProfileSessions,
   widthBandForWindow,
 } from "../AppShell";
@@ -15,6 +17,41 @@ import type { HermesSession, HermesProfile, HermesStatus } from "../../types/her
 
 afterEach(() => {
   vi.unstubAllGlobals();
+});
+
+describe("AppShell connection status", () => {
+  it("uses the active connection name when Core is connected", () => {
+    expect(
+      sidebarConnectionStatusLabel(true, {
+        ...statusFixture(),
+        activeConnectionName: "Mac mini",
+        connectionMode: "ssh",
+      }),
+    ).toBe("Mac mini connected");
+  });
+
+  it("falls back to transport-aware labels without a connection name", () => {
+    expect(
+      sidebarConnectionStatusLabel(true, {
+        ...statusFixture(),
+        activeConnectionName: "",
+        connectionMode: "ssh",
+      }),
+    ).toBe("SSH connected");
+    expect(
+      sidebarConnectionStatusLabel(true, {
+        ...statusFixture(),
+        activeConnectionName: "",
+        connectionMode: "managed-local",
+      }),
+    ).toBe("Local connected");
+  });
+
+  it("uses Iris Core offline when the app is disconnected", () => {
+    expect(sidebarConnectionStatusLabel(false, { ...statusFixture(), activeConnectionName: "Local" })).toBe(
+      "Iris Core offline",
+    );
+  });
 });
 
 describe("AppShell pinned sessions", () => {
@@ -463,6 +500,27 @@ describe("AppShell pinned sessions", () => {
       "Pirate / default",
       "Sessions / default",
     ]);
+  });
+
+  it("keeps duplicate session titles as unique command values", () => {
+    const items = buildSessionSearchItems({
+      sessions: [],
+      sessionsByProfile: {},
+      sessionsByProject: {},
+      profiles: [profileFixture()],
+      projects: [],
+      selectedProfile: "default",
+      unprojectedSessions: [
+        sessionFixture({ id: "session_first", title: "Untitled session", lastActiveAt: 20 }),
+        sessionFixture({ id: "session_second", title: "Untitled session", lastActiveAt: 10 }),
+      ],
+      onSelectSession: noop,
+      onSelectProjectSession: noop,
+    });
+
+    expect(items).toHaveLength(2);
+    expect(items.map((item) => item.session.title)).toEqual(["Untitled session", "Untitled session"]);
+    expect(new Set(items.map(sessionSearchCommandValue)).size).toBe(2);
   });
 });
 
