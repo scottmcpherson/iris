@@ -22,10 +22,14 @@ import type { HermesInboxMessage, HermesSession } from "./types/hermes";
 import { useIrisProjects } from "./features/projects/useIrisProjects";
 import { CommandMenu } from "./features/polish/CommandMenu";
 import { OnboardingOverlay } from "./features/polish/OnboardingOverlay";
+import { RuntimeDiagnosticsDialog } from "./features/runtime/RuntimeDiagnosticsDialog";
 import { AppShell } from "./layout/AppShell";
 import { globalShortcutActionForKey } from "./app/keyboardShortcuts";
 import { loadBooleanValue, saveBooleanValue, storageKeys } from "./app/storage";
 import { resolveCoreApiUrl } from "./app/runtimeConfig";
+import {
+  runtimeReadinessForStatus,
+} from "./app/runtimeReadiness";
 import {
   isProjectSession,
   mergeProjectSessionsForSidebar,
@@ -34,6 +38,11 @@ import {
 } from "./app/projectSessions";
 import { Toaster } from "./shared/ui/sonner";
 import { toast } from "sonner";
+import {
+  installIrisCoreHermesPlugin,
+  type IrisCoreGatewayAction,
+  type IrisCoreInstallPluginResult,
+} from "./lib/irisCore";
 
 type AppNotificationInput = {
   tone: "info" | "success" | "error";
@@ -41,11 +50,19 @@ type AppNotificationInput = {
   message: string;
 };
 
+type GatewayActionState = {
+  action: IrisCoreGatewayAction;
+  profile: string;
+};
+
 function App() {
   const [activeView, setActiveView] = useState<View>("chat");
   const [agentDetailProfile, setAgentDetailProfile] = useState<string | null>(null);
   const [agentSection, setAgentSection] = useState<AgentDetailSection>("overview");
   const [commandMenuOpen, setCommandMenuOpen] = useState(false);
+  const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
+  const [gatewayActionState, setGatewayActionState] = useState<GatewayActionState | null>(null);
+  const [adapterInstallBusyProfile, setAdapterInstallBusyProfile] = useState("");
   const [onboardingOpen, setOnboardingOpen] = useState(
     () => !loadBooleanValue(storageKeys.onboardingDismissed),
   );
@@ -53,11 +70,13 @@ function App() {
   const refreshWithNoticeRef = useRef<() => Promise<void>>(async () => {});
 
   const iris = useIrisRuntime();
+  const gatewayActionBusy = Boolean(gatewayActionState);
+  const [chatProfile, setChatProfile] = useState("default");
   const projects = useIrisProjects(iris.runtimeConfig, iris.connected ? "connected" : "offline");
   const projectsRef = useRef(projects);
   projectsRef.current = projects;
   const chat = useIrisChat({
-    profile: iris.selectedProfile,
+    profile: chatProfile,
     runtimeConfig: iris.runtimeConfig,
     isChatViewActive: activeView === "chat",
     onSessionMetadataResolved: (_sessionId, projectId) => {
@@ -110,15 +129,20 @@ function App() {
   const agentProfiles = iris.status?.profiles?.length ? iris.status.profiles : [iris.activeProfile];
   const selectedProfileSummary =
     agentProfiles.find((profile) => profile.name === iris.selectedProfile) || iris.activeProfile;
+  const runtimeReadiness = runtimeReadinessForStatus(iris.status, selectedProfileSummary);
+  const chatProfileSummary =
+    agentProfiles.find((profile) => profile.name === chatProfile) || selectedProfileSummary;
+  const chatRuntimeReadiness = runtimeReadinessForStatus(iris.status, chatProfileSummary);
+  const sidebarStatusProfile = activeView === "chat" ? chatProfile : iris.selectedProfile;
   const modelCatalog = useIrisModelCatalog({
-    profile: iris.selectedProfile,
-    profileSummary: selectedProfileSummary,
+    profile: chatProfile,
+    profileSummary: chatProfileSummary,
     runtimeConfig: iris.runtimeConfig,
     connected: iris.connected,
     refreshKey: iris.status?.checkedAt || 0,
   });
   const slashCommands = useIrisSlashCommands({
-    profile: iris.selectedProfile,
+    profile: chatProfile,
     runtimeConfig: iris.runtimeConfig,
     connected: iris.connected,
     refreshKey: iris.status?.checkedAt || 0,
@@ -133,15 +157,23 @@ function App() {
     () => new Set([chat.selectedSessionId, ...chat.activeSessionIds].filter(Boolean) as string[]),
     [chat.activeSessionIds, chat.selectedSessionId],
   );
+  const sidebarSessions = chat.sessionsByProfile[iris.selectedProfile] ||
+    (chatProfile === iris.selectedProfile ? chat.sessions : []);
+  const sidebarSessionsLoading = chatProfile === iris.selectedProfile
+    ? chat.sessionsLoading
+    : Boolean(chat.sessionsLoadingByProfile[iris.selectedProfile]);
+  const sidebarHistoryError = chatProfile === iris.selectedProfile
+    ? chat.historyError
+    : chat.historyErrorsByProfile[iris.selectedProfile] || null;
   const sidebarSessionsByProject = useMemo(
     () =>
       mergeProjectSessionsForSidebar(
         projects.projects.map((project) => project.id),
         projects.sessionsByProject,
-        chat.sessions,
+        sidebarSessions,
         { preserveProjectSessionIds: projectSessionIdsToPreserve },
       ),
-    [chat.sessions, projectSessionIdsToPreserve, projects.sessionsByProject, projects.projects],
+    [projectSessionIdsToPreserve, projects.sessionsByProject, projects.projects, sidebarSessions],
   );
   const projectedSessions = useMemo(
     () => projectSessionMembership(sidebarSessionsByProject),
@@ -149,15 +181,58 @@ function App() {
   );
   const unprojectedSessions = useMemo(
     () =>
-      chat.sessions.filter((session) =>
+      sidebarSessions.filter((session) =>
         !isProjectSession(session, projectedSessions.ids, projectedSessions.chatIds),
       ),
-    [chat.sessions, projectedSessions],
+    [projectedSessions, sidebarSessions],
   );
   const sidebarSessionReadStates = useMemo(
     () => mergeProjectSessionReadStatesForSidebar(chat.sessionReadStates, sidebarSessionsByProject),
     [chat.sessionReadStates, sidebarSessionsByProject],
   );
+
+  async function runGatewayAction(action: IrisCoreGatewayAction, profileName = iris.selectedProfile) {
+    if (gatewayActionState) return;
+    setGatewayActionState({ action, profile: profileName });
+    try {
+      const result = await iris.runGatewayAction(action, profileName);
+      if (result.ok) {
+        toast.success(`Hermes gateway ${action} completed.`);
+      } else {
+        toast.error(result.error || result.command?.stderr || result.command?.stdout || `Hermes gateway ${action} failed.`);
+      }
+      await Promise.all([
+        modelCatalog.refreshModelCatalog(),
+        slashCommands.refreshSlashCommands(),
+        jobs.refresh(),
+      ]);
+    } finally {
+      setGatewayActionState(null);
+    }
+  }
+
+  async function installAdapterForProfile(profileName = iris.selectedProfile) {
+    if (adapterInstallBusyProfile) return;
+    setAdapterInstallBusyProfile(profileName);
+    try {
+      let installedOk = false;
+      try {
+        const result = await installIrisCoreHermesPlugin(iris.runtimeConfig);
+        const detail = pluginInstallSummary(result);
+        installedOk = result.ok && detail.ok;
+        toast[installedOk ? "success" : "error"](detail.message);
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : "Iris could not install the Iris adapter.");
+      }
+      if (installedOk) {
+        const profile = agentProfiles.find((item) => item.name === profileName);
+        if (profile?.gatewayRunning) await runGatewayAction("restart", profileName);
+        else await iris.refreshIris(profileName);
+      }
+    } finally {
+      setAdapterInstallBusyProfile("");
+    }
+  }
 
   function openDeliveryChat(delivery: HermesInboxMessage) {
     const targetProfile = delivery.profile || iris.selectedProfile;
@@ -169,7 +244,7 @@ function App() {
           ? deliveryMetadata.sessionId
           : "";
     const allSessionEntries = [
-      ...chat.sessions.map((session) => ({ profile: iris.selectedProfile, projectId: null as string | null, session })),
+      ...sidebarSessions.map((session) => ({ profile: iris.selectedProfile, projectId: null as string | null, session })),
       ...Object.entries(chat.sessionsByProfile).flatMap(([profileName, sessions]) =>
         sessions.map((session) => ({ profile: profileName, projectId: null as string | null, session })),
       ),
@@ -195,9 +270,7 @@ function App() {
     const profileName = match?.profile || targetProfile;
     setActiveView("chat");
     projects.selectProject(match?.projectId || null);
-    if (profileName !== iris.selectedProfile) {
-      iris.selectProfile(profileName);
-    }
+    setChatProfile(profileName);
     void chat.loadSession(sessionId, profileName);
   }
 
@@ -270,9 +343,10 @@ function App() {
           ) : undefined
         }
         selectedProfile={iris.selectedProfile}
+        statusProfile={sidebarStatusProfile}
         status={iris.status}
         coreApiUrl={resolveCoreApiUrl(iris.runtimeConfig)}
-        sessions={chat.sessions}
+        sessions={sidebarSessions}
         sessionsByProfile={chat.sessionsByProfile}
         sessionReadStates={sidebarSessionReadStates}
         projects={projects.projects}
@@ -306,9 +380,9 @@ function App() {
         onRefreshProjects={() => void projects.refreshProjects()}
         onRefreshProjectSessions={(projectId) => void projects.refreshProjectSessions(projectId)}
         sessionsLoadedByProfile={chat.sessionsLoadedByProfile}
-        sessionsLoading={chat.sessionsLoading}
+        sessionsLoading={sidebarSessionsLoading}
         sessionsLoadingByProfile={chat.sessionsLoadingByProfile}
-        historyError={chat.historyError}
+        historyError={sidebarHistoryError}
         historyErrorsByProfile={chat.historyErrorsByProfile}
         selectedSessionId={chat.selectedSessionId}
         activeSessionIds={chat.activeSessionIds}
@@ -318,19 +392,15 @@ function App() {
             const project = projects.projects.find((item) => item.id === projectId);
             const agent = project ? projectAgentById.get(project.defaultAgentId) : null;
             projects.selectProject(projectId);
-            if (agent && agent.runtimeProfile !== iris.selectedProfile) {
-              iris.selectProfile(agent.runtimeProfile);
-              chat.startNewSession(agent.runtimeProfile);
-            } else {
-              chat.startNewSession(profileName || iris.selectedProfile);
-            }
+            const targetProfile = agent?.runtimeProfile || profileName || chatProfile;
+            setChatProfile(targetProfile);
+            chat.startNewSession(targetProfile);
             return;
           }
           projects.selectProject(null);
-          if (profileName && profileName !== iris.selectedProfile) {
-            iris.selectProfile(profileName);
-          }
-          chat.startNewSession(profileName);
+          const targetProfile = profileName || chatProfile;
+          setChatProfile(targetProfile);
+          chat.startNewSession(targetProfile);
         }}
         onEditProfile={(profileName) => {
           if (profileName !== iris.selectedProfile) {
@@ -371,23 +441,34 @@ function App() {
         onSelectSession={(profileName, sessionId) => {
           setActiveView("chat");
           projects.selectProject(null);
-          if (profileName !== iris.selectedProfile) {
-            iris.selectProfile(profileName);
-          }
+          setChatProfile(profileName);
           void chat.loadSession(sessionId, profileName);
         }}
         onSelectProjectSession={(projectId, profileName, sessionId) => {
           setActiveView("chat");
           projects.selectProject(projectId);
-          if (profileName !== iris.selectedProfile) {
-            iris.selectProfile(profileName);
-          }
+          setChatProfile(profileName);
           void chat.loadSession(sessionId, profileName);
         }}
         onSelectProfile={(profileName) => {
           iris.selectProfile(profileName);
         }}
         onSelectView={selectView}
+        onOpenDiagnostics={() => setDiagnosticsOpen(true)}
+      />
+      <RuntimeDiagnosticsDialog
+        open={diagnosticsOpen}
+        status={iris.status}
+        selectedProfile={sidebarStatusProfile}
+        runtimeConfig={iris.runtimeConfig}
+        gatewayActionBusy={gatewayActionBusy}
+        onOpenChange={setDiagnosticsOpen}
+        onRuntimeChange={iris.updateRuntimeConfig}
+        onGatewayAction={async (action) => {
+          await runGatewayAction(action, sidebarStatusProfile);
+        }}
+        onRefresh={() => void iris.refreshIris()}
+        onOpenSettings={() => setActiveView("settings")}
       />
       <CommandMenu
         commands={commands}
@@ -482,12 +563,19 @@ function App() {
           memory={iris.memory}
           skills={iris.skills}
           section={agentSection}
+          runtimeReadiness={runtimeReadiness}
+          gatewayActionBusy={gatewayActionBusy}
+          gatewayActionBusyAction={gatewayActionState?.action || null}
+          gatewayActionBusyProfile={gatewayActionState?.profile || ""}
+          adapterInstallBusyProfile={adapterInstallBusyProfile}
           onDetailProfileChange={setAgentDetailProfile}
           onSectionChange={setAgentSection}
           onSelectProfile={iris.selectProfile}
           onRuntimeChange={iris.updateRuntimeConfig}
           onRefresh={() => void iris.refreshIris()}
           onProfileAction={iris.runProfileAction}
+          onGatewayAction={(action, profileName) => void runGatewayAction(action, profileName)}
+          onInstallAdapter={(profileName) => void installAdapterForProfile(profileName)}
           onOpenSettings={() => setActiveView("settings")}
           onResetMemory={iris.resetMemoryFile}
           onSaveMemory={iris.saveMemoryFile}
@@ -502,9 +590,15 @@ function App() {
           selectedProfile={iris.selectedProfile}
           runtimeConfig={iris.runtimeConfig}
           mode="settings"
+          runtimeReadiness={runtimeReadiness}
+          gatewayActionBusy={gatewayActionBusy}
+          gatewayActionBusyAction={gatewayActionState?.action || null}
+          adapterInstallBusy={adapterInstallBusyProfile === iris.selectedProfile}
           onRuntimeChange={iris.updateRuntimeConfig}
           onRefresh={() => void iris.refreshIris()}
           onProfileAction={iris.runProfileAction}
+          onGatewayAction={(action) => void runGatewayAction(action)}
+          onInstallAdapter={() => void installAdapterForProfile(iris.selectedProfile)}
         />
       );
     }
@@ -518,6 +612,9 @@ function App() {
           deliveriesLoading={jobs.deliveriesLoading}
           error={jobs.error}
           pausedAutomations={jobs.pausedAutomations}
+          runtimeReadiness={runtimeReadiness}
+          gatewayActionBusy={gatewayActionBusy}
+          gatewayActionBusyAction={gatewayActionState?.action || null}
           projects={projects.projects}
           selectedProjectId={projects.selectedProjectId}
           onAcknowledgeDelivery={(messageId) => void jobs.acknowledgeDelivery(messageId)}
@@ -528,11 +625,12 @@ function App() {
             if (!projectId) return;
             const project = projects.projects.find((item) => item.id === projectId);
             const agent = project ? projectAgentById.get(project.defaultAgentId) : null;
-            if (agent && agent.runtimeProfile !== iris.selectedProfile) {
-              iris.selectProfile(agent.runtimeProfile);
+            if (agent) {
+              setChatProfile(agent.runtimeProfile);
             }
           }}
           onRunJobAction={jobs.runJobAction}
+          onGatewayAction={(action) => void runGatewayAction(action)}
           onUpdateScheduledMessage={jobs.updateScheduledMessage}
         />
       );
@@ -560,7 +658,7 @@ function App() {
           })
         }
         connected={iris.connected}
-        profile={iris.selectedProfile}
+        profile={chatProfile}
         profiles={agentProfiles}
         projects={projects.projects}
         selectedProjectId={projects.selectedProjectId}
@@ -569,11 +667,11 @@ function App() {
           if (!projectId) return;
           const project = projects.projects.find((item) => item.id === projectId);
           const agent = project ? projectAgentById.get(project.defaultAgentId) : null;
-          if (agent && agent.runtimeProfile !== iris.selectedProfile) {
-            iris.selectProfile(agent.runtimeProfile);
+          if (agent) {
+            setChatProfile(agent.runtimeProfile);
           }
         }}
-        onProfileChange={iris.selectProfile}
+        onProfileChange={setChatProfile}
         requestActive={chat.requestActive}
         onCancel={() => void chat.cancelMessage()}
         modelCatalog={modelCatalog.catalog}
@@ -587,6 +685,10 @@ function App() {
         slashCommandsLoading={slashCommands.loading}
         slashCommandsError={slashCommands.error}
         onSlashCommandsRefresh={() => void slashCommands.refreshSlashCommands()}
+        runtimeReadiness={chatRuntimeReadiness}
+        gatewayActionBusy={gatewayActionBusy}
+        gatewayActionBusyAction={gatewayActionState?.action || null}
+        onGatewayAction={(action) => void runGatewayAction(action, chatProfile)}
       />
     );
   }
@@ -598,6 +700,29 @@ function profileActionTitle(action: ProfileAction) {
   if (action === "delete") return "Agent deleted";
   if (action === "rename") return "Agent renamed";
   return "Agent switched";
+}
+
+function pluginInstallSummary(result: IrisCoreInstallPluginResult) {
+  if (!result?.ok) {
+    return {
+      ok: false,
+      message: result?.error || "Iris adapter install failed.",
+    };
+  }
+  if (result.enabled === false) {
+    return {
+      ok: false,
+      message:
+        result.enableError ||
+        "Iris adapter files were copied, but Hermes did not enable them.",
+    };
+  }
+  return {
+    ok: true,
+    message: result.restartRequired
+      ? "Iris adapter installed. Restarting this agent gateway to load it."
+      : "Iris adapter installed.",
+  };
 }
 
 function sessionProfile(session: HermesSession) {

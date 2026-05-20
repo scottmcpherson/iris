@@ -21,9 +21,15 @@ describe("AgentDetailView", () => {
         runtimeConfig: runtimeConfigFixture(),
         memory: memoryFixture(),
         skills: skillsFixture(),
+        runtimeReadiness: "ready",
+        gatewayActionBusy: false,
+        gatewayActionBusyAction: null,
+        adapterInstallBusy: false,
         onRuntimeChange: noop,
         onRefresh: noop,
         onProfileAction: async () => "",
+        onGatewayAction: noop,
+        onInstallAdapter: noop,
         onOpenSettings: noop,
         onSaveMemory: async () => "",
         onResetMemory: async () => "",
@@ -32,12 +38,74 @@ describe("AgentDetailView", () => {
 
     expect(html).toContain("Iris Core");
     expect(html).toContain("http://127.0.0.1:8765");
+    expect(html).not.toContain("default ready");
+    expect(html).not.toContain("Restart gateway");
     expect(html).toContain("Configure in Settings");
     expect(html).not.toContain("Routes and credentials");
     expect(html).not.toContain("Connection details are shared across the app");
     expect(html).not.toContain("Memory overview");
     expect(html).not.toContain("Skills overview");
     expect(html).not.toContain("installed skills");
+  });
+
+  it("shows gateway recovery controls in the overview page", () => {
+    const stoppedProfile = profileFixture({ gatewayRunning: false });
+    const html = renderToStaticMarkup(
+      createElement(AgentDetailView, {
+        section: "overview",
+        status: statusFixture(stoppedProfile),
+        profile: stoppedProfile,
+        selectedProfile: "default",
+        runtimeConfig: runtimeConfigFixture(),
+        memory: memoryFixture(),
+        skills: skillsFixture(),
+        runtimeReadiness: "gateway-stopped",
+        gatewayActionBusy: false,
+        gatewayActionBusyAction: null,
+        adapterInstallBusy: false,
+        onRuntimeChange: noop,
+        onRefresh: noop,
+        onProfileAction: async () => "",
+        onGatewayAction: noop,
+        onInstallAdapter: noop,
+        onOpenSettings: noop,
+        onSaveMemory: async () => "",
+        onResetMemory: async () => "",
+      }),
+    );
+
+    expect(html).toContain("default gateway is stopped");
+    expect(html).toContain("Start gateway");
+  });
+
+  it("shows gateway recovery controls when the adapter is unreachable", () => {
+    const html = renderToStaticMarkup(
+      createElement(AgentDetailView, {
+        section: "overview",
+        status: statusFixture(),
+        profile: profileFixture(),
+        selectedProfile: "default",
+        runtimeConfig: runtimeConfigFixture(),
+        memory: memoryFixture(),
+        skills: skillsFixture(),
+        runtimeReadiness: "adapter-unavailable",
+        gatewayActionBusy: false,
+        gatewayActionBusyAction: null,
+        adapterInstallBusy: false,
+        onRuntimeChange: noop,
+        onRefresh: noop,
+        onProfileAction: async () => "",
+        onGatewayAction: noop,
+        onInstallAdapter: noop,
+        onOpenSettings: noop,
+        onSaveMemory: async () => "",
+        onResetMemory: async () => "",
+      }),
+    );
+
+    expect(html).toContain("Iris adapter is unreachable");
+    expect(html).toContain("Restart gateway");
+    expect(html).toContain("Install adapter");
   });
 });
 
@@ -63,7 +131,7 @@ function runtimeConfigFixture(): HermesRuntimeConfig {
   };
 }
 
-function profileFixture(): HermesProfile {
+function profileFixture(overrides: Partial<HermesProfile> = {}): HermesProfile {
   return {
     name: "default",
     path: "/tmp/default",
@@ -77,20 +145,21 @@ function profileFixture(): HermesProfile {
     sessionCount: 0,
     estimatedCostUsd: null,
     gatewayRunning: true,
+    ...overrides,
   };
 }
 
-function statusFixture(): HermesStatus {
+function statusFixture(profile = profileFixture()): HermesStatus {
   return {
     ok: true,
     connected: true,
     root: "/tmp/hermes",
     hermesPath: "/tmp/hermes",
     version: "test",
-    activeProfile: profileFixture(),
+    activeProfile: profile,
     coreApiUrl: "http://127.0.0.1:8765",
     checkedAt: 1_774_199_763,
-    profiles: [profileFixture()],
+    profiles: [profile],
     managementStatus: {
       ok: true,
       url: "http://127.0.0.1:8765",

@@ -8,6 +8,8 @@ import {
   CommandList,
 } from "../../../shared/ui/command";
 import { cn } from "../../../shared/ui/utils";
+import type { RuntimeReadiness } from "../../../app/runtimeReadiness";
+import { runtimeReadinessGatewayAction } from "../../../app/runtimeReadiness";
 import type { HermesSlashCommand } from "../../../types/hermes";
 
 type SlashCommandMenuProps = {
@@ -15,8 +17,13 @@ type SlashCommandMenuProps = {
   activeIndex: number;
   loading: boolean;
   error: string | null;
+  runtimeReadiness: RuntimeReadiness;
+  profile: string;
   commandRefs: MutableRefObject<Record<string, HTMLElement | null>>;
   onRefresh: () => void;
+  onGatewayAction: (action: "start" | "restart") => void;
+  gatewayActionBusy?: boolean;
+  gatewayActionBusyAction?: "start" | "restart" | "stop" | null;
   onActiveIndex: (index: number) => void;
   onSelect: (command: HermesSlashCommand) => void;
 };
@@ -26,12 +33,26 @@ export function SlashCommandMenu({
   activeIndex,
   loading,
   error,
+  runtimeReadiness,
+  profile,
   commandRefs,
   onRefresh,
+  onGatewayAction,
+  gatewayActionBusy = false,
+  gatewayActionBusyAction = null,
   onActiveIndex,
   onSelect,
 }: SlashCommandMenuProps) {
   const activeCommand = commands[activeIndex] || commands[0];
+  const gatewayAction = runtimeReadinessGatewayAction(runtimeReadiness);
+  const gatewayBusyLabel = gatewayActionLabel(gatewayAction, gatewayActionBusy, gatewayActionBusyAction);
+  const unavailableDetail =
+    gatewayBusyLabel ||
+    (runtimeReadiness === "gateway-stopped"
+      ? `${profile} gateway is stopped`
+      : runtimeReadiness === "adapter-unavailable"
+        ? "Iris adapter is unreachable"
+        : "Click to retry");
   const listRef = useRef<HTMLDivElement | null>(null);
   const rowClassName = cn(
     "group grid h-[50px] w-full min-w-0 grid-cols-[22px_minmax(0,1fr)_auto] items-center gap-[9px] overflow-hidden rounded-lg px-[9px] py-0 text-left text-[12px] font-[inherit] leading-none text-menu-foreground",
@@ -77,14 +98,19 @@ export function SlashCommandMenu({
             <CommandItem
               value="commands-unavailable"
               className={rowClassName}
-              onSelect={onRefresh}
+              onSelect={() => {
+                if (gatewayActionBusy) return;
+                if (gatewayAction) onGatewayAction(gatewayAction);
+                else onRefresh();
+              }}
+              aria-disabled={gatewayActionBusy}
             >
               <span className={iconClassName}>
                 <CommandIcon size={14} />
               </span>
               <span className="grid min-w-0 gap-1 overflow-hidden">
                 <strong className="truncate text-[12px] font-[760] leading-[15px] text-menu-hover-foreground">Commands unavailable</strong>
-                <small className="truncate text-[11px] font-[720] leading-[13px] text-menu-muted-foreground">Click to retry</small>
+                <small className="truncate text-[11px] font-[720] leading-[13px] text-menu-muted-foreground">{unavailableDetail}</small>
               </span>
             </CommandItem>
           ) : null}
@@ -124,4 +150,14 @@ export function SlashCommandMenu({
       </CommandList>
     </Command>
   );
+}
+
+function gatewayActionLabel(
+  action: "start" | "restart" | null,
+  busy: boolean,
+  busyAction: "start" | "restart" | "stop" | null,
+) {
+  if (action === "start" && busy && busyAction === "start") return "Starting gateway...";
+  if (action === "restart" && busy && busyAction === "restart") return "Restarting gateway...";
+  return "";
 }

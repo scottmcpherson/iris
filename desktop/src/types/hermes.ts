@@ -177,6 +177,8 @@ export type HermesEndpointStatus = {
   ok: boolean;
   url?: string;
   status?: number;
+  profile?: string;
+  requestedProfile?: string;
   body?: string;
   error?: string;
 };

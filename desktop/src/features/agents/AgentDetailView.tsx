@@ -1,4 +1,6 @@
 import type { ProfileActionHandler } from "../../app/types";
+import type { RuntimeReadiness } from "../../app/runtimeReadiness";
+import type { IrisCoreGatewayAction } from "../../lib/irisCore";
 import type {
   HermesMemory,
   HermesProfile,
@@ -19,9 +21,15 @@ type AgentDetailViewProps = {
   runtimeConfig: HermesRuntimeConfig;
   memory: HermesMemory | null;
   skills: HermesSkill[];
+  runtimeReadiness: RuntimeReadiness;
+  gatewayActionBusy: boolean;
+  gatewayActionBusyAction: IrisCoreGatewayAction | null;
+  adapterInstallBusy: boolean;
   onRuntimeChange: (config: HermesRuntimeConfig) => void;
   onRefresh: () => void;
   onProfileAction: ProfileActionHandler;
+  onGatewayAction: (action: IrisCoreGatewayAction) => void;
+  onInstallAdapter: () => void;
   onOpenSettings: () => void;
   onSaveMemory: (file: "memory" | "user", content: string, expectedUpdatedAt?: number | null) => Promise<string>;
   onResetMemory: (file: "memory" | "user" | "all", confirm: string) => Promise<string>;
@@ -35,9 +43,15 @@ export function AgentDetailView({
   runtimeConfig,
   memory,
   skills,
+  runtimeReadiness,
+  gatewayActionBusy,
+  gatewayActionBusyAction,
+  adapterInstallBusy,
   onRuntimeChange,
   onRefresh,
   onProfileAction,
+  onGatewayAction,
+  onInstallAdapter,
   onOpenSettings,
   onSaveMemory,
   onResetMemory,
@@ -76,12 +90,18 @@ export function AgentDetailView({
           <SettingsView
             status={status}
             profile={profile}
-            selectedProfile={selectedProfile}
+            selectedProfile={profile.name}
             runtimeConfig={runtimeConfig}
             mode="profile"
+            runtimeReadiness={runtimeReadiness}
+            gatewayActionBusy={gatewayActionBusy}
+            gatewayActionBusyAction={gatewayActionBusyAction}
+            adapterInstallBusy={adapterInstallBusy}
             onRuntimeChange={onRuntimeChange}
             onRefresh={onRefresh}
             onProfileAction={onProfileAction}
+            onGatewayAction={onGatewayAction}
+            onInstallAdapter={onInstallAdapter}
             onOpenSettings={onOpenSettings}
           />
         </div>

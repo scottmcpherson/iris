@@ -5,7 +5,9 @@ from __future__ import annotations
 import json
 import ipaddress
 import os
+import shutil
 import sqlite3
+import subprocess
 import time
 import urllib.error
 import urllib.parse
@@ -23,7 +25,7 @@ from ..core_store import (
     core_message_from_hermes,
     message_content_hash_candidates,
 )
-from .hermes_store import HermesStore
+from .hermes_store import HermesStore, normalize_hermes_home, validate_profile_name
 from ..security import ManagementError
 
 
@@ -31,6 +33,8 @@ DEFAULT_GATEWAY_URL = "http://127.0.0.1:8642"
 DEFAULT_MANAGEMENT_URL = "http://127.0.0.1:8765"
 DEFAULT_IRIS_GATEWAY_URL = "http://127.0.0.1:8766"
 IRIS_GATEWAY_PORT_OFFSET = 124
+GATEWAY_CONTROL_ACTIONS = {"status", "start", "stop", "restart"}
+GATEWAY_CONTROL_TIMEOUT_SECONDS = 25
 
 
 def iris_multipart_attachments(attachments: Any) -> list[dict[str, Any]]:
@@ -454,14 +458,96 @@ class HermesRuntimeAdapter:
         gateway_url = str(self.connection.get("gatewayUrl") or DEFAULT_GATEWAY_URL)
         management_url = str(self.connection.get("managementUrl") or DEFAULT_MANAGEMENT_URL)
         adapter_url = self.iris_gateway_url(profile)
+        adapter_probe = probe_endpoint(f"{adapter_url.rstrip('/')}/health", expected_profile=profile)
         return {
             "gateway": probe_endpoint(gateway_url),
             "management": probe_endpoint(f"{management_url.rstrip('/')}/health"),
             "irisAdapter": {
-                **probe_endpoint(f"{adapter_url.rstrip('/')}/health"),
-                "profile": profile,
+                **adapter_probe,
+                "profile": adapter_probe.get("profile") or profile,
+                "requestedProfile": profile,
             },
         }
+
+    def gateway_status(self, profile: str) -> dict[str, Any]:
+        return self.gateway_control(profile, "status")
+
+    def gateway_control(self, profile: str, action: str) -> dict[str, Any]:
+        clean_profile = validate_profile_name(str(profile or "default"))
+        clean_action = str(action or "").strip().lower()
+        if clean_action not in GATEWAY_CONTROL_ACTIONS:
+            return {
+                "ok": False,
+                "stdout": "",
+                "stderr": "",
+                "status": None,
+                "error": f"Unsupported Hermes gateway action: {clean_action or 'unknown'}.",
+            }
+
+        hermes = self.resolve_hermes_executable()
+        if not hermes:
+            return {
+                "ok": False,
+                "stdout": "",
+                "stderr": "",
+                "status": None,
+                "error": "Hermes CLI was not found. Add hermes to PATH or configure HERMES_HOME for Iris Core.",
+            }
+
+        argv = [hermes, "--profile", clean_profile, "gateway", clean_action]
+        env = os.environ.copy()
+        if self.hermes_home:
+            env["HERMES_HOME"] = str(normalize_hermes_home(self.hermes_home))
+
+        try:
+            completed = subprocess.run(
+                argv,
+                shell=False,
+                capture_output=True,
+                text=True,
+                timeout=GATEWAY_CONTROL_TIMEOUT_SECONDS,
+                env=env,
+            )
+        except subprocess.TimeoutExpired as exc:
+            return {
+                "ok": False,
+                "stdout": str(exc.stdout or ""),
+                "stderr": str(exc.stderr or ""),
+                "status": None,
+                "error": f"Hermes gateway {clean_action} timed out after {GATEWAY_CONTROL_TIMEOUT_SECONDS} seconds.",
+            }
+        except OSError as exc:
+            return {
+                "ok": False,
+                "stdout": "",
+                "stderr": "",
+                "status": None,
+                "error": str(exc),
+            }
+
+        stdout = completed.stdout or ""
+        stderr = completed.stderr or ""
+        return {
+            "ok": completed.returncode == 0,
+            "stdout": stdout,
+            "stderr": stderr,
+            "status": completed.returncode,
+            **({} if completed.returncode == 0 else {"error": stderr.strip() or stdout.strip() or f"Hermes gateway {clean_action} failed."}),
+        }
+
+    def resolve_hermes_executable(self) -> str:
+        found = shutil.which("hermes")
+        if found:
+            return found
+        if self.hermes_home:
+            home = normalize_hermes_home(self.hermes_home)
+            for candidate in (
+                home / "hermes-agent" / "venv" / "bin" / "hermes",
+                home / "venv" / "bin" / "hermes",
+            ):
+                if candidate.is_file() and os.access(candidate, os.X_OK):
+                    return str(candidate)
+        return ""
 
     def send_message(
         self,
@@ -667,12 +753,43 @@ class HermesRuntimeAdapter:
 
     def iris_gateway_url(self, profile: str) -> str:
         routes = self.connection.get("irisGatewayUrls") if isinstance(self.connection.get("irisGatewayUrls"), dict) else {}
-        explicit = routes.get(profile) or routes.get("default")
+        explicit = routes.get(profile)
         if explicit:
             return str(explicit)
+        default_route = str(routes.get("default") or "")
+        if profile and profile != "default":
+            profile_url = profile_iris_gateway_url(self.hermes_home, profile, default_route or DEFAULT_IRIS_GATEWAY_URL)
+            if profile_url:
+                return profile_url
+        if default_route:
+            return default_route
         gateway_url = str(self.connection.get("gatewayUrl") or DEFAULT_GATEWAY_URL)
         derived = derive_iris_gateway_url(gateway_url)
         return derived or DEFAULT_IRIS_GATEWAY_URL
+
+
+def profile_iris_gateway_url(hermes_home: Path | str | None, profile: str, default_url: str) -> str:
+    if not hermes_home or not profile or profile == "default":
+        return ""
+    parsed = urllib.parse.urlparse(default_url)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname or not parsed.port:
+        return ""
+    profiles_root = normalize_hermes_home(hermes_home) / "profiles"
+    try:
+        profile_names = sorted(
+            item.name for item in profiles_root.iterdir()
+            if item.is_dir()
+        )
+    except OSError:
+        return ""
+    if profile not in profile_names:
+        return ""
+    host = parsed.hostname
+    if ":" in host and not host.startswith("["):
+        host = f"[{host}]"
+    return urllib.parse.urlunparse(
+        (parsed.scheme, f"{host}:{parsed.port + profile_names.index(profile) + 1}", "", "", "", "")
+    )
 
 
 def derive_iris_gateway_url(gateway_url: str) -> str:
@@ -698,12 +815,29 @@ def url_is_loopback(url: str) -> bool:
         return False
 
 
-def probe_endpoint(url: str) -> dict[str, Any]:
+def probe_endpoint(url: str, *, expected_profile: str = "") -> dict[str, Any]:
     request = urllib.request.Request(url, method="GET")
     try:
         with urllib.request.urlopen(request, timeout=2) as response:
-            response.read(256)
-            return {"ok": 200 <= response.status < 500, "url": url, "status": response.status}
+            text = response.read(4096).decode("utf-8", errors="replace")
+            parsed: dict[str, Any] = {}
+            try:
+                loaded = json.loads(text) if text else {}
+                if isinstance(loaded, dict):
+                    parsed = loaded
+            except ValueError:
+                parsed = {}
+            actual_profile = str(parsed.get("profile") or "").strip()
+            ok = 200 <= response.status < 500
+            payload: dict[str, Any] = {"ok": ok, "url": url, "status": response.status}
+            if actual_profile:
+                payload["profile"] = actual_profile
+            if expected_profile and actual_profile and actual_profile != expected_profile:
+                payload.update({
+                    "ok": False,
+                    "error": f"Iris adapter is for '{actual_profile}', not '{expected_profile}'.",
+                })
+            return payload
     except urllib.error.HTTPError as exc:
         return {"ok": False, "url": url, "status": exc.code, "error": f"HTTP {exc.code}"}
     except Exception as exc:

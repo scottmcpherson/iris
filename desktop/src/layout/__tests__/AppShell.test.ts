@@ -20,14 +20,14 @@ afterEach(() => {
 });
 
 describe("AppShell connection status", () => {
-  it("uses the active connection name when Core is connected", () => {
+  it("pairs the connection name with the active profile when ready", () => {
     expect(
       sidebarConnectionStatusLabel(true, {
         ...statusFixture(),
         activeConnectionName: "Mac mini",
         connectionMode: "ssh",
       }),
-    ).toBe("Mac mini connected");
+    ).toBe("Mac mini · default");
   });
 
   it("falls back to transport-aware labels without a connection name", () => {
@@ -37,19 +37,41 @@ describe("AppShell connection status", () => {
         activeConnectionName: "",
         connectionMode: "ssh",
       }),
-    ).toBe("SSH connected");
+    ).toBe("SSH · default");
     expect(
       sidebarConnectionStatusLabel(true, {
         ...statusFixture(),
         activeConnectionName: "",
         connectionMode: "managed-local",
       }),
-    ).toBe("Local connected");
+    ).toBe("Local · default");
   });
 
-  it("uses Iris Core offline when the app is disconnected", () => {
+  it("appends a degraded runtime state without calling Core disconnected", () => {
+    expect(
+      sidebarConnectionStatusLabel(true, {
+        ...statusFixture(),
+        activeConnectionName: "Mac mini",
+        connectionMode: "ssh",
+        gatewayStatus: { ok: false },
+        activeApiStatus: { ok: false },
+        activeProfile: { ...profileFixture(), gatewayRunning: false },
+        profiles: [{ ...profileFixture(), gatewayRunning: false }],
+      }),
+    ).toBe("Mac mini · default gateway stopped");
+    expect(
+      sidebarConnectionStatusLabel(true, {
+        ...statusFixture(),
+        activeConnectionName: "Mac mini",
+        connectionMode: "ssh",
+        activeApiStatus: { ok: false },
+      }),
+    ).toBe("Mac mini · default adapter unavailable");
+  });
+
+  it("uses Core offline when the app is disconnected", () => {
     expect(sidebarConnectionStatusLabel(false, { ...statusFixture(), activeConnectionName: "Local" })).toBe(
-      "Iris Core offline",
+      "Core offline",
     );
   });
 });
@@ -592,6 +614,8 @@ function statusFixture(): HermesStatus {
     activeProfile,
     profiles: [activeProfile],
     checkedAt: 1,
+    gatewayStatus: { ok: true },
+    activeApiStatus: { ok: true },
   };
 }
 

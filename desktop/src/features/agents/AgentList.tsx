@@ -1,13 +1,16 @@
 import { useState } from "react";
 import type { FormEvent } from "react";
-import { Bot, Copy, Database, Ellipsis, FolderOpen, Plus, Sparkles, Trash2 } from "lucide-react";
+import { Bot, Copy, Database, Ellipsis, FolderOpen, Play, Plug, Plus, RotateCw, Sparkles, Trash2, Unplug, Wrench } from "lucide-react";
 import type { ProfileActionHandler } from "../../app/types";
+import type { RuntimeReadiness } from "../../app/runtimeReadiness";
+import type { IrisCoreGatewayAction } from "../../lib/irisCore";
 import { formatBytes } from "../../shared/format";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuGroup,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "../../shared/ui/dropdown-menu";
 import { Button } from "../../shared/ui/button";
@@ -29,15 +32,35 @@ type AgentListDialog =
 
 type AgentListProps = {
   profiles: HermesProfile[];
+  selectedProfile: string;
+  runtimeReadiness: RuntimeReadiness;
+  gatewayActionBusy: boolean;
+  gatewayActionBusyAction: IrisCoreGatewayAction | null;
+  gatewayActionBusyProfile: string;
+  adapterInstallBusyProfile: string;
   onOpenAgent: (profileName: string) => void;
   onProfileAction: ProfileActionHandler;
+  onGatewayAction: (action: IrisCoreGatewayAction, profileName: string) => void;
+  onInstallAdapter: (profileName: string) => void;
 };
 
 const dialogContentClassName = "border-menu-border bg-menu text-menu-foreground shadow-context-menu sm:max-w-[360px]";
 const labelClassName = "grid gap-[7px] text-xs font-[750] text-menu-muted-foreground";
 const inputClassName = "h-[38px] border-menu-border bg-secondary text-menu-hover-foreground placeholder:text-menu-muted-foreground";
 
-export function AgentList({ profiles, onOpenAgent, onProfileAction }: AgentListProps) {
+export function AgentList({
+  profiles,
+  selectedProfile,
+  runtimeReadiness,
+  gatewayActionBusy,
+  gatewayActionBusyAction,
+  gatewayActionBusyProfile,
+  adapterInstallBusyProfile,
+  onOpenAgent,
+  onProfileAction,
+  onGatewayAction,
+  onInstallAdapter,
+}: AgentListProps) {
   const [dialog, setDialog] = useState<AgentListDialog | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -60,73 +83,152 @@ export function AgentList({ profiles, onOpenAgent, onProfileAction }: AgentListP
       </div>
 
       <div className="agent-list-grid">
-        {profiles.map((profile) => (
-          <div
-            key={profile.name}
-            className="agent-list-row"
-          >
-            <Button
-              type="button"
-              variant="ghost"
-              className="agent-list-row-open"
+        {profiles.map((profile) => {
+          const gateway = gatewaySummary(profile, selectedProfile, runtimeReadiness);
+          const pillAction = gateway.action;
+          const pillBusy = Boolean(
+            pillAction &&
+              gatewayActionBusy &&
+              gatewayActionBusyProfile === profile.name &&
+              gatewayActionBusyAction === pillAction,
+          );
+          const pillActionLabel = pillAction === "start"
+            ? pillBusy
+              ? "Starting gateway..."
+              : "Start gateway"
+            : pillAction === "restart"
+              ? pillBusy
+                ? "Restarting gateway..."
+                : "Restart gateway"
+              : null;
+          const PillActionIcon = pillAction === "start" ? Play : RotateCw;
+          return (
+            <div
+              key={profile.name}
+              role="button"
+              tabIndex={0}
+              aria-label={`Open ${profile.name}`}
+              className="agent-list-row"
+              data-actionable={pillAction ? "true" : undefined}
               onClick={() => onOpenAgent(profile.name)}
+              onKeyDown={(event) => {
+                if (event.target !== event.currentTarget) return;
+                if (event.key === "Enter" || event.key === " ") {
+                  event.preventDefault();
+                  onOpenAgent(profile.name);
+                }
+              }}
             >
-              <span className="agent-avatar">
-                <Bot size={18} />
+              <span className="agent-list-row-primary">
+                <span className="agent-avatar">
+                  <Bot size={18} />
+                </span>
+                <span className="agent-list-main">
+                  <strong>{profile.name}</strong>
+                  <small>{agentSubtitle(profile)}</small>
+                </span>
               </span>
-              <span className="agent-list-main">
-                <strong>{profile.name}</strong>
-                <small>{agentSubtitle(profile)}</small>
-              </span>
-              <span className="agent-list-stat">
-                <FolderOpen size={15} />
-                <strong>{profile.sessionCount}</strong>
-                <small>Sessions</small>
-              </span>
-              <span className="agent-list-stat">
-                <Database size={15} />
-                <strong>{formatBytes(profile.memoryBytes)}</strong>
-                <small>Memory</small>
-              </span>
-              <span className="agent-list-stat">
-                <Sparkles size={15} />
-                <strong>{profile.skillCount}</strong>
-                <small>Skills</small>
-              </span>
-            </Button>
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button
+              {pillAction && pillActionLabel ? (
+                <button
                   type="button"
-                  variant="ghost"
-                  className="profile-row-action agent-list-menu-trigger"
-                  aria-label={`More actions for ${profile.name}`}
-                  title={`More actions for ${profile.name}`}
+                  className={`agent-gateway-pill agent-gateway-pill-action ${gateway.tone}`}
+                  disabled={gatewayActionBusy}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onGatewayAction(pillAction, profile.name);
+                  }}
+                  onKeyDown={(event) => event.stopPropagation()}
+                  aria-label={pillActionLabel}
+                  title={pillActionLabel}
+                >
+                  <span className="service-health-dot degraded" />
+                  <strong>{pillBusy ? pillActionLabel : gateway.label}</strong>
+                  <span className="agent-gateway-pill-hint">
+                    <PillActionIcon size={11} aria-hidden />
+                  </span>
+                </button>
+              ) : (
+                <span className={`agent-gateway-pill ${gateway.tone}`}>
+                  <span className={`service-health-dot ${gateway.tone === "ready" ? "online" : "degraded"}`} />
+                  <strong>{gateway.label}</strong>
+                </span>
+              )}
+              <span className="agent-list-row-stats">
+                <span className="agent-list-stat">
+                  <FolderOpen size={15} />
+                  <strong>{profile.sessionCount}</strong>
+                  <small>Sessions</small>
+                </span>
+                <span className="agent-list-stat">
+                  <Database size={15} />
+                  <strong>{formatBytes(profile.memoryBytes)}</strong>
+                  <small>Memory</small>
+                </span>
+                <span className="agent-list-stat">
+                  <Sparkles size={15} />
+                  <strong>{profile.skillCount}</strong>
+                  <small>Skills</small>
+                </span>
+              </span>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    className="profile-row-action agent-list-menu-trigger"
+                    aria-label={`More actions for ${profile.name}`}
+                    title={`More actions for ${profile.name}`}
+                    onClick={(event) => event.stopPropagation()}
+                    onKeyDown={(event) => event.stopPropagation()}
+                  >
+                    <Ellipsis size={18} />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent
+                  align="end"
+                  sideOffset={6}
                   onClick={(event) => event.stopPropagation()}
                 >
-                  <Ellipsis size={18} />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" sideOffset={6}>
-                <DropdownMenuGroup>
-                  <DropdownMenuItem onSelect={() => openCloneDialog(profile.name)}>
-                    <Copy data-icon="inline-start" />
-                    Duplicate
-                  </DropdownMenuItem>
-                  <DropdownMenuItem
-                    variant="destructive"
-                    disabled={profile.name === "default"}
-                    title={profile.name === "default" ? "The default agent cannot be deleted" : undefined}
-                    onSelect={() => openDeleteDialog(profile.name)}
-                  >
-                    <Trash2 data-icon="inline-start" />
-                    Delete
-                  </DropdownMenuItem>
-                </DropdownMenuGroup>
-              </DropdownMenuContent>
-            </DropdownMenu>
-          </div>
-        ))}
+                  <DropdownMenuGroup>
+                    <DropdownMenuItem disabled={gatewayActionBusy} onSelect={() => onGatewayAction("start", profile.name)}>
+                      <Plug data-icon="inline-start" />
+                      Start gateway
+                    </DropdownMenuItem>
+                    <DropdownMenuItem disabled={gatewayActionBusy} onSelect={() => onGatewayAction("stop", profile.name)}>
+                      <Unplug data-icon="inline-start" />
+                      Stop gateway
+                    </DropdownMenuItem>
+                    <DropdownMenuItem disabled={gatewayActionBusy} onSelect={() => onGatewayAction("restart", profile.name)}>
+                      <RotateCw data-icon="inline-start" />
+                      Restart gateway
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      disabled={adapterInstallBusyProfile === profile.name}
+                      onSelect={() => onInstallAdapter(profile.name)}
+                    >
+                      <Wrench data-icon="inline-start" />
+                      {adapterInstallBusyProfile === profile.name ? "Installing adapter..." : "Install adapter"}
+                    </DropdownMenuItem>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem onSelect={() => openCloneDialog(profile.name)}>
+                      <Copy data-icon="inline-start" />
+                      Duplicate
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      variant="destructive"
+                      disabled={profile.name === "default"}
+                      title={profile.name === "default" ? "The default agent cannot be deleted" : undefined}
+                      onSelect={() => openDeleteDialog(profile.name)}
+                    >
+                      <Trash2 data-icon="inline-start" />
+                      Delete
+                    </DropdownMenuItem>
+                  </DropdownMenuGroup>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
+          );
+        })}
       </div>
       {dialog ? renderDialog() : null}
     </div>
@@ -259,6 +361,28 @@ function agentSubtitle(profile: HermesProfile) {
   const model = cleanAgentLabel(profile.model);
   const summary = model ? `${provider} / ${model}` : provider;
   return profile.active ? `${summary} / active` : summary;
+}
+
+function gatewaySummary(profile: HermesProfile, selectedProfile: string, runtimeReadiness: RuntimeReadiness) {
+  if (!profile.gatewayRunning) {
+    return {
+      label: "Gateway stopped",
+      tone: "stopped" as const,
+      action: "start" as const,
+    };
+  }
+  if (profile.name === selectedProfile && runtimeReadiness === "adapter-unavailable") {
+    return {
+      label: "Adapter unavailable",
+      tone: "degraded" as const,
+      action: "restart" as const,
+    };
+  }
+  return {
+    label: "Running",
+    tone: "ready" as const,
+    action: null,
+  };
 }
 
 function cleanAgentLabel(value: unknown) {

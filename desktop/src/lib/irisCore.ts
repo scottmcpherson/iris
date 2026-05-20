@@ -27,13 +27,16 @@ type CorePrimitive = string | number | boolean | null;
 type CoreJsonValue = CorePrimitive | CoreJsonValue[] | { [key: string]: CoreJsonValue };
 export type CoreMetadata = { [key: string]: CoreJsonValue };
 
-type CoreEndpointProbe = {
+export type CoreEndpointProbe = {
   ok: boolean;
   url?: string;
+  status?: number;
+  profile?: string;
+  requestedProfile?: string;
   error?: string;
 };
 
-type CoreRuntimeProbe = {
+export type CoreRuntimeProbe = {
   gateway: CoreEndpointProbe;
   management: CoreEndpointProbe;
   irisAdapter: CoreEndpointProbe;
@@ -217,6 +220,27 @@ export type IrisCoreAutomation = {
   metadata: CoreMetadata;
 };
 
+export type IrisCoreGatewayAction = "start" | "stop" | "restart";
+
+export type IrisCoreGatewayCommandResult = {
+  ok: boolean;
+  stdout?: string;
+  stderr?: string;
+  status?: number | null;
+  error?: string;
+};
+
+export type IrisCoreGatewayControlResult = {
+  ok: boolean;
+  agentId: string;
+  runtimeId: string;
+  profile: string;
+  action: IrisCoreGatewayAction | "status";
+  command?: IrisCoreGatewayCommandResult;
+  probe?: CoreRuntimeProbe;
+  error?: string;
+};
+
 export type IrisCoreAttachment = {
   id: string;
   name: string;
@@ -263,7 +287,7 @@ export async function revokeIrisCoreDevice(deviceId: string, runtime?: HermesRun
   );
 }
 
-export async function getIrisCoreStatus(runtime?: HermesRuntimeConfig) {
+export async function getIrisCoreStatus(runtime?: HermesRuntimeConfig, profile?: string) {
   const connection = activeCoreConnection(runtime);
   const [health, status, agents, runtimes] = await Promise.all([
     coreRequest<CoreHealthResponse>(runtime, "GET", "/health"),
@@ -276,7 +300,13 @@ export async function getIrisCoreStatus(runtime?: HermesRuntimeConfig) {
   const activeAgent = agentRows.find((agent) => agent.isDefault) || agentRows[0] || null;
   const profiles = agentRows.map(coreAgentToHermesProfile);
   const runtimeRows = runtimes.ok ? runtimes.runtimes || [] : [];
-  const probe = firstRuntimeProbe(runtimeRows);
+  const requestedAgent = profile ? agentRows.find((agent) => agent.runtimeProfile === profile) : null;
+  const gatewayStatus = requestedAgent
+    ? await getIrisCoreGatewayStatus(requestedAgent.id, runtime)
+    : null;
+  const probe = gatewayStatus?.probe
+    ? gatewayStatus.probe
+    : firstRuntimeProbe(runtimeRows);
   const coreStatus = endpointFromResponse(status, coreBaseUrl(runtime));
   const coreVersion = typeof health.version === "string" ? health.version : "";
   const clientVersion = String(desktopPackage.version || "");
@@ -324,13 +354,15 @@ export async function getIrisCoreStatus(runtime?: HermesRuntimeConfig) {
 export async function getIrisCoreAgentForProfile(profile = "default", runtime?: HermesRuntimeConfig) {
   const result = await getIrisCoreAgents(runtime);
   if (!result.ok) return { ...result, agent: null };
+  const targetProfile = profile || "default";
+  const exact = result.agents.find((agent) => agent.runtimeProfile === targetProfile) || null;
   return {
     ok: true,
     agent:
-      result.agents.find((agent) => agent.runtimeProfile === profile) ||
-      result.agents.find((agent) => agent.isDefault) ||
-      result.agents[0] ||
-      null,
+      exact ||
+      (targetProfile === "default"
+        ? result.agents.find((agent) => agent.isDefault) || result.agents[0] || null
+        : null),
   };
 }
 
@@ -363,6 +395,57 @@ export async function resetIrisCoreAgentMemory(
     "DELETE",
     `/agents/${encodeURIComponent(agentId)}/memory/${encodeURIComponent(file)}`,
     payload,
+  );
+}
+
+export async function getIrisCoreGatewayStatus(agentId: string, runtime?: HermesRuntimeConfig) {
+  return coreRequest<IrisCoreGatewayControlResult>(
+    runtime,
+    "GET",
+    `/agents/${encodeURIComponent(agentId)}/gateway/status`,
+  );
+}
+
+export async function controlIrisCoreGateway(
+  agentId: string,
+  action: IrisCoreGatewayAction,
+  runtime?: HermesRuntimeConfig,
+) {
+  return coreRequest<IrisCoreGatewayControlResult>(
+    runtime,
+    "POST",
+    `/agents/${encodeURIComponent(agentId)}/gateway/${encodeURIComponent(action)}`,
+    {},
+    { timeoutMs: 35_000 },
+  );
+}
+
+export type IrisCoreInstallPluginResult = {
+  ok: boolean;
+  hermesHome: string;
+  pluginPath?: string;
+  enabled?: boolean;
+  enableError?: string;
+  restartRequired?: boolean;
+  installations?: Array<{
+    ok?: boolean;
+    hermesHome?: string;
+    pluginPath?: string;
+    enabled?: boolean;
+    enableError?: string;
+    restartRequired?: boolean;
+    error?: string;
+  }>;
+  error?: string;
+};
+
+export async function installIrisCoreHermesPlugin(runtime?: HermesRuntimeConfig) {
+  return coreRequest<IrisCoreInstallPluginResult>(
+    runtime,
+    "POST",
+    `/system/install-hermes-plugin`,
+    {},
+    { timeoutMs: 60_000 },
   );
 }
 

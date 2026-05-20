@@ -29,6 +29,8 @@ import {
 } from "../../shared/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../shared/ui/tabs";
 import { Textarea } from "../../shared/ui/textarea";
+import type { RuntimeReadiness } from "../../app/runtimeReadiness";
+import { runtimeReadinessDetail, runtimeReadinessGatewayAction } from "../../app/runtimeReadiness";
 
 type TabKey = "active" | "paused";
 type ScheduleMode = "delay" | "datetime" | "daily" | "custom";
@@ -42,12 +44,16 @@ type AutomationsViewProps = {
   deliveriesLoading: boolean;
   error: string | null;
   pausedAutomations: HermesAutomation[];
+  runtimeReadiness?: RuntimeReadiness;
+  gatewayActionBusy?: boolean;
+  gatewayActionBusyAction?: "start" | "restart" | "stop" | null;
   projects: IrisProject[];
   selectedProjectId: string | null;
   onAcknowledgeDelivery: (messageId: string) => void;
   onCreateScheduledMessage: (input: CreateScheduledMessageInput) => Promise<string>;
   onOpenDeliveryChat: (delivery: HermesInboxMessage) => void;
   onProjectChange: (projectId: string | null) => void;
+  onGatewayAction?: (action: "start" | "restart") => void;
   onRunJobAction: (jobId: string, action: "pause" | "resume" | "run" | "delete") => Promise<string>;
   onUpdateScheduledMessage: (jobId: string, input: UpdateScheduledMessageInput) => Promise<string>;
 };
@@ -60,12 +66,16 @@ export function AutomationsView({
   deliveriesLoading,
   error,
   pausedAutomations,
+  runtimeReadiness = connected ? "ready" : "offline",
+  gatewayActionBusy = false,
+  gatewayActionBusyAction = null,
   projects,
   selectedProjectId,
   onAcknowledgeDelivery,
   onCreateScheduledMessage,
   onOpenDeliveryChat,
   onProjectChange,
+  onGatewayAction = () => {},
   onRunJobAction,
   onUpdateScheduledMessage,
 }: AutomationsViewProps) {
@@ -98,9 +108,17 @@ export function AutomationsView({
     tab === "active"
       ? "No active automations."
       : "No paused automations.";
+  const runtimeReady = runtimeReadiness === "ready";
+  const runtimeAction = runtimeReadinessGatewayAction(runtimeReadiness);
+  const runtimeNotice = runtimeReadinessDetail(runtimeReadiness);
+  const runtimeActionLabel = gatewayActionLabel(runtimeAction, gatewayActionBusy, gatewayActionBusyAction);
 
   async function submitSchedule(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (!runtimeReady) {
+      setFormNotice(runtimeNotice || "Runtime is not ready.");
+      return;
+    }
     setFormBusy(true);
     const input = { name, prompt, schedule, repeat, projectId: selectedProjectId || null };
     const result = editingJobId
@@ -182,6 +200,7 @@ export function AutomationsView({
             size="icon-md"
             aria-label="Create automation"
             title="Create automation"
+            disabled={!runtimeReady}
             onClick={startCreating}
           >
             <Plus data-icon="inline-start" />
@@ -194,6 +213,26 @@ export function AutomationsView({
           <Alert variant="destructive" className="jobs-alert">
             <AlertCircle />
             <AlertDescription>{error}</AlertDescription>
+          </Alert>
+        ) : null}
+
+        {!runtimeReady ? (
+          <Alert tone="degraded">
+            <AlertCircle />
+            <AlertDescription className="flex flex-wrap items-center justify-between gap-2.5 text-current">
+              <span>{runtimeNotice}</span>
+              {runtimeAction ? (
+                <Button
+                  type="button"
+                  variant="appNeutral"
+                  size="appSmall"
+                  disabled={gatewayActionBusy}
+                  onClick={() => onGatewayAction(runtimeAction)}
+                >
+                  {runtimeActionLabel}
+                </Button>
+              ) : null}
+            </AlertDescription>
           </Alert>
         ) : null}
 
@@ -268,7 +307,7 @@ export function AutomationsView({
                         projects={projects}
                         selectedProjectId={selectedProjectId}
                         open={projectMenuOpen}
-                        disabled={!connected}
+                        disabled={!connected || !runtimeReady}
                         title="Choose project"
                         locked={false}
                         connected={connected}
@@ -359,7 +398,7 @@ export function AutomationsView({
                     <Button type="button" variant="appNeutral" size="appSmall" onClick={cancelEditing} disabled={formBusy}>
                       Cancel
                     </Button>
-                    <Button type="submit" size="appSmall" disabled={formBusy}>
+                    <Button type="submit" size="appSmall" disabled={formBusy || !runtimeReady}>
                       {formBusy ? "Saving..." : editingJobId ? "Save changes" : "Create"}
                     </Button>
                   </div>
@@ -402,6 +441,7 @@ export function AutomationsView({
               <JobList
                 jobs={visibleJobs}
                 emptyText={emptyText}
+                runtimeReady={runtimeReady}
                 busyJobId={busyAutomationId}
                 confirmDeleteJobId={confirmDeleteJobId}
                 selectedJobId={selectedJobId}
@@ -453,6 +493,7 @@ export function automationActivityEmptyText(loading: boolean) {
 function JobList({
   jobs,
   emptyText,
+  runtimeReady,
   busyJobId,
   confirmDeleteJobId,
   selectedJobId,
@@ -463,6 +504,7 @@ function JobList({
 }: {
   jobs: HermesAutomation[];
   emptyText: string;
+  runtimeReady: boolean;
   busyJobId: string | null;
   confirmDeleteJobId: string | null;
   selectedJobId: string | null;
@@ -476,7 +518,7 @@ function JobList({
   return (
     <div className="job-list">
       {jobs.map((job) => {
-        const busy = busyJobId === job.id;
+        const busy = busyJobId === job.id || !runtimeReady;
         const meta = jobMetaLine(job);
         const selected = selectedJobId === job.id;
         return (
@@ -823,6 +865,16 @@ function dateTimeLocalValue(value: number) {
 function localInputToIso(value: string) {
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? "" : date.toISOString();
+}
+
+function gatewayActionLabel(
+  action: "start" | "restart" | null,
+  busy: boolean,
+  busyAction: "start" | "restart" | "stop" | null,
+) {
+  if (action === "start") return busy && busyAction === "start" ? "Starting gateway..." : "Start gateway";
+  if (action === "restart") return busy && busyAction === "restart" ? "Restarting gateway..." : "Restart gateway";
+  return "";
 }
 
 export function matchingDeliveries(job: HermesAutomation, deliveries: HermesInboxMessage[]) {

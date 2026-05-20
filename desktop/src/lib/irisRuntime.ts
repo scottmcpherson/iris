@@ -57,7 +57,7 @@ async function bridge<T>(action: string, payload: Record<string, unknown> = {}) 
 }
 
 export async function getIrisStatus(runtime?: HermesRuntimeConfig, profile?: string) {
-  const status = await getIrisCoreStatus(runtime);
+  const status = await getIrisCoreStatus(runtime, profile);
   if (!profile) return status;
   const activeProfile =
     status.profiles.find((item) => item.name === profile) ||

@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import {
+  AlertCircle,
   ArrowRightLeft,
   ChevronDown,
   Copy,
@@ -53,7 +54,6 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "../../shared/ui/dropdown-menu";
 import {
@@ -65,6 +65,7 @@ import {
   FieldSet,
 } from "../../shared/ui/field";
 import { Input } from "../../shared/ui/input";
+import { StatusBanner } from "../../shared/ui/status-banner";
 import { Switch } from "../../shared/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../shared/ui/tabs";
 import type {
@@ -74,6 +75,14 @@ import type {
   IrisCoreConnectionMode,
   IrisCoreConnectionProfile,
 } from "../../types/hermes";
+import type { RuntimeReadiness } from "../../app/runtimeReadiness";
+import {
+  runtimeReadinessDetail,
+  runtimeReadinessGatewayAction,
+  runtimeReadinessLabel,
+  runtimeReadinessTone,
+} from "../../app/runtimeReadiness";
+import type { IrisCoreGatewayAction } from "../../lib/irisCore";
 import { SshConnectionDialog } from "../iris/SshConnectionDialog";
 import { sshTargetLabel } from "../iris/sshConnectionDraft";
 import { useSshConnectionManager } from "../iris/useSshConnectionManager";
@@ -87,6 +96,12 @@ type SettingsViewProps = {
   onRuntimeChange: (config: HermesRuntimeConfig) => void;
   onRefresh: () => void;
   onProfileAction: ProfileActionHandler;
+  runtimeReadiness?: RuntimeReadiness;
+  gatewayActionBusy?: boolean;
+  gatewayActionBusyAction?: IrisCoreGatewayAction | null;
+  adapterInstallBusy?: boolean;
+  onGatewayAction?: (action: IrisCoreGatewayAction) => void;
+  onInstallAdapter?: () => void;
   onOpenSettings?: () => void;
 };
 
@@ -131,6 +146,12 @@ export function SettingsView({
   onRuntimeChange,
   onRefresh,
   onProfileAction,
+  runtimeReadiness = "offline",
+  gatewayActionBusy = false,
+  gatewayActionBusyAction = null,
+  adapterInstallBusy = false,
+  onGatewayAction,
+  onInstallAdapter,
   onOpenSettings,
 }: SettingsViewProps) {
   const activeConnection = activeCoreConnection(runtimeConfig);
@@ -144,6 +165,10 @@ export function SettingsView({
   const checkedAt = status?.checkedAt ? formatTimestamp(status.checkedAt) : "Not checked";
   const modelDisplay = modelSummary(profile.provider, profile.model);
   const statusConnection = status?.activeConnectionName || activeConnection.name;
+  const runtimeLabel = runtimeReadinessLabel(runtimeReadiness, selectedProfile);
+  const runtimeDetail = runtimeReadinessDetail(runtimeReadiness, selectedProfile, runtimeConfig.connectionMode);
+  const runtimeGatewayAction = runtimeReadinessGatewayAction(runtimeReadiness);
+  const runtimeGatewayActionLabel = gatewayActionLabel(runtimeGatewayAction, gatewayActionBusy, gatewayActionBusyAction);
   const profilesByMode = useMemo(
     () => ({
       ssh: runtimeConfig.coreConnections.filter((connection) => connection.mode === "ssh"),
@@ -224,17 +249,6 @@ export function SettingsView({
     });
   }
 
-  async function installHermesPlugin() {
-    await withBusy("plugin-install", async () => {
-      const result = await invoke<CoreCliResult>("core_install_hermes_plugin", { config: localCoreConfig(localDraft) });
-      if (result.ok) {
-        toast.success("Iris installed the Hermes plugin. Restart Hermes gateway.");
-      } else {
-        toast.error(result.error || result.stderr || "Plugin install failed.");
-      }
-    });
-  }
-
   async function installCoreService() {
     await withBusy("service-install", async () => {
       const result = await invoke<CoreCliResult>("core_service_install", {
@@ -312,6 +326,44 @@ export function SettingsView({
             </Button>
           ) : null}
         </div>
+
+        {runtimeReadinessTone(runtimeReadiness) !== "ready" ? (
+          <StatusBanner
+            tone="degraded"
+            density="comfortable"
+            icon={AlertCircle}
+            action={
+              runtimeGatewayAction || runtimeReadiness === "adapter-unavailable" ? (
+                <span className="flex items-center gap-2">
+                  {runtimeGatewayAction ? (
+                    <Button
+                      type="button"
+                      variant="appNeutral"
+                      size="appSmall"
+                      disabled={gatewayActionBusy || !onGatewayAction}
+                      onClick={() => onGatewayAction?.(runtimeGatewayAction)}
+                    >
+                      {runtimeGatewayActionLabel}
+                    </Button>
+                  ) : null}
+                  {runtimeReadiness === "adapter-unavailable" ? (
+                    <Button
+                      type="button"
+                      variant="appNeutral"
+                      size="appSmall"
+                      disabled={adapterInstallBusy || !onInstallAdapter}
+                      onClick={() => onInstallAdapter?.()}
+                    >
+                      {adapterInstallBusy ? "Installing adapter..." : "Install adapter"}
+                    </Button>
+                  ) : null}
+                </span>
+              ) : null
+            }
+          >
+            {runtimeDetail || runtimeLabel}
+          </StatusBanner>
+        ) : null}
 
         <section className="settings-section model-section">
           <div className="settings-section-header">
@@ -444,11 +496,6 @@ export function SettingsView({
                     <RotateCw />
                     Restart Core
                   </DropdownMenuItem>
-                  <DropdownMenuItem disabled={busyAction === "plugin-install"} onSelect={() => void installHermesPlugin()}>
-                    <Wrench />
-                    Install Hermes plugin
-                  </DropdownMenuItem>
-                  <DropdownMenuSeparator />
                   <DropdownMenuItem disabled={busyAction === "service-install"} onSelect={() => void installCoreService()}>
                     <Server />
                     Install login service
@@ -819,6 +866,16 @@ function transportLabel(connection: IrisCoreConnectionProfile) {
   if (transport === "ssh-tunnel") return "SSH tunnel";
   if (transport === "tailscale") return "SSH";
   return "Sidecar";
+}
+
+function gatewayActionLabel(
+  action: "start" | "restart" | null,
+  busy: boolean,
+  busyAction: IrisCoreGatewayAction | null,
+) {
+  if (action === "start") return busy && busyAction === "start" ? "Starting gateway..." : "Start gateway";
+  if (action === "restart") return busy && busyAction === "restart" ? "Restarting gateway..." : "Restart gateway";
+  return "";
 }
 
 function profileSubtitle(profile: IrisCoreConnectionProfile) {

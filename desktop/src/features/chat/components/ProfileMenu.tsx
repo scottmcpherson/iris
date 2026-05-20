@@ -63,7 +63,12 @@ export function ProfileMenu({
         <DropdownMenuRadioGroup value={profile} onValueChange={onSelect}>
           {profiles.map((item) => (
             <DropdownMenuRadioItem key={item.name} value={item.name}>
-              {item.name}
+              <span className="grid min-w-0 gap-0.5">
+                <span className="truncate">{item.name}</span>
+                <span className="truncate text-[11px] font-[650] text-menu-muted-foreground">
+                  {item.gatewayRunning ? "Gateway running" : "Gateway stopped"}
+                </span>
+              </span>
             </DropdownMenuRadioItem>
           ))}
         </DropdownMenuRadioGroup>

@@ -9,9 +9,13 @@ import {
   getIrisCoreAutomationEvents,
   getIrisCoreAgentSkill,
   getIrisCoreAgentSkills,
+  controlIrisCoreGateway,
   getIrisCoreEvents,
+  getIrisCoreGatewayStatus,
+  installIrisCoreHermesPlugin,
   getIrisCoreLatestEventCursor,
   getIrisCoreAttachmentDataUrl,
+  getIrisCoreStatus,
   pairIrisCoreDevice,
   renameIrisCoreAgent,
   revokeIrisCoreDevice,
@@ -171,6 +175,127 @@ describe("irisCore", () => {
           "Idempotency-Key": "client-message-1",
         }),
       }),
+    );
+  });
+
+  it("calls agent-scoped gateway routes through Core transport", async () => {
+    const fetch = vi.fn(async (_url: string, init: RequestInit) => ({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        ok: true,
+        agentId: "agent_default",
+        runtimeId: "runtime_local_hermes",
+        profile: "default",
+        action: init.method === "GET" ? "status" : "restart",
+        command: { ok: true, status: 0 },
+      }),
+    }));
+    vi.stubGlobal("fetch", fetch);
+
+    await getIrisCoreGatewayStatus("agent_default", defaultRuntimeConfig);
+    await controlIrisCoreGateway("agent_default", "restart", defaultRuntimeConfig);
+
+    expect(fetch).toHaveBeenNthCalledWith(
+      1,
+      expect.stringContaining("/v1/agents/agent_default/gateway/status"),
+      expect.objectContaining({ method: "GET" }),
+    );
+    expect(fetch).toHaveBeenNthCalledWith(
+      2,
+      expect.stringContaining("/v1/agents/agent_default/gateway/restart"),
+      expect.objectContaining({ method: "POST", body: "{}" }),
+    );
+  });
+
+  it("uses the selected profile gateway probe when building Core status", async () => {
+    const fetch = vi.fn(async (url: string) => {
+      if (url.endsWith("/v1/health")) {
+        return jsonResponse({ ok: true, version: "0.1.0" });
+      }
+      if (url.endsWith("/v1/status")) {
+        return jsonResponse({ ok: true });
+      }
+      if (url.endsWith("/v1/agents")) {
+        return jsonResponse({
+          ok: true,
+          agents: [
+            coreAgentFixture("default", true),
+            coreAgentFixture("health", false),
+          ],
+        });
+      }
+      if (url.endsWith("/v1/runtimes")) {
+        return jsonResponse({
+          ok: true,
+          runtimes: [{
+            id: "runtime_local_hermes",
+            status: {
+              probe: {
+                gateway: { ok: true, url: "http://127.0.0.1:8642" },
+                management: { ok: true, url: "http://127.0.0.1:8765/health" },
+                irisAdapter: { ok: true, profile: "default", url: "http://127.0.0.1:8766/health" },
+              },
+            },
+          }],
+        });
+      }
+      if (url.endsWith("/v1/agents/agent_health/gateway/status")) {
+        return jsonResponse({
+          ok: true,
+          agentId: "agent_health",
+          runtimeId: "runtime_local_hermes",
+          profile: "health",
+          action: "status",
+          command: { ok: true, status: 0 },
+          probe: {
+            gateway: { ok: true, url: "http://127.0.0.1:8642" },
+            management: { ok: true, url: "http://127.0.0.1:8765/health" },
+            irisAdapter: {
+              ok: false,
+              profile: "default",
+              requestedProfile: "health",
+              error: "Iris adapter is for 'default', not 'health'.",
+            },
+          },
+        });
+      }
+      return jsonResponse({ ok: false, error: `Unexpected ${url}` }, 404);
+    });
+    vi.stubGlobal("fetch", fetch);
+
+    const result = await getIrisCoreStatus(defaultRuntimeConfig, "health");
+
+    expect(result.activeProfile.name).toBe("default");
+    expect(result.activeApiStatus?.ok).toBe(false);
+    expect(result.activeApiStatus?.requestedProfile).toBe("health");
+    expect(fetch).toHaveBeenCalledWith(
+      expect.stringContaining("/v1/agents/agent_health/gateway/status"),
+      expect.objectContaining({ method: "GET" }),
+    );
+  });
+
+  it("calls the system plugin install endpoint through Core transport", async () => {
+    const fetch = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        ok: true,
+        hermesHome: "/home/user/.hermes",
+        pluginPath: "/home/user/.hermes/plugins/iris-platform",
+        enabled: true,
+        restartRequired: true,
+      }),
+    }));
+    vi.stubGlobal("fetch", fetch);
+
+    const result = await installIrisCoreHermesPlugin(defaultRuntimeConfig);
+
+    expect(result.ok).toBe(true);
+    expect(result.restartRequired).toBe(true);
+    expect(fetch).toHaveBeenCalledWith(
+      expect.stringContaining("/v1/system/install-hermes-plugin"),
+      expect.objectContaining({ method: "POST", body: "{}" }),
     );
   });
 
@@ -505,3 +630,33 @@ describe("irisCore", () => {
     ]);
   });
 });
+
+function jsonResponse(body: unknown, status = 200) {
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    json: async () => body,
+  } as Response;
+}
+
+function coreAgentFixture(profile: string, isDefault = false) {
+  return {
+    id: `agent_${profile}`,
+    runtimeId: "runtime_local_hermes",
+    runtimeKind: "hermes",
+    displayName: profile,
+    runtimeProfile: profile,
+    isDefault,
+    metadata: {
+      provider: "openai-codex",
+      model: "gpt-5.5",
+      path: `/tmp/${profile}`,
+      exists: true,
+      memoryBytes: 0,
+      memoryUpdatedAt: null,
+      skillCount: 0,
+      sessionCount: 0,
+      gatewayRunning: true,
+    },
+  };
+}

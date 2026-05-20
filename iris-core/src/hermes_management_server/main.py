@@ -1908,6 +1908,26 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         adapter = app.state.runtime_registry.adapter_for_runtime(agent["runtimeId"])
         return await run_runtime_call(app, adapter.models, agent["runtimeProfile"])
 
+    @app.get("/v1/agents/{agent_id}/gateway/status")
+    async def core_agent_gateway_status(agent_id: str, _auth: None = Depends(require_auth)) -> dict[str, Any]:
+        return await core_agent_gateway_action(app, agent_id, "status")
+
+    @app.post("/v1/agents/{agent_id}/gateway/start")
+    async def core_agent_gateway_start(agent_id: str, _auth: None = Depends(require_auth)) -> dict[str, Any]:
+        return await core_agent_gateway_action(app, agent_id, "start")
+
+    @app.post("/v1/agents/{agent_id}/gateway/stop")
+    async def core_agent_gateway_stop(agent_id: str, _auth: None = Depends(require_auth)) -> dict[str, Any]:
+        return await core_agent_gateway_action(app, agent_id, "stop")
+
+    @app.post("/v1/agents/{agent_id}/gateway/restart")
+    async def core_agent_gateway_restart(agent_id: str, _auth: None = Depends(require_auth)) -> dict[str, Any]:
+        return await core_agent_gateway_action(app, agent_id, "restart")
+
+    @app.post("/v1/system/install-hermes-plugin")
+    async def core_install_iris_hermes_plugin(_auth: None = Depends(require_auth)) -> dict[str, Any]:
+        return await run_runtime_call(app, install_iris_hermes_plugin_for_app, app)
+
     @app.get("/v1/agents/{agent_id}/slash-commands")
     async def core_agent_slash_commands(agent_id: str, _auth: None = Depends(require_auth)) -> dict[str, Any]:
         agent = app.state.runtime_registry.agent(agent_id)
@@ -1935,6 +1955,100 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
 
     return app
+
+
+async def core_agent_gateway_action(app: FastAPI, agent_id: str, action: str) -> dict[str, Any]:
+    agent = app.state.runtime_registry.agent(agent_id)
+    if not agent:
+        raise ManagementError("Agent was not found.", status_code=404)
+    profile = str(agent["runtimeProfile"])
+    runtime_id = str(agent["runtimeId"])
+    registry = app.state.runtime_registry
+    timeout = 30 if action in {"start", "restart"} else DEFAULT_RUNTIME_CALL_TIMEOUT_SECONDS
+    command = await run_runtime_call(
+        app,
+        registry.gateway_status if action == "status" else registry.gateway_control,
+        runtime_id,
+        profile,
+        *(() if action == "status" else (action,)),
+        timeout=timeout,
+    )
+    probe: dict[str, Any] | None = None
+    try:
+        probe = await run_runtime_call(app, registry.probe, runtime_id, profile=profile)
+    except Exception as exc:
+        probe = {
+            "gateway": {"ok": False, "error": str(exc)},
+            "management": {"ok": False, "error": str(exc)},
+            "irisAdapter": {"ok": False, "error": str(exc), "profile": profile},
+        }
+    return {
+        "ok": bool(command.get("ok")),
+        "agentId": agent_id,
+        "runtimeId": runtime_id,
+        "profile": profile,
+        "action": action,
+        "command": command,
+        "probe": probe,
+        **({} if command.get("ok") else {"error": command.get("error") or f"Hermes gateway {action} failed."}),
+    }
+
+
+def install_iris_hermes_plugin_for_app(app: FastAPI) -> dict[str, Any]:
+    settings: Settings = app.state.settings
+    hermes_home = str(normalize_hermes_home(settings.hermes_home or os.environ.get("HERMES_HOME") or "~/.hermes"))
+    token = getattr(app.state, "management_token", "") or iris_token(hermes_home)
+    inbound_port = getattr(settings, "iris_inbound_port", None) or DEFAULT_IRIS_INBOUND_PORT
+    installations: list[dict[str, Any]] = []
+    for index, target_home in enumerate(hermes_plugin_install_homes(hermes_home)):
+        try:
+            result = install_hermes_plugin(
+                str(target_home),
+                host=settings.host,
+                port=settings.port,
+                token=token,
+                inbound_port=int(inbound_port) + index,
+            )
+        except SystemExit as exc:
+            result = {
+                "ok": False,
+                "hermesHome": str(target_home),
+                "error": str(exc) or "Iris could not install the Hermes plugin.",
+                "restartRequired": True,
+            }
+        except Exception as exc:  # pragma: no cover - defensive
+            result = {
+                "ok": False,
+                "hermesHome": str(target_home),
+                "error": str(exc) or "Iris could not install the Hermes plugin.",
+                "restartRequired": True,
+            }
+        installations.append(result)
+
+    failed_install = next((item for item in installations if not item.get("ok")), None)
+    failed_enable = next((item for item in installations if not item.get("enabled")), None)
+    primary = installations[0] if installations else {}
+    return {
+        "ok": failed_install is None,
+        "hermesHome": hermes_home,
+        "pluginPath": primary.get("pluginPath", ""),
+        "enabled": failed_enable is None,
+        "enableError": failed_enable.get("enableError", "") if failed_enable else "",
+        "restartRequired": any(bool(item.get("restartRequired", True)) for item in installations) if installations else True,
+        "installations": installations,
+        **({} if failed_install is None else {"error": failed_install.get("error") or "Iris could not install the Hermes plugin."}),
+    }
+
+
+def hermes_plugin_install_homes(hermes_home: str) -> list[Path]:
+    root = Path(hermes_home).expanduser()
+    homes = [root]
+    profiles_root = root / "profiles"
+    if profiles_root.is_dir():
+        for item in sorted(profiles_root.iterdir(), key=lambda path: path.name.lower()):
+            if item.is_dir():
+                homes.append(item)
+    return homes
 
 
 def core_status_payload(*, request_app: FastAPI) -> dict[str, Any]:

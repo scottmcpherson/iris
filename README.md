@@ -76,7 +76,7 @@ Product terminology uses "sessions" for user-facing work threads. Core API route
 
 ## Iris Hermes Adapter
 
-The easiest path is inside Iris Desktop: use first-run setup or Settings -> Local -> Service management -> Install Hermes plugin. The packaged app runs the version-matched Core installer, copies the bundled `iris-platform` plugin, writes Hermes `.env` hints, enables the plugin when the Hermes CLI is available, and then requires a Hermes gateway restart.
+The easiest path is inside Iris Desktop: use first-run setup or Settings -> Local -> Service management -> Install Iris adapter. The packaged app runs the version-matched Core installer, copies the bundled `iris-platform` plugin, writes Hermes `.env` hints, enables the plugin when the Hermes CLI is available, and then requires a Hermes gateway restart.
 
 The same installer is available from the Core binary:
 

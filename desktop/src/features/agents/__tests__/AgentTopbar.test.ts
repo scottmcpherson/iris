@@ -20,7 +20,7 @@ describe("AgentTopbar", () => {
     expect(html).not.toContain("127.0.0.1");
   });
 
-  it("renders the agent detail title without the topbar avatar", () => {
+  it("renders the agent detail title without the runtime pill or avatar", () => {
     const html = renderToStaticMarkup(
       createElement(AgentTopbar, {
         detailProfile: "default",
@@ -32,6 +32,7 @@ describe("AgentTopbar", () => {
     );
 
     expect(html).toContain("Agents / default");
+    expect(html).not.toContain("agent-topbar-runtime-pill");
     expect(html).not.toContain("agent-avatar");
   });
 });

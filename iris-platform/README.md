@@ -13,7 +13,7 @@ On the machine running Hermes:
 iris-core install-hermes-plugin --hermes-home ~/.hermes --host 127.0.0.1 --port 8765
 ```
 
-Iris Desktop exposes the same action in first-run Local Hermes setup and in Settings -> Local -> Service management -> Install Hermes plugin. The installer copies the version-matched plugin bundled with Iris Core, enables `iris-platform` when the Hermes CLI is available, writes Iris env hints, and then requires a Hermes gateway restart.
+Iris Desktop exposes the same action in first-run Local Hermes setup and in Settings -> Local -> Service management -> Install Iris adapter. The installer copies the version-matched plugin bundled with Iris Core, enables `iris-platform` when the Hermes CLI is available, writes Iris env hints, and then requires a Hermes gateway restart.
 
 Manual installation remains useful for plugin development:
 

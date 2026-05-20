@@ -7,6 +7,7 @@ import type {
 import { convertFileSrc, isTauri } from "@tauri-apps/api/core";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import {
+  AlertCircle,
   ArrowDown,
   Check,
   Mic,
@@ -20,6 +21,11 @@ import {
 import { StickToBottom, useStickToBottomContext } from "use-stick-to-bottom";
 import type { Message, MessageAttachment } from "../../app/types";
 import type { IrisProject } from "../../lib/irisCore";
+import type { RuntimeReadiness } from "../../app/runtimeReadiness";
+import {
+  runtimeReadinessDetail,
+  runtimeReadinessGatewayAction,
+} from "../../app/runtimeReadiness";
 import type {
   HermesModelCatalog,
   HermesModelProvider,
@@ -44,6 +50,7 @@ import {
   DropdownMenuTrigger,
 } from "../../shared/ui/dropdown-menu";
 import { Button } from "../../shared/ui/button";
+import { StatusBanner } from "../../shared/ui/status-banner";
 import {
   filterSlashCommands,
   moveSlashCommandIndex,
@@ -96,6 +103,10 @@ type ChatViewProps = {
   slashCommandsLoading: boolean;
   slashCommandsError: string | null;
   onSlashCommandsRefresh: () => void;
+  runtimeReadiness?: RuntimeReadiness;
+  onGatewayAction?: (action: "start" | "restart") => void;
+  gatewayActionBusy?: boolean;
+  gatewayActionBusyAction?: "start" | "restart" | "stop" | null;
 };
 
 type AttachmentDraft = MessageAttachment & {
@@ -139,6 +150,10 @@ export function ChatView({
   slashCommandsLoading,
   slashCommandsError,
   onSlashCommandsRefresh,
+  runtimeReadiness = connected ? "ready" : "offline",
+  onGatewayAction = () => {},
+  gatewayActionBusy = false,
+  gatewayActionBusyAction = null,
 }: ChatViewProps) {
   const chatPaneRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -175,6 +190,10 @@ export function ChatView({
   const inputHasText = input.trim().length > 0;
   const composerCanSend = inputHasText || attachments.length > 0;
   const composerBusy = requestActive || sendPending;
+  const runtimeReady = runtimeReadiness === "ready";
+  const runtimeGatewayAction = runtimeReadinessGatewayAction(runtimeReadiness);
+  const runtimeNotice = runtimeReadinessDetail(runtimeReadiness, profile, runtimeConfig.connectionMode);
+  const runtimeGatewayActionLabel = gatewayActionLabel(runtimeGatewayAction, gatewayActionBusy, gatewayActionBusyAction);
   const dictation = useVoiceDictation({
     onRecordingComplete: sendVoiceRecording,
   });
@@ -194,13 +213,15 @@ export function ChatView({
   );
   const modelSelectionLocked = shouldLockComposerModelSelection(composerBusy);
   const modelOptionsAvailable = Boolean(modelCatalog?.providers?.some((provider) => provider.models.length));
-  const modelSelectionDisabled = modelSelectionLocked || dictationBusy || !connected || modelLoading || !modelOptionsAvailable;
+  const modelSelectionDisabled = modelSelectionLocked || dictationBusy || !connected || !runtimeReady || modelLoading || !modelOptionsAvailable;
   const modelSelectorTitle = modelSelectionLocked
     ? "Model is locked while this request is active"
     : modelLoading
       ? "Models are loading"
       : !connected
         ? "Connect Iris to select a model"
+        : !runtimeReady
+          ? runtimeNotice || "Runtime is not ready"
         : !modelOptionsAvailable
           ? "No model catalog available"
           : "Change model";
@@ -394,7 +415,7 @@ export function ChatView({
     const draftText = options.text ?? input;
     const draftAttachments = options.attachments ?? attachments;
     const hasSendableContent = draftText.trim().length > 0 || draftAttachments.length > 0;
-    if (!hasSendableContent || requestActive || sendPendingRef.current || (dictationBusy && !options.allowDuringDictation)) {
+    if (!runtimeReady || !hasSendableContent || requestActive || sendPendingRef.current || (dictationBusy && !options.allowDuringDictation)) {
       return false;
     }
     sendPendingRef.current = true;
@@ -542,7 +563,7 @@ export function ChatView({
 
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
-      sendWithAttachments();
+      void sendWithAttachments();
       return;
     }
 
@@ -685,6 +706,28 @@ export function ChatView({
           }}
         />
         <div className="composer-input-wrap">
+          {!runtimeReady ? (
+            <StatusBanner
+              tone="degraded"
+              icon={AlertCircle}
+              className="mb-1"
+              action={
+                runtimeGatewayAction ? (
+                  <Button
+                    type="button"
+                    variant="appNeutral"
+                    size="appSmall"
+                    disabled={gatewayActionBusy}
+                    onClick={() => onGatewayAction(runtimeGatewayAction)}
+                  >
+                    {runtimeGatewayActionLabel}
+                  </Button>
+                ) : null
+              }
+            >
+              {runtimeNotice}
+            </StatusBanner>
+          ) : null}
           <textarea
             ref={textareaRef}
             value={input}
@@ -712,8 +755,13 @@ export function ChatView({
               activeIndex={activeSlashIndex}
               loading={slashCommandsLoading}
               error={slashCommandsError}
+              runtimeReadiness={runtimeReadiness}
+              profile={profile}
               commandRefs={slashCommandRefs}
               onRefresh={onSlashCommandsRefresh}
+              onGatewayAction={onGatewayAction}
+              gatewayActionBusy={gatewayActionBusy}
+              gatewayActionBusyAction={gatewayActionBusyAction}
               onActiveIndex={setActiveSlashIndex}
               onSelect={insertSlashCommand}
             />
@@ -827,11 +875,13 @@ export function ChatView({
                   title={
                     !composerCanSend
                       ? "Enter a message or add a file to send"
+                      : !runtimeReady
+                        ? runtimeNotice || "Runtime is not ready"
                       : sendPending
                         ? "Sending message"
                         : "Send message"
                   }
-                  disabled={!composerCanSend || sendPending}
+                  disabled={!composerCanSend || !runtimeReady || sendPending}
                   aria-busy={sendPending}
                   onPointerDown={(event) => {
                     if (event.button !== 0) return;
@@ -1052,6 +1102,16 @@ export function chatTranscriptScrollKey(selectedSessionId: string | null, render
 
 export function shouldLockComposerModelSelection(composerBusy: boolean) {
   return composerBusy;
+}
+
+function gatewayActionLabel(
+  action: "start" | "restart" | null,
+  busy: boolean,
+  busyAction: "start" | "restart" | "stop" | null,
+) {
+  if (action === "start") return busy && busyAction === "start" ? "Starting gateway..." : "Start gateway";
+  if (action === "restart") return busy && busyAction === "restart" ? "Restarting gateway..." : "Restart gateway";
+  return "";
 }
 
 export function shouldShowVisibleDictationStatus(state: DictationState) {

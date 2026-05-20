@@ -21,8 +21,20 @@ import {
   saveIrisMemoryFile,
   switchIrisAgent,
 } from "../../lib/irisRuntime";
+import {
+  controlIrisCoreGateway,
+  getIrisCoreAgentForProfile,
+  type IrisCoreGatewayAction,
+  type IrisCoreGatewayControlResult,
+} from "../../lib/irisCore";
 import type { HermesMemory, HermesRuntimeConfig, HermesSkill, HermesStatus } from "../../types/hermes";
 import { ensureActiveSshTunnel } from "./sshRuntime";
+
+type RefreshOptions = {
+  loadProfileData?: boolean;
+  selectProfile?: boolean;
+  silent?: boolean;
+};
 
 export function useIrisRuntime() {
   const [status, setStatus] = useState<HermesStatus | null>(null);
@@ -33,6 +45,7 @@ export function useIrisRuntime() {
   const [runtimeConfig, setRuntimeConfig] = useState<HermesRuntimeConfig>(() => loadRuntimeConfig());
   const selectedProfileRef = useRef(selectedProfile);
   const runtimeConfigRef = useRef(runtimeConfig);
+  const statusPollRef = useRef(false);
 
   function setCurrentProfile(profile: string) {
     selectedProfileRef.current = profile;
@@ -44,9 +57,15 @@ export function useIrisRuntime() {
     setRuntimeConfig(config);
   }
 
-  async function refreshIris(profileName = selectedProfileRef.current, config = runtimeConfigRef.current) {
-    setIsRefreshing(true);
+  async function refreshIris(
+    profileName = selectedProfileRef.current,
+    config = runtimeConfigRef.current,
+    options: RefreshOptions = {},
+  ) {
+    if (!options.silent) setIsRefreshing(true);
     let activeConfig = config;
+    const selectRefreshedProfile = options.selectProfile !== false;
+    const loadProfileData = options.loadProfileData ?? selectRefreshedProfile;
     try {
       activeConfig = await ensureActiveSshTunnel(config);
       if (activeConfig !== config) {
@@ -58,8 +77,9 @@ export function useIrisRuntime() {
       if (!nextStatus.ok) throw new Error(nextStatus.error || "Iris status failed.");
       const profile = profileName || nextStatus.activeProfile?.name || "default";
       setStatus(nextStatus);
-      setCurrentProfile(profile);
+      if (selectRefreshedProfile) setCurrentProfile(profile);
 
+      if (!loadProfileData) return nextStatus;
       const [nextMemory, nextSkills] = await Promise.all([
         getIrisMemory(profile, activeConfig),
         getIrisSkills(profile, activeConfig),
@@ -89,11 +109,13 @@ export function useIrisRuntime() {
         profiles: [offlineProfile],
       };
       setStatus(offlineStatus);
-      setCurrentProfile("default");
-      setSkills([]);
+      if (selectRefreshedProfile) {
+        setCurrentProfile("default");
+        setSkills([]);
+      }
       return offlineStatus;
     } finally {
-      setIsRefreshing(false);
+      if (!options.silent) setIsRefreshing(false);
     }
   }
 
@@ -163,8 +185,95 @@ export function useIrisRuntime() {
     return "Memory reset completed.";
   }
 
+  async function runGatewayAction(action: IrisCoreGatewayAction, targetProfile?: string): Promise<IrisCoreGatewayControlResult> {
+    const profile = targetProfile || selectedProfileRef.current || "default";
+    let activeConfig = runtimeConfigRef.current;
+    const preserveSelectedProfile = profile !== selectedProfileRef.current;
+    try {
+      activeConfig = await ensureActiveSshTunnel(activeConfig);
+      if (activeConfig !== runtimeConfigRef.current) {
+        setCurrentRuntimeConfig(activeConfig);
+        saveRuntimeConfig(activeConfig);
+      }
+      const agentResult = await getIrisCoreAgentForProfile(profile, activeConfig);
+      if (!agentResult.ok || !agentResult.agent) {
+        return {
+          ok: false,
+          agentId: "",
+          runtimeId: "",
+          profile,
+          action,
+          error: ("error" in agentResult ? agentResult.error : "") || "Could not resolve Iris agent.",
+        };
+      }
+      const result = await controlIrisCoreGateway(agentResult.agent.id, action, activeConfig);
+      const normalizedResult = result.ok || result.command
+        ? result
+        : {
+            ok: false,
+            agentId: agentResult.agent.id,
+            runtimeId: agentResult.agent.runtimeId,
+            profile,
+            action,
+            error: result.error || `Could not ${action} Hermes gateway.`,
+          };
+      await refreshAfterGatewayAction(action, profile, activeConfig, Boolean(normalizedResult.ok), preserveSelectedProfile);
+      return normalizedResult;
+    } catch (error) {
+      await refreshIris(profile, activeConfig, {
+        loadProfileData: !preserveSelectedProfile,
+        selectProfile: !preserveSelectedProfile,
+      });
+      return {
+        ok: false,
+        agentId: "",
+        runtimeId: "",
+        profile,
+        action,
+        error: error instanceof Error ? error.message : `Could not ${action} Hermes gateway.`,
+      };
+    }
+  }
+
+  async function refreshAfterGatewayAction(
+    action: IrisCoreGatewayAction,
+    profile: string,
+    config: HermesRuntimeConfig,
+    commandOk: boolean,
+    preserveSelectedProfile: boolean,
+  ) {
+    const expectedRunning = action !== "stop";
+    const delays = commandOk ? [0, 300, 800, 1400] : [0];
+    for (const delay of delays) {
+      if (delay > 0) await sleep(delay);
+      const nextStatus = await refreshIris(profile, config, {
+        loadProfileData: !preserveSelectedProfile,
+        selectProfile: !preserveSelectedProfile,
+      });
+      const target = nextStatus.profiles?.find((item) => item.name === profile);
+      if (!target) continue;
+      if (Boolean(target.gatewayRunning) === expectedRunning) break;
+    }
+  }
+
   useEffect(() => {
     void refreshIris();
+  }, []);
+
+  useEffect(() => {
+    const interval = window.setInterval(() => {
+      if (statusPollRef.current) return;
+      if (document.visibilityState === "hidden") return;
+      statusPollRef.current = true;
+      void refreshIris(selectedProfileRef.current, runtimeConfigRef.current, {
+        loadProfileData: false,
+        selectProfile: false,
+        silent: true,
+      }).finally(() => {
+        statusPollRef.current = false;
+      });
+    }, 5000);
+    return () => window.clearInterval(interval);
   }, []);
 
   useEffect(() => {
@@ -202,6 +311,7 @@ export function useIrisRuntime() {
     memory,
     refreshIris,
     resetMemoryFile,
+    runGatewayAction,
     runProfileAction,
     runtimeConfig,
     saveMemoryFile,
@@ -211,4 +321,8 @@ export function useIrisRuntime() {
     status,
     updateRuntimeConfig,
   };
+}
+
+function sleep(ms: number) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
 }

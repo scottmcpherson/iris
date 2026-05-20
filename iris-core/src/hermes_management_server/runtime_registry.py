@@ -68,3 +68,11 @@ class RuntimeRegistry:
         probe = adapter.probe(profile)
         self.core_store.update_runtime_probe(runtime_id, probe)
         return probe
+
+    def gateway_status(self, runtime_id: str, profile: str) -> dict[str, Any]:
+        adapter = self.adapter_for_runtime(runtime_id)
+        return adapter.gateway_status(profile)
+
+    def gateway_control(self, runtime_id: str, profile: str, action: str) -> dict[str, Any]:
+        adapter = self.adapter_for_runtime(runtime_id)
+        return adapter.gateway_control(profile, action)

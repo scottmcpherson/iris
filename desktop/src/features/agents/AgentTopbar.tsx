@@ -31,7 +31,9 @@ export function AgentTopbar({
       <div className="agent-detail-title">
         <div>
           <p className="eyebrow">Agents / {profile.name}</p>
-          <h1>{profile.name}</h1>
+          <h1>
+            <span>{profile.name}</span>
+          </h1>
         </div>
       </div>
       <div className="agent-topbar-actions">

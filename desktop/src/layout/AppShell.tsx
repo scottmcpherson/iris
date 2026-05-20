@@ -26,6 +26,7 @@ import { navItems, viewTitle } from "../app/navigation";
 import { loadJsonValue, saveJsonValue, storageKeys } from "../app/storage";
 import type { ProfileActionHandler, View } from "../app/types";
 import { offlineProfile } from "../app/offlineProfile";
+import { runtimeReadinessForStatus } from "../app/runtimeReadiness";
 import type { IrisCoreAgent, IrisProject } from "../lib/irisCore";
 import type { HermesSession, HermesProfile, HermesStatus } from "../types/hermes";
 import {
@@ -69,16 +70,31 @@ const SIDEBAR_STANDARD_WIDTH = 252;
 const SIDEBAR_COLLAPSED_WIDTH = 0;
 const SIDEBAR_MAX_WIDTH = 440;
 
-export function sidebarConnectionStatusLabel(connected: boolean, status: HermesStatus | null) {
-  if (!connected) return "Iris Core offline";
+export function sidebarConnectionStatusLabel(
+  connected: boolean,
+  status: HermesStatus | null,
+  selectedProfile = status?.activeProfile?.name || "default",
+) {
+  if (!connected) return "Core offline";
 
+  const connectionLabel = sidebarConnectionName(status);
+  const profile = status?.profiles.find((item) => item.name === selectedProfile) || status?.activeProfile || null;
+  const profileName = profile?.name || selectedProfile;
+  const readiness = runtimeReadinessForStatus(status, profile);
+
+  if (readiness === "ready") return `${connectionLabel} · ${profileName}`;
+  if (readiness === "gateway-stopped") return `${connectionLabel} · ${profileName} gateway stopped`;
+  if (readiness === "adapter-unavailable") return `${connectionLabel} · ${profileName} adapter unavailable`;
+  return `${connectionLabel} · connecting`;
+}
+
+function sidebarConnectionName(status: HermesStatus | null) {
   const connectionName = status?.activeConnectionName?.trim();
-  if (connectionName) return `${connectionName} connected`;
-
-  if (status?.connectionMode === "ssh") return "SSH connected";
-  if (status?.connectionMode === "tailscale") return "Tailscale connected";
-  if (status?.connectionMode === "manual-url") return "Remote Core connected";
-  return "Local connected";
+  if (connectionName) return connectionName;
+  if (status?.connectionMode === "ssh") return "SSH";
+  if (status?.connectionMode === "tailscale") return "Tailscale";
+  if (status?.connectionMode === "manual-url") return "Remote";
+  return "Local";
 }
 
 type SidebarWidthBand = "compact" | "regular";
@@ -103,6 +119,7 @@ type AppShellProps = {
   primaryPane: ReactNode;
   topbarPane?: ReactNode;
   selectedProfile: string;
+  statusProfile?: string;
   status: HermesStatus | null;
   sessions: HermesSession[];
   sessionsByProfile: Record<string, HermesSession[]>;
@@ -143,6 +160,7 @@ type AppShellProps = {
   onSelectProjectSession: (projectId: string, profileName: string, sessionId: string) => void;
   onSelectProfile: (profile: string) => void;
   onSelectView: (view: View) => void;
+  onOpenDiagnostics?: () => void;
 };
 
 export function AppShell({
@@ -153,6 +171,7 @@ export function AppShell({
   primaryPane,
   topbarPane,
   selectedProfile,
+  statusProfile,
   status,
   sessions,
   sessionsByProfile,
@@ -190,8 +209,10 @@ export function AppShell({
   onSelectProjectSession,
   onSelectProfile,
   onSelectView,
+  onOpenDiagnostics,
 }: AppShellProps) {
   const profiles = status?.profiles ?? [offlineProfile];
+  const brandStatusProfile = statusProfile || selectedProfile;
   const showSelectedSession = activeView === "chat";
   const [sessionContextMenuKey, setSessionContextMenuKey] = useState("");
   const [profileDialog, setProfileDialog] = useState<ProfileDialog | null>(null);
@@ -229,6 +250,16 @@ export function AppShell({
   const chatsSectionCollapsed = Boolean(collapsedSidebarSections.chats);
   const agentsSectionCollapsed = Boolean(collapsedSidebarSections.agents);
   const pinnedSectionCollapsed = Boolean(collapsedSidebarSections.pinned);
+  const selectedStatusProfile =
+    profiles.find((profile) => profile.name === selectedProfile) ??
+    status?.activeProfile ??
+    offlineProfile;
+  const runtimeReadiness = runtimeReadinessForStatus(status, selectedStatusProfile);
+  const statusDotClassName = [
+    "status-dot",
+    runtimeReadiness === "ready" ? "connected" : "",
+    connected && runtimeReadiness !== "ready" ? "degraded" : "",
+  ].filter(Boolean).join(" ");
 
   useEffect(() => {
     sidebarCollapsedRef.current = sidebarCollapsed;
@@ -422,10 +453,23 @@ export function AppShell({
           </div>
           <div>
             <p className="brand-name">Iris</p>
-            <p className="brand-status">
-              <span className={connected ? "status-dot connected" : "status-dot"} />
-              <span className="brand-status-text">{sidebarConnectionStatusLabel(connected, status)}</span>
-            </p>
+            {onOpenDiagnostics ? (
+              <button
+                type="button"
+                className="brand-status brand-status-button"
+                onClick={onOpenDiagnostics}
+                aria-label="Open runtime diagnostics"
+                title="Diagnose and recover the runtime"
+              >
+                <span className={statusDotClassName} />
+                <span className="brand-status-text">{sidebarConnectionStatusLabel(connected, status, brandStatusProfile)}</span>
+              </button>
+            ) : (
+              <p className="brand-status">
+                <span className={statusDotClassName} />
+                <span className="brand-status-text">{sidebarConnectionStatusLabel(connected, status, brandStatusProfile)}</span>
+              </p>
+            )}
           </div>
         </div>
 

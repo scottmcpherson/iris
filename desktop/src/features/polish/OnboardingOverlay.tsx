@@ -132,11 +132,11 @@ export function OnboardingOverlay({
       const result = await invoke<CoreCliResult>("core_install_hermes_plugin", { config: localCoreConfig(localDraft) });
       setLocalMessage(
         result.ok
-          ? "Iris installed the Hermes adapter. Restart Hermes gateway, then retry readiness."
-          : result.error || result.stderr || "Hermes adapter install failed.",
+          ? "Iris adapter installed. Restart Hermes gateway, then retry readiness."
+          : result.error || result.stderr || "Iris adapter install failed.",
       );
     } catch (error) {
-      setLocalMessage(error instanceof Error ? error.message : "Hermes adapter install failed.");
+      setLocalMessage(error instanceof Error ? error.message : "Iris adapter install failed.");
     } finally {
       setLocalBusy("");
     }
@@ -261,7 +261,7 @@ export function OnboardingOverlay({
                 </Button>
                 <Button variant="appNeutral" size="appSmall" disabled={Boolean(localBusy)} onClick={() => void installHermesPlugin()}>
                   <Wrench data-icon="inline-start" />
-                  Install adapter
+                  Install Iris adapter
                 </Button>
                 <Button size="appSmall" disabled={Boolean(localBusy)} onClick={() => void startLocalCore()}>
                   <Server data-icon="inline-start" />
