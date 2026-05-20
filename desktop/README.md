@@ -4,12 +4,13 @@ Iris Desktop is the native Tauri 2, React 18, TypeScript, and Tailwind client fo
 
 This app lives in the `desktop/` workspace of the Iris monorepo. For normal setup and startup, run commands from the repository root.
 
-## Phase 1 Foundation
+## Current Capabilities
 
 - macOS-style app layout with sidebar navigation and session workspace.
 - Rust Tauri command bridge used only for Iris Core request fallback, Core attachment uploads from local paths, and Core credential storage.
 - Iris Core discovery for agents, memory files, skills, sessions, model catalogs, slash commands, automations, and runtime health.
 - Sessions, profile actions, memory writes, skill writes, model catalog, slash commands, and automations all route through Iris Core. Hermes remains a runtime adapter behind Core.
+- First-run setup for Local Hermes and Hermes via SSH.
 
 ## Development
 
@@ -34,7 +35,7 @@ npm run dev
 npm run tauri dev
 ```
 
-The web dev surface runs on `http://127.0.0.1:1420/`. The full desktop shell is launched with root `npm run dev` or local `npm run tauri dev`.
+The web dev surface runs on `http://localhost:1420/`. The full desktop shell is launched with root `npm run dev` or local `npm run tauri dev`.
 
 ## Iris Core Integration
 
@@ -44,12 +45,10 @@ The desktop app expects one HTTP route:
 
 - Iris Core API: agents, sessions, automations, device auth, runtime routing, memory, skills, status, runtime health, model catalogs, slash commands, and session reads come from the monorepo service in `../iris-core`, defaulting to `http://127.0.0.1:8765/v1`.
 
-Settings uses connection profiles instead of a single URL/token form:
+First-run setup and Settings use connection profiles instead of a single URL/token form:
 
-- `This Mac`: managed local sidecar, local Core port, Hermes home, plugin install, Core service install, logs, and Tailscale pairing-token creation.
-- `SSH`: saved remote Mac profiles, non-interactive SSH probe, remote Core probe, local tunnel connect/disconnect, and clear host-key/auth/Core-offline errors.
-- `Tailscale`: saved private-network profiles, paired device token storage in Keychain, test, and connect.
-- `Manual URL`: advanced/development mode for custom private Core URLs and optional tokens.
+- `Local`: managed local sidecar, local Core port, Hermes home, Hermes adapter install, Core service install, and logs.
+- `SSH`: saved remote-host profiles, local tunnel connect/disconnect, and clear host-key/auth/Core-offline errors.
 
 Runtime-specific routes, including Hermes gateway and adapter URLs, belong to Iris Core runtime configuration. The desktop app does not read local runtime files or SQLite history directly and does not keep a browser-side session cache. Core bearer/device tokens are stored through the OS credential store under profile-specific accounts, not in browser local storage.
 
@@ -61,9 +60,9 @@ Useful environment variables:
 
 ## Remote Connection Notes
 
-SSH mode uses system OpenSSH with `BatchMode=yes`; Iris does not store SSH passwords or private keys. Configure `~/.ssh/config`, `known_hosts`, and ssh-agent outside the app. If the remote Core is not running, start Iris or install the Core login service on the remote Mac.
+SSH mode uses system OpenSSH with `BatchMode=yes`; Iris does not store SSH passwords or private keys. Configure `~/.ssh/config`, `known_hosts`, and ssh-agent outside the app. If remote Core is not running, start Iris Core on the remote host and keep it bound to `127.0.0.1:8765`, then retry the tunnel.
 
-Tailscale mode does not require the Tailscale CLI. Enter a MagicDNS name or `100.x.y.z` address in Settings and paste a paired device token generated on the Mac that owns Hermes.
+Iris Core still supports direct private-network binds and paired device tokens for advanced deployments, but the current desktop setup UI focuses on Local and SSH.
 
 ## Production Checks
 

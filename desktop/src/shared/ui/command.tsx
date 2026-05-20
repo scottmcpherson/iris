@@ -94,12 +94,13 @@ const CommandInput = React.forwardRef<
   );
 });
 
-function CommandList({
-  className,
-  ...props
-}: React.ComponentProps<typeof CommandPrimitive.List>) {
+const CommandList = React.forwardRef<
+  React.ElementRef<typeof CommandPrimitive.List>,
+  React.ComponentPropsWithoutRef<typeof CommandPrimitive.List>
+>(function CommandList({ className, ...props }, ref) {
   return (
     <CommandPrimitive.List
+      ref={ref}
       data-slot="command-list"
       className={cn(
         "max-h-[300px] scroll-py-1 overflow-x-hidden overflow-y-auto",
@@ -108,7 +109,7 @@ function CommandList({
       {...props}
     />
   );
-}
+});
 
 function CommandEmpty({
   ...props
@@ -151,12 +152,13 @@ function CommandSeparator({
   );
 }
 
-function CommandItem({
-  className,
-  ...props
-}: React.ComponentProps<typeof CommandPrimitive.Item>) {
+const CommandItem = React.forwardRef<
+  React.ElementRef<typeof CommandPrimitive.Item>,
+  React.ComponentPropsWithoutRef<typeof CommandPrimitive.Item>
+>(function CommandItem({ className, ...props }, ref) {
   return (
     <CommandPrimitive.Item
+      ref={ref}
       data-slot="command-item"
       className={cn(
         "group relative flex min-h-[30px] cursor-default items-center gap-2 rounded-sm px-2 py-0 text-xs text-menu-foreground outline-hidden select-none data-[disabled=true]:pointer-events-none data-[disabled=true]:text-menu-disabled data-[selected=true]:bg-menu-hover data-[selected=true]:text-menu-hover-foreground [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-3.5",
@@ -165,7 +167,7 @@ function CommandItem({
       {...props}
     />
   );
-}
+});
 
 function CommandShortcut({
   className,

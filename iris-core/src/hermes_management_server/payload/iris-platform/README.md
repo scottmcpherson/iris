@@ -10,6 +10,14 @@ responses and scheduled job output back into Iris Core.
 On the machine running Hermes:
 
 ```bash
+iris-core install-hermes-plugin --hermes-home ~/.hermes --host 127.0.0.1 --port 8765
+```
+
+Iris Desktop exposes the same action in first-run Local Hermes setup and in Settings -> Local -> Service management -> Install Hermes plugin. The installer copies the version-matched plugin bundled with Iris Core, enables `iris-platform` when the Hermes CLI is available, writes Iris env hints, and then requires a Hermes gateway restart.
+
+Manual installation remains useful for plugin development:
+
+```bash
 mkdir -p ~/.hermes/plugins
 cp -R iris-platform ~/.hermes/plugins/iris-platform
 hermes plugins enable iris-platform
@@ -26,7 +34,7 @@ hermes plugins install https://github.com/<org>/iris-platform.git --enable
 Set these values where the Hermes gateway process can read them:
 
 ```bash
-export IRIS_BASE_URL="http://<iris-tailscale-host>:8765"
+export IRIS_BASE_URL="http://<iris-core-host>:8765"
 export IRIS_TOKEN="<iris bearer token>"
 export IRIS_DEFAULT_CHAT_ID="desktop"
 export IRIS_INBOUND_HOST="127.0.0.1"
@@ -51,11 +59,15 @@ streaming:
 `display.streaming` only controls the terminal UI and does not enable platform
 message edits.
 
-Use a private network address such as Tailscale for remote delivery. Keep Iris Core bound to `127.0.0.1` for local-only use, or to a private interface when Hermes runs elsewhere.
+Use a private network address for direct remote delivery. Keep Iris Core bound to `127.0.0.1` for local-only use and for Hermes via SSH, or bind it to a private interface only when you intentionally use non-loopback Core traffic with a bearer token or paired device token.
+
+For Hermes via SSH, keep Iris Core and this plugin on the host that owns Hermes. Core can remain bound to `127.0.0.1`; Iris Desktop reaches it through an SSH tunnel, so the plugin can also use loopback config.
+
+For direct private-network setups such as Tailscale, bind Iris Core to the selected private IP and use a paired device token for non-loopback Core traffic. Do not expose Core on a public interface.
 
 ## Chat Inbound
 
-Iris posts user messages to the Hermes machine:
+Iris posts user messages to the host running Hermes:
 
 ```bash
 curl -X POST http://127.0.0.1:8766/iris/messages \

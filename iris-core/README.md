@@ -6,7 +6,7 @@ Product terminology uses "sessions" for user-facing work threads. Hermes-level a
 
 This service lives in the `iris-core/` workspace of the Iris monorepo.
 
-The default bind address is `127.0.0.1`. For remote use, prefer Tailscale and a bearer token over public port forwarding. Non-loopback binds require `IRIS_TOKEN` or an active paired device token.
+The default bind address is `127.0.0.1`. For remote desktop use, the current Iris app prefers SSH tunneling to a loopback-bound Core on the host that owns Hermes. For direct private-network Core URLs, use a bearer token or paired device token and avoid public port forwarding. Non-loopback binds require `IRIS_TOKEN` or an active paired device token.
 
 ## Install
 
@@ -101,39 +101,39 @@ iris-core install-hermes-plugin --hermes-home ~/.hermes --host 127.0.0.1 --port 
 
 The command copies the bundled plugin to `$HERMES_HOME/plugins/iris-platform`, runs `hermes plugins enable iris-platform` when the Hermes CLI is available, updates `.env` hints for `IRIS_BASE_URL`, `IRIS_TOKEN` when set, `IRIS_INBOUND_HOST`, and `IRIS_INBOUND_PORT` (default `8766`), then prints a reminder to restart the Hermes gateway. Use `--inbound-port` if the Hermes plugin listener needs a non-default port.
 
-## Remote Mac Setup
+## Remote Host Setup
 
 ### SSH Mode
 
-SSH mode keeps Core private on the Hermes Mac:
+SSH mode keeps Core private on the host that owns Hermes:
 
 ```text
-MacBook Iris -> 127.0.0.1:<local-forward-port> -> ssh -> Mac mini 127.0.0.1:8765
+Iris Desktop -> 127.0.0.1:<local-forward-port> -> ssh -> remote host 127.0.0.1:8765
 ```
 
-Run Core on the Mac that owns Hermes, preferably through Iris Desktop or the LaunchAgent service below. On the client Mac, Settings -> Iris Core -> SSH uses system OpenSSH with `BatchMode=yes`, the user's normal `~/.ssh/config`, `known_hosts`, and ssh-agent. Host-key and auth failures should be fixed in Terminal first, for example:
+Run Core on the host that owns Hermes. On the client machine, first-run setup or Settings -> SSH uses system OpenSSH with `BatchMode=yes`, the user's normal `~/.ssh/config`, `known_hosts`, and ssh-agent. Host-key and auth failures should be fixed in Terminal first, for example:
 
 ```bash
-ssh user@mac-mini.local true
+ssh user@remote-host.local true
 ```
 
-Core remains bound to `127.0.0.1` on the remote Mac, and the default SSH tunnel path does not require a Core bearer token.
+Core remains bound to `127.0.0.1` on the remote host, and the default SSH tunnel path does not require a Core bearer token. If Iris reports `core-offline`, start Core on the remote host and retry the tunnel:
 
-### Tailscale Mode
+```bash
+HERMES_HOME="$HOME/.hermes" iris-core --host 127.0.0.1 --port 8765
+```
 
-1. Install Tailscale on the Hermes machine and on the Iris client machine.
-2. Sign in to the same tailnet on both machines.
-3. On the Hermes machine, open Iris Settings -> This Mac, enable Tailscale connections, enter the Tailscale IP or MagicDNS name, and create a pairing token.
-4. Install or update the Core login service bound to the selected Tailscale/private address.
-5. On the client Mac, open Settings -> Tailscale, enter the same host and port, paste the paired device token, and connect.
+### Direct Private-Network Mode
 
-CLI-only setup is also possible. On the Hermes machine, create a temporary management token:
+SSH is the default remote setup path in Iris Desktop. Direct private-network Core URLs are still available for advanced deployments where Core is intentionally bound to a private interface such as a Tailscale address. In that mode, each client needs a bearer token or paired device token.
+
+On the Hermes host, create a temporary management token:
 
 ```bash
 export IRIS_TOKEN="$(openssl rand -base64 32)"
 ```
 
-Start Iris Core on the Hermes machine:
+Start Iris Core on the Hermes host:
 
 ```bash
 HERMES_HOME="$HOME/.hermes" \
@@ -141,26 +141,26 @@ IRIS_TOKEN="$IRIS_TOKEN" \
 iris-core --host 100.x.y.z --port 8765
 ```
 
-Pair each remote client and copy the returned `token` once:
+Pair each client and copy the returned `token` once:
 
 ```bash
-curl -X POST http://<tailscale-hostname>:8765/v1/devices/pair \
+curl -X POST http://<private-core-host>:8765/v1/devices/pair \
   -H "Authorization: Bearer $IRIS_TOKEN" \
   -H "Content-Type: application/json" \
-  --data '{"name":"Scott MacBook","kind":"desktop","metadata":{"network":"tailscale"}}'
+  --data '{"name":"Workstation","kind":"desktop","metadata":{"network":"private"}}'
 ```
 
-6. In Iris Desktop, open Settings, set the Iris Core URL, and save the paired device token in the Core token field. Remote clients should connect to:
+Clients should connect to:
 
 ```text
-http://<tailscale-hostname>:8765/v1
+http://<private-core-host>:8765/v1
 ```
 
 Example:
 
 ```bash
 curl -H "Authorization: Bearer <paired-device-token>" \
-  http://<tailscale-hostname>:8765/v1/agents
+  http://<private-core-host>:8765/v1/agents
 ```
 
 Do not default to public interfaces such as `0.0.0.0`. Prefer a specific `100.x.y.z` address:
@@ -201,10 +201,10 @@ Verify a second client without Hermes filesystem access:
 
 ```bash
 curl -H "Authorization: Bearer <paired-device-token>" \
-  'http://<tailscale-hostname>:8765/v1/sessions?agentId=<agent-id>'
+  'http://<private-core-host>:8765/v1/sessions?agentId=<agent-id>'
 
 curl -H "Authorization: Bearer <paired-device-token>" \
-  'http://<tailscale-hostname>:8765/v1/events?after=0&limit=50&agentId=<agent-id>'
+  'http://<private-core-host>:8765/v1/events?after=0&limit=50&agentId=<agent-id>'
 ```
 
 The second client needs only the Core URL and paired device token. It should not read `~/.hermes`, Hermes SQLite files, or the Iris Core SQLite file directly.
@@ -221,7 +221,7 @@ iris-core service uninstall
 
 The service label is `com.nousresearch.iris-core`. The plist lives at `~/Library/LaunchAgents/com.nousresearch.iris-core.plist`, with logs under `~/Library/Logs/Iris/`.
 
-For SSH access from another Mac, keep the service bound to `127.0.0.1`. For Tailscale access, bind to the selected Tailscale/private IP, pair per-device tokens, and keep CORS disabled unless a browser client has an explicit trusted origin.
+For SSH access from another host, keep the service bound to `127.0.0.1`. For direct private-network access, bind to the selected private IP, pair per-device tokens, and keep CORS disabled unless a browser client has an explicit trusted origin.
 
 ## API
 

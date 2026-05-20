@@ -10,7 +10,12 @@ Iris is a monorepo for local-first agent control surfaces, including Iris Deskto
 
 ## First-Time Setup
 
-For a normal same-machine install, build or install `Iris.app` and open it. The packaged app includes a version-matched Iris Core sidecar and starts it on `127.0.0.1:8765` automatically; users do not need to run `npm run core:setup`, a Python virtualenv, or a separate Core process.
+For a normal install, build or install `Iris.app` and open it. The packaged app includes a version-matched Iris Core sidecar and starts it on `127.0.0.1:8765` automatically; users do not need to run `npm run core:setup`, a Python virtualenv, or a separate Core process.
+
+On first launch, Iris shows a setup assistant with two paths:
+
+- `Local Hermes`: Iris Core and Hermes run on the same machine. Iris can start managed Core, install or update the Hermes adapter, and then asks you to restart the Hermes gateway.
+- `Hermes via SSH`: Iris opens a local SSH tunnel to `127.0.0.1:8765` on a remote host where Iris Core and Hermes are already running. Core remains private on that host and no Core bearer token is required for the default loopback tunnel path.
 
 Developer setup still uses the monorepo tools:
 
@@ -48,18 +53,18 @@ Start only Iris Core:
 npm run core:dev
 ```
 
-The desktop Vite server runs on `http://127.0.0.1:1420/`. Iris Core defaults to `http://127.0.0.1:8765/v1`.
+The desktop Vite server runs on `http://localhost:1420/`. Iris Core defaults to `http://127.0.0.1:8765/v1`.
 
-## Remote Mac Connections
+## Runtime Connections
 
-Iris Desktop always talks to Iris Core, and Core must run on the Mac that owns Hermes. Use Settings -> Iris Core to choose one of four connection modes:
+Iris Desktop always talks to Iris Core, and Core must run on the machine that owns Hermes. Use first-run setup or Settings to choose the current connection paths:
 
-- `This Mac`: the packaged app manages the bundled local Core sidecar.
-- `SSH`: Iris opens a local tunnel to `127.0.0.1:<core-port>` on another Mac. Core stays private on that Mac and no Core bearer token is required for the default loopback tunnel path.
-- `Tailscale`: Core binds to a selected private tailnet address, and the client stores a paired device token in Keychain.
-- `Manual URL`: advanced/development mode for custom private Core URLs.
+- `Local`: the packaged app manages the bundled local Core sidecar and local Hermes configuration.
+- `SSH`: Iris opens a local tunnel to `127.0.0.1:<core-port>` on a remote host. Core stays private on that host and no Core bearer token is required for the default loopback tunnel path.
 
-For a reliable MacBook -> Mac mini setup, open Iris on the Mac mini, install/update the Hermes plugin from Settings, and optionally install the Core login service. Then connect from the MacBook with SSH or Tailscale from Settings.
+For Hermes via SSH, start Iris Core on the remote host first, install or update the Hermes adapter there, restart the Hermes gateway, then add the SSH endpoint from Iris setup or Settings. Iris uses system OpenSSH with `BatchMode=yes`, so host keys, SSH config, and ssh-agent should be prepared outside the app.
+
+Direct private-network Core URLs and paired device tokens are still supported by Iris Core for advanced deployments, but the visible desktop setup flow currently focuses on Local and SSH.
 
 ## Iris Core API
 
@@ -71,28 +76,33 @@ Product terminology uses "sessions" for user-facing work threads. Core API route
 
 ## Iris Hermes Adapter
 
-Install or update the bidirectional Iris platform plugin into the local Hermes home:
+The easiest path is inside Iris Desktop: use first-run setup or Settings -> Local -> Service management -> Install Hermes plugin. The packaged app runs the version-matched Core installer, copies the bundled `iris-platform` plugin, writes Hermes `.env` hints, enables the plugin when the Hermes CLI is available, and then requires a Hermes gateway restart.
+
+The same installer is available from the Core binary:
 
 ```bash
 npm run core:build:binary
 iris-core/dist/iris-core install-hermes-plugin --hermes-home ~/.hermes
 ```
 
-For monorepo development, the older Node installer is still available:
+For monorepo development, the source-tree Node installer is still available. It copies the working-tree plugin into Hermes plugin directories and enables it, but the Core binary installer above is preferred for packaged/version-matched installs:
 
 ```bash
 npm run iris:hermes:install
 ```
 
-`npm run iris:platform:install` is the same installer under a platform-focused name. Configure Hermes to receive Iris session messages and deliver responses into Iris Core. Add these to the environment used by the Hermes gateway, commonly `$HERMES_HOME/.env`:
+`npm run iris:platform:install` is the same installer under a platform-focused name.
+
+For manual configuration, set these values where the Hermes gateway process can read them, commonly `$HERMES_HOME/.env`:
 
 ```bash
 IRIS_BASE_URL=http://127.0.0.1:8765
 # Optional for loopback; required when IRIS_BASE_URL is non-loopback.
 IRIS_TOKEN=replace-with-a-local-token
-IRIS_DEFAULT_CHAT_ID=desktop
 IRIS_INBOUND_HOST=127.0.0.1
 IRIS_INBOUND_PORT=8766
+# Optional routing/user defaults.
+IRIS_DEFAULT_CHAT_ID=desktop
 IRIS_ALLOWED_USERS=iris-user
 ```
 

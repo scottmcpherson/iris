@@ -77,6 +77,10 @@ describe("composer responsive layout", () => {
       new URL("../components/SlashCommandMenu.tsx", import.meta.url),
       "utf8",
     ) as string;
+    const commandSource = readFileSync(
+      new URL("../../../shared/ui/command.tsx", import.meta.url),
+      "utf8",
+    ) as string;
 
     expect(menuSource).toContain("h-auto max-h-80");
     expect(menuSource).not.toContain("max-h-none overflow-visible");
@@ -85,6 +89,19 @@ describe("composer responsive layout", () => {
     expect(menuSource).toContain("onValueChange={(value) =>");
     expect(menuSource).toContain("const listRef = useRef<HTMLDivElement | null>(null)");
     expect(menuSource).toContain("list.scrollTop +=");
+    expect(commandSource).toContain("const CommandList = React.forwardRef");
+    expect(commandSource).toContain("const CommandItem = React.forwardRef");
+  });
+
+  it("clears slash menu dismissal after the slash token changes", async () => {
+    // @ts-expect-error The desktop tsconfig intentionally omits Node types, but Vitest runs in Node.
+    const { readFileSync } = await import("node:fs");
+    const chatSource = readFileSync(new URL("../ChatView.tsx", import.meta.url), "utf8") as string;
+
+    expect(chatSource).toContain("if (!slashToken) setDismissedSlashToken(\"\")");
+    expect(chatSource).toContain("setDismissedSlashToken(\"\");\n              updateComposerSelection(event.target);");
+    expect(chatSource).toContain("event.key === \"/\"");
+    expect(chatSource).toContain("dismissedSlashToken === slashTokenKey");
   });
 });
 

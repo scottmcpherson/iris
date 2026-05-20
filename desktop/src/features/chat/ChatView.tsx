@@ -264,6 +264,10 @@ export function ChatView({
   }, [slashToken?.query]);
 
   useEffect(() => {
+    if (!slashToken) setDismissedSlashToken("");
+  }, [slashToken]);
+
+  useEffect(() => {
     if (!slashMenuOpen) return;
     setActiveSlashIndex((current) => Math.min(Math.max(current, 0), Math.max(0, filteredSlashCommands.length - 1)));
   }, [filteredSlashCommands.length, slashMenuOpen]);
@@ -492,6 +496,18 @@ export function ChatView({
   }
 
   function handleComposerKeyDown(event: ReactKeyboardEvent<HTMLTextAreaElement>) {
+    if (
+      !slashMenuOpen &&
+      event.key === "/" &&
+      slashToken &&
+      slashToken.query === "" &&
+      dismissedSlashToken === slashTokenKey
+    ) {
+      event.preventDefault();
+      setDismissedSlashToken("");
+      return;
+    }
+
     if (slashMenuOpen) {
       if (event.key === "Escape") {
         event.preventDefault();
@@ -674,6 +690,7 @@ export function ChatView({
             value={input}
             onChange={(event) => {
               onInput(event.target.value);
+              setDismissedSlashToken("");
               updateComposerSelection(event.target);
             }}
             onClick={(event) => updateComposerSelection(event.currentTarget)}
