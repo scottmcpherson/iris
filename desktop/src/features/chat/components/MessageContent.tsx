@@ -9,6 +9,7 @@ import { irisCoreAttachmentUrl, getIrisCoreAttachmentDataUrl } from "../../../li
 import { attachmentTypeLabel } from "../../../shared/files";
 import { Button } from "../../../shared/ui/button";
 import type { HermesRuntimeConfig } from "../../../types/hermes";
+import { ASSISTANT_THINKING_TEXT, isAssistantThinkingPlaceholder } from "../assistantStatus";
 import { normalizeChatMarkdown } from "../markdown";
 import { LegacyToolEvents, StreamToolEvents } from "./ToolEvents";
 
@@ -20,16 +21,18 @@ const markdownComponents = {
 export function MessageContent({ message }: { message: Message }) {
   if (message.role === "tool") return <LegacyToolEvents content={message.content} />;
   const content = message.content.trim();
-  const thinking = message.streaming && content === "Thinking...";
+  const thinking = message.streaming && isAssistantThinkingPlaceholder(content);
   const hasToolEvents = Boolean(message.streamEvents?.length);
   if (thinking && !hasToolEvents) {
-    return <span className="thinking-shimmer">Thinking...</span>;
+    return <span className="thinking-shimmer">{ASSISTANT_THINKING_TEXT}</span>;
   }
   return (
     <>
       {hasToolEvents ? <StreamToolEvents events={message.streamEvents || []} /> : null}
       {content && !thinking ? <MarkdownMessage content={message.content} streaming={message.streaming} /> : null}
-      {message.streaming ? <span className="typing-caret" /> : null}
+      {message.streaming ? (
+        <span className="thinking-shimmer streaming-thinking-indicator">{ASSISTANT_THINKING_TEXT}</span>
+      ) : null}
     </>
   );
 }

@@ -33,6 +33,7 @@ import type {
 } from "../../types/hermes";
 import { compactText } from "../../shared/strings";
 import { AttachmentUploadError, formatPromptWithAttachments, uploadAttachmentsForSend } from "./chatAttachments";
+import { ASSISTANT_THINKING_TEXT } from "./assistantStatus";
 import type { PendingProfileSessionSelection, SendMessageOptions } from "./chatTypes";
 import {
   isHiddenDeliveryMetadata,
@@ -386,7 +387,7 @@ export function useIrisChat({
     const assistantMessage: Message = {
       id: assistantId,
       role: "assistant",
-      content: "Thinking...",
+      content: ASSISTANT_THINKING_TEXT,
       streaming: true,
       clientRequestId: userMessageId,
     };

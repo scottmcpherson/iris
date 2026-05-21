@@ -4,6 +4,7 @@ import {
   mergeStreamToolEvent,
   streamToolEventsFromMetadata,
 } from "./toolEvents";
+import { isAssistantThinkingPlaceholder } from "./assistantStatus";
 
 const attachmentKinds = new Set<AttachmentKind>(["image", "document", "audio", "video", "archive", "code", "file"]);
 
@@ -148,7 +149,7 @@ export function mergeErrorDelivery(
       ? {
           ...message,
           id: message.streamMessageId || message.id,
-          content: message.content && message.content !== "Thinking..."
+          content: message.content && !isAssistantThinkingPlaceholder(message.content)
             ? `${message.content}\n\n${errorMessage}`
             : errorMessage,
           streaming: false,

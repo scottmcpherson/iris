@@ -59,6 +59,7 @@ import {
   slashTokenAtCursor,
 } from "./slashCommands";
 import { AttachmentTray } from "./components/AttachmentTray";
+import { ASSISTANT_THINKING_TEXT } from "./assistantStatus";
 import { SlashCommandMenu } from "./components/SlashCommandMenu";
 import { ProfileMenu } from "./components/ProfileMenu";
 import { ProjectMenu } from "./components/ProjectMenu";
@@ -664,7 +665,7 @@ export function ChatView({
                   </div>
                   <strong>
                     {requestActive ? (
-                      <span className="thinking-shimmer">Thinking...</span>
+                      <span className="thinking-shimmer">{ASSISTANT_THINKING_TEXT}</span>
                     ) : connected ? (
                       "Ready for the first request."
                     ) : (

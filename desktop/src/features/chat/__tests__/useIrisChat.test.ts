@@ -34,6 +34,7 @@ import {
   stripModelSwitchNote,
   toAppMessages,
 } from "../chatHistory";
+import { ASSISTANT_THINKING_TEXT } from "../assistantStatus";
 import { shouldApplyDeliveryReadState } from "../chatCoreEvents";
 import { mergeUploadedAttachment } from "../chatAttachments";
 import { irisCoreEventToDeliveryMessage } from "../../../lib/irisCoreMappings";
@@ -368,7 +369,7 @@ describe("Iris chat inbox merging", () => {
   it("replaces the optimistic assistant bubble with the first stream update", () => {
     const existing: Message[] = [
       { id: "user-1", role: "user", content: "Write a long answer", clientRequestId: "user-1" },
-      { id: "assistant-1", role: "assistant", content: "Thinking...", streaming: true, clientRequestId: "user-1" },
+      { id: "assistant-1", role: "assistant", content: ASSISTANT_THINKING_TEXT, streaming: true, clientRequestId: "user-1" },
     ];
 
     const merged = mergeStreamDelivery(
@@ -472,7 +473,7 @@ describe("Iris chat inbox merging", () => {
   it("normalizes live tool metadata into stream tool events", () => {
     const existing: Message[] = [
       { id: "user-1", role: "user", content: "Run a command", clientRequestId: "user-1" },
-      { id: "assistant-1", role: "assistant", content: "Thinking...", streaming: true, clientRequestId: "user-1" },
+      { id: "assistant-1", role: "assistant", content: ASSISTANT_THINKING_TEXT, streaming: true, clientRequestId: "user-1" },
     ];
 
     const merged = mergeStreamDelivery(
@@ -521,7 +522,7 @@ describe("Iris chat inbox merging", () => {
   it("does not infer live tool events from assistant text without metadata", () => {
     const existing: Message[] = [
       { id: "user-1", role: "user", content: "Run a command", clientRequestId: "user-1" },
-      { id: "assistant-1", role: "assistant", content: "Thinking...", streaming: true, clientRequestId: "user-1" },
+      { id: "assistant-1", role: "assistant", content: ASSISTANT_THINKING_TEXT, streaming: true, clientRequestId: "user-1" },
     ];
 
     const merged = mergeStreamDelivery(
@@ -546,7 +547,7 @@ describe("Iris chat inbox merging", () => {
     const streamed = mergeStreamDelivery(
       [
         { id: "user-1", role: "user", content: "Run a command", clientRequestId: "user-1" },
-        { id: "assistant-1", role: "assistant", content: "Thinking...", streaming: true, clientRequestId: "user-1" },
+        { id: "assistant-1", role: "assistant", content: ASSISTANT_THINKING_TEXT, streaming: true, clientRequestId: "user-1" },
       ],
       inboxMessage({
         id: "stream-1:tool:1",
@@ -796,7 +797,7 @@ describe("Iris chat inbox merging", () => {
   it("keeps non-stream deliveries on the completed-message path", () => {
     const existing: Message[] = [
       { id: "user-1", role: "user", content: "Ping" },
-      { id: "assistant-1", role: "assistant", content: "Thinking...", streaming: true, clientRequestId: "user-1" },
+      { id: "assistant-1", role: "assistant", content: ASSISTANT_THINKING_TEXT, streaming: true, clientRequestId: "user-1" },
     ];
 
     const merged = mergeCompletedDelivery(
@@ -824,7 +825,7 @@ describe("Iris chat inbox merging", () => {
       {
         id: "assistant-1",
         role: "assistant",
-        content: "Thinking...",
+        content: ASSISTANT_THINKING_TEXT,
         streaming: true,
         clientRequestId: "user-1",
         streamEvents: [
@@ -1010,7 +1011,7 @@ describe("Iris chat inbox merging", () => {
     const streamed = mergeStreamDelivery(
       [
         { id: "user-1", role: "user", content: "create a test image for me", clientRequestId: "user-1" },
-        { id: "assistant-1", role: "assistant", content: "Thinking...", streaming: true, clientRequestId: "user-1" },
+        { id: "assistant-1", role: "assistant", content: ASSISTANT_THINKING_TEXT, streaming: true, clientRequestId: "user-1" },
       ],
       inboxMessage({
         id: "stream-1:edit:1",
@@ -1181,7 +1182,7 @@ describe("clientRequestId dedup", () => {
       {
         id: "uuid-asst",
         role: "assistant",
-        content: "Thinking...",
+        content: ASSISTANT_THINKING_TEXT,
         streaming: true,
         clientRequestId: "uuid-user",
       },
@@ -1394,7 +1395,7 @@ describe("clientRequestId dedup", () => {
           {
             id: "optimistic-assistant",
             role: "assistant",
-            content: "Thinking...",
+            content: ASSISTANT_THINKING_TEXT,
             streaming: true,
             clientRequestId: "client-message-1",
           },
