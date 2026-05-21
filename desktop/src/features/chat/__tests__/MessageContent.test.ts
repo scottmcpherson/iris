@@ -30,6 +30,7 @@ describe("MessageContent streaming status", () => {
     const html = renderToStaticMarkup(createElement(MessageContent, { message }));
 
     expect(html).toContain("thinking-shimmer");
+    expect(html).toContain(`aria-label="${ASSISTANT_THINKING_TEXT}"`);
     expect(html).toContain(`>${ASSISTANT_THINKING_TEXT}<`);
     expect(html).not.toContain("Thinking...");
     expect(html).not.toContain("typing-caret");
@@ -47,6 +48,7 @@ describe("MessageContent streaming status", () => {
 
     expect(html).toContain("Starting");
     expect(html).toContain("streaming-thinking-indicator");
+    expect(html).toContain(`aria-label="${ASSISTANT_THINKING_TEXT}"`);
     expect(html).toContain(`>${ASSISTANT_THINKING_TEXT}<`);
     expect(html).not.toContain("typing-caret");
   });

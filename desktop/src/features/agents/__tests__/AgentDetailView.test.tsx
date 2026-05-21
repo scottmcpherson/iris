@@ -24,7 +24,6 @@ describe("AgentDetailView", () => {
         gatewayActionBusy: false,
         gatewayActionBusyAction: null,
         adapterInstallBusy: false,
-        onRuntimeChange: noop,
         onRefresh: noop,
         onProfileAction: async () => "",
         onGatewayAction: noop,
@@ -37,9 +36,15 @@ describe("AgentDetailView", () => {
 
     expect(html).toContain("Iris Core");
     expect(html).toContain("http://127.0.0.1:8765");
+    expect(html).toContain("agent-content-frame");
+    expect(html).toContain("data-layout=\"record\"");
+    expect(html).toContain("agent-overview-view");
+    expect(html).toContain("Profile metadata");
     expect(html).not.toContain("default ready");
     expect(html).not.toContain("Restart gateway");
     expect(html).toContain("Configure in Settings");
+    expect(html).not.toContain("tool-view settings-view");
+    expect(html).not.toContain("settings-toolbar");
     expect(html).not.toContain("Routes and credentials");
     expect(html).not.toContain("Connection details are shared across the app");
     expect(html).not.toContain("Memory overview");
@@ -61,7 +66,6 @@ describe("AgentDetailView", () => {
         gatewayActionBusy: false,
         gatewayActionBusyAction: null,
         adapterInstallBusy: false,
-        onRuntimeChange: noop,
         onRefresh: noop,
         onProfileAction: async () => "",
         onGatewayAction: noop,
@@ -89,7 +93,6 @@ describe("AgentDetailView", () => {
         gatewayActionBusy: false,
         gatewayActionBusyAction: null,
         adapterInstallBusy: false,
-        onRuntimeChange: noop,
         onRefresh: noop,
         onProfileAction: async () => "",
         onGatewayAction: noop,
@@ -103,6 +106,36 @@ describe("AgentDetailView", () => {
     expect(html).toContain("Iris adapter is unreachable");
     expect(html).toContain("Restart gateway");
     expect(html).toContain("Install adapter");
+  });
+
+  it("wraps memory in the shared workbench frame without a nested page shell", () => {
+    const html = renderToStaticMarkup(
+      createElement(AgentDetailView, {
+        section: "memory",
+        status: statusFixture(),
+        profile: profileFixture(),
+        selectedProfile: "default",
+        runtimeConfig: runtimeConfigFixture(),
+        memory: memoryFixture(),
+        skills: skillsFixture(),
+        gatewayActionBusy: false,
+        gatewayActionBusyAction: null,
+        adapterInstallBusy: false,
+        onRefresh: noop,
+        onProfileAction: async () => "",
+        onGatewayAction: noop,
+        onInstallAdapter: noop,
+        onOpenSettings: noop,
+        onSaveMemory: async () => "",
+        onResetMemory: async () => "",
+      }),
+    );
+
+    expect(html).toContain("agent-content-frame");
+    expect(html).toContain("data-layout=\"workbench\"");
+    expect(html).toContain("memory-workspace");
+    expect(html).not.toContain("tool-view memory-workspace");
+    expect(html).not.toContain("agent-subview");
   });
 });
 

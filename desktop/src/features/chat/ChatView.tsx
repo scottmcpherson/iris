@@ -665,7 +665,9 @@ export function ChatView({
                   </div>
                   <strong>
                     {requestActive ? (
-                      <span className="thinking-shimmer">{ASSISTANT_THINKING_TEXT}</span>
+                      <span className="thinking-shimmer" aria-label={ASSISTANT_THINKING_TEXT}>
+                        {ASSISTANT_THINKING_TEXT}
+                      </span>
                     ) : connected ? (
                       "Ready for the first request."
                     ) : (

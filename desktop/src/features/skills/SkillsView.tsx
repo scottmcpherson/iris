@@ -239,7 +239,7 @@ export function SkillsView({
   }
 
   return (
-    <div className="tool-view skills-workspace">
+    <div className="skills-workspace">
       <div className="skills-browser">
         <aside className="skill-list-panel">
           <div className={`skill-list-controls ${isSearchExpanded ? "is-searching" : ""}`}>

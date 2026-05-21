@@ -24,14 +24,16 @@ export function MessageContent({ message }: { message: Message }) {
   const thinking = message.streaming && isAssistantThinkingPlaceholder(content);
   const hasToolEvents = Boolean(message.streamEvents?.length);
   if (thinking && !hasToolEvents) {
-    return <span className="thinking-shimmer">{ASSISTANT_THINKING_TEXT}</span>;
+    return <span className="thinking-shimmer" aria-label={ASSISTANT_THINKING_TEXT}>{ASSISTANT_THINKING_TEXT}</span>;
   }
   return (
     <>
       {hasToolEvents ? <StreamToolEvents events={message.streamEvents || []} /> : null}
       {content && !thinking ? <MarkdownMessage content={message.content} streaming={message.streaming} /> : null}
       {message.streaming ? (
-        <span className="thinking-shimmer streaming-thinking-indicator">{ASSISTANT_THINKING_TEXT}</span>
+        <span className="thinking-shimmer streaming-thinking-indicator" aria-label={ASSISTANT_THINKING_TEXT}>
+          {ASSISTANT_THINKING_TEXT}
+        </span>
       ) : null}
     </>
   );

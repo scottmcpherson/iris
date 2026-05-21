@@ -27,7 +27,6 @@ type AgentsViewProps = {
   onDetailProfileChange: (profileName: string | null) => void;
   onSectionChange: (section: AgentDetailSection) => void;
   onOpenAgent: (profileName: string) => void;
-  onRuntimeChange: (config: HermesRuntimeConfig) => void;
   onRefresh: () => void;
   onProfileAction: ProfileActionHandler;
   onGatewayAction: (action: IrisCoreGatewayAction, profileName: string) => void;
@@ -52,7 +51,6 @@ export function AgentsView({
   onDetailProfileChange,
   onSectionChange,
   onOpenAgent,
-  onRuntimeChange,
   onRefresh,
   onProfileAction,
   onGatewayAction,
@@ -101,7 +99,6 @@ export function AgentsView({
         gatewayActionBusy={gatewayActionBusy}
         gatewayActionBusyAction={gatewayActionBusyAction}
         adapterInstallBusy={adapterInstallBusyProfile === detailAgentProfile.name}
-        onRuntimeChange={onRuntimeChange}
         onRefresh={onRefresh}
         onProfileAction={onProfileAction}
         onGatewayAction={(action) => onGatewayAction(action, detailAgentProfile.name)}

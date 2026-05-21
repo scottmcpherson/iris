@@ -116,7 +116,7 @@ export function MemoryView({
   }, [providers]);
 
   return (
-    <div className="tool-view memory-workspace">
+    <div className="memory-workspace">
       <section className="memory-dashboard" aria-label="Memory growth dashboard">
         <MetricTile label="Total" value={formatBytes(stats.totalBytes)} detail={`${stats.totalLines} lines`} />
         <MetricTile label="MEMORY.md" value={formatBytes(memoryFile.bytes)} detail={formatDate(memoryFile.updatedAt)} />

@@ -24,6 +24,7 @@ import {
 } from "../../shared/ui/dialog";
 import { Input } from "../../shared/ui/input";
 import type { HermesProfile, HermesStatus } from "../../types/hermes";
+import { AgentContentFrame } from "./AgentContentFrame";
 
 type AgentListDialog =
   | { action: "create"; name: string }
@@ -64,7 +65,7 @@ export function AgentList({
   const [error, setError] = useState("");
 
   return (
-    <div className="agent-list-workspace">
+    <AgentContentFrame layout="index" className="agent-list-workspace">
       <div className="agent-list-header">
         <div>
           <h1>Agent Profiles</h1>
@@ -229,7 +230,7 @@ export function AgentList({
         })}
       </div>
       {dialog ? renderDialog() : null}
-    </div>
+    </AgentContentFrame>
   );
 
   function openCreateDialog() {

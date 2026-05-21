@@ -22,6 +22,8 @@ describe("AgentList", () => {
     );
 
     expect(html).toContain("More actions for health");
+    expect(html).toContain("agent-content-frame");
+    expect(html).toContain("data-layout=\"index\"");
     expect(html).toContain("agent-list-menu-trigger");
     expect(html.includes(`sidebar-${"context"}-menu`)).toBe(false);
     expect(html.includes(`agent-list-${"context"}-menu`)).toBe(false);

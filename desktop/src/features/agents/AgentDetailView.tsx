@@ -8,8 +8,9 @@ import type {
   HermesStatus,
 } from "../../types/hermes";
 import { MemoryView } from "../memory/MemoryView";
-import { SettingsView } from "../settings/SettingsView";
 import { SkillsView } from "../skills/SkillsView";
+import { AgentContentFrame } from "./AgentContentFrame";
+import { AgentOverviewView } from "./AgentOverviewView";
 import type { AgentDetailSection } from "./types";
 
 type AgentDetailViewProps = {
@@ -23,7 +24,6 @@ type AgentDetailViewProps = {
   gatewayActionBusy: boolean;
   gatewayActionBusyAction: IrisCoreGatewayAction | null;
   adapterInstallBusy: boolean;
-  onRuntimeChange: (config: HermesRuntimeConfig) => void;
   onRefresh: () => void;
   onProfileAction: ProfileActionHandler;
   onGatewayAction: (action: IrisCoreGatewayAction) => void;
@@ -44,7 +44,6 @@ export function AgentDetailView({
   gatewayActionBusy,
   gatewayActionBusyAction,
   adapterInstallBusy,
-  onRuntimeChange,
   onRefresh,
   onProfileAction,
   onGatewayAction,
@@ -55,7 +54,7 @@ export function AgentDetailView({
 }: AgentDetailViewProps) {
   if (section === "memory") {
     return (
-      <div className="agent-subview">
+      <AgentContentFrame layout="workbench">
         <MemoryView
           memory={memory}
           profile={selectedProfile}
@@ -63,45 +62,39 @@ export function AgentDetailView({
           onResetMemory={onResetMemory}
           onSaveMemory={onSaveMemory}
         />
-      </div>
+      </AgentContentFrame>
     );
   }
 
   if (section === "skills") {
     return (
-      <div className="agent-subview">
+      <AgentContentFrame layout="workbench">
         <SkillsView
           profile={selectedProfile}
           runtimeConfig={runtimeConfig}
           skills={skills}
           onRefresh={onRefresh}
         />
-      </div>
+      </AgentContentFrame>
     );
   }
 
   return (
-    <div className="agent-detail-workspace">
-      <div className="agent-detail-grid agent-detail-grid-single">
-        <div className="agent-detail-main">
-          <SettingsView
-            status={status}
-            profile={profile}
-            selectedProfile={profile.name}
-            runtimeConfig={runtimeConfig}
-            mode="profile"
-            gatewayActionBusy={gatewayActionBusy}
-            gatewayActionBusyAction={gatewayActionBusyAction}
-            adapterInstallBusy={adapterInstallBusy}
-            onRuntimeChange={onRuntimeChange}
-            onRefresh={onRefresh}
-            onProfileAction={onProfileAction}
-            onGatewayAction={onGatewayAction}
-            onInstallAdapter={onInstallAdapter}
-            onOpenSettings={onOpenSettings}
-          />
-        </div>
-      </div>
-    </div>
+    <AgentContentFrame layout="record" className="agent-detail-workspace">
+      <AgentOverviewView
+        status={status}
+        profile={profile}
+        selectedProfile={profile.name}
+        runtimeConfig={runtimeConfig}
+        gatewayActionBusy={gatewayActionBusy}
+        gatewayActionBusyAction={gatewayActionBusyAction}
+        adapterInstallBusy={adapterInstallBusy}
+        onRefresh={onRefresh}
+        onProfileAction={onProfileAction}
+        onGatewayAction={onGatewayAction}
+        onInstallAdapter={onInstallAdapter}
+        onOpenSettings={onOpenSettings}
+      />
+    </AgentContentFrame>
   );
 }

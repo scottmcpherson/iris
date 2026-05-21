@@ -769,7 +769,6 @@ function App() {
             })
           }
           onOpenAgent={() => {}}
-          onRuntimeChange={iris.updateRuntimeConfig}
           onRefresh={() => void iris.refreshIris()}
           onProfileAction={iris.runProfileAction}
           onGatewayAction={(action, profileName) => void runGatewayAction(action, profileName)}
@@ -788,18 +787,9 @@ function App() {
       return (
         <SettingsView
           status={iris.status}
-          profile={iris.activeProfile}
-          selectedProfile={iris.selectedProfile}
           runtimeConfig={iris.runtimeConfig}
-          mode="settings"
-          gatewayActionBusy={gatewayActionBusy}
-          gatewayActionBusyAction={gatewayActionState?.action || null}
-          adapterInstallBusy={adapterInstallBusyProfile === iris.selectedProfile}
           onRuntimeChange={iris.updateRuntimeConfig}
           onRefresh={() => void iris.refreshIris()}
-          onProfileAction={iris.runProfileAction}
-          onGatewayAction={(action) => void runGatewayAction(action)}
-          onInstallAdapter={() => void installAdapterForProfile(iris.selectedProfile)}
         />
       );
     }
