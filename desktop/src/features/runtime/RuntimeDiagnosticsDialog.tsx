@@ -2,14 +2,13 @@ import { useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { toast } from "sonner";
 import {
-  AlertCircle,
-  CheckCircle2,
   Copy,
   Plug,
   RefreshCw,
   Terminal,
   Wrench,
 } from "lucide-react";
+import { DiagnosticRow, type DiagnosticRowAction } from "../../shared/ui/diagnostic-row";
 import {
   activeCoreConnection,
   defaultCorePort,
@@ -167,7 +166,7 @@ export function RuntimeDiagnosticsDialog({
   const restartGatewayBusy = busyAction === "gateway-restart" || gatewayActionBusy;
   const startGatewayBusy = busyAction === "gateway-start" || gatewayActionBusy;
 
-  const coreAction: RowAction | null = !coreOk
+  const coreAction: DiagnosticRowAction | null = !coreOk
     ? connection.mode === "ssh"
       ? {
           label: busyAction === "ssh-reconnect" ? "Reconnecting…" : sshTarget ? `Reconnect to ${sshTarget}` : "Reconnect SSH",
@@ -183,7 +182,7 @@ export function RuntimeDiagnosticsDialog({
         }
     : null;
 
-  const gatewayAction: RowAction | null = coreOk && !gatewayOk
+  const gatewayAction: DiagnosticRowAction | null = coreOk && !gatewayOk
     ? {
         label: busyAction === "gateway-start" ? "Starting gateway…" : "Start gateway",
         icon: Plug,
@@ -192,7 +191,7 @@ export function RuntimeDiagnosticsDialog({
       }
     : null;
 
-  const adapterAction: RowAction | null = coreOk && !adapterOk
+  const adapterAction: DiagnosticRowAction | null = coreOk && !adapterOk
     ? {
         label: busyAction === "plugin-install"
           ? gatewayOk
@@ -266,52 +265,6 @@ export function RuntimeDiagnosticsDialog({
         </DialogFooter>
       </DialogContent>
     </Dialog>
-  );
-}
-
-type RowAction = {
-  label: string;
-  icon: typeof Plug;
-  disabled: boolean;
-  onClick: () => void;
-};
-
-function DiagnosticRow({
-  label,
-  sublabel,
-  ok,
-  tone,
-  action,
-}: {
-  label: string;
-  sublabel?: string;
-  ok: boolean;
-  tone: "ready" | "degraded" | "offline";
-  action: RowAction | null;
-}) {
-  const ActionIcon = action?.icon;
-  return (
-    <div className={`diagnostics-row ${tone}`}>
-      <span className="diagnostics-row-icon" aria-hidden>
-        {ok ? <CheckCircle2 size={16} /> : <AlertCircle size={16} />}
-      </span>
-      <div className="diagnostics-row-text">
-        <strong>{label}</strong>
-        {sublabel ? <span>{sublabel}</span> : null}
-      </div>
-      {action ? (
-        <Button
-          className="diagnostics-row-action"
-          variant="appNeutral"
-          size="appSmall"
-          disabled={action.disabled}
-          onClick={action.onClick}
-        >
-          {ActionIcon ? <ActionIcon data-icon="inline-start" /> : null}
-          {action.label}
-        </Button>
-      ) : null}
-    </div>
   );
 }
 

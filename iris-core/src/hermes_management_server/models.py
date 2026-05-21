@@ -45,25 +45,70 @@ class ProfileSummary(BaseModel):
     memoryUpdatedAt: int | None
     skillCount: int
     gatewayRunning: bool
+    managed: bool = True
+    error: str | None = None
+    warnings: list[str] = Field(default_factory=list)
 
 
 class AgentCreateRequest(BaseModel):
     name: str
     runtimeId: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
+    createAlias: bool = False
+    noAlias: bool = False
+    noSkills: bool = False
+
+
+class AgentCloneRequest(AgentCreateRequest):
+    cloneMode: str = "identity"
+    sourceProfile: str = ""
 
 
 class AgentRenameRequest(BaseModel):
     name: str
 
 
+class ProfileFileWriteRequest(BaseModel):
+    content: str
+    expectedContentHash: str | None = None
+
+
+class ProfileEnvUpdateRequest(BaseModel):
+    values: dict[str, str] = Field(default_factory=dict)
+    removeKeys: list[str] = Field(default_factory=list)
+
+
+class ProfileImportRequest(BaseModel):
+    name: str = ""
+
+
+class ProfileInstallRequest(BaseModel):
+    source: str
+    name: str = ""
+    alias: bool = False
+    force: bool = False
+
+
+class ProfileDistributionUpdateRequest(BaseModel):
+    forceConfig: bool = False
+
+
+class ProfileAliasRequest(BaseModel):
+    alias: str = ""
+
+
 class AgentMemorySaveRequest(BaseModel):
     content: str
     expectedUpdatedAt: int | None = None
+    expectedContentHash: str | None = None
 
 
 class AgentMemoryResetRequest(BaseModel):
     confirm: str = ""
+    expectedUpdatedAt: int | None = None
+    expectedUpdatedAtByFile: dict[str, int | None] = Field(default_factory=dict)
+    expectedContentHash: str | None = None
+    expectedContentHashByFile: dict[str, str | None] = Field(default_factory=dict)
 
 
 class AgentSkillSaveRequest(BaseModel):
@@ -73,6 +118,17 @@ class AgentSkillSaveRequest(BaseModel):
     content: str = ""
 
 
+class AgentSkillInstallRequest(BaseModel):
+    sourceAgentId: str = ""
+    sourceProfile: str = ""
+    sourceSkillId: str
+    overwrite: bool = False
+
+
+class AgentSkillDeleteRequest(BaseModel):
+    confirm: str = ""
+
+
 class FileContent(BaseModel):
     name: str
     path: str
@@ -80,6 +136,7 @@ class FileContent(BaseModel):
     updatedAt: int | None
     bytes: int
     content: str
+    contentHash: str
 
 
 class SkillSummary(BaseModel):
@@ -93,6 +150,7 @@ class SkillSummary(BaseModel):
     version: str | None
     tags: list[str] = Field(default_factory=list)
     bytes: int
+    contentHash: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 

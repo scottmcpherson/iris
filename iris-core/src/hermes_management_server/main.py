@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Any
 
 import uvicorn
-from fastapi import Depends, FastAPI, Query, Request
+from fastapi import Depends, FastAPI, File, Form, Query, Request, UploadFile
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -52,9 +52,17 @@ from .message_coalescer import (
 )
 from .models import (
     AgentCreateRequest,
+    AgentCloneRequest,
     AgentMemoryResetRequest,
     AgentMemorySaveRequest,
+    ProfileAliasRequest,
+    ProfileDistributionUpdateRequest,
+    ProfileEnvUpdateRequest,
+    ProfileFileWriteRequest,
+    ProfileInstallRequest,
     AgentRenameRequest,
+    AgentSkillDeleteRequest,
+    AgentSkillInstallRequest,
     AgentSkillSaveRequest,
     CoreAutomationCreateRequest,
     CoreAutomationUpdateRequest,
@@ -893,21 +901,49 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     ) -> dict[str, Any]:
         runtime_id = request.runtimeId or DEFAULT_RUNTIME_ID
         adapter = app.state.runtime_registry.adapter_for_runtime(runtime_id)
-        agent = await run_runtime_call(app, adapter.create_agent, request.name, request.metadata)
-        return {"ok": True, "agent": agent}
+        result = await run_runtime_call(
+            app,
+            adapter.create_agent,
+            request.name,
+            request.metadata,
+            create_alias=request.createAlias,
+            no_alias=request.noAlias,
+            no_skills=request.noSkills,
+        )
+        result = install_profile_adapter_for_mutation(app, result, runtime_id=runtime_id)
+        return {"ok": True, **result}
 
     @app.post("/v1/agents/{agent_id}/clone")
     async def core_clone_agent(
         agent_id: str,
-        request: AgentCreateRequest,
+        request: AgentCloneRequest,
         _auth: None = Depends(require_auth),
     ) -> dict[str, Any]:
         agent = app.state.runtime_registry.agent(agent_id)
         if not agent:
             raise ManagementError("Agent was not found.", status_code=404)
         adapter = app.state.runtime_registry.adapter_for_runtime(agent["runtimeId"])
-        cloned = await run_runtime_call(app, adapter.clone_agent, agent, request.name)
-        return {"ok": True, "agent": cloned}
+        source_agent = agent
+        if request.sourceProfile:
+            source_agent = next(
+                (
+                    row for row in app.state.runtime_registry.agents()
+                    if row["runtimeId"] == agent["runtimeId"] and row["runtimeProfile"] == request.sourceProfile
+                ),
+                agent,
+            )
+        result = await run_runtime_call(
+            app,
+            adapter.clone_agent,
+            source_agent,
+            request.name,
+            clone_mode=request.cloneMode,
+            create_alias=request.createAlias,
+            no_alias=request.noAlias,
+            no_skills=request.noSkills,
+        )
+        result = install_profile_adapter_for_mutation(app, result, runtime_id=agent["runtimeId"])
+        return {"ok": True, **result}
 
     @app.patch("/v1/agents/{agent_id}")
     async def core_rename_agent(
@@ -919,8 +955,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if not agent:
             raise ManagementError("Agent was not found.", status_code=404)
         adapter = app.state.runtime_registry.adapter_for_runtime(agent["runtimeId"])
-        renamed = await run_runtime_call(app, adapter.rename_agent, agent, request.name)
-        return {"ok": True, "agent": renamed}
+        result = await run_runtime_call(app, adapter.rename_agent, agent, request.name)
+        result = install_profile_adapter_for_mutation(app, result, runtime_id=agent["runtimeId"])
+        return {"ok": True, **result}
 
     @app.delete("/v1/agents/{agent_id}")
     async def core_delete_agent(agent_id: str, _auth: None = Depends(require_auth)) -> dict[str, Any]:
@@ -928,8 +965,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if not agent:
             raise ManagementError("Agent was not found.", status_code=404)
         adapter = app.state.runtime_registry.adapter_for_runtime(agent["runtimeId"])
-        next_agent = await run_runtime_call(app, adapter.delete_agent, agent)
-        return {"ok": True, "agent": next_agent}
+        result = await run_runtime_call(app, adapter.delete_agent, agent)
+        return {"ok": True, **result}
 
     @app.post("/v1/agents/{agent_id}/activate")
     async def core_activate_agent(agent_id: str, _auth: None = Depends(require_auth)) -> dict[str, Any]:
@@ -937,8 +974,187 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if not agent:
             raise ManagementError("Agent was not found.", status_code=404)
         adapter = app.state.runtime_registry.adapter_for_runtime(agent["runtimeId"])
-        activated = await run_runtime_call(app, adapter.activate_agent, agent)
-        return {"ok": True, "agent": activated}
+        result = await run_runtime_call(app, adapter.activate_agent, agent)
+        return {"ok": True, **result}
+
+    @app.get("/v1/agents/{agent_id}/profile/identity")
+    async def core_agent_profile_identity(agent_id: str, _auth: None = Depends(require_auth)) -> dict[str, Any]:
+        agent = require_agent(app, agent_id)
+        adapter = app.state.runtime_registry.adapter_for_runtime(agent["runtimeId"])
+        return await run_runtime_call(app, adapter.profile_identity, agent)
+
+    @app.put("/v1/agents/{agent_id}/profile/soul")
+    async def core_save_agent_profile_soul(
+        agent_id: str,
+        request: ProfileFileWriteRequest,
+        _auth: None = Depends(require_auth),
+    ) -> dict[str, Any]:
+        agent = require_agent(app, agent_id)
+        adapter = app.state.runtime_registry.adapter_for_runtime(agent["runtimeId"])
+        return await run_runtime_call(app, adapter.save_profile_soul, agent, request.content, request.expectedContentHash)
+
+    @app.post("/v1/agents/{agent_id}/profile/soul/reset")
+    async def core_reset_agent_profile_soul(
+        agent_id: str,
+        request: ProfileFileWriteRequest | None = None,
+        _auth: None = Depends(require_auth),
+    ) -> dict[str, Any]:
+        agent = require_agent(app, agent_id)
+        adapter = app.state.runtime_registry.adapter_for_runtime(agent["runtimeId"])
+        return await run_runtime_call(
+            app,
+            adapter.reset_profile_soul,
+            agent,
+            request.expectedContentHash if request else None,
+        )
+
+    @app.get("/v1/agents/{agent_id}/profile/config")
+    async def core_agent_profile_config(agent_id: str, _auth: None = Depends(require_auth)) -> dict[str, Any]:
+        agent = require_agent(app, agent_id)
+        adapter = app.state.runtime_registry.adapter_for_runtime(agent["runtimeId"])
+        return await run_runtime_call(app, adapter.profile_config, agent)
+
+    @app.put("/v1/agents/{agent_id}/profile/config")
+    async def core_save_agent_profile_config(
+        agent_id: str,
+        request: ProfileFileWriteRequest,
+        _auth: None = Depends(require_auth),
+    ) -> dict[str, Any]:
+        agent = require_agent(app, agent_id)
+        adapter = app.state.runtime_registry.adapter_for_runtime(agent["runtimeId"])
+        return await run_runtime_call(app, adapter.save_profile_config, agent, request.content, request.expectedContentHash)
+
+    @app.get("/v1/agents/{agent_id}/profile/env")
+    async def core_agent_profile_env(agent_id: str, _auth: None = Depends(require_auth)) -> dict[str, Any]:
+        agent = require_agent(app, agent_id)
+        adapter = app.state.runtime_registry.adapter_for_runtime(agent["runtimeId"])
+        return await run_runtime_call(app, adapter.profile_env, agent)
+
+    @app.put("/v1/agents/{agent_id}/profile/env")
+    async def core_update_agent_profile_env(
+        agent_id: str,
+        request: ProfileEnvUpdateRequest,
+        _auth: None = Depends(require_auth),
+    ) -> dict[str, Any]:
+        agent = require_agent(app, agent_id)
+        adapter = app.state.runtime_registry.adapter_for_runtime(agent["runtimeId"])
+        return await run_runtime_call(app, adapter.update_profile_env, agent, request.values, request.removeKeys)
+
+    @app.post("/v1/agents/{agent_id}/profile/config/check")
+    async def core_agent_profile_config_check(agent_id: str, _auth: None = Depends(require_auth)) -> dict[str, Any]:
+        agent = require_agent(app, agent_id)
+        adapter = app.state.runtime_registry.adapter_for_runtime(agent["runtimeId"])
+        return await run_runtime_call(app, adapter.profile_config_check, agent)
+
+    @app.get("/v1/agents/{agent_id}/profile/export")
+    async def core_export_agent_profile(agent_id: str, _auth: None = Depends(require_auth)) -> StreamingResponse:
+        agent = require_agent(app, agent_id)
+        adapter = app.state.runtime_registry.adapter_for_runtime(agent["runtimeId"])
+        profile = str(agent["runtimeProfile"])
+        tmpdir = Path(tempfile.mkdtemp(prefix="iris_profile_export_"))
+        output_path = tmpdir / f"{profile}-hermes-profile.tar.gz"
+        archive_path, _warnings = await run_runtime_call(app, adapter.export_profile, agent, output_path)
+
+        def stream_archive():
+            try:
+                with open(archive_path, "rb") as handle:
+                    while True:
+                        chunk = handle.read(1024 * 1024)
+                        if not chunk:
+                            break
+                        yield chunk
+            finally:
+                try:
+                    Path(archive_path).unlink(missing_ok=True)
+                    tmpdir.rmdir()
+                except OSError:
+                    pass
+
+        return StreamingResponse(
+            stream_archive(),
+            media_type="application/gzip",
+            headers={"Content-Disposition": f'attachment; filename="{profile}-hermes-profile.tar.gz"'},
+        )
+
+    @app.post("/v1/profiles/import")
+    async def core_import_profile(
+        file: UploadFile = File(...),
+        name: str = Form(""),
+        _auth: None = Depends(require_auth),
+    ) -> dict[str, Any]:
+        adapter = app.state.runtime_registry.adapter_for_runtime(DEFAULT_RUNTIME_ID)
+        with tempfile.NamedTemporaryFile(prefix="iris_profile_import_", suffix=".tar.gz", delete=False) as handle:
+            temp_path = Path(handle.name)
+            while True:
+                chunk = await file.read(1024 * 1024)
+                if not chunk:
+                    break
+                handle.write(chunk)
+        try:
+            result = await run_runtime_call(app, adapter.import_profile, temp_path, name)
+            result = install_profile_adapter_for_mutation(app, result, runtime_id=DEFAULT_RUNTIME_ID)
+            return {"ok": True, **result}
+        finally:
+            temp_path.unlink(missing_ok=True)
+
+    @app.post("/v1/profiles/install")
+    async def core_install_profile_distribution(
+        request: ProfileInstallRequest,
+        _auth: None = Depends(require_auth),
+    ) -> dict[str, Any]:
+        adapter = app.state.runtime_registry.adapter_for_runtime(DEFAULT_RUNTIME_ID)
+        result = await run_runtime_call(
+            app,
+            adapter.install_distribution,
+            source=request.source,
+            name=request.name,
+            alias=request.alias,
+            force=request.force,
+        )
+        result = install_profile_adapter_for_mutation(app, result, runtime_id=DEFAULT_RUNTIME_ID)
+        return {"ok": True, **result}
+
+    @app.post("/v1/agents/{agent_id}/profile/distribution/update")
+    async def core_update_profile_distribution(
+        agent_id: str,
+        request: ProfileDistributionUpdateRequest,
+        _auth: None = Depends(require_auth),
+    ) -> dict[str, Any]:
+        agent = require_agent(app, agent_id)
+        adapter = app.state.runtime_registry.adapter_for_runtime(agent["runtimeId"])
+        return await run_runtime_call(app, adapter.update_distribution, agent, force_config=request.forceConfig)
+
+    @app.get("/v1/agents/{agent_id}/profile/distribution/info")
+    async def core_profile_distribution_info(agent_id: str, _auth: None = Depends(require_auth)) -> dict[str, Any]:
+        agent = require_agent(app, agent_id)
+        adapter = app.state.runtime_registry.adapter_for_runtime(agent["runtimeId"])
+        return await run_runtime_call(app, adapter.distribution_info, agent)
+
+    @app.get("/v1/agents/{agent_id}/profile/alias")
+    async def core_profile_alias(agent_id: str, _auth: None = Depends(require_auth)) -> dict[str, Any]:
+        agent = require_agent(app, agent_id)
+        adapter = app.state.runtime_registry.adapter_for_runtime(agent["runtimeId"])
+        return await run_runtime_call(app, adapter.profile_alias, agent)
+
+    @app.post("/v1/agents/{agent_id}/profile/alias")
+    async def core_create_profile_alias(
+        agent_id: str,
+        request: ProfileAliasRequest,
+        _auth: None = Depends(require_auth),
+    ) -> dict[str, Any]:
+        agent = require_agent(app, agent_id)
+        adapter = app.state.runtime_registry.adapter_for_runtime(agent["runtimeId"])
+        return await run_runtime_call(app, adapter.create_profile_alias, agent, request.alias)
+
+    @app.delete("/v1/agents/{agent_id}/profile/alias")
+    async def core_delete_profile_alias(
+        agent_id: str,
+        request: ProfileAliasRequest | None = None,
+        _auth: None = Depends(require_auth),
+    ) -> dict[str, Any]:
+        agent = require_agent(app, agent_id)
+        adapter = app.state.runtime_registry.adapter_for_runtime(agent["runtimeId"])
+        return await run_runtime_call(app, adapter.remove_profile_alias, agent, request.alias if request else "")
 
     @app.get("/v1/agents/{agent_id}/memory")
     async def core_agent_memory(agent_id: str, _auth: None = Depends(require_auth)) -> dict[str, Any]:
@@ -965,6 +1181,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             file,
             request.content,
             request.expectedUpdatedAt,
+            request.expectedContentHash,
         )
         return {"ok": True, "profile": memory["profile"], "memory": memory}
 
@@ -981,7 +1198,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if not agent:
             raise ManagementError("Agent was not found.", status_code=404)
         adapter = app.state.runtime_registry.adapter_for_runtime(agent["runtimeId"])
-        memory = await run_runtime_call(app, adapter.reset_agent_memory, agent, file)
+        memory = await run_runtime_call(
+            app,
+            adapter.reset_agent_memory,
+            agent,
+            file,
+            request.expectedUpdatedAt,
+            request.expectedUpdatedAtByFile,
+            request.expectedContentHash,
+            request.expectedContentHashByFile,
+        )
         return {"ok": True, "profile": memory["profile"], "memory": memory}
 
     @app.get("/v1/agents/{agent_id}/skills")
@@ -991,6 +1217,26 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise ManagementError("Agent was not found.", status_code=404)
         adapter = app.state.runtime_registry.adapter_for_runtime(agent["runtimeId"])
         return await run_runtime_call(app, adapter.list_agent_skills, agent)
+
+    @app.get("/v1/agents/{agent_id}/skills/catalog")
+    async def core_agent_skill_catalog(agent_id: str, _auth: None = Depends(require_auth)) -> dict[str, Any]:
+        agent = app.state.runtime_registry.agent(agent_id)
+        if not agent:
+            raise ManagementError("Agent was not found.", status_code=404)
+        adapter = app.state.runtime_registry.adapter_for_runtime(agent["runtimeId"])
+        return await run_runtime_call(app, adapter.list_agent_skill_catalog, agent)
+
+    @app.post("/v1/agents/{agent_id}/skills/install")
+    async def core_install_agent_skill(
+        agent_id: str,
+        request: AgentSkillInstallRequest,
+        _auth: None = Depends(require_auth),
+    ) -> dict[str, Any]:
+        agent = app.state.runtime_registry.agent(agent_id)
+        if not agent:
+            raise ManagementError("Agent was not found.", status_code=404)
+        adapter = app.state.runtime_registry.adapter_for_runtime(agent["runtimeId"])
+        return await run_runtime_call(app, adapter.install_agent_skill, agent, dump_model(request))
 
     @app.get("/v1/agents/{agent_id}/skills/{skill_id}")
     async def core_agent_skill_detail(
@@ -1028,6 +1274,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise ManagementError("Agent was not found.", status_code=404)
         adapter = app.state.runtime_registry.adapter_for_runtime(agent["runtimeId"])
         return await run_runtime_call(app, adapter.save_agent_skill, agent, skill_id, dump_model(request))
+
+    @app.delete("/v1/agents/{agent_id}/skills/{skill_id}")
+    async def core_delete_agent_skill(
+        agent_id: str,
+        skill_id: str,
+        request: AgentSkillDeleteRequest | None = None,
+        _auth: None = Depends(require_auth),
+    ) -> dict[str, Any]:
+        agent = app.state.runtime_registry.agent(agent_id)
+        if not agent:
+            raise ManagementError("Agent was not found.", status_code=404)
+        adapter = app.state.runtime_registry.adapter_for_runtime(agent["runtimeId"])
+        payload = dump_model(request) if request else {}
+        return await run_runtime_call(app, adapter.delete_agent_skill, agent, skill_id, payload)
 
     @app.get("/v1/projects")
     async def core_projects(
@@ -1944,17 +2204,26 @@ def install_iris_hermes_plugin_for_app(app: FastAPI) -> dict[str, Any]:
     hermes_home = str(normalize_hermes_home(settings.hermes_home or os.environ.get("HERMES_HOME") or "~/.hermes"))
     inbound_port = getattr(settings, "iris_inbound_port", None) or DEFAULT_IRIS_INBOUND_PORT
     installations: list[dict[str, Any]] = []
-    for index, target_home in enumerate(hermes_plugin_install_homes(hermes_home)):
+    for index, (profile, target_home) in enumerate(hermes_plugin_install_targets(hermes_home)):
         try:
+            stable_port = app.state.core_store.ensure_runtime_profile_port(
+                runtime_id=DEFAULT_RUNTIME_ID,
+                runtime_profile=profile,
+                default_port=int(inbound_port),
+                preferred_port=int(inbound_port) + index,
+            )
             result = install_hermes_plugin(
                 str(target_home),
                 host=settings.host,
                 port=settings.port,
-                inbound_port=int(inbound_port) + index,
+                inbound_port=stable_port,
             )
+            result["profile"] = profile
+            result["inboundPort"] = stable_port
         except SystemExit as exc:
             result = {
                 "ok": False,
+                "profile": profile,
                 "hermesHome": str(target_home),
                 "error": str(exc) or "Iris could not install the Hermes plugin.",
                 "restartRequired": True,
@@ -1962,6 +2231,7 @@ def install_iris_hermes_plugin_for_app(app: FastAPI) -> dict[str, Any]:
         except Exception as exc:  # pragma: no cover - defensive
             result = {
                 "ok": False,
+                "profile": profile,
                 "hermesHome": str(target_home),
                 "error": str(exc) or "Iris could not install the Hermes plugin.",
                 "restartRequired": True,
@@ -1984,14 +2254,78 @@ def install_iris_hermes_plugin_for_app(app: FastAPI) -> dict[str, Any]:
 
 
 def hermes_plugin_install_homes(hermes_home: str) -> list[Path]:
+    return [path for _profile, path in hermes_plugin_install_targets(hermes_home)]
+
+
+def hermes_plugin_install_targets(hermes_home: str) -> list[tuple[str, Path]]:
     root = Path(hermes_home).expanduser()
-    homes = [root]
+    homes: list[tuple[str, Path]] = [("default", root)]
     profiles_root = root / "profiles"
     if profiles_root.is_dir():
         for item in sorted(profiles_root.iterdir(), key=lambda path: path.name.lower()):
             if item.is_dir():
-                homes.append(item)
+                homes.append((item.name, item))
     return homes
+
+
+def install_profile_adapter_for_mutation(app: FastAPI, result: dict[str, Any], *, runtime_id: str) -> dict[str, Any]:
+    agent = result.get("agent") if isinstance(result.get("agent"), dict) else {}
+    profile = str(result.get("profile") or agent.get("runtimeProfile") or "").strip()
+    if not profile:
+        return result
+    install = install_iris_hermes_plugin_for_profile(app, profile, runtime_id=runtime_id)
+    warnings = [str(item) for item in result.get("warnings", []) if str(item)]
+    adapter_install_required = bool(result.get("adapterInstallRequired"))
+    if not install.get("ok") or not install.get("enabled"):
+        adapter_install_required = True
+        warnings.append(install.get("error") or install.get("enableError") or "Iris Hermes adapter install did not complete.")
+    return {
+        **result,
+        "warnings": warnings,
+        "restartRequired": bool(result.get("restartRequired")) or bool(install.get("restartRequired")),
+        "adapterInstallRequired": adapter_install_required,
+        "adapterInstall": install,
+    }
+
+
+def install_iris_hermes_plugin_for_profile(app: FastAPI, profile: str, *, runtime_id: str) -> dict[str, Any]:
+    settings: Settings = app.state.settings
+    root = normalize_hermes_home(settings.hermes_home or os.environ.get("HERMES_HOME") or "~/.hermes")
+    inbound_port = getattr(settings, "iris_inbound_port", None) or DEFAULT_IRIS_INBOUND_PORT
+    target_home = root if profile == "default" else root / "profiles" / profile
+    try:
+        stable_port = app.state.core_store.ensure_runtime_profile_port(
+            runtime_id=runtime_id,
+            runtime_profile=profile,
+            default_port=int(inbound_port),
+        )
+        result = install_hermes_plugin(
+            str(target_home),
+            host=settings.host,
+            port=settings.port,
+            inbound_port=stable_port,
+        )
+        return {
+            **result,
+            "profile": profile,
+            "inboundPort": stable_port,
+        }
+    except SystemExit as exc:
+        return {
+            "ok": False,
+            "profile": profile,
+            "hermesHome": str(target_home),
+            "error": str(exc) or "Iris could not install the Hermes plugin.",
+            "restartRequired": True,
+        }
+    except Exception as exc:
+        return {
+            "ok": False,
+            "profile": profile,
+            "hermesHome": str(target_home),
+            "error": str(exc) or "Iris could not install the Hermes plugin.",
+            "restartRequired": True,
+        }
 
 
 def core_status_payload(*, request_app: FastAPI) -> dict[str, Any]:
@@ -2020,6 +2354,13 @@ def profile_summary_from_agent(agent: dict[str, Any]) -> ProfileSummary:
         skillCount=int(metadata.get("skillCount") if isinstance(metadata.get("skillCount"), int) else 0),
         gatewayRunning=bool(metadata.get("gatewayRunning")),
     )
+
+
+def require_agent(app: FastAPI, agent_id: str) -> dict[str, Any]:
+    agent = app.state.runtime_registry.agent(agent_id)
+    if not agent:
+        raise ManagementError("Agent was not found.", status_code=404)
+    return agent
 
 
 def core_auth_payload(request_app: FastAPI) -> dict[str, Any]:

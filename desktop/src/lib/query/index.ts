@@ -5,6 +5,7 @@ export * from "./events";
 export * from "./memory";
 export * from "./models";
 export * from "./projects";
+export * from "./profile";
 export * from "./runtimeKey";
 export * from "./sessions";
 export * from "./skills";

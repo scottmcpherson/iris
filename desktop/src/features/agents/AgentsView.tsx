@@ -3,9 +3,9 @@ import type { ProfileActionHandler } from "../../app/types";
 import type { IrisCoreGatewayAction } from "../../lib/irisCore";
 import type {
   HermesMemory,
+  HermesMemoryResetExpectations,
   HermesProfile,
   HermesRuntimeConfig,
-  HermesSkill,
   HermesStatus,
 } from "../../types/hermes";
 import { AgentDetailView } from "./AgentDetailView";
@@ -18,7 +18,6 @@ type AgentsViewProps = {
   activeProfile: HermesProfile;
   runtimeConfig: HermesRuntimeConfig;
   memory: HermesMemory | null;
-  skills: HermesSkill[];
   section: AgentDetailSection;
   gatewayActionBusy: boolean;
   gatewayActionBusyAction: IrisCoreGatewayAction | null;
@@ -28,12 +27,22 @@ type AgentsViewProps = {
   onSectionChange: (section: AgentDetailSection) => void;
   onOpenAgent: (profileName: string) => void;
   onRefresh: () => void;
+  onProfileSkillsChanged: (profileName: string) => void;
   onProfileAction: ProfileActionHandler;
   onGatewayAction: (action: IrisCoreGatewayAction, profileName: string) => void;
   onInstallAdapter: (profileName: string) => void;
   onOpenSettings: () => void;
-  onSaveMemory: (file: "memory" | "user", content: string, expectedUpdatedAt?: number | null) => Promise<string>;
-  onResetMemory: (file: "memory" | "user" | "all", confirm: string) => Promise<string>;
+  onSaveMemory: (
+    file: "memory" | "user",
+    content: string,
+    expectedUpdatedAt?: number | null,
+    expectedContentHash?: string | null,
+  ) => Promise<string>;
+  onResetMemory: (
+    file: "memory" | "user" | "all",
+    confirm: string,
+    expectations?: HermesMemoryResetExpectations,
+  ) => Promise<string>;
 };
 
 export function AgentsView({
@@ -42,7 +51,6 @@ export function AgentsView({
   activeProfile,
   runtimeConfig,
   memory,
-  skills,
   section,
   gatewayActionBusy,
   gatewayActionBusyAction,
@@ -52,6 +60,7 @@ export function AgentsView({
   onSectionChange,
   onOpenAgent,
   onRefresh,
+  onProfileSkillsChanged,
   onProfileAction,
   onGatewayAction,
   onInstallAdapter,
@@ -95,11 +104,16 @@ export function AgentsView({
         selectedProfile={detailAgentProfile.name}
         runtimeConfig={runtimeConfig}
         memory={memory}
-        skills={skills}
         gatewayActionBusy={gatewayActionBusy}
         gatewayActionBusyAction={gatewayActionBusyAction}
         adapterInstallBusy={adapterInstallBusyProfile === detailAgentProfile.name}
         onRefresh={onRefresh}
+        onOpenAgentProfile={(profileName) => {
+          onDetailProfileChange(profileName);
+          onOpenAgent(profileName);
+          onSectionChange("overview");
+        }}
+        onProfileSkillsChanged={onProfileSkillsChanged}
         onProfileAction={onProfileAction}
         onGatewayAction={(action) => onGatewayAction(action, detailAgentProfile.name)}
         onInstallAdapter={() => onInstallAdapter(detailAgentProfile.name)}

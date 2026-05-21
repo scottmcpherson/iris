@@ -5,22 +5,37 @@ import {
   createIrisCoreAgent,
   createIrisCoreAgentSkill,
   deleteIrisCoreAgent,
+  deleteIrisCoreAgentSkill,
   deleteIrisCoreSession,
   getIrisCoreAgentForProfile,
   getIrisCoreAgentMemory,
   getIrisCoreAgentSkill,
+  getIrisCoreAgentSkillCatalog,
   getIrisCoreAgentSkills,
+  getIrisCoreProfileAlias,
+  getIrisCoreProfileIdentity,
   getIrisCoreSession,
   getIrisCoreSessionMessages,
   getIrisCoreSessions,
   getIrisCoreEvents,
   getIrisCoreModels,
   getIrisCoreSlashCommands,
+  checkIrisCoreProfileConfig,
+  createIrisCoreProfileAlias,
+  installIrisCoreAgentSkill,
+  installIrisCoreProfileDistribution,
+  importIrisCoreProfileArchive,
   getIrisCoreStatus,
   renameIrisCoreAgent,
   resetIrisCoreAgentMemory,
+  resetIrisCoreProfileSoul,
   saveIrisCoreAgentMemory,
   saveIrisCoreAgentSkill,
+  saveIrisCoreProfileConfig,
+  saveIrisCoreProfileSoul,
+  updateIrisCoreProfileDistribution,
+  updateIrisCoreProfileEnv,
+  deleteIrisCoreProfileAlias,
   updateIrisCoreSession,
 } from "./irisCore";
 import {
@@ -31,10 +46,15 @@ import {
 import type {
   HermesMemory,
   HermesModelCatalog,
+  HermesProfileAlias,
+  HermesProfileIdentity,
   HermesSessionDetail,
   HermesSessionsResult,
   HermesRuntimeConfig,
+  HermesSkillCatalog,
+  HermesSkillDeleteResult,
   HermesSkillDetail,
+  HermesSkillSaveResult,
   HermesSkills,
   HermesSlashCommandsResult,
   HermesSlashCompletionResult,
@@ -67,6 +87,7 @@ export async function saveIrisMemoryFile(payload: {
   file: "memory" | "user";
   content: string;
   expectedUpdatedAt?: number | null;
+  expectedContentHash?: string | null;
   runtime?: HermesRuntimeConfig;
 }) {
   const agentResult = await getIrisCoreAgentForProfile(payload.profile || "default", payload.runtime);
@@ -76,7 +97,11 @@ export async function saveIrisMemoryFile(payload: {
   const result = await saveIrisCoreAgentMemory(
     agentResult.agent.id,
     payload.file,
-    { content: payload.content, expectedUpdatedAt: payload.expectedUpdatedAt },
+    {
+      content: payload.content,
+      expectedUpdatedAt: payload.expectedUpdatedAt,
+      expectedContentHash: payload.expectedContentHash,
+    },
     payload.runtime,
   );
   return result.ok ? result : { ...result, profile: agentResult.agent.runtimeProfile, memory: emptyMemory(agentResult.agent.runtimeProfile) };
@@ -86,6 +111,10 @@ export async function resetIrisMemoryFile(payload: {
   profile?: string;
   file: "memory" | "user" | "all";
   confirm: string;
+  expectedUpdatedAt?: number | null;
+  expectedUpdatedAtByFile?: Record<string, number | null>;
+  expectedContentHash?: string | null;
+  expectedContentHashByFile?: Record<string, string | null>;
   runtime?: HermesRuntimeConfig;
 }) {
   const agentResult = await getIrisCoreAgentForProfile(payload.profile || "default", payload.runtime);
@@ -95,7 +124,13 @@ export async function resetIrisMemoryFile(payload: {
   const result = await resetIrisCoreAgentMemory(
     agentResult.agent.id,
     payload.file,
-    { confirm: payload.confirm },
+    {
+      confirm: payload.confirm,
+      expectedUpdatedAt: payload.expectedUpdatedAt,
+      expectedUpdatedAtByFile: payload.expectedUpdatedAtByFile,
+      expectedContentHash: payload.expectedContentHash,
+      expectedContentHashByFile: payload.expectedContentHashByFile,
+    },
     payload.runtime,
   );
   return result.ok ? result : { ...result, profile: agentResult.agent.runtimeProfile, memory: emptyMemory(agentResult.agent.runtimeProfile) };
@@ -108,6 +143,18 @@ export async function getIrisSkills(profile?: string, runtime?: HermesRuntimeCon
   }
   const result = await getIrisCoreAgentSkills(agentResult.agent.id, runtime);
   return result.ok ? result : emptySkills(agentResult.agent.runtimeProfile, result.error || "Could not load skills from Iris Core.");
+}
+
+export async function getIrisSkillCatalog(profile?: string, runtime?: HermesRuntimeConfig): Promise<HermesSkillCatalog> {
+  const targetProfile = profile || "default";
+  const agentResult = await getIrisCoreAgentForProfile(targetProfile, runtime);
+  if (!agentResult.ok || !agentResult.agent) {
+    return emptySkillCatalog(targetProfile, agentResultError(agentResult, "Could not resolve Iris agent."));
+  }
+  const result = await getIrisCoreAgentSkillCatalog(agentResult.agent.id, runtime);
+  return result.ok
+    ? result
+    : emptySkillCatalog(agentResult.agent.runtimeProfile, result.error || "Could not load skill catalog from Iris Core.");
 }
 
 export async function getIrisSkillDetail(
@@ -146,6 +193,66 @@ export async function saveIrisSkill(payload: {
     ? await saveIrisCoreAgentSkill(agentResult.agent.id, payload.id, savePayload, payload.runtime)
     : await createIrisCoreAgentSkill(agentResult.agent.id, savePayload, payload.runtime);
   return result.ok ? result : { ...result, profile: agentResult.agent.runtimeProfile, skill: emptySkillDetail(agentResult.agent.runtimeProfile) };
+}
+
+export async function installIrisSkill(payload: {
+  profile?: string;
+  sourceProfile?: string;
+  sourceAgentId?: string;
+  sourceSkillId: string;
+  overwrite?: boolean;
+  runtime?: HermesRuntimeConfig;
+}): Promise<HermesSkillSaveResult> {
+  const targetProfile = payload.profile || "default";
+  const agentResult = await getIrisCoreAgentForProfile(targetProfile, payload.runtime);
+  if (!agentResult.ok || !agentResult.agent) {
+    return {
+      ok: false,
+      profile: targetProfile,
+      skill: emptySkillDetail(targetProfile),
+      error: agentResultError(agentResult, "Could not resolve Iris agent."),
+    };
+  }
+  const result = await installIrisCoreAgentSkill(
+    agentResult.agent.id,
+    {
+      sourceAgentId: payload.sourceAgentId,
+      sourceProfile: payload.sourceProfile,
+      sourceSkillId: payload.sourceSkillId,
+      overwrite: payload.overwrite,
+    },
+    payload.runtime,
+  );
+  return result.ok
+    ? result
+    : { ...result, profile: agentResult.agent.runtimeProfile, skill: emptySkillDetail(agentResult.agent.runtimeProfile) };
+}
+
+export async function deleteIrisSkill(
+  profile: string | undefined,
+  skillId: string,
+  runtime?: HermesRuntimeConfig,
+): Promise<HermesSkillDeleteResult> {
+  const targetProfile = profile || "default";
+  const agentResult = await getIrisCoreAgentForProfile(targetProfile, runtime);
+  if (!agentResult.ok || !agentResult.agent) {
+    return {
+      ok: false,
+      profile: targetProfile,
+      deletedSkillId: skillId,
+      deletedPath: "",
+      error: agentResultError(agentResult, "Could not resolve Iris agent."),
+    };
+  }
+  const result = await deleteIrisCoreAgentSkill(agentResult.agent.id, skillId, runtime);
+  return result.ok
+    ? result
+    : {
+        ...result,
+        profile: agentResult.agent.runtimeProfile,
+        deletedSkillId: skillId,
+        deletedPath: "",
+      };
 }
 
 export async function getIrisSessions(
@@ -424,6 +531,130 @@ export async function createIrisAgent(name: string, runtime?: HermesRuntimeConfi
   return profileActionResult(result);
 }
 
+export async function getIrisProfileIdentity(profile = "default", runtime?: HermesRuntimeConfig): Promise<HermesProfileIdentity> {
+  const agentResult = await getIrisCoreAgentForProfile(profile || "default", runtime);
+  if (!agentResult.ok || !agentResult.agent) {
+    return emptyProfileIdentity(profile || "default", agentResultError(agentResult, "Could not resolve Iris agent."));
+  }
+  const result = await getIrisCoreProfileIdentity(agentResult.agent.id, runtime);
+  return result.ok ? result : emptyProfileIdentity(agentResult.agent.runtimeProfile, result.error || "Could not load profile configuration.");
+}
+
+export async function saveIrisProfileSoul(payload: {
+  profile?: string;
+  content: string;
+  expectedContentHash?: string | null;
+  runtime?: HermesRuntimeConfig;
+}) {
+  const agentResult = await getIrisCoreAgentForProfile(payload.profile || "default", payload.runtime);
+  if (!agentResult.ok || !agentResult.agent) return { ok: false, error: agentResultError(agentResult, "Could not resolve Iris agent.") };
+  return saveIrisCoreProfileSoul(
+    agentResult.agent.id,
+    { content: payload.content, expectedContentHash: payload.expectedContentHash },
+    payload.runtime,
+  );
+}
+
+export async function resetIrisProfileSoul(payload: {
+  profile?: string;
+  expectedContentHash?: string | null;
+  runtime?: HermesRuntimeConfig;
+}) {
+  const agentResult = await getIrisCoreAgentForProfile(payload.profile || "default", payload.runtime);
+  if (!agentResult.ok || !agentResult.agent) return { ok: false, error: agentResultError(agentResult, "Could not resolve Iris agent.") };
+  return resetIrisCoreProfileSoul(
+    agentResult.agent.id,
+    { expectedContentHash: payload.expectedContentHash },
+    payload.runtime,
+  );
+}
+
+export async function saveIrisProfileConfig(payload: {
+  profile?: string;
+  content: string;
+  expectedContentHash?: string | null;
+  runtime?: HermesRuntimeConfig;
+}) {
+  const agentResult = await getIrisCoreAgentForProfile(payload.profile || "default", payload.runtime);
+  if (!agentResult.ok || !agentResult.agent) return { ok: false, error: agentResultError(agentResult, "Could not resolve Iris agent.") };
+  return saveIrisCoreProfileConfig(
+    agentResult.agent.id,
+    { content: payload.content, expectedContentHash: payload.expectedContentHash },
+    payload.runtime,
+  );
+}
+
+export async function updateIrisProfileEnv(payload: {
+  profile?: string;
+  values: Record<string, string>;
+  removeKeys?: string[];
+  runtime?: HermesRuntimeConfig;
+}) {
+  const agentResult = await getIrisCoreAgentForProfile(payload.profile || "default", payload.runtime);
+  if (!agentResult.ok || !agentResult.agent) return { ok: false, error: agentResultError(agentResult, "Could not resolve Iris agent.") };
+  return updateIrisCoreProfileEnv(
+    agentResult.agent.id,
+    { values: payload.values, removeKeys: payload.removeKeys },
+    payload.runtime,
+  );
+}
+
+export async function checkIrisProfileConfig(profile = "default", runtime?: HermesRuntimeConfig) {
+  const agentResult = await getIrisCoreAgentForProfile(profile || "default", runtime);
+  if (!agentResult.ok || !agentResult.agent) return { ok: false, error: agentResultError(agentResult, "Could not resolve Iris agent.") };
+  return checkIrisCoreProfileConfig(agentResult.agent.id, runtime);
+}
+
+export async function getIrisProfileAlias(profile = "default", runtime?: HermesRuntimeConfig): Promise<HermesProfileAlias> {
+  const agentResult = await getIrisCoreAgentForProfile(profile || "default", runtime);
+  if (!agentResult.ok || !agentResult.agent) {
+    return { ok: false, profile, alias: profile, path: "", exists: false, inPath: false, error: agentResultError(agentResult, "Could not resolve Iris agent.") };
+  }
+  const result = await getIrisCoreProfileAlias(agentResult.agent.id, runtime);
+  return result.ok ? result : { ok: false, profile, alias: profile, path: "", exists: false, inPath: false, error: result.error || "Could not load alias." };
+}
+
+export async function createIrisProfileAlias(profile: string, alias: string, runtime?: HermesRuntimeConfig) {
+  const agentResult = await getIrisCoreAgentForProfile(profile || "default", runtime);
+  if (!agentResult.ok || !agentResult.agent) return { ok: false, error: agentResultError(agentResult, "Could not resolve Iris agent.") };
+  return createIrisCoreProfileAlias(agentResult.agent.id, alias, runtime);
+}
+
+export async function deleteIrisProfileAlias(profile: string, alias: string, runtime?: HermesRuntimeConfig) {
+  const agentResult = await getIrisCoreAgentForProfile(profile || "default", runtime);
+  if (!agentResult.ok || !agentResult.agent) return { ok: false, error: agentResultError(agentResult, "Could not resolve Iris agent.") };
+  return deleteIrisCoreProfileAlias(agentResult.agent.id, alias, runtime);
+}
+
+export async function installIrisProfileDistribution(payload: {
+  source: string;
+  name?: string;
+  alias?: boolean;
+  force?: boolean;
+  runtime?: HermesRuntimeConfig;
+}) {
+  const result = await installIrisCoreProfileDistribution(
+    { source: payload.source, name: payload.name, alias: payload.alias, force: payload.force },
+    payload.runtime,
+  );
+  return profileActionResult(result);
+}
+
+export async function importIrisProfileArchive(payload: {
+  file: File;
+  name?: string;
+  runtime?: HermesRuntimeConfig;
+}) {
+  const result = await importIrisCoreProfileArchive({ file: payload.file, name: payload.name }, payload.runtime);
+  return profileActionResult(result);
+}
+
+export async function updateIrisProfileDistribution(profile: string, forceConfig: boolean, runtime?: HermesRuntimeConfig) {
+  const agentResult = await getIrisCoreAgentForProfile(profile || "default", runtime);
+  if (!agentResult.ok || !agentResult.agent) return { ok: false, error: agentResultError(agentResult, "Could not resolve Iris agent.") };
+  return updateIrisCoreProfileDistribution(agentResult.agent.id, { forceConfig }, runtime);
+}
+
 export async function cloneIrisAgent(source: string, name: string, runtime?: HermesRuntimeConfig) {
   const agentResult = await getIrisCoreAgentForProfile(source || "default", runtime);
   if (!agentResult.ok || !agentResult.agent) return { ok: false, profile: source, error: agentResultError(agentResult, "Could not resolve Iris agent.") };
@@ -471,6 +702,7 @@ function emptyMemory(profile: string, error = ""): HermesMemory {
     updatedAt: null,
     bytes: 0,
     content: "",
+    contentHash: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
   });
   return {
     ok: !error,
@@ -489,6 +721,17 @@ function emptySkills(profile: string, error: string): HermesSkills {
     profile,
     path: "",
     skills: [],
+    error,
+  };
+}
+
+function emptySkillCatalog(profile: string, error: string): HermesSkillCatalog {
+  return {
+    ok: false,
+    profile,
+    installed: [],
+    available: [],
+    generatedAt: Math.floor(Date.now() / 1000),
     error,
   };
 }
@@ -512,9 +755,57 @@ function emptySkillDetail(_profile: string, error = ""): HermesSkillDetail {
   } as HermesSkillDetail;
 }
 
-function profileActionResult(result: { ok: boolean; agent?: { runtimeProfile: string }; error?: string }) {
+function emptyProfileIdentity(profile: string, error = ""): HermesProfileIdentity {
+  const emptyFile = {
+    name: "SOUL.md",
+    path: "",
+    exists: false,
+    updatedAt: null,
+    bytes: 0,
+    content: "",
+    contentHash: "",
+  };
+  return {
+    ok: false,
+    profile,
+    path: "",
+    soul: emptyFile,
+    config: {
+      path: "",
+      raw: "",
+      provider: "not configured",
+      model: "not configured",
+      contentHash: "",
+    },
+    env: {
+      path: "",
+      exists: false,
+      updatedAt: null,
+      bytes: 0,
+      keys: [],
+    },
+    distribution: null,
+    error,
+  };
+}
+
+function profileActionResult(result: {
+  ok: boolean;
+  agent?: { runtimeProfile: string };
+  profile?: string;
+  warnings?: string[];
+  restartRequired?: boolean;
+  adapterInstallRequired?: boolean;
+  error?: string;
+}) {
   return result.ok && result.agent
-    ? { ok: true, profile: result.agent.runtimeProfile }
+    ? {
+        ok: true,
+        profile: result.profile || result.agent.runtimeProfile,
+        warnings: result.warnings || [],
+        restartRequired: Boolean(result.restartRequired),
+        adapterInstallRequired: Boolean(result.adapterInstallRequired),
+      }
     : { ok: false, profile: "", error: result.error || "Agent operation failed." };
 }
 

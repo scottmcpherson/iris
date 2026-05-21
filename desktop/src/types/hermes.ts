@@ -51,6 +51,87 @@ export type HermesProfile = {
   sessionCount: number;
   estimatedCostUsd: number | null;
   gatewayRunning: boolean;
+  managed?: boolean;
+  error?: string | null;
+  warnings?: string[];
+};
+
+export type HermesProfileFile = {
+  ok?: boolean;
+  profile?: string;
+  name: string;
+  path: string;
+  exists: boolean;
+  updatedAt: number | null;
+  bytes: number;
+  content: string;
+  contentHash: string;
+};
+
+export type HermesProfileConfig = {
+  ok?: boolean;
+  profile?: string;
+  path: string;
+  exists?: boolean;
+  updatedAt?: number | null;
+  bytes?: number;
+  contentHash?: string;
+  raw: string;
+  provider: string;
+  model: string;
+  parseError?: string;
+};
+
+export type HermesProfileEnv = {
+  ok?: boolean;
+  profile?: string;
+  path: string;
+  exists: boolean;
+  updatedAt: number | null;
+  bytes: number;
+  keys: string[];
+  requiredKeys?: string[];
+};
+
+export type HermesProfileDistribution = {
+  name?: string;
+  version?: string;
+  description?: string;
+  hermesRequires?: string;
+  author?: string;
+  license?: string;
+  source?: string;
+  installedAt?: string;
+  envRequires?: Array<{
+    name?: string;
+    description?: string;
+    required?: boolean;
+    default?: string;
+  }>;
+  distributionOwned?: string[];
+  parseError?: string;
+};
+
+export type HermesProfileIdentity = {
+  ok: boolean;
+  profile: string;
+  path: string;
+  soul: HermesProfileFile;
+  config: HermesProfileConfig;
+  env: HermesProfileEnv;
+  distribution?: HermesProfileDistribution | null;
+  error?: string;
+};
+
+export type HermesProfileAlias = {
+  ok: boolean;
+  profile: string;
+  alias: string;
+  path: string;
+  exists: boolean;
+  inPath: boolean;
+  collision?: string;
+  error?: string;
 };
 
 export type HermesModelProvider = {
@@ -174,6 +255,7 @@ export type HermesMemoryFile = {
   updatedAt: number | null;
   bytes: number;
   content: string;
+  contentHash?: string;
 };
 
 export type HermesMemoryHistoryEntry = {
@@ -184,6 +266,14 @@ export type HermesMemoryHistoryEntry = {
   bytes: number;
   summary: string;
   content: string;
+  metadata?: Record<string, unknown>;
+};
+
+export type HermesMemoryResetExpectations = {
+  expectedUpdatedAt?: number | null;
+  expectedUpdatedAtByFile?: Record<string, number | null>;
+  expectedContentHash?: string | null;
+  expectedContentHashByFile?: Record<string, string | null>;
 };
 
 export type HermesMemory = {
@@ -288,6 +378,7 @@ export type HermesSkill = {
   version: string | null;
   tags: string[];
   bytes: number;
+  contentHash?: string | null;
   metadata: Record<string, string>;
 };
 
@@ -313,10 +404,38 @@ export type HermesSkills = {
   error?: string;
 };
 
+export type HermesSkillCatalogItem = HermesSkill & {
+  catalogId: string;
+  installed: boolean;
+  sourceProfile: string;
+  sourceAgentId?: string;
+  sourceSkillId: string;
+  targetProfile: string;
+  conflict?: boolean;
+  contentHash?: string | null;
+};
+
+export type HermesSkillCatalog = {
+  ok: boolean;
+  profile: string;
+  installed: HermesSkill[];
+  available: HermesSkillCatalogItem[];
+  generatedAt: number;
+  error?: string;
+};
+
 export type HermesSkillSaveResult = {
   ok: boolean;
   profile: string;
   skill: HermesSkillDetail;
+  error?: string;
+};
+
+export type HermesSkillDeleteResult = {
+  ok: boolean;
+  profile: string;
+  deletedSkillId: string;
+  deletedPath: string;
   error?: string;
 };
 

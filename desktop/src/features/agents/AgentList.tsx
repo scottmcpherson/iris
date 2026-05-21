@@ -25,6 +25,7 @@ import {
 import { Input } from "../../shared/ui/input";
 import type { HermesProfile, HermesStatus } from "../../types/hermes";
 import { AgentContentFrame } from "./AgentContentFrame";
+import { normalizeProfileName, profileNameError } from "./profileNames";
 
 type AgentListDialog =
   | { action: "create"; name: string }
@@ -264,7 +265,8 @@ export function AgentList({
     const label = isDelete ? "Confirm agent name" : "Agent name";
     const submitLabel = isDelete ? "Delete" : isClone ? "Duplicate" : "Create";
     const submitVariant = isDelete ? "appDanger" : isClone ? "appNeutral" : "default";
-    const disabled = busy || (isDelete ? dialog.name.trim() !== source : !dialog.name.trim());
+    const validationError = isDelete ? "" : profileNameError(dialog.name);
+    const disabled = busy || (isDelete ? dialog.name.trim() !== source : Boolean(validationError));
 
     return (
       <Dialog
@@ -293,7 +295,9 @@ export function AgentList({
                 onChange={(event) => setDialog({ ...dialog, name: event.target.value })}
               />
             </label>
-            {error ? <p className="text-xs leading-[1.45] text-menu-danger">{error}</p> : null}
+            {error || validationError ? (
+              <p className="text-xs leading-[1.45] text-menu-danger">{error || validationError}</p>
+            ) : null}
             <DialogFooter className="gap-2">
               <Button type="button" variant="appNeutral" size="appSmall" onClick={closeDialog}>
                 Cancel
@@ -317,9 +321,10 @@ export function AgentList({
     event.preventDefault();
     if (!dialog || busy) return;
 
-    const name = dialog.name.trim();
-    if (dialog.action !== "delete" && !name) {
-      setError("Enter an agent name.");
+    const name = dialog.action === "delete" ? dialog.name.trim() : normalizeProfileName(dialog.name);
+    const validationError = dialog.action === "delete" ? "" : profileNameError(name);
+    if (validationError) {
+      setError(validationError);
       return;
     }
     if (dialog.action === "delete" && name !== dialog.source) {

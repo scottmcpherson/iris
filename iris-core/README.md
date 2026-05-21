@@ -226,13 +226,20 @@ Session discovery is schema-tolerant and read-only inside the Hermes runtime ada
 ```bash
 curl http://127.0.0.1:8765/v1/agents/<agent_id>/skills
 curl http://127.0.0.1:8765/v1/agents/<agent_id>/skills/<skill_id>
+curl http://127.0.0.1:8765/v1/agents/<agent_id>/skills/catalog
+curl -X POST http://127.0.0.1:8765/v1/agents/<agent_id>/skills/install \
+  -H "Content-Type: application/json" \
+  -d '{"sourceProfile":"default","sourceSkillId":"<skill_id>"}'
+curl -X DELETE http://127.0.0.1:8765/v1/agents/<agent_id>/skills/<skill_id> \
+  -H "Content-Type: application/json" \
+  -d '{"confirm":"REMOVE SKILL"}'
 ```
 
-Skill ids are URL-safe base64 encodings of the relative `SKILL.md` path under the selected profile's `skills` directory. The server rejects ids that decode to absolute paths, parent traversal, or anything other than a `SKILL.md` file.
+Skill ids are URL-safe base64 encodings of the relative `SKILL.md` path under the selected profile's `skills` directory. The server rejects ids that decode to absolute paths, parent traversal, or anything other than a `SKILL.md` file. Catalog rows are local skills visible to Core from other Hermes profiles, and install/delete only mutate the selected agent/profile's skills directory.
 
 ## Security Notes
 
-- The service is read-only.
+- The service only writes through explicit Core mutation endpoints.
 - It never accepts arbitrary file paths from clients.
 - Profile names are limited to letters, numbers, dots, dashes, and underscores.
 - Memory, skill, and session reads are resolved and checked so they stay inside the selected profile directory.

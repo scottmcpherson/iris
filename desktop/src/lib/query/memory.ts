@@ -1,8 +1,10 @@
 import { queryOptions, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { getIrisMemory, resetIrisMemoryFile, saveIrisMemoryFile } from "../irisRuntime";
-import type { HermesRuntimeConfig } from "../../types/hermes";
+import type { HermesMemoryResetExpectations, HermesRuntimeConfig } from "../../types/hermes";
 import { ensureOk } from "./ensureOk";
 import { runtimeRouteQueryKey } from "./runtimeKey";
+import { agentKeys } from "./agents";
+import { statusKeys } from "./status";
 
 export const memoryKeys = {
   all: (runtimeKey: string) => ["memory", runtimeKey] as const,
@@ -30,10 +32,13 @@ export function useSaveMemoryMutation(runtime: HermesRuntimeConfig) {
       file: "memory" | "user";
       content: string;
       expectedUpdatedAt?: number | null;
+      expectedContentHash?: string | null;
     }) => ensureOk(saveIrisMemoryFile({ ...payload, runtime }), "Could not save memory."),
     onSuccess: (result, payload) => {
       queryClient.setQueryData(memoryKeys.agent(routeKey, payload.profile || "default"), result.memory);
       queryClient.invalidateQueries({ queryKey: memoryKeys.agent(routeKey, payload.profile || "default") });
+      queryClient.invalidateQueries({ queryKey: agentKeys.all(routeKey) });
+      queryClient.invalidateQueries({ queryKey: statusKeys.all(routeKey) });
     },
   });
 }
@@ -42,11 +47,13 @@ export function useResetMemoryMutation(runtime: HermesRuntimeConfig) {
   const queryClient = useQueryClient();
   const routeKey = runtimeRouteQueryKey(runtime);
   return useMutation({
-    mutationFn: (payload: { profile?: string; file: "memory" | "user" | "all"; confirm: string }) =>
+    mutationFn: (payload: { profile?: string; file: "memory" | "user" | "all"; confirm: string } & HermesMemoryResetExpectations) =>
       ensureOk(resetIrisMemoryFile({ ...payload, runtime }), "Could not reset memory."),
     onSuccess: (result, payload) => {
       queryClient.setQueryData(memoryKeys.agent(routeKey, payload.profile || "default"), result.memory);
       queryClient.invalidateQueries({ queryKey: memoryKeys.agent(routeKey, payload.profile || "default") });
+      queryClient.invalidateQueries({ queryKey: agentKeys.all(routeKey) });
+      queryClient.invalidateQueries({ queryKey: statusKeys.all(routeKey) });
     },
   });
 }

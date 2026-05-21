@@ -51,11 +51,17 @@ describe("route intents", () => {
 
   it("validates agent detail sections and normalizes unknown sections", () => {
     expect(isAgentDetailSection("memory")).toBe(true);
+    expect(isAgentDetailSection("configuration")).toBe(true);
     expect(isAgentDetailSection("unknown")).toBe(false);
     expect(routePathToIntent("/agents/default/memory")).toEqual({
       type: "agents",
       profile: "default",
       section: "memory",
+    });
+    expect(routePathToIntent("/agents/default/configuration")).toEqual({
+      type: "agents",
+      profile: "default",
+      section: "configuration",
     });
     expect(routePathToIntent("/agents/default/nope")).toEqual({
       type: "agents",

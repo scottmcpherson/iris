@@ -14,6 +14,13 @@ import desktopPackage from "../../package.json";
 import type {
   HermesMemory,
   HermesMemorySaveResult,
+  HermesProfileAlias,
+  HermesProfileConfig,
+  HermesProfileEnv,
+  HermesProfileFile,
+  HermesProfileIdentity,
+  HermesSkillCatalog,
+  HermesSkillDeleteResult,
   HermesSkillDetail,
   HermesSkillSaveResult,
   HermesSkills,
@@ -125,6 +132,18 @@ export type IrisCoreAgent = {
   runtimeProfile: string;
   isDefault: boolean;
   metadata?: CoreMetadata;
+};
+
+export type IrisCoreAgentMutationResult = {
+  ok: boolean;
+  agent: IrisCoreAgent;
+  profile?: string;
+  warnings?: string[];
+  restartRequired?: boolean;
+  adapterInstallRequired?: boolean;
+  adapterInstall?: CoreMetadata;
+  distribution?: CoreMetadata;
+  error?: string;
 };
 
 export type IrisCoreSession = {
@@ -343,7 +362,7 @@ export async function getIrisCoreAgentMemory(agentId: string, runtime?: HermesRu
 export async function saveIrisCoreAgentMemory(
   agentId: string,
   file: "memory" | "user",
-  payload: { content: string; expectedUpdatedAt?: number | null },
+  payload: { content: string; expectedUpdatedAt?: number | null; expectedContentHash?: string | null },
   runtime?: HermesRuntimeConfig,
 ) {
   return coreRequest<HermesMemorySaveResult>(
@@ -357,7 +376,13 @@ export async function saveIrisCoreAgentMemory(
 export async function resetIrisCoreAgentMemory(
   agentId: string,
   file: "memory" | "user" | "all",
-  payload: { confirm: string },
+  payload: {
+    confirm: string;
+    expectedUpdatedAt?: number | null;
+    expectedUpdatedAtByFile?: Record<string, number | null>;
+    expectedContentHash?: string | null;
+    expectedContentHashByFile?: Record<string, string | null>;
+  },
   runtime?: HermesRuntimeConfig,
 ) {
   return coreRequest<HermesMemorySaveResult>(
@@ -423,6 +448,14 @@ export async function getIrisCoreAgentSkills(agentId: string, runtime?: HermesRu
   return coreRequest<HermesSkills>(runtime, "GET", `/agents/${encodeURIComponent(agentId)}/skills`);
 }
 
+export async function getIrisCoreAgentSkillCatalog(agentId: string, runtime?: HermesRuntimeConfig) {
+  return coreRequest<HermesSkillCatalog>(
+    runtime,
+    "GET",
+    `/agents/${encodeURIComponent(agentId)}/skills/catalog`,
+  );
+}
+
 export async function getIrisCoreAgentSkill(agentId: string, skillId: string, runtime?: HermesRuntimeConfig) {
   return coreRequest<HermesSkillDetail>(
     runtime,
@@ -444,6 +477,24 @@ export async function createIrisCoreAgentSkill(
   );
 }
 
+export async function installIrisCoreAgentSkill(
+  agentId: string,
+  payload: {
+    sourceAgentId?: string;
+    sourceProfile?: string;
+    sourceSkillId: string;
+    overwrite?: boolean;
+  },
+  runtime?: HermesRuntimeConfig,
+) {
+  return coreRequest<HermesSkillSaveResult>(
+    runtime,
+    "POST",
+    `/agents/${encodeURIComponent(agentId)}/skills/install`,
+    payload,
+  );
+}
+
 export async function saveIrisCoreAgentSkill(
   agentId: string,
   skillId: string,
@@ -458,19 +509,32 @@ export async function saveIrisCoreAgentSkill(
   );
 }
 
-export async function createIrisCoreAgent(
-  payload: { name: string; runtimeId?: string; metadata?: CoreMetadata },
+export async function deleteIrisCoreAgentSkill(
+  agentId: string,
+  skillId: string,
   runtime?: HermesRuntimeConfig,
 ) {
-  return coreRequest<{ agent: IrisCoreAgent }>(runtime, "POST", "/agents", payload);
+  return coreRequest<HermesSkillDeleteResult>(
+    runtime,
+    "DELETE",
+    `/agents/${encodeURIComponent(agentId)}/skills/${encodeURIComponent(skillId)}`,
+    {},
+  );
+}
+
+export async function createIrisCoreAgent(
+  payload: { name: string; runtimeId?: string; metadata?: CoreMetadata; createAlias?: boolean; noAlias?: boolean; noSkills?: boolean },
+  runtime?: HermesRuntimeConfig,
+) {
+  return coreRequest<IrisCoreAgentMutationResult>(runtime, "POST", "/agents", payload);
 }
 
 export async function cloneIrisCoreAgent(
   agentId: string,
-  payload: { name: string; metadata?: CoreMetadata },
+  payload: { name: string; metadata?: CoreMetadata; cloneMode?: "identity" | "all"; sourceProfile?: string; createAlias?: boolean; noAlias?: boolean; noSkills?: boolean },
   runtime?: HermesRuntimeConfig,
 ) {
-  return coreRequest<{ agent: IrisCoreAgent }>(
+  return coreRequest<IrisCoreAgentMutationResult>(
     runtime,
     "POST",
     `/agents/${encodeURIComponent(agentId)}/clone`,
@@ -483,7 +547,7 @@ export async function renameIrisCoreAgent(
   payload: { name: string },
   runtime?: HermesRuntimeConfig,
 ) {
-  return coreRequest<{ agent: IrisCoreAgent }>(
+  return coreRequest<IrisCoreAgentMutationResult>(
     runtime,
     "PATCH",
     `/agents/${encodeURIComponent(agentId)}`,
@@ -492,7 +556,7 @@ export async function renameIrisCoreAgent(
 }
 
 export async function activateIrisCoreAgent(agentId: string, runtime?: HermesRuntimeConfig) {
-  return coreRequest<{ agent: IrisCoreAgent }>(
+  return coreRequest<IrisCoreAgentMutationResult>(
     runtime,
     "POST",
     `/agents/${encodeURIComponent(agentId)}/activate`,
@@ -501,11 +565,159 @@ export async function activateIrisCoreAgent(agentId: string, runtime?: HermesRun
 }
 
 export async function deleteIrisCoreAgent(agentId: string, runtime?: HermesRuntimeConfig) {
-  return coreRequest<{ agent: IrisCoreAgent }>(
+  return coreRequest<IrisCoreAgentMutationResult>(
     runtime,
     "DELETE",
     `/agents/${encodeURIComponent(agentId)}`,
   );
+}
+
+export async function getIrisCoreProfileIdentity(agentId: string, runtime?: HermesRuntimeConfig) {
+  return coreRequest<HermesProfileIdentity>(
+    runtime,
+    "GET",
+    `/agents/${encodeURIComponent(agentId)}/profile/identity`,
+  );
+}
+
+export async function saveIrisCoreProfileSoul(
+  agentId: string,
+  payload: { content: string; expectedContentHash?: string | null },
+  runtime?: HermesRuntimeConfig,
+) {
+  return coreRequest<HermesProfileFile>(
+    runtime,
+    "PUT",
+    `/agents/${encodeURIComponent(agentId)}/profile/soul`,
+    payload,
+  );
+}
+
+export async function resetIrisCoreProfileSoul(
+  agentId: string,
+  payload: { content?: string; expectedContentHash?: string | null },
+  runtime?: HermesRuntimeConfig,
+) {
+  return coreRequest<HermesProfileFile>(
+    runtime,
+    "POST",
+    `/agents/${encodeURIComponent(agentId)}/profile/soul/reset`,
+    payload,
+  );
+}
+
+export async function saveIrisCoreProfileConfig(
+  agentId: string,
+  payload: { content: string; expectedContentHash?: string | null },
+  runtime?: HermesRuntimeConfig,
+) {
+  return coreRequest<HermesProfileConfig>(
+    runtime,
+    "PUT",
+    `/agents/${encodeURIComponent(agentId)}/profile/config`,
+    payload,
+  );
+}
+
+export async function updateIrisCoreProfileEnv(
+  agentId: string,
+  payload: { values: Record<string, string>; removeKeys?: string[] },
+  runtime?: HermesRuntimeConfig,
+) {
+  return coreRequest<HermesProfileEnv>(
+    runtime,
+    "PUT",
+    `/agents/${encodeURIComponent(agentId)}/profile/env`,
+    payload,
+  );
+}
+
+export async function checkIrisCoreProfileConfig(agentId: string, runtime?: HermesRuntimeConfig) {
+  return coreRequest<{
+    ok: boolean;
+    profile: string;
+    commands: Record<string, IrisCoreGatewayCommandResult>;
+    error?: string;
+  }>(runtime, "POST", `/agents/${encodeURIComponent(agentId)}/profile/config/check`, {});
+}
+
+export async function getIrisCoreProfileAlias(agentId: string, runtime?: HermesRuntimeConfig) {
+  return coreRequest<HermesProfileAlias>(runtime, "GET", `/agents/${encodeURIComponent(agentId)}/profile/alias`);
+}
+
+export async function createIrisCoreProfileAlias(agentId: string, alias: string, runtime?: HermesRuntimeConfig) {
+  return coreRequest<HermesProfileAlias>(
+    runtime,
+    "POST",
+    `/agents/${encodeURIComponent(agentId)}/profile/alias`,
+    { alias },
+  );
+}
+
+export async function deleteIrisCoreProfileAlias(agentId: string, alias: string, runtime?: HermesRuntimeConfig) {
+  return coreRequest<HermesProfileAlias>(
+    runtime,
+    "DELETE",
+    `/agents/${encodeURIComponent(agentId)}/profile/alias`,
+    { alias },
+  );
+}
+
+export async function installIrisCoreProfileDistribution(
+  payload: { source: string; name?: string; alias?: boolean; force?: boolean },
+  runtime?: HermesRuntimeConfig,
+) {
+  return coreRequest<IrisCoreAgentMutationResult>(
+    runtime,
+    "POST",
+    "/profiles/install",
+    payload,
+    { timeoutMs: 190_000 },
+  );
+}
+
+export async function importIrisCoreProfileArchive(
+  payload: { file: File; name?: string },
+  runtime?: HermesRuntimeConfig,
+) {
+  const form = new FormData();
+  form.set("file", payload.file, payload.file.name);
+  if (payload.name) form.set("name", payload.name);
+  try {
+    const response = await fetch(`${coreBaseUrl(runtime)}/profiles/import`, {
+      method: "POST",
+      headers: { Accept: "application/json" },
+      body: form,
+    });
+    const parsed = await response.json().catch(() => ({}));
+    if (!response.ok && parsed.ok !== false) {
+      return { ok: false, error: parsed.error || `HTTP ${response.status}` } as CoreResponse<IrisCoreAgentMutationResult>;
+    }
+    return parsed as CoreResponse<IrisCoreAgentMutationResult>;
+  } catch (error) {
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : "Profile import failed.",
+    } as CoreResponse<IrisCoreAgentMutationResult>;
+  }
+}
+
+export async function updateIrisCoreProfileDistribution(
+  agentId: string,
+  payload: { forceConfig?: boolean },
+  runtime?: HermesRuntimeConfig,
+) {
+  return coreRequest<CoreResponse<CoreMetadata> & { ok: boolean; profile: string; warnings?: string[] }>(
+    runtime,
+    "POST",
+    `/agents/${encodeURIComponent(agentId)}/profile/distribution/update`,
+    payload,
+    { timeoutMs: 190_000 },
+  );
+}
+
+export function irisCoreProfileExportUrl(agentId: string, runtime?: HermesRuntimeConfig) {
+  return `${coreBaseUrl(runtime)}/agents/${encodeURIComponent(agentId)}/profile/export`;
 }
 
 export async function getIrisProjects(runtime?: HermesRuntimeConfig) {

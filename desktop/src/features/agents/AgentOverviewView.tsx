@@ -1,27 +1,26 @@
 import { useState } from "react";
 import { toast } from "sonner";
 import {
-  AlertCircle,
+  Activity,
   ArrowRightLeft,
   Copy,
+  Cpu,
+  Info,
   Pencil,
+  Plug,
   Plus,
   RefreshCw,
   Server,
+  Settings2,
   Trash2,
   Wrench,
 } from "lucide-react";
 import {
   activeCoreConnection,
-  connectionTransport,
   resolveCoreApiUrl,
 } from "../../app/runtimeConfig";
 import {
-  agentRuntimeReadinessForStatus,
-  runtimeReadinessDetail,
-  runtimeReadinessGatewayAction,
-  runtimeReadinessLabel,
-  runtimeReadinessTone,
+  runtimeGatewayIsReachable,
 } from "../../app/runtimeReadiness";
 import type { ProfileAction, ProfileActionHandler } from "../../app/types";
 import type { IrisCoreGatewayAction } from "../../lib/irisCore";
@@ -46,15 +45,15 @@ import {
   DialogHeader,
   DialogTitle,
 } from "../../shared/ui/dialog";
+import { DiagnosticRow, type DiagnosticRowAction } from "../../shared/ui/diagnostic-row";
 import { Field, FieldLabel } from "../../shared/ui/field";
 import { Input } from "../../shared/ui/input";
-import { StatusBanner } from "../../shared/ui/status-banner";
 import type {
   HermesProfile,
   HermesRuntimeConfig,
   HermesStatus,
-  IrisCoreConnectionProfile,
 } from "../../types/hermes";
+import { normalizeProfileName, profileNameError } from "./profileNames";
 
 type AgentOverviewViewProps = {
   status: HermesStatus | null;
@@ -87,17 +86,58 @@ export function AgentOverviewView({
 }: AgentOverviewViewProps) {
   const activeConnection = activeCoreConnection(runtimeConfig);
   const [profileName, setProfileName] = useState("");
-  const checkedAt = status?.checkedAt ? formatTimestamp(status.checkedAt) : "Not checked";
+  const [actionNotice, setActionNotice] = useState("");
+  const checkedAt = status?.checkedAt ? formatTimestamp(status.checkedAt) : "";
   const modelDisplay = modelSummary(profile.provider, profile.model);
-  const runtimeReadiness = agentRuntimeReadinessForStatus(status, profile);
-  const runtimeLabel = runtimeReadinessLabel(runtimeReadiness, selectedProfile);
-  const runtimeDetail = runtimeReadinessDetail(runtimeReadiness, selectedProfile, runtimeConfig.connectionMode);
-  const runtimeGatewayAction = runtimeReadinessGatewayAction(runtimeReadiness);
-  const runtimeGatewayActionLabel = gatewayActionLabel(runtimeGatewayAction, gatewayActionBusy, gatewayActionBusyAction);
-  const coreHealthy = status?.managementStatus?.ok ?? false;
+  const coreOk = Boolean(status?.connected && status?.managementStatus?.ok);
+  const gatewayOk = runtimeGatewayIsReachable(status, profile);
+  const adapterOk = Boolean(status?.activeApiStatus?.ok);
+  const coreUrl = status?.coreApiUrl || resolveCoreApiUrl(runtimeConfig);
+  const coreTransportShort = activeConnection.mode === "ssh" ? "SSH" : "Local";
+  const coreSublabel = coreUrl ? `${coreTransportShort} · ${coreUrl}` : coreTransportShort;
+  const gatewayActionBusyForStart = gatewayActionBusy && gatewayActionBusyAction === "start";
+  const gatewayActionBusyForRestart = gatewayActionBusy && gatewayActionBusyAction === "restart";
+
+  const coreDiagnosticAction: DiagnosticRowAction | null = !coreOk
+    ? {
+        label: "Open Settings",
+        icon: Wrench,
+        onClick: onOpenSettings,
+      }
+    : null;
+
+  const gatewayDiagnosticAction: DiagnosticRowAction | null = coreOk && !gatewayOk
+    ? {
+        label: gatewayActionBusyForStart ? "Starting…" : "Start gateway",
+        icon: Plug,
+        disabled: gatewayActionBusy,
+        onClick: () => onGatewayAction("start"),
+      }
+    : null;
+
+  const adapterDiagnosticAction: DiagnosticRowAction | null = coreOk && gatewayOk && !adapterOk
+    ? {
+        label: adapterInstallBusy
+          ? "Installing…"
+          : gatewayActionBusyForRestart
+            ? "Restarting gateway…"
+            : "Install adapter",
+        icon: Wrench,
+        disabled: adapterInstallBusy || gatewayActionBusyForRestart,
+        onClick: onInstallAdapter,
+      }
+    : null;
 
   async function runProfileAction(action: ProfileAction) {
-    const message = await onProfileAction(action, profileName);
+    const target = action === "switch" ? normalizeProfileName(profileName || selectedProfile) : normalizeProfileName(profileName);
+    const validationError = ["create", "clone", "rename"].includes(action) ? profileNameError(target) : "";
+    if (validationError) {
+      setActionNotice(validationError);
+      toast.error(validationError);
+      return;
+    }
+    const message = await onProfileAction(action, target);
+    setActionNotice(message);
     if (isProfileActionFailure(message)) {
       toast.error(message);
     } else {
@@ -108,112 +148,106 @@ export function AgentOverviewView({
 
   return (
     <div className="agent-overview-view">
-      <div className="agent-overview-toolbar">
-        <div>
-          <h2>Runtime health</h2>
-          <span>{profile.name}</span>
-        </div>
-        <Button variant="appNeutral" size="appSmall" onClick={onRefresh}>
-          <RefreshCw data-icon="inline-start" />
-          Refresh
-        </Button>
-      </div>
-
-      <div className="core-status-strip agent-overview-core-strip" data-online={coreHealthy ? "true" : "false"}>
-        <span className={coreHealthy ? "service-health-dot online" : "service-health-dot offline"} />
-        <span className="core-status-strip-name">Iris Core</span>
-        <span className="core-status-strip-sep" aria-hidden>/</span>
-        <span className="core-status-strip-field">
-          <strong>{status?.coreApiUrl || resolveCoreApiUrl(runtimeConfig)}</strong>
-        </span>
-        <span className="core-status-strip-sep" aria-hidden>/</span>
-        <span className="core-status-strip-field">{transportLabel(activeConnection)}</span>
-        <span className="core-status-strip-spacer" />
-        <span className="core-status-strip-checked">
-          {coreHealthy ? `Healthy / ${checkedAt}` : `Offline / ${checkedAt}`}
-        </span>
-        <Button variant="appNeutral" size="appSmall" onClick={onOpenSettings}>
-          <Wrench data-icon="inline-start" />
-          Configure in Settings
-        </Button>
-      </div>
-
-      {runtimeReadinessTone(runtimeReadiness) !== "ready" ? (
-        <StatusBanner
-          tone="degraded"
-          density="comfortable"
-          icon={AlertCircle}
-          action={
-            runtimeGatewayAction || runtimeReadiness === "adapter-unavailable" ? (
-              <span className="flex items-center gap-2">
-                {runtimeGatewayAction ? (
-                  <Button
-                    type="button"
-                    variant="appNeutral"
-                    size="appSmall"
-                    disabled={gatewayActionBusy}
-                    onClick={() => onGatewayAction(runtimeGatewayAction)}
-                  >
-                    {runtimeGatewayActionLabel}
-                  </Button>
-                ) : null}
-                {runtimeReadiness === "adapter-unavailable" ? (
-                  <Button
-                    type="button"
-                    variant="appNeutral"
-                    size="appSmall"
-                    disabled={adapterInstallBusy}
-                    onClick={onInstallAdapter}
-                  >
-                    {adapterInstallBusy ? "Installing adapter..." : "Install adapter"}
-                  </Button>
-                ) : null}
-              </span>
-            ) : null
-          }
-        >
-          {runtimeDetail || runtimeLabel}
-        </StatusBanner>
-      ) : null}
-
-      <div className="agent-overview-grid">
-        <div className="agent-overview-primary">
-          <section className="settings-section model-section agent-overview-runtime">
-            <div className="settings-section-header">
-              <div>
-                <h2>Runtime configuration</h2>
-              </div>
-            </div>
-            <ModelCard summary={modelDisplay} rawModel={profile.model} provider={profile.provider} />
-          </section>
-
-          <ProfileWorkflows
-            profileName={profileName}
-            currentAgent={profile.name}
-            onProfileNameChange={setProfileName}
-            onProfileAction={runProfileAction}
-            onDeleteAgent={() => onProfileAction("delete", profile.name, profile.name)}
-          />
-        </div>
-
-        <Card className="agent-profile-summary-card">
+      <div className="agent-overview-top">
+        <Card className="agent-overview-card agent-overview-card-health">
           <CardHeader>
-            <CardTitle>Profile metadata</CardTitle>
+            <CardTitle>
+              <Activity className="agent-overview-card-icon" />
+              <span>Runtime health</span>
+            </CardTitle>
+            <div className="agent-overview-card-header-actions">
+              <Button
+                variant="appIcon"
+                size="icon-sm"
+                onClick={onRefresh}
+                title="Refresh"
+                aria-label="Refresh runtime health"
+              >
+                <RefreshCw />
+              </Button>
+              <Button
+                variant="appIcon"
+                size="icon-sm"
+                onClick={onOpenSettings}
+                title="Configure in Settings"
+                aria-label="Configure in Settings"
+              >
+                <Wrench />
+              </Button>
+            </div>
+          </CardHeader>
+          <CardContent className="agent-overview-card-body">
+            <div className="diagnostics-rows">
+              <DiagnosticRow
+                label="Iris Core"
+                sublabel={coreSublabel}
+                ok={coreOk}
+                tone={coreOk ? "ready" : "offline"}
+                action={coreDiagnosticAction}
+              />
+              <DiagnosticRow
+                label={`Hermes gateway (${selectedProfile})`}
+                ok={gatewayOk}
+                tone={gatewayOk ? "ready" : "degraded"}
+                action={gatewayDiagnosticAction}
+              />
+              <DiagnosticRow
+                label="Iris adapter"
+                ok={adapterOk}
+                tone={adapterOk ? "ready" : "degraded"}
+                action={adapterDiagnosticAction}
+              />
+            </div>
+            {checkedAt ? (
+              <span className="agent-overview-card-foot">Last checked {checkedAt}</span>
+            ) : null}
+          </CardContent>
+        </Card>
+
+        <Card className="agent-overview-card agent-overview-card-metadata">
+          <CardHeader>
+            <CardTitle>
+              <Info className="agent-overview-card-icon" />
+              <span>Profile metadata</span>
+            </CardTitle>
             <CardDescription>{profile.path || "Profile path unavailable"}</CardDescription>
           </CardHeader>
-          <CardContent className="agent-profile-summary-grid">
-            <ProfileStat label="Runtime" value={selectedProfile} />
-            <ProfileStat label="Sessions" value={`${profile.sessionCount}`} />
-            <ProfileStat label="Memory" value={formatBytes(profile.memoryBytes)} />
-            <ProfileStat label="Skills" value={`${profile.skillCount}`} />
-            <ProfileStat
-              label="Estimated cost"
-              value={profile.estimatedCostUsd == null ? "Unavailable" : `$${profile.estimatedCostUsd.toFixed(4)}`}
-            />
-            <ProfileStat label="Status" value={profile.active ? "Active" : "Available"} />
+          <CardContent className="agent-overview-card-body">
+            <div className="agent-overview-stats">
+              <ProfileStat label="Runtime" value={selectedProfile} />
+              <ProfileStat label="Sessions" value={`${profile.sessionCount}`} />
+              <ProfileStat label="Memory" value={formatBytes(profile.memoryBytes)} />
+              <ProfileStat label="Skills" value={`${profile.skillCount}`} />
+              <ProfileStat
+                label="Estimated cost"
+                value={profile.estimatedCostUsd == null ? "Unavailable" : `$${profile.estimatedCostUsd.toFixed(4)}`}
+              />
+              <ProfileStat label="Status" value={profile.active ? "Active" : "Available"} />
+            </div>
           </CardContent>
         </Card>
       </div>
+
+      <Card className="agent-overview-card agent-overview-card-runtime">
+        <CardHeader>
+          <CardTitle>
+            <Cpu className="agent-overview-card-icon" />
+            <span>Runtime configuration</span>
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="agent-overview-card-body">
+          <ModelCard summary={modelDisplay} rawModel={profile.model} provider={profile.provider} />
+        </CardContent>
+      </Card>
+
+        <ProfileWorkflows
+          profileName={profileName}
+          currentAgent={profile.name}
+          actionNotice={actionNotice}
+          onProfileNameChange={setProfileName}
+          onProfileAction={runProfileAction}
+          onDeleteAgent={() => onProfileAction("delete", profile.name, profile.name)}
+      />
     </div>
   );
 }
@@ -230,12 +264,14 @@ function ProfileStat({ label, value }: { label: string; value: string }) {
 function ProfileWorkflows({
   profileName,
   currentAgent,
+  actionNotice,
   onProfileNameChange,
   onProfileAction,
   onDeleteAgent,
 }: {
   profileName: string;
   currentAgent: string;
+  actionNotice: string;
   onProfileNameChange: (value: string) => void;
   onProfileAction: (action: ProfileAction) => Promise<void>;
   onDeleteAgent: () => Promise<string>;
@@ -245,6 +281,7 @@ function ProfileWorkflows({
   const [deleteBusy, setDeleteBusy] = useState(false);
   const isDefault = currentAgent === "default";
   const canDelete = !isDefault && deleteConfirm.trim() === currentAgent;
+  const validationError = profileName.trim() ? profileNameError(profileName) : "";
 
   function closeDeleteDialog() {
     if (deleteBusy) return;
@@ -271,9 +308,12 @@ function ProfileWorkflows({
 
   return (
     <>
-      <Card className="profile-workflows">
+      <Card className="profile-workflows agent-overview-card">
         <CardHeader>
-          <CardTitle>Agent management</CardTitle>
+          <CardTitle>
+            <Settings2 className="agent-overview-card-icon" />
+            <span>Agent management</span>
+          </CardTitle>
           <CardDescription>Create, clone, rename, or switch agents by name.</CardDescription>
         </CardHeader>
         <CardContent className="profile-workflows-content">
@@ -289,6 +329,11 @@ function ProfileWorkflows({
               Create
             </Button>
           </div>
+          {validationError || actionNotice ? (
+            <p className={`profile-workflows-notice ${validationError || isProfileActionFailure(actionNotice) ? "error" : ""}`}>
+              {validationError || actionNotice}
+            </p>
+          ) : null}
           <div className="profile-workflows-secondary">
             <Button variant="appNeutral" size="appSmall" onClick={() => void onProfileAction("clone")}>
               <Copy data-icon="inline-start" />
@@ -393,22 +438,6 @@ function ModelCard({
 
 function isProfileActionFailure(message: string) {
   return /\b(error|failed|cannot|already exists|does not exist|enter|invalid)\b/i.test(message);
-}
-
-function transportLabel(connection: IrisCoreConnectionProfile) {
-  const transport = connectionTransport(connection);
-  if (transport === "ssh-tunnel") return "SSH tunnel";
-  return "Sidecar";
-}
-
-function gatewayActionLabel(
-  action: "start" | "restart" | null,
-  busy: boolean,
-  busyAction: IrisCoreGatewayAction | null,
-) {
-  if (action === "start") return busy && busyAction === "start" ? "Starting gateway..." : "Start gateway";
-  if (action === "restart") return busy && busyAction === "restart" ? "Restarting gateway..." : "Restart gateway";
-  return "";
 }
 
 function modelSummary(provider: string, model: string) {

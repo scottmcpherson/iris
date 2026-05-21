@@ -16,7 +16,7 @@ export type IrisRouteTarget = {
 const IRIS_APP_HOST = "iris.app";
 
 export function isAgentDetailSection(value: string): value is AgentDetailSection {
-  return value === "overview" || value === "memory" || value === "skills";
+  return value === "overview" || value === "memory" || value === "skills" || value === "configuration";
 }
 
 export function viewForRouteIntent(intent: IrisRouteIntent): View {

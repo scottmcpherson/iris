@@ -7,6 +7,7 @@ export type CodeEditorProps = {
   value: string;
   onChange: (value: string) => void;
   spellCheck?: boolean;
+  readOnly?: boolean;
   metadata?: CodeEditorMetadata[];
   className?: string;
 };
@@ -15,6 +16,7 @@ export function CodeEditor({
   value,
   onChange,
   spellCheck = false,
+  readOnly = false,
   metadata = [],
   className = "",
 }: CodeEditorProps) {
@@ -30,6 +32,7 @@ export function CodeEditor({
       <div className="skill-code-editor">
         <pre aria-hidden="true">{lineNumbers(value)}</pre>
         <textarea
+          readOnly={readOnly}
           spellCheck={spellCheck}
           value={value}
           onChange={(event) => onChange(event.target.value)}

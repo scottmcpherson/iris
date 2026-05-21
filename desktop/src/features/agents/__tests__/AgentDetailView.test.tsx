@@ -1,38 +1,36 @@
-import { createElement } from "react";
+import { createElement, type ComponentProps } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { describe, expect, it } from "vitest";
 import { AgentDetailView } from "../AgentDetailView";
 import type {
   HermesMemory,
   HermesProfile,
   HermesRuntimeConfig,
-  HermesSkill,
   HermesStatus,
 } from "../../../types/hermes";
 
 describe("AgentDetailView", () => {
   it("keeps memory and skills previews out of the overview page", () => {
-    const html = renderToStaticMarkup(
-      createElement(AgentDetailView, {
-        section: "overview",
-        status: statusFixture(),
-        profile: profileFixture(),
-        selectedProfile: "default",
-        runtimeConfig: runtimeConfigFixture(),
-        memory: memoryFixture(),
-        skills: skillsFixture(),
-        gatewayActionBusy: false,
-        gatewayActionBusyAction: null,
-        adapterInstallBusy: false,
-        onRefresh: noop,
-        onProfileAction: async () => "",
-        onGatewayAction: noop,
-        onInstallAdapter: noop,
-        onOpenSettings: noop,
-        onSaveMemory: async () => "",
-        onResetMemory: async () => "",
-      }),
-    );
+    const html = renderAgentDetailView({
+      section: "overview",
+      status: statusFixture(),
+      profile: profileFixture(),
+      selectedProfile: "default",
+      runtimeConfig: runtimeConfigFixture(),
+      memory: memoryFixture(),
+      gatewayActionBusy: false,
+      gatewayActionBusyAction: null,
+      adapterInstallBusy: false,
+      onRefresh: noop,
+      onProfileSkillsChanged: noop,
+      onProfileAction: async () => "",
+      onGatewayAction: noop,
+      onInstallAdapter: noop,
+      onOpenSettings: noop,
+      onSaveMemory: async () => "",
+      onResetMemory: async () => "",
+    });
 
     expect(html).toContain("Iris Core");
     expect(html).toContain("http://127.0.0.1:8765");
@@ -54,82 +52,75 @@ describe("AgentDetailView", () => {
 
   it("shows gateway recovery controls in the overview page", () => {
     const stoppedProfile = profileFixture({ gatewayRunning: false });
-    const html = renderToStaticMarkup(
-      createElement(AgentDetailView, {
-        section: "overview",
-        status: statusFixture(stoppedProfile),
-        profile: stoppedProfile,
-        selectedProfile: "default",
-        runtimeConfig: runtimeConfigFixture(),
-        memory: memoryFixture(),
-        skills: skillsFixture(),
-        gatewayActionBusy: false,
-        gatewayActionBusyAction: null,
-        adapterInstallBusy: false,
-        onRefresh: noop,
-        onProfileAction: async () => "",
-        onGatewayAction: noop,
-        onInstallAdapter: noop,
-        onOpenSettings: noop,
-        onSaveMemory: async () => "",
-        onResetMemory: async () => "",
-      }),
-    );
+    const html = renderAgentDetailView({
+      section: "overview",
+      status: statusFixture(stoppedProfile),
+      profile: stoppedProfile,
+      selectedProfile: "default",
+      runtimeConfig: runtimeConfigFixture(),
+      memory: memoryFixture(),
+      gatewayActionBusy: false,
+      gatewayActionBusyAction: null,
+      adapterInstallBusy: false,
+      onRefresh: noop,
+      onProfileSkillsChanged: noop,
+      onProfileAction: async () => "",
+      onGatewayAction: noop,
+      onInstallAdapter: noop,
+      onOpenSettings: noop,
+      onSaveMemory: async () => "",
+      onResetMemory: async () => "",
+    });
 
-    expect(html).toContain("default gateway is stopped");
+    expect(html).toContain("Hermes gateway (default)");
     expect(html).toContain("Start gateway");
   });
 
   it("shows gateway recovery controls when the adapter is unreachable", () => {
-    const html = renderToStaticMarkup(
-      createElement(AgentDetailView, {
-        section: "overview",
-        status: { ...statusFixture(), activeApiStatus: { ok: false, profile: "default" } },
-        profile: profileFixture(),
-        selectedProfile: "default",
-        runtimeConfig: runtimeConfigFixture(),
-        memory: memoryFixture(),
-        skills: skillsFixture(),
-        gatewayActionBusy: false,
-        gatewayActionBusyAction: null,
-        adapterInstallBusy: false,
-        onRefresh: noop,
-        onProfileAction: async () => "",
-        onGatewayAction: noop,
-        onInstallAdapter: noop,
-        onOpenSettings: noop,
-        onSaveMemory: async () => "",
-        onResetMemory: async () => "",
-      }),
-    );
+    const html = renderAgentDetailView({
+      section: "overview",
+      status: { ...statusFixture(), activeApiStatus: { ok: false, profile: "default" } },
+      profile: profileFixture(),
+      selectedProfile: "default",
+      runtimeConfig: runtimeConfigFixture(),
+      memory: memoryFixture(),
+      gatewayActionBusy: false,
+      gatewayActionBusyAction: null,
+      adapterInstallBusy: false,
+      onRefresh: noop,
+      onProfileSkillsChanged: noop,
+      onProfileAction: async () => "",
+      onGatewayAction: noop,
+      onInstallAdapter: noop,
+      onOpenSettings: noop,
+      onSaveMemory: async () => "",
+      onResetMemory: async () => "",
+    });
 
-    expect(html).toContain("Iris adapter is unreachable");
-    expect(html).toContain("Restart gateway");
+    expect(html).toContain("Iris adapter");
     expect(html).toContain("Install adapter");
   });
 
   it("wraps memory in the shared workbench frame without a nested page shell", () => {
-    const html = renderToStaticMarkup(
-      createElement(AgentDetailView, {
-        section: "memory",
-        status: statusFixture(),
-        profile: profileFixture(),
-        selectedProfile: "default",
-        runtimeConfig: runtimeConfigFixture(),
-        memory: memoryFixture(),
-        skills: skillsFixture(),
-        gatewayActionBusy: false,
-        gatewayActionBusyAction: null,
-        adapterInstallBusy: false,
-        onRefresh: noop,
-        onProfileAction: async () => "",
-        onGatewayAction: noop,
-        onInstallAdapter: noop,
-        onOpenSettings: noop,
-        onSaveMemory: async () => "",
-        onResetMemory: async () => "",
-      }),
-    );
+    const html = renderAgentDetailView({
+      section: "memory",
+      status: statusFixture(),
+      profile: profileFixture(),
+      selectedProfile: "default",
+      runtimeConfig: runtimeConfigFixture(),
+      memory: memoryFixture(),
+      gatewayActionBusy: false,
+      gatewayActionBusyAction: null,
+      adapterInstallBusy: false,
+      onRefresh: noop,
+      onProfileSkillsChanged: noop,
+      onProfileAction: async () => "",
+      onGatewayAction: noop,
+      onInstallAdapter: noop,
+      onOpenSettings: noop,
+      onSaveMemory: async () => "",
+      onResetMemory: async () => "",
+    });
 
     expect(html).toContain("agent-content-frame");
     expect(html).toContain("data-layout=\"workbench\"");
@@ -137,9 +128,80 @@ describe("AgentDetailView", () => {
     expect(html).not.toContain("tool-view memory-workspace");
     expect(html).not.toContain("agent-subview");
   });
+
+  it("does not render selected-profile memory while viewing another profile detail route", () => {
+    const html = renderAgentDetailView({
+      section: "memory",
+      status: statusFixture(profileFixture({ name: "research" })),
+      profile: profileFixture({ name: "research" }),
+      selectedProfile: "research",
+      runtimeConfig: runtimeConfigFixture(),
+      memory: memoryFixture({ profile: "default" }),
+      gatewayActionBusy: false,
+      gatewayActionBusyAction: null,
+      adapterInstallBusy: false,
+      onRefresh: noop,
+      onProfileSkillsChanged: noop,
+      onProfileAction: async () => "",
+      onGatewayAction: noop,
+      onInstallAdapter: noop,
+      onOpenSettings: noop,
+      onSaveMemory: async () => "",
+      onResetMemory: async () => "",
+    });
+
+    expect(html).toContain("memory-workspace");
+    expect(html).not.toContain("Remember the overview should stay focused.");
+    expect(html).not.toContain("User profile notes.");
+  });
+
+  it("wraps configuration in the shared workbench frame", () => {
+    const html = renderAgentDetailView({
+      section: "configuration",
+      status: { ...statusFixture(), connected: false },
+      profile: profileFixture(),
+      selectedProfile: "default",
+      runtimeConfig: runtimeConfigFixture(),
+      memory: memoryFixture(),
+      gatewayActionBusy: false,
+      gatewayActionBusyAction: null,
+      adapterInstallBusy: false,
+      onRefresh: noop,
+      onProfileSkillsChanged: noop,
+      onProfileAction: async () => "",
+      onGatewayAction: noop,
+      onInstallAdapter: noop,
+      onOpenSettings: noop,
+      onSaveMemory: async () => "",
+      onResetMemory: async () => "",
+    });
+
+    expect(html).toContain("agent-content-frame");
+    expect(html).toContain("data-layout=\"workbench\"");
+    expect(html).toContain("Iris Core is offline.");
+  });
 });
 
 function noop() {}
+
+type RenderAgentDetailViewProps =
+  Omit<ComponentProps<typeof AgentDetailView>, "onOpenAgentProfile"> &
+  Partial<Pick<ComponentProps<typeof AgentDetailView>, "onOpenAgentProfile">>;
+
+function renderAgentDetailView(props: RenderAgentDetailViewProps) {
+  const queryClient = new QueryClient({
+    defaultOptions: {
+      queries: { retry: false },
+    },
+  });
+  return renderToStaticMarkup(
+    createElement(
+      QueryClientProvider,
+      { client: queryClient },
+      createElement(AgentDetailView, { onOpenAgentProfile: noop, ...props }),
+    ),
+  );
+}
 
 function runtimeConfigFixture(): HermesRuntimeConfig {
   return {
@@ -198,7 +260,7 @@ function statusFixture(profile = profileFixture()): HermesStatus {
   };
 }
 
-function memoryFixture(): HermesMemory {
+function memoryFixture(overrides: Partial<HermesMemory> = {}): HermesMemory {
   return {
     ok: true,
     profile: "default",
@@ -220,36 +282,6 @@ function memoryFixture(): HermesMemory {
       content: "User profile notes.",
     },
     history: [],
+    ...overrides,
   };
-}
-
-function skillsFixture(): HermesSkill[] {
-  return [
-    {
-      id: "apple-notes",
-      name: "apple-notes",
-      path: "/tmp/skills/apple-notes",
-      category: "apple",
-      source: "installed",
-      description: "",
-      updatedAt: null,
-      version: null,
-      tags: [],
-      bytes: 0,
-      metadata: {},
-    },
-    {
-      id: "airtable",
-      name: "airtable",
-      path: "/tmp/skills/airtable",
-      category: "productivity",
-      source: "installed",
-      description: "",
-      updatedAt: null,
-      version: null,
-      tags: [],
-      bytes: 0,
-      metadata: {},
-    },
-  ];
 }

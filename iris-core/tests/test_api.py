@@ -3,13 +3,17 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+import tarfile
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 
 from fastapi.testclient import TestClient
 
 from hermes_management_server import __version__
+from hermes_management_server.core_store import MEMORY_REVISION_LIMIT
 from hermes_management_server.main import LiveDeliveryBus, Settings, coalesce_core_messages, create_app, install_hermes_plugin
 from hermes_management_server.runtime_adapters import hermes as hermes_adapter
+from hermes_management_server.runtime_adapters.hermes_store import encode_skill_id
 
 PNG_BYTES = (
     b"\x89PNG\r\n\x1a\n"
@@ -45,6 +49,15 @@ def agent_for_profile(client, profile):
         if agent["runtimeProfile"] == profile:
             return agent
     raise AssertionError(f"Agent for profile {profile} was not found.")
+
+
+def memory_revision_profiles(path):
+    connection = sqlite3.connect(path)
+    try:
+        rows = connection.execute("select runtime_profile from memory_revisions order by runtime_profile").fetchall()
+    finally:
+        connection.close()
+    return [row[0] for row in rows]
 
 
 def create_core_history_db(path, *, session_id, title, user_text, assistant_text, chat_id):
@@ -222,6 +235,207 @@ def test_agent_memory_and_skills_endpoints(tmp_path):
     assert detail_response.json()["content"] == "# Summarize\n\nCondense notes."
 
 
+def test_agent_memory_save_creates_revision(tmp_path):
+    root = tmp_path / ".hermes"
+    memories = root / "memories"
+    memories.mkdir(parents=True)
+    memory_path = memories / "MEMORY.md"
+    memory_path.write_text("before", encoding="utf-8")
+    client = make_client(root)
+    agent_id = agent_for_profile(client, "default")["id"]
+
+    memory_response = client.get(f"/v1/agents/{agent_id}/memory")
+    save_response = client.put(
+        f"/v1/agents/{agent_id}/memory/memory",
+        json={
+            "content": "after",
+            "expectedContentHash": memory_response.json()["memory"]["contentHash"],
+        },
+    )
+
+    assert save_response.status_code == 200
+    payload = save_response.json()["memory"]
+    assert payload["memory"]["content"] == "after"
+    assert memory_path.read_text(encoding="utf-8") == "after"
+    assert len(payload["history"]) == 1
+    revision = payload["history"][0]
+    assert revision["file"] == "MEMORY.md"
+    assert revision["action"] == "save"
+    assert revision["content"] == "before"
+    assert revision["summary"] == "Before Iris save"
+
+
+def test_agent_memory_reset_creates_revision(tmp_path):
+    root = tmp_path / ".hermes"
+    memories = root / "memories"
+    memories.mkdir(parents=True)
+    user_path = memories / "USER.md"
+    user_path.write_text("user facts", encoding="utf-8")
+    client = make_client(root)
+    agent_id = agent_for_profile(client, "default")["id"]
+
+    memory_response = client.get(f"/v1/agents/{agent_id}/memory")
+    reset_response = client.request(
+        "DELETE",
+        f"/v1/agents/{agent_id}/memory/user",
+        json={
+            "confirm": "RESET MEMORY",
+            "expectedContentHash": memory_response.json()["user"]["contentHash"],
+            "expectedUpdatedAt": memory_response.json()["user"]["updatedAt"],
+        },
+    )
+
+    assert reset_response.status_code == 200
+    assert not user_path.exists()
+    revision = reset_response.json()["memory"]["history"][0]
+    assert revision["file"] == "USER.md"
+    assert revision["action"] == "reset"
+    assert revision["content"] == "user facts"
+    assert revision["summary"] == "Before Iris reset"
+
+
+def test_agent_memory_reset_all_creates_revisions_for_existing_files(tmp_path):
+    root = tmp_path / ".hermes"
+    memories = root / "memories"
+    memories.mkdir(parents=True)
+    memory_path = memories / "MEMORY.md"
+    user_path = memories / "USER.md"
+    memory_path.write_text("memory facts", encoding="utf-8")
+    user_path.write_text("user facts", encoding="utf-8")
+    client = make_client(root)
+    agent_id = agent_for_profile(client, "default")["id"]
+
+    memory_response = client.get(f"/v1/agents/{agent_id}/memory").json()
+    reset_response = client.request(
+        "DELETE",
+        f"/v1/agents/{agent_id}/memory/all",
+        json={
+            "confirm": "RESET MEMORY",
+            "expectedContentHashByFile": {
+                "memory": memory_response["memory"]["contentHash"],
+                "user": memory_response["user"]["contentHash"],
+            },
+            "expectedUpdatedAtByFile": {
+                "memory": memory_response["memory"]["updatedAt"],
+                "user": memory_response["user"]["updatedAt"],
+            },
+        },
+    )
+
+    assert reset_response.status_code == 200
+    assert not memory_path.exists()
+    assert not user_path.exists()
+    revisions = reset_response.json()["memory"]["history"]
+    assert {(entry["file"], entry["action"], entry["content"]) for entry in revisions} == {
+        ("MEMORY.md", "reset", "memory facts"),
+        ("USER.md", "reset", "user facts"),
+    }
+
+
+def test_agent_memory_save_conflict_does_not_create_revision(tmp_path):
+    root = tmp_path / ".hermes"
+    memories = root / "memories"
+    memories.mkdir(parents=True)
+    memory_path = memories / "MEMORY.md"
+    memory_path.write_text("before", encoding="utf-8")
+    client = make_client(root)
+    agent_id = agent_for_profile(client, "default")["id"]
+
+    memory_response = client.get(f"/v1/agents/{agent_id}/memory")
+    memory_path.write_text("external update", encoding="utf-8")
+    save_response = client.put(
+        f"/v1/agents/{agent_id}/memory/memory",
+        json={
+            "content": "after",
+            "expectedContentHash": memory_response.json()["memory"]["contentHash"],
+        },
+    )
+    refreshed = client.get(f"/v1/agents/{agent_id}/memory")
+
+    assert save_response.status_code == 409
+    assert memory_path.read_text(encoding="utf-8") == "external update"
+    assert refreshed.json()["memory"]["content"] == "external update"
+    assert refreshed.json()["history"] == []
+
+
+def test_agent_memory_revision_retention_prunes_old_rows(tmp_path):
+    root = tmp_path / ".hermes"
+    memories = root / "memories"
+    memories.mkdir(parents=True)
+    (memories / "MEMORY.md").write_text("v0", encoding="utf-8")
+    client = make_client(root)
+    agent_id = agent_for_profile(client, "default")["id"]
+    current = client.get(f"/v1/agents/{agent_id}/memory").json()["memory"]
+
+    for index in range(1, MEMORY_REVISION_LIMIT + 6):
+        response = client.put(
+            f"/v1/agents/{agent_id}/memory/memory",
+            json={
+                "content": f"v{index}",
+                "expectedContentHash": current["contentHash"],
+            },
+        )
+        assert response.status_code == 200
+        current = response.json()["memory"]["memory"]
+
+    history = client.get(f"/v1/agents/{agent_id}/memory").json()["history"]
+    contents = [entry["content"] for entry in history if entry["file"] == "MEMORY.md"]
+    assert len(contents) == MEMORY_REVISION_LIMIT
+    assert contents[0] == f"v{MEMORY_REVISION_LIMIT + 4}"
+    assert "v0" not in contents
+
+
+def test_agent_memory_revisions_follow_profile_rename(tmp_path):
+    root = tmp_path / ".hermes"
+    memories = root / "profiles" / "research" / "memories"
+    memories.mkdir(parents=True)
+    (memories / "MEMORY.md").write_text("research memory", encoding="utf-8")
+    core_path = tmp_path / "core.sqlite3"
+    client = make_client(root)
+    agent = agent_for_profile(client, "research")
+    memory_response = client.get(f"/v1/agents/{agent['id']}/memory")
+    save_response = client.put(
+        f"/v1/agents/{agent['id']}/memory/memory",
+        json={
+            "content": "updated research memory",
+            "expectedContentHash": memory_response.json()["memory"]["contentHash"],
+        },
+    )
+
+    rename_response = client.patch(f"/v1/agents/{agent['id']}", json={"name": "health"})
+    renamed_agent = rename_response.json()["agent"]
+    renamed_memory = client.get(f"/v1/agents/{renamed_agent['id']}/memory")
+
+    assert save_response.status_code == 200
+    assert rename_response.status_code == 200
+    assert renamed_memory.status_code == 200
+    assert renamed_memory.json()["history"][0]["content"] == "research memory"
+    assert memory_revision_profiles(core_path) == ["health"]
+
+
+def test_agent_memory_revisions_are_deleted_with_profile(tmp_path):
+    root = tmp_path / ".hermes"
+    memories = root / "profiles" / "research" / "memories"
+    memories.mkdir(parents=True)
+    (memories / "MEMORY.md").write_text("research memory", encoding="utf-8")
+    core_path = tmp_path / "core.sqlite3"
+    client = make_client(root)
+    agent = agent_for_profile(client, "research")
+    memory_response = client.get(f"/v1/agents/{agent['id']}/memory")
+    save_response = client.put(
+        f"/v1/agents/{agent['id']}/memory/memory",
+        json={
+            "content": "updated research memory",
+            "expectedContentHash": memory_response.json()["memory"]["contentHash"],
+        },
+    )
+    delete_response = client.delete(f"/v1/agents/{agent['id']}")
+
+    assert save_response.status_code == 200
+    assert delete_response.status_code == 200
+    assert memory_revision_profiles(core_path) == []
+
+
 def test_agent_scoped_memory_skills_and_profile_actions(tmp_path):
     root = tmp_path / ".hermes"
     memories = root / "memories"
@@ -269,10 +483,125 @@ def test_agent_scoped_memory_skills_and_profile_actions(tmp_path):
     assert activate_agent_response.status_code == 200
     assert rename_agent_response.status_code == 200
     assert (root / "profiles" / "research-renamed").is_dir()
-    assert (root / "active_profile").read_text(encoding="utf-8") == "research-renamed"
+    assert (root / "active_profile").read_text(encoding="utf-8").strip() == "research-renamed"
     delete_agent_response = client.delete(f"/v1/agents/{clone_agent_response.json()['agent']['id']}")
     assert delete_agent_response.status_code == 200
     assert not (root / "profiles" / "default-copy").exists()
+
+
+def test_agent_skill_delete_removes_only_target_profile_skill(tmp_path):
+    root = tmp_path / ".hermes"
+    relative = Path("ops") / "deploy" / "SKILL.md"
+    default_skill = root / "skills" / relative
+    health_skill = root / "profiles" / "health" / "skills" / relative
+    default_skill.parent.mkdir(parents=True)
+    health_skill.parent.mkdir(parents=True)
+    default_skill.write_text("# Default Deploy\n", encoding="utf-8")
+    health_skill.write_text("# Health Deploy\n", encoding="utf-8")
+    client = make_client(root)
+    health_agent = agent_for_profile(client, "health")
+    skill_id = encode_skill_id(relative)
+
+    delete_response = client.request(
+        "DELETE",
+        f"/v1/agents/{health_agent['id']}/skills/{skill_id}",
+        json={"confirm": "REMOVE SKILL"},
+    )
+    refreshed_health_agent = agent_for_profile(client, "health")
+
+    assert delete_response.status_code == 200
+    assert delete_response.json()["profile"] == "health"
+    assert not health_skill.exists()
+    assert default_skill.read_text(encoding="utf-8") == "# Default Deploy\n"
+    assert refreshed_health_agent["metadata"]["skillCount"] == 0
+
+
+def test_agent_skill_install_copies_from_default_profile(tmp_path):
+    root = tmp_path / ".hermes"
+    relative = Path("research") / "summarize" / "SKILL.md"
+    source_skill = root / "skills" / relative
+    source_skill.parent.mkdir(parents=True)
+    source_skill.write_text("---\nname: Summarize\n---\n\nCopy this exactly.", encoding="utf-8")
+    (root / "profiles" / "health").mkdir(parents=True)
+    client = make_client(root)
+    health_agent = agent_for_profile(client, "health")
+    source_skill_id = encode_skill_id(relative)
+
+    response = client.post(
+        f"/v1/agents/{health_agent['id']}/skills/install",
+        json={"sourceProfile": "default", "sourceSkillId": source_skill_id},
+    )
+    target_skill = root / "profiles" / "health" / "skills" / relative
+
+    assert response.status_code == 200
+    assert response.json()["profile"] == "health"
+    assert response.json()["skill"]["id"] == source_skill_id
+    assert response.json()["skill"]["content"] == "---\nname: Summarize\n---\n\nCopy this exactly."
+    assert target_skill.read_text(encoding="utf-8") == source_skill.read_text(encoding="utf-8")
+
+
+def test_agent_skill_install_rejects_conflict_without_overwrite(tmp_path):
+    root = tmp_path / ".hermes"
+    relative = Path("research") / "summarize" / "SKILL.md"
+    source_skill = root / "skills" / relative
+    target_skill = root / "profiles" / "health" / "skills" / relative
+    source_skill.parent.mkdir(parents=True)
+    target_skill.parent.mkdir(parents=True)
+    source_skill.write_text("# Default Summarize\n", encoding="utf-8")
+    target_skill.write_text("# Health Summarize\n", encoding="utf-8")
+    client = make_client(root)
+    health_agent = agent_for_profile(client, "health")
+
+    response = client.post(
+        f"/v1/agents/{health_agent['id']}/skills/install",
+        json={"sourceProfile": "default", "sourceSkillId": encode_skill_id(relative)},
+    )
+
+    assert response.status_code == 409
+    assert target_skill.read_text(encoding="utf-8") == "# Health Summarize\n"
+
+
+def test_agent_skill_catalog_marks_conflicts(tmp_path):
+    root = tmp_path / ".hermes"
+    relative = Path("research") / "summarize" / "SKILL.md"
+    source_skill = root / "skills" / relative
+    target_skill = root / "profiles" / "health" / "skills" / relative
+    source_skill.parent.mkdir(parents=True)
+    target_skill.parent.mkdir(parents=True)
+    source_skill.write_text("# Default Summarize\n", encoding="utf-8")
+    target_skill.write_text("# Health Summarize\n", encoding="utf-8")
+    client = make_client(root)
+    health_agent = agent_for_profile(client, "health")
+
+    response = client.get(f"/v1/agents/{health_agent['id']}/skills/catalog")
+    available = response.json()["available"]
+
+    assert response.status_code == 200
+    assert response.json()["profile"] == "health"
+    assert available
+    assert available[0]["sourceProfile"] == "default"
+    assert available[0]["sourceSkillId"] == encode_skill_id(relative)
+    assert available[0]["conflict"] is True
+
+
+def test_agent_skill_mutations_reject_unsafe_ids(tmp_path):
+    root = tmp_path / ".hermes"
+    (root / "profiles" / "health").mkdir(parents=True)
+    client = make_client(root)
+    health_agent = agent_for_profile(client, "health")
+
+    delete_response = client.request(
+        "DELETE",
+        f"/v1/agents/{health_agent['id']}/skills/not-a-safe-id!",
+        json={},
+    )
+    install_response = client.post(
+        f"/v1/agents/{health_agent['id']}/skills/install",
+        json={"sourceProfile": "default", "sourceSkillId": "not-a-safe-id!"},
+    )
+
+    assert delete_response.status_code == 400
+    assert install_response.status_code == 400
 
 
 def test_profile_summary_accepts_json_gateway_pid(tmp_path):
@@ -314,6 +643,98 @@ def test_agent_management_endpoints_create_clone_delete(tmp_path):
     assert not (root / "profiles" / "research").exists()
     assert default_delete_response.status_code == 400
     assert "default profile cannot be deleted" in default_delete_response.json()["error"].lower()
+
+
+def test_profile_mutation_cli_unavailable_fallback_returns_warning(tmp_path, monkeypatch):
+    root = tmp_path / ".hermes"
+    profile = root / "profiles" / "work"
+    profile.mkdir(parents=True)
+    client = make_client(root)
+    agent = agent_for_profile(client, "work")
+
+    monkeypatch.setattr(hermes_adapter.HermesRuntimeAdapter, "resolve_hermes_executable", lambda _self: "")
+    rename_response = client.patch(f"/v1/agents/{agent['id']}", json={"name": "renamed"})
+    renamed = agent_for_profile(client, "renamed")
+    assert (root / "profiles" / "renamed").is_dir()
+    delete_response = client.delete(f"/v1/agents/{renamed['id']}")
+
+    assert rename_response.status_code == 200
+    assert any("Hermes CLI was unavailable" in item for item in rename_response.json()["warnings"])
+    assert delete_response.status_code == 200
+    assert any("Hermes CLI was unavailable" in item for item in delete_response.json()["warnings"])
+    assert not (root / "profiles" / "renamed").exists()
+
+
+def test_profile_identity_env_and_config_endpoints_redact_and_conflict(tmp_path):
+    root = tmp_path / ".hermes"
+    profile = root / "profiles" / "work"
+    profile.mkdir(parents=True)
+    (profile / "SOUL.md").write_text("soul", encoding="utf-8")
+    (profile / "config.yaml").write_text("model:\n  provider: openai\n  model: gpt-5.4\n", encoding="utf-8")
+    (profile / ".env").write_text("API_KEY=secret\n", encoding="utf-8")
+    client = make_client(root)
+    agent_id = agent_for_profile(client, "work")["id"]
+
+    identity = client.get(f"/v1/agents/{agent_id}/profile/identity")
+    env_update = client.put(
+        f"/v1/agents/{agent_id}/profile/env",
+        json={"values": {"NEW_SECRET": "value"}},
+    )
+    conflict = client.put(
+        f"/v1/agents/{agent_id}/profile/soul",
+        json={"content": "new", "expectedContentHash": "bad"},
+    )
+
+    assert identity.status_code == 200
+    assert identity.json()["soul"]["content"] == "soul"
+    assert identity.json()["config"]["provider"] == "openai"
+    assert identity.json()["env"]["keys"] == ["API_KEY"]
+    assert "secret" not in json.dumps(identity.json()["env"])
+    assert env_update.status_code == 200
+    assert "NEW_SECRET" in env_update.json()["keys"]
+    assert "value" not in json.dumps(env_update.json())
+    assert conflict.status_code == 409
+
+
+def test_profile_export_import_and_distribution_install_endpoints(tmp_path, monkeypatch):
+    monkeypatch.setattr(hermes_adapter.HermesRuntimeAdapter, "resolve_hermes_executable", lambda _self: "")
+    root = tmp_path / ".hermes"
+    profile = root / "profiles" / "work"
+    profile.mkdir(parents=True)
+    (profile / "SOUL.md").write_text("work soul", encoding="utf-8")
+    (profile / ".env").write_text("SECRET=value\n", encoding="utf-8")
+    client = make_client(root)
+    agent_id = agent_for_profile(client, "work")["id"]
+
+    export_response = client.get(f"/v1/agents/{agent_id}/profile/export")
+    archive_path = tmp_path / "work.tar.gz"
+    archive_path.write_bytes(export_response.content)
+    with tarfile.open(archive_path, "r:gz") as tar:
+        names = set(tar.getnames())
+    import_response = client.post(
+        "/v1/profiles/import",
+        files={"file": ("work.tar.gz", archive_path.read_bytes(), "application/gzip")},
+        data={"name": "restored"},
+    )
+
+    distribution = tmp_path / "dist"
+    distribution.mkdir()
+    (distribution / "distribution.yaml").write_text("name: bundled\nversion: 1.0.0\n", encoding="utf-8")
+    (distribution / "SOUL.md").write_text("distribution soul", encoding="utf-8")
+    install_response = client.post(
+        "/v1/profiles/install",
+        json={"source": str(distribution), "name": "bundled"},
+    )
+
+    assert export_response.status_code == 200
+    assert "work/SOUL.md" in names
+    assert "work/.env" not in names
+    assert import_response.status_code == 200
+    assert import_response.json()["agent"]["runtimeProfile"] == "restored"
+    assert (root / "profiles" / "restored" / "SOUL.md").read_text(encoding="utf-8") == "work soul"
+    assert install_response.status_code == 200
+    assert install_response.json()["agent"]["runtimeProfile"] == "bundled"
+    assert (root / "profiles" / "bundled" / "distribution.yaml").is_file()
 
 
 def test_removed_profile_routes_return_structured_404(tmp_path):

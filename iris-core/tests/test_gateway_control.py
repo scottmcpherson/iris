@@ -87,12 +87,11 @@ def test_install_hermes_plugin_endpoint_invokes_local_installer(tmp_path, monkey
 
     captured = {}
 
-    def fake_install(hermes_home, *, host, port, token, inbound_port):
+    def fake_install(hermes_home, *, host, port, inbound_port):
         captured["args"] = {
             "hermes_home": hermes_home,
             "host": host,
             "port": port,
-            "token": token,
             "inbound_port": inbound_port,
         }
         return {
@@ -121,7 +120,7 @@ def test_install_hermes_plugin_endpoint_returns_error_for_failed_install(tmp_pat
     app = create_app(Settings(hermes_home=str(root), core_store_path=str(tmp_path / "core.sqlite3")))
     client = TestClient(app)
 
-    def fake_install(hermes_home, *, host, port, token, inbound_port):
+    def fake_install(hermes_home, *, host, port, inbound_port):
         raise SystemExit("Bundled iris-platform payload was not found")
 
     monkeypatch.setattr("hermes_management_server.main.install_hermes_plugin", fake_install)
@@ -145,7 +144,7 @@ def test_install_hermes_plugin_endpoint_installs_profile_homes(tmp_path, monkeyp
 
     ports = []
 
-    def fake_install(hermes_home, *, host, port, token, inbound_port):
+    def fake_install(hermes_home, *, host, port, inbound_port):
         homes.append(hermes_home)
         ports.append(inbound_port)
         return {

@@ -3,7 +3,6 @@ export const storageKeys = {
   legacyRuntimeConfig: "hermes.desktop.runtime",
   onboardingDismissed: "hermes.desktop.onboarding.dismissed",
   automationsDeliveryTarget: "hermes.desktop.automations.deliveryTarget",
-  memoryProviders: "hermes-memory-provider-controls",
   modelSelectionByProfile: "hermes.desktop.modelSelectionByProfile",
   collapsedSidebarSections: "iris.desktop.sidebar.collapsedSections",
   sidebarOrganization: "iris.desktop.sidebar.organization",

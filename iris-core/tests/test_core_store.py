@@ -26,7 +26,7 @@ def test_core_store_creates_only_core_owned_schema(tmp_path):
         }
     )
 
-    assert store.health()["schemaVersion"] == 7
+    assert store.health()["schemaVersion"] == 9
     assert store.health()["sourceOfTruthMigration"] == "complete"
     assert runtime["id"] == "runtime_local_hermes"
     assert set(store.tables()) == {
@@ -41,6 +41,8 @@ def test_core_store_creates_only_core_owned_schema(tmp_path):
         "projects",
         "project_sessions",
         "session_read_state",
+        "memory_revisions",
+        "runtime_profile_ports",
     }
 
 
@@ -55,6 +57,48 @@ def test_core_store_connections_use_lock_tolerant_sqlite_pragmas(tmp_path):
     assert busy_timeout == 5000
     assert journal_mode == "wal"
     assert synchronous == 1
+
+
+def test_runtime_profile_ports_are_stable_across_insert_rename_delete(tmp_path):
+    store = CoreStore(tmp_path / "core.sqlite3")
+    runtime_id = "runtime_local_hermes"
+
+    default_port = store.ensure_runtime_profile_port(
+        runtime_id=runtime_id,
+        runtime_profile="default",
+        default_port=8766,
+    )
+    zeta_port = store.ensure_runtime_profile_port(
+        runtime_id=runtime_id,
+        runtime_profile="zeta",
+        default_port=8766,
+        preferred_port=8767,
+    )
+    alpha_port = store.ensure_runtime_profile_port(
+        runtime_id=runtime_id,
+        runtime_profile="alpha",
+        default_port=8766,
+        preferred_port=8767,
+    )
+    renamed_port = store.rename_runtime_profile_port(
+        runtime_id=runtime_id,
+        old_profile="zeta",
+        new_profile="omega",
+        default_port=8766,
+    )
+    store.mark_runtime_profile_port_deleted(runtime_id=runtime_id, runtime_profile="alpha")
+    beta_port = store.ensure_runtime_profile_port(
+        runtime_id=runtime_id,
+        runtime_profile="beta",
+        default_port=8766,
+    )
+
+    assert default_port == 8766
+    assert zeta_port == 8767
+    assert alpha_port == 8768
+    assert renamed_port == zeta_port
+    assert store.runtime_profile_port(runtime_id=runtime_id, runtime_profile="omega") == zeta_port
+    assert beta_port == 8769
 
 
 def test_source_of_truth_migration_drops_duplicate_tables_and_preserves_core_data(tmp_path):
@@ -113,6 +157,8 @@ def test_source_of_truth_migration_drops_duplicate_tables_and_preserves_core_dat
         "projects",
         "project_sessions",
         "session_read_state",
+        "memory_revisions",
+        "runtime_profile_ports",
     }
     assert store.list_devices()[0]["id"] == "dev_1"
     assert store.list_runtimes()[0]["id"] == "runtime_local_hermes"

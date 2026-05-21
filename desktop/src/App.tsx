@@ -753,7 +753,6 @@ function App() {
           activeProfile={iris.activeProfile}
           runtimeConfig={iris.runtimeConfig}
           memory={iris.memory}
-          skills={iris.skills}
           section={agentSection}
           gatewayActionBusy={gatewayActionBusy}
           gatewayActionBusyAction={gatewayActionState?.action || null}
@@ -770,15 +769,28 @@ function App() {
           }
           onOpenAgent={() => {}}
           onRefresh={() => void iris.refreshIris()}
+          onProfileSkillsChanged={(profileName) =>
+            void iris.refreshIris(profileName, iris.runtimeConfig, {
+              loadProfileData: false,
+              selectProfile: false,
+              silent: true,
+            })
+          }
           onProfileAction={iris.runProfileAction}
           onGatewayAction={(action, profileName) => void runGatewayAction(action, profileName)}
           onInstallAdapter={(profileName) => void installAdapterForProfile(profileName)}
           onOpenSettings={() => irisNavigate.openSettings()}
-          onResetMemory={(file, confirm) =>
-            iris.resetMemoryFile(file, confirm, agentDetailProfile || iris.selectedProfile)
+          onResetMemory={(file, confirm, expectations) =>
+            iris.resetMemoryFile(file, confirm, expectations, agentDetailProfile || iris.selectedProfile)
           }
-          onSaveMemory={(file, content, expectedUpdatedAt) =>
-            iris.saveMemoryFile(file, content, expectedUpdatedAt, agentDetailProfile || iris.selectedProfile)
+          onSaveMemory={(file, content, expectedUpdatedAt, expectedContentHash) =>
+            iris.saveMemoryFile(
+              file,
+              content,
+              expectedUpdatedAt,
+              expectedContentHash,
+              agentDetailProfile || iris.selectedProfile,
+            )
           }
         />
       );

@@ -42,13 +42,13 @@ export function AgentTopbar({
             aria-label={`${profile.name} sections`}
             className="h-[var(--agent-topbar-control-height,34px)] min-w-max border border-menu-border bg-secondary p-0"
           >
-            {(["overview", "memory", "skills"] as AgentDetailSection[]).map((item) => (
+            {(["overview", "memory", "skills", "configuration"] as AgentDetailSection[]).map((item) => (
               <TabsTrigger
                 key={item}
                 value={item}
                 className="min-w-[76px] rounded-[7px] px-3 capitalize"
               >
-                {item}
+                {item === "configuration" ? "Config" : item}
               </TabsTrigger>
             ))}
           </TabsList>

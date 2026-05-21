@@ -5,14 +5,17 @@ import {
   createIrisCoreAgent,
   createIrisCoreAgentSkill,
   deleteIrisCoreAgent,
+  deleteIrisCoreAgentSkill,
   getIrisCoreAgentMemory,
   getIrisCoreAutomationEvents,
   getIrisCoreAgentSkill,
+  getIrisCoreAgentSkillCatalog,
   getIrisCoreAgentSkills,
   controlIrisCoreGateway,
   getIrisCoreEvents,
   getIrisCoreGatewayStatus,
   installIrisCoreHermesPlugin,
+  installIrisCoreAgentSkill,
   getIrisCoreLatestEventCursor,
   getIrisCoreAttachmentDataUrl,
   getIrisCoreStatus,
@@ -645,12 +648,33 @@ describe("irisCore", () => {
     );
 
     await getIrisCoreAgentMemory("agent_default", defaultRuntimeConfig);
-    await saveIrisCoreAgentMemory("agent_default", "memory", { content: "notes" }, defaultRuntimeConfig);
-    await resetIrisCoreAgentMemory("agent_default", "user", { confirm: "RESET MEMORY" }, defaultRuntimeConfig);
+    await saveIrisCoreAgentMemory(
+      "agent_default",
+      "memory",
+      { content: "notes", expectedContentHash: "memory-hash" },
+      defaultRuntimeConfig,
+    );
+    await resetIrisCoreAgentMemory(
+      "agent_default",
+      "user",
+      {
+        confirm: "RESET MEMORY",
+        expectedContentHashByFile: { user: "user-hash" },
+        expectedUpdatedAtByFile: { user: 123 },
+      },
+      defaultRuntimeConfig,
+    );
     await getIrisCoreAgentSkills("agent_default", defaultRuntimeConfig);
+    await getIrisCoreAgentSkillCatalog("agent_default", defaultRuntimeConfig);
     await getIrisCoreAgentSkill("agent_default", "skill_1", defaultRuntimeConfig);
     await createIrisCoreAgentSkill("agent_default", { name: "Skill", category: "personal", content: "# Skill" }, defaultRuntimeConfig);
+    await installIrisCoreAgentSkill(
+      "agent_default",
+      { sourceProfile: "health", sourceSkillId: "skill_2", overwrite: true },
+      defaultRuntimeConfig,
+    );
     await saveIrisCoreAgentSkill("agent_default", "skill_1", { name: "Skill", category: "personal", content: "# Skill" }, defaultRuntimeConfig);
+    await deleteIrisCoreAgentSkill("agent_default", "skill_1", defaultRuntimeConfig);
     await createIrisCoreAgent({ name: "research" }, defaultRuntimeConfig);
     await cloneIrisCoreAgent("agent_default", { name: "copy" }, defaultRuntimeConfig);
     await renameIrisCoreAgent("agent_default", { name: "renamed" }, defaultRuntimeConfig);
@@ -663,9 +687,12 @@ describe("irisCore", () => {
       ["PUT", "/v1/agents/agent_default/memory/memory"],
       ["DELETE", "/v1/agents/agent_default/memory/user"],
       ["GET", "/v1/agents/agent_default/skills"],
+      ["GET", "/v1/agents/agent_default/skills/catalog"],
       ["GET", "/v1/agents/agent_default/skills/skill_1"],
       ["POST", "/v1/agents/agent_default/skills"],
+      ["POST", "/v1/agents/agent_default/skills/install"],
       ["PUT", "/v1/agents/agent_default/skills/skill_1"],
+      ["DELETE", "/v1/agents/agent_default/skills/skill_1"],
       ["POST", "/v1/agents"],
       ["POST", "/v1/agents/agent_default/clone"],
       ["PATCH", "/v1/agents/agent_default"],
@@ -673,6 +700,20 @@ describe("irisCore", () => {
       ["PATCH", "/v1/sessions/session_123"],
       ["PATCH", "/v1/sessions/session_123/read-state"],
     ]);
+    expect(JSON.parse(calls[1].init.body as string)).toEqual({
+      content: "notes",
+      expectedContentHash: "memory-hash",
+    });
+    expect(JSON.parse(calls[2].init.body as string)).toEqual({
+      confirm: "RESET MEMORY",
+      expectedContentHashByFile: { user: "user-hash" },
+      expectedUpdatedAtByFile: { user: 123 },
+    });
+    expect(JSON.parse(calls[7].init.body as string)).toEqual({
+      sourceProfile: "health",
+      sourceSkillId: "skill_2",
+      overwrite: true,
+    });
   });
 });
 

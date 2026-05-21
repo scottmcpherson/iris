@@ -23,12 +23,13 @@ from .attachment_types import (
 from .models import SessionMessage, SessionSummary, ProfileSummary
 
 
-CORE_SCHEMA_VERSION = 7
+CORE_SCHEMA_VERSION = 9
 DEFAULT_RUNTIME_ID = "runtime_local_hermes"
 PROFILE_SLUG_RE = re.compile(r"[^A-Za-z0-9_.-]+")
 DEFAULT_MAX_ATTACHMENT_SIZE_MB = 250
 MAX_ATTACHMENT_SIZE_BYTES = DEFAULT_MAX_ATTACHMENT_SIZE_MB * 1024 * 1024
 MAX_ATTACHMENTS_PER_MESSAGE = 8
+MEMORY_REVISION_LIMIT = 50
 SQLITE_BUSY_TIMEOUT_MS = 5000
 DEVICE_METADATA_BLOCKED_KEY_PARTS = ("token", "secret", "authorization", "password")
 DUPLICATE_RUNTIME_TABLES = (
@@ -54,6 +55,8 @@ CORE_OWNED_TABLES = (
     "projects",
     "project_sessions",
     "session_read_state",
+    "memory_revisions",
+    "runtime_profile_ports",
 )
 SESSION_READ_STATES = {"read", "unread"}
 MAX_SESSION_READ_STATE_IDS = 500
@@ -425,6 +428,38 @@ class CoreStore:
 
                 create index if not exists idx_session_read_state_state
                   on session_read_state(state, updated_at desc);
+
+                create table if not exists memory_revisions (
+                  id text primary key,
+                  runtime_id text not null,
+                  runtime_profile text not null,
+                  file_key text not null,
+                  file_name text not null,
+                  action text not null,
+                  created_at integer not null,
+                  file_updated_at integer,
+                  content_hash text not null,
+                  bytes integer not null,
+                  summary text not null,
+                  content text not null,
+                  metadata_json text not null
+                );
+
+                create index if not exists idx_memory_revisions_profile_file_created
+                  on memory_revisions(runtime_id, runtime_profile, file_key, created_at desc);
+
+                create table if not exists runtime_profile_ports (
+                  runtime_id text not null,
+                  runtime_profile text not null,
+                  inbound_port integer not null,
+                  created_at integer not null,
+                  updated_at integer not null,
+                  deleted_at integer,
+                  primary key(runtime_id, runtime_profile)
+                );
+
+                create unique index if not exists idx_runtime_profile_ports_port
+                  on runtime_profile_ports(runtime_id, inbound_port);
                 """
             )
         if auto_migrate:
@@ -487,6 +522,265 @@ class CoreStore:
         with self.connect() as connection:
             row = connection.execute("select value from schema_meta where key = ?", (key,)).fetchone()
         return str(row["value"]) if row else None
+
+    def create_memory_revision(
+        self,
+        *,
+        runtime_id: str,
+        runtime_profile: str,
+        file_key: str,
+        file_name: str,
+        action: str,
+        content: str,
+        file_updated_at: int | None,
+        summary: str,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        revision_id = random_id("memory_revision")
+        timestamp = now()
+        text = str(content or "")
+        encoded = text.encode("utf-8")
+        with self.connect() as connection:
+            connection.execute(
+                """
+                insert into memory_revisions(
+                  id, runtime_id, runtime_profile, file_key, file_name, action,
+                  created_at, file_updated_at, content_hash, bytes, summary,
+                  content, metadata_json
+                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    revision_id,
+                    runtime_id,
+                    runtime_profile,
+                    file_key,
+                    file_name,
+                    action,
+                    timestamp,
+                    file_updated_at,
+                    hashlib.sha256(encoded).hexdigest(),
+                    len(encoded),
+                    summary,
+                    text,
+                    dumps(metadata or {}),
+                ),
+            )
+            connection.execute(
+                """
+                delete from memory_revisions
+                where rowid in (
+                  select rowid from memory_revisions
+                  where runtime_id = ? and runtime_profile = ? and file_key = ?
+                  order by created_at desc, rowid desc
+                  limit -1 offset ?
+                )
+                """,
+                (runtime_id, runtime_profile, file_key, MEMORY_REVISION_LIMIT),
+            )
+            row = connection.execute(
+                "select * from memory_revisions where id = ?",
+                (revision_id,),
+            ).fetchone()
+        return memory_revision_from_row(row)
+
+    def list_memory_revisions(
+        self,
+        *,
+        runtime_id: str,
+        runtime_profile: str,
+        file_key: str | None = None,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        safe_limit = clamp_int(limit, default=100, minimum=1, maximum=500)
+        clauses = ["runtime_id = ?", "runtime_profile = ?"]
+        values: list[Any] = [runtime_id, runtime_profile]
+        if file_key:
+            clauses.append("file_key = ?")
+            values.append(file_key)
+        values.append(safe_limit)
+        with self.connect() as connection:
+            rows = connection.execute(
+                f"""
+                select * from memory_revisions
+                where {' and '.join(clauses)}
+                order by created_at desc, rowid desc
+                limit ?
+                """,
+                tuple(values),
+            ).fetchall()
+        return [memory_revision_from_row(row) for row in rows]
+
+    def rename_memory_revisions_profile(
+        self,
+        *,
+        runtime_id: str,
+        old_profile: str,
+        new_profile: str,
+    ) -> None:
+        with self.connect() as connection:
+            connection.execute(
+                """
+                update memory_revisions
+                set runtime_profile = ?
+                where runtime_id = ? and runtime_profile = ?
+                """,
+                (new_profile, runtime_id, old_profile),
+            )
+
+    def delete_memory_revisions_for_profile(
+        self,
+        *,
+        runtime_id: str,
+        runtime_profile: str,
+    ) -> None:
+        with self.connect() as connection:
+            connection.execute(
+                "delete from memory_revisions where runtime_id = ? and runtime_profile = ?",
+                (runtime_id, runtime_profile),
+            )
+
+    def runtime_profile_port(
+        self,
+        *,
+        runtime_id: str,
+        runtime_profile: str,
+    ) -> int | None:
+        with self.connect() as connection:
+            row = connection.execute(
+                """
+                select inbound_port from runtime_profile_ports
+                where runtime_id = ? and runtime_profile = ?
+                """,
+                (runtime_id, runtime_profile),
+            ).fetchone()
+        return int(row["inbound_port"]) if row else None
+
+    def ensure_runtime_profile_port(
+        self,
+        *,
+        runtime_id: str,
+        runtime_profile: str,
+        default_port: int,
+        preferred_port: int | None = None,
+    ) -> int:
+        timestamp = now()
+        with self.connect() as connection:
+            row = connection.execute(
+                """
+                select inbound_port from runtime_profile_ports
+                where runtime_id = ? and runtime_profile = ?
+                """,
+                (runtime_id, runtime_profile),
+            ).fetchone()
+            if row:
+                port = int(row["inbound_port"])
+                connection.execute(
+                    """
+                    update runtime_profile_ports
+                    set updated_at = ?, deleted_at = null
+                    where runtime_id = ? and runtime_profile = ?
+                    """,
+                    (timestamp, runtime_id, runtime_profile),
+                )
+                return port
+
+            used_ports = {
+                int(item["inbound_port"])
+                for item in connection.execute(
+                    "select inbound_port from runtime_profile_ports where runtime_id = ?",
+                    (runtime_id,),
+                ).fetchall()
+            }
+            if runtime_profile == "default":
+                port = default_port
+            elif preferred_port is not None and preferred_port not in used_ports:
+                port = int(preferred_port)
+            else:
+                port = max(used_ports | {default_port}) + 1
+
+            while port in used_ports:
+                port += 1
+
+            connection.execute(
+                """
+                insert into runtime_profile_ports(
+                  runtime_id, runtime_profile, inbound_port, created_at, updated_at, deleted_at
+                )
+                values (?, ?, ?, ?, ?, null)
+                """,
+                (runtime_id, runtime_profile, port, timestamp, timestamp),
+            )
+            return port
+
+    def rename_runtime_profile_port(
+        self,
+        *,
+        runtime_id: str,
+        old_profile: str,
+        new_profile: str,
+        default_port: int,
+    ) -> int:
+        timestamp = now()
+        with self.connect() as connection:
+            new_row = connection.execute(
+                """
+                select inbound_port from runtime_profile_ports
+                where runtime_id = ? and runtime_profile = ?
+                """,
+                (runtime_id, new_profile),
+            ).fetchone()
+            old_row = connection.execute(
+                """
+                select inbound_port from runtime_profile_ports
+                where runtime_id = ? and runtime_profile = ?
+                """,
+                (runtime_id, old_profile),
+            ).fetchone()
+            if new_row:
+                if old_row:
+                    connection.execute(
+                        """
+                        update runtime_profile_ports
+                        set deleted_at = ?, updated_at = ?
+                        where runtime_id = ? and runtime_profile = ?
+                        """,
+                        (timestamp, timestamp, runtime_id, old_profile),
+                    )
+                return int(new_row["inbound_port"])
+            if old_row:
+                port = int(old_row["inbound_port"])
+                connection.execute(
+                    """
+                    update runtime_profile_ports
+                    set runtime_profile = ?, updated_at = ?, deleted_at = null
+                    where runtime_id = ? and runtime_profile = ?
+                    """,
+                    (new_profile, timestamp, runtime_id, old_profile),
+                )
+                return port
+
+        return self.ensure_runtime_profile_port(
+            runtime_id=runtime_id,
+            runtime_profile=new_profile,
+            default_port=default_port,
+        )
+
+    def mark_runtime_profile_port_deleted(
+        self,
+        *,
+        runtime_id: str,
+        runtime_profile: str,
+    ) -> None:
+        timestamp = now()
+        with self.connect() as connection:
+            connection.execute(
+                """
+                update runtime_profile_ports
+                set deleted_at = ?, updated_at = ?
+                where runtime_id = ? and runtime_profile = ?
+                """,
+                (timestamp, timestamp, runtime_id, runtime_profile),
+            )
 
     def create_project(
         self,
@@ -1350,6 +1644,19 @@ class CoreStore:
             "updatedAt": int(row["updated_at"]),
         }
 
+def memory_revision_from_row(row: sqlite3.Row) -> dict[str, Any]:
+    return {
+        "id": str(row["id"]),
+        "file": str(row["file_name"]),
+        "action": str(row["action"]),
+        "updatedAt": int(row["created_at"]),
+        "bytes": int(row["bytes"]),
+        "summary": str(row["summary"]),
+        "content": str(row["content"]),
+        "metadata": loads(row["metadata_json"]),
+    }
+
+
 def runtime_from_row(row: sqlite3.Row) -> dict[str, Any]:
     return {
         "id": str(row["id"]),
@@ -1581,6 +1888,9 @@ def agent_from_profile_summary(runtime: dict[str, Any], profile: ProfileSummary,
         "skillCount": profile.skillCount,
         "gatewayRunning": profile.gatewayRunning,
         "runtimeProfile": profile.name,
+        "managed": profile.managed,
+        "error": profile.error,
+        "warnings": profile.warnings,
     }
     return {
         "id": agent_id_for_profile(str(runtime["id"]), profile.name),

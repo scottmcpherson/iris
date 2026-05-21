@@ -8,6 +8,7 @@ import os
 import shutil
 import sqlite3
 import subprocess
+import tempfile
 import time
 import urllib.error
 import urllib.parse
@@ -25,7 +26,17 @@ from ..core_store import (
     core_message_from_hermes,
     message_content_hash_candidates,
 )
-from .hermes_store import HermesStore, normalize_hermes_home, validate_profile_name
+from .hermes_store import (
+    HermesStore,
+    distribution_manifest,
+    inspect_archive_root,
+    memory_file_name,
+    normalize_profile_name,
+    normalize_hermes_home,
+    normalized_memory_file_key,
+    stage_distribution_source,
+    validate_profile_name,
+)
 from ..security import ManagementError
 
 
@@ -35,6 +46,26 @@ DEFAULT_IRIS_GATEWAY_URL = "http://127.0.0.1:8766"
 IRIS_GATEWAY_PORT_OFFSET = 124
 GATEWAY_CONTROL_ACTIONS = {"status", "start", "stop", "restart"}
 GATEWAY_CONTROL_TIMEOUT_SECONDS = 25
+PROFILE_CLI_TIMEOUT_SECONDS = 90
+
+
+def raise_memory_conflict() -> None:
+    raise ManagementError(
+        "Memory changed on disk. Refresh before saving so you do not overwrite newer notes.",
+        status_code=409,
+    )
+
+
+def reset_expectation_for_file(
+    expectations: dict[str, Any],
+    file_key: str,
+    file_name: str,
+) -> tuple[bool, Any]:
+    candidates = (file_key, file_name, file_name.lower())
+    for candidate in candidates:
+        if candidate in expectations:
+            return True, expectations[candidate]
+    return False, None
 
 
 def iris_multipart_attachments(attachments: Any) -> list[dict[str, Any]]:
@@ -112,6 +143,10 @@ class HermesRuntimeAdapter:
         self.hermes_api_token = hermes_api_token
         self.connection = runtime.get("connection") if isinstance(runtime.get("connection"), dict) else {}
 
+    @property
+    def runtime_id(self) -> str:
+        return str(self.runtime.get("id") or DEFAULT_RUNTIME_ID)
+
     def list_agents(self) -> list[dict[str, Any]]:
         store = self.require_store()
         profiles = store.profiles()
@@ -121,27 +156,120 @@ class HermesRuntimeAdapter:
     def get_agent(self, agent_id: str) -> dict[str, Any] | None:
         return next((agent for agent in self.list_agents() if agent["id"] == agent_id), None)
 
-    def create_agent(self, name: str, metadata: dict[str, Any] | None = None) -> dict[str, Any]:
+    def create_agent(
+        self,
+        name: str,
+        metadata: dict[str, Any] | None = None,
+        *,
+        create_alias: bool = False,
+        no_alias: bool = False,
+        no_skills: bool = False,
+    ) -> dict[str, Any]:
         del metadata
-        self.require_store().create_profile(name)
-        return self.require_agent_profile(name)
+        store = self.require_store()
+        profile, warnings = store.create_profile(name, no_skills=no_skills)
+        if create_alias and not no_alias:
+            try:
+                store.create_alias(profile.name)
+            except ManagementError as exc:
+                warnings.append(exc.error)
+        return self.mutation_result(self.require_agent_profile(profile.name), warnings=warnings, restart_required=True)
 
-    def clone_agent(self, source_agent: dict[str, Any], name: str) -> dict[str, Any]:
-        self.require_store().clone_profile(str(source_agent["runtimeProfile"]), name)
-        return self.require_agent_profile(name)
+    def clone_agent(
+        self,
+        source_agent: dict[str, Any],
+        name: str,
+        *,
+        clone_mode: str = "identity",
+        create_alias: bool = False,
+        no_alias: bool = False,
+        no_skills: bool = False,
+    ) -> dict[str, Any]:
+        del no_skills
+        store = self.require_store()
+        profile, warnings = store.clone_profile(str(source_agent["runtimeProfile"]), name, clone_mode=clone_mode)
+        if create_alias and not no_alias:
+            try:
+                store.create_alias(profile.name)
+            except ManagementError as exc:
+                warnings.append(exc.error)
+        return self.mutation_result(self.require_agent_profile(profile.name), warnings=warnings, restart_required=True)
 
     def rename_agent(self, agent: dict[str, Any], name: str) -> dict[str, Any]:
-        self.require_store().rename_profile(str(agent["runtimeProfile"]), name)
-        return self.require_agent_profile(name)
+        old_profile = str(agent["runtimeProfile"])
+        new_profile = normalize_profile_name(name)
+        warnings: list[str] = []
+        command = self.run_hermes_profile_cli(["profile", "rename", old_profile, new_profile])
+        if command.get("missing"):
+            stop_result = self.gateway_control(old_profile, "stop")
+            if not stop_result.get("ok"):
+                warnings.append("Hermes CLI was unavailable, and Iris could not confirm the gateway stopped before fallback rename.")
+            warnings.append("Hermes CLI was unavailable. Iris renamed the profile directly; CLI aliases, services, and Honcho host state may need Hermes cleanup.")
+            self.require_store().rename_profile(old_profile, new_profile)
+        elif not command.get("ok"):
+            raise ManagementError(command.get("error") or "Hermes profile rename failed.", status_code=400)
+        if self.core_store:
+            self.core_store.rename_memory_revisions_profile(
+                runtime_id=self.runtime_id,
+                old_profile=old_profile,
+                new_profile=new_profile,
+            )
+            self.core_store.rename_runtime_profile_port(
+                runtime_id=self.runtime_id,
+                old_profile=old_profile,
+                new_profile=new_profile,
+                default_port=default_iris_gateway_port(),
+            )
+        return self.mutation_result(self.require_agent_profile(new_profile), warnings=warnings, restart_required=True)
 
     def activate_agent(self, agent: dict[str, Any]) -> dict[str, Any]:
         self.require_store().activate_profile(str(agent["runtimeProfile"]))
         refreshed = self.get_agent(str(agent["id"])) or self.require_agent_profile(str(agent["runtimeProfile"]))
-        return {**refreshed, "isDefault": True}
+        return self.mutation_result({**refreshed, "isDefault": True})
 
     def delete_agent(self, agent: dict[str, Any]) -> dict[str, Any]:
-        next_profile = self.require_store().delete_profile(str(agent["runtimeProfile"]))
-        return self.require_agent_profile(next_profile)
+        profile = str(agent["runtimeProfile"])
+        if profile == "default":
+            self.require_store().delete_profile(profile)
+        warnings: list[str] = []
+        command = self.run_hermes_profile_cli(["profile", "delete", profile, "-y"])
+        if command.get("missing"):
+            stop_result = self.gateway_control(profile, "stop")
+            if not stop_result.get("ok"):
+                warnings.append("Hermes CLI was unavailable, and Iris could not confirm the gateway stopped before fallback delete.")
+            warnings.append("Hermes CLI was unavailable. Iris deleted the profile directory directly; CLI aliases and gateway service cleanup may need Hermes cleanup.")
+            next_profile = self.require_store().delete_profile(profile)
+        elif command.get("ok"):
+            next_profile = self.require_store().active_profile_name()
+        else:
+            raise ManagementError(command.get("error") or "Hermes profile delete failed.", status_code=400)
+        if self.core_store:
+            self.core_store.delete_memory_revisions_for_profile(
+                runtime_id=self.runtime_id,
+                runtime_profile=profile,
+            )
+            self.core_store.mark_runtime_profile_port_deleted(
+                runtime_id=self.runtime_id,
+                runtime_profile=profile,
+            )
+        return self.mutation_result(self.require_agent_profile(next_profile), warnings=warnings, restart_required=True)
+
+    def mutation_result(
+        self,
+        agent: dict[str, Any],
+        *,
+        warnings: list[str] | None = None,
+        restart_required: bool = False,
+        adapter_install_required: bool = False,
+    ) -> dict[str, Any]:
+        profile = str(agent.get("runtimeProfile") or "")
+        return {
+            "agent": agent,
+            "profile": profile,
+            "warnings": [warning for warning in (warnings or []) if warning],
+            "restartRequired": restart_required,
+            "adapterInstallRequired": adapter_install_required,
+        }
 
     def require_agent_profile(self, profile: str) -> dict[str, Any]:
         agent = next((row for row in self.list_agents() if row["runtimeProfile"] == profile), None)
@@ -154,6 +282,13 @@ class HermesRuntimeAdapter:
         store = self.require_store()
         memory_file, user_file = store.memory_files(profile)
         directory = store.profile_directory(profile)
+        history = []
+        if self.core_store:
+            history = self.core_store.list_memory_revisions(
+                runtime_id=self.runtime_id,
+                runtime_profile=profile,
+                limit=100,
+            )
         return {
             "ok": True,
             "profile": profile,
@@ -161,7 +296,7 @@ class HermesRuntimeAdapter:
             "files": [memory_file, user_file],
             "memory": memory_file,
             "user": user_file,
-            "history": [],
+            "history": history,
         }
 
     def save_agent_memory(
@@ -170,13 +305,141 @@ class HermesRuntimeAdapter:
         file: str,
         content: str,
         expected_updated_at: int | None = None,
+        expected_content_hash: str | None = None,
     ) -> dict[str, Any]:
-        self.require_store().save_memory_file(str(agent["runtimeProfile"]), file, content, expected_updated_at)
+        profile = str(agent["runtimeProfile"])
+        store = self.require_store()
+        file_key = normalized_memory_file_key(file)
+        current = self.memory_file_payload(store, profile, file_key)
+        self.check_memory_expectations(
+            current=current,
+            expected_updated_at=expected_updated_at,
+            expected_content_hash=expected_content_hash,
+        )
+        if current.exists and current.content != content and self.core_store:
+            self.core_store.create_memory_revision(
+                runtime_id=self.runtime_id,
+                runtime_profile=profile,
+                file_key=file_key,
+                file_name=memory_file_name(file_key),
+                action="save",
+                content=current.content,
+                file_updated_at=current.updatedAt,
+                summary="Before Iris save",
+                metadata={
+                    "source": "iris",
+                    "operation": "save",
+                    "expectedUpdatedAt": expected_updated_at,
+                    "expectedContentHash": expected_content_hash,
+                },
+            )
+        if current.content != content:
+            store.save_memory_file(
+                profile,
+                file_key,
+                content,
+                expected_updated_at=expected_updated_at,
+                expected_content_hash=expected_content_hash,
+            )
         return self.agent_memory(agent)
 
-    def reset_agent_memory(self, agent: dict[str, Any], file: str) -> dict[str, Any]:
-        self.require_store().reset_memory_file(str(agent["runtimeProfile"]), file)
+    def reset_agent_memory(
+        self,
+        agent: dict[str, Any],
+        file: str,
+        expected_updated_at: int | None = None,
+        expected_updated_at_by_file: dict[str, int | None] | None = None,
+        expected_content_hash: str | None = None,
+        expected_content_hash_by_file: dict[str, str | None] | None = None,
+    ) -> dict[str, Any]:
+        profile = str(agent["runtimeProfile"])
+        store = self.require_store()
+        normalized = file.strip().lower()
+        targets = ["memory", "user"] if normalized == "all" else [normalized_memory_file_key(file)]
+        current_by_file = {
+            file_key: self.memory_file_payload(store, profile, file_key)
+            for file_key in targets
+        }
+        for file_key, current in current_by_file.items():
+            file_expected_updated_at = reset_expectation_for_file(
+                expected_updated_at_by_file or {},
+                file_key,
+                memory_file_name(file_key),
+            )
+            file_expected_content_hash = reset_expectation_for_file(
+                expected_content_hash_by_file or {},
+                file_key,
+                memory_file_name(file_key),
+            )
+            self.check_memory_expectations(
+                current=current,
+                expected_updated_at=file_expected_updated_at[1]
+                if file_expected_updated_at[0]
+                else expected_updated_at if len(targets) == 1 else None,
+                expected_content_hash=file_expected_content_hash[1]
+                if file_expected_content_hash[0]
+                else expected_content_hash if len(targets) == 1 else None,
+                expected_updated_at_provided=file_expected_updated_at[0]
+                or (expected_updated_at is not None and len(targets) == 1),
+                expected_content_hash_provided=file_expected_content_hash[0]
+                or (expected_content_hash is not None and len(targets) == 1),
+            )
+        if self.core_store:
+            for file_key, current in current_by_file.items():
+                if not current.exists:
+                    continue
+                self.core_store.create_memory_revision(
+                    runtime_id=self.runtime_id,
+                    runtime_profile=profile,
+                    file_key=file_key,
+                    file_name=memory_file_name(file_key),
+                    action="reset",
+                    content=current.content,
+                    file_updated_at=current.updatedAt,
+                    summary="Before Iris reset",
+                    metadata={
+                        "source": "iris",
+                        "operation": "reset",
+                        "target": normalized,
+                    },
+                )
+        store.reset_memory_file(profile, normalized)
         return self.agent_memory(agent)
+
+    def memory_file_payload(self, store: HermesStore, profile: str, file_key: str):
+        memory_file, user_file = store.memory_files(profile)
+        return memory_file if file_key == "memory" else user_file
+
+    def check_memory_expectations(
+        self,
+        *,
+        current: Any,
+        expected_updated_at: int | None = None,
+        expected_content_hash: str | None = None,
+        expected_updated_at_provided: bool | None = None,
+        expected_content_hash_provided: bool | None = None,
+    ) -> None:
+        hash_provided = (
+            expected_content_hash is not None
+            if expected_content_hash_provided is None
+            else expected_content_hash_provided
+        )
+        if hash_provided:
+            if expected_content_hash is None:
+                if current.exists:
+                    raise_memory_conflict()
+                return
+            if current.contentHash != expected_content_hash:
+                raise_memory_conflict()
+            return
+
+        timestamp_provided = (
+            expected_updated_at is not None
+            if expected_updated_at_provided is None
+            else expected_updated_at_provided
+        )
+        if timestamp_provided and current.updatedAt != expected_updated_at:
+            raise_memory_conflict()
 
     def list_agent_skills(self, agent: dict[str, Any]) -> dict[str, Any]:
         profile = str(agent["runtimeProfile"])
@@ -189,6 +452,14 @@ class HermesRuntimeAdapter:
             "skills": store.skills(profile),
         }
 
+    def list_agent_skill_catalog(self, agent: dict[str, Any]) -> dict[str, Any]:
+        profile = str(agent["runtimeProfile"])
+        agents_by_profile = {
+            str(row.get("runtimeProfile") or ""): row
+            for row in self.list_agents()
+        }
+        return self.require_store().skill_catalog(profile, agents_by_profile=agents_by_profile)
+
     def get_agent_skill(self, agent: dict[str, Any], skill_id: str) -> dict[str, Any]:
         profile = str(agent["runtimeProfile"])
         summary, content = self.require_store().skill_detail(profile, skill_id)
@@ -199,10 +470,172 @@ class HermesRuntimeAdapter:
         summary, content = self.require_store().save_skill(profile, payload)
         return {"ok": True, "profile": profile, "skill": {"content": content, "history": [], **summary.model_dump()}}
 
+    def install_agent_skill(self, agent: dict[str, Any], payload: dict[str, Any]) -> dict[str, Any]:
+        profile = str(agent["runtimeProfile"])
+        source_agent_id = str(payload.get("sourceAgentId") or "").strip()
+        if source_agent_id and not str(payload.get("sourceProfile") or "").strip():
+            source_agent = self.get_agent(source_agent_id)
+            if not source_agent:
+                raise ManagementError("Source agent was not found.", status_code=404)
+            payload = {**payload, "sourceProfile": str(source_agent["runtimeProfile"])}
+        summary, content = self.require_store().install_skill(profile, payload)
+        return {"ok": True, "profile": profile, "skill": {"content": content, "history": [], **summary.model_dump()}}
+
     def save_agent_skill(self, agent: dict[str, Any], skill_id: str, payload: dict[str, Any]) -> dict[str, Any]:
         profile = str(agent["runtimeProfile"])
         summary, content = self.require_store().save_skill(profile, payload, skill_id)
         return {"ok": True, "profile": profile, "skill": {"content": content, "history": [], **summary.model_dump()}}
+
+    def delete_agent_skill(self, agent: dict[str, Any], skill_id: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+        del payload
+        profile = str(agent["runtimeProfile"])
+        result = self.require_store().delete_skill(profile, skill_id)
+        return {"ok": True, "profile": profile, **result}
+
+    def profile_identity(self, agent: dict[str, Any]) -> dict[str, Any]:
+        return self.require_store().profile_identity(str(agent["runtimeProfile"]))
+
+    def profile_soul(self, agent: dict[str, Any]) -> dict[str, Any]:
+        profile = str(agent["runtimeProfile"])
+        payload = self.require_store().read_profile_file(profile, "SOUL.md")
+        return {"ok": True, "profile": profile, **payload.model_dump()}
+
+    def save_profile_soul(self, agent: dict[str, Any], content: str, expected_content_hash: str | None = None) -> dict[str, Any]:
+        profile = str(agent["runtimeProfile"])
+        payload = self.require_store().write_profile_file(profile, "SOUL.md", content, expected_content_hash)
+        return {"ok": True, "profile": profile, **payload.model_dump()}
+
+    def reset_profile_soul(self, agent: dict[str, Any], expected_content_hash: str | None = None) -> dict[str, Any]:
+        profile = str(agent["runtimeProfile"])
+        payload = self.require_store().reset_soul_file(profile, expected_content_hash)
+        return {"ok": True, "profile": profile, **payload.model_dump()}
+
+    def profile_config(self, agent: dict[str, Any]) -> dict[str, Any]:
+        return self.require_store().profile_config(str(agent["runtimeProfile"]))
+
+    def save_profile_config(self, agent: dict[str, Any], content: str, expected_content_hash: str | None = None) -> dict[str, Any]:
+        profile = str(agent["runtimeProfile"])
+        payload = self.require_store().write_profile_file(profile, "config.yaml", content, expected_content_hash)
+        return {"ok": True, "profile": profile, **self.require_store().profile_config(profile), "contentHash": payload.contentHash}
+
+    def profile_env(self, agent: dict[str, Any]) -> dict[str, Any]:
+        return self.require_store().profile_env(str(agent["runtimeProfile"]))
+
+    def update_profile_env(self, agent: dict[str, Any], values: dict[str, str], remove_keys: list[str]) -> dict[str, Any]:
+        return self.require_store().update_profile_env(str(agent["runtimeProfile"]), values, remove_keys)
+
+    def profile_config_check(self, agent: dict[str, Any]) -> dict[str, Any]:
+        profile = str(agent["runtimeProfile"])
+        commands = {
+            "check": ["--profile", profile, "config", "check"],
+            "path": ["--profile", profile, "config", "path"],
+            "envPath": ["--profile", profile, "config", "env-path"],
+        }
+        results = {
+            key: self.run_hermes_profile_cli(argv, timeout=30)
+            for key, argv in commands.items()
+        }
+        ok = all(item.get("ok") for item in results.values())
+        return {
+            "ok": ok,
+            "profile": profile,
+            "commands": results,
+            **({} if ok else {"error": next((item.get("error") for item in results.values() if item.get("error")), "Hermes config diagnostics failed.")}),
+        }
+
+    def export_profile(self, agent: dict[str, Any], output_path: Path) -> tuple[Path, list[str]]:
+        profile = str(agent["runtimeProfile"])
+        warnings: list[str] = []
+        command = self.run_hermes_profile_cli(["profile", "export", profile, "-o", str(output_path)])
+        if command.get("missing"):
+            warnings.append("Hermes CLI was unavailable. Iris exported the profile with its built-in safe archive fallback.")
+            return self.require_store().export_profile(profile, output_path), warnings
+        if not command.get("ok"):
+            raise ManagementError(command.get("error") or "Hermes profile export failed.", status_code=400)
+        return output_path, warnings
+
+    def import_profile(self, archive_path: Path, name: str = "") -> dict[str, Any]:
+        target = normalize_profile_name(name) if name else normalize_profile_name(inspect_archive_root(archive_path))
+        warnings: list[str] = []
+        args = ["profile", "import", str(archive_path)]
+        if target:
+            args.extend(["--name", target])
+        command = self.run_hermes_profile_cli(args)
+        if command.get("missing"):
+            profile, fallback_warnings = self.require_store().import_profile(archive_path, target)
+            warnings.extend(fallback_warnings)
+            warnings.append("Hermes CLI was unavailable. Iris imported the profile with its built-in safe archive fallback.")
+        elif command.get("ok"):
+            profile = self.require_store().profile_summary(target)
+        else:
+            raise ManagementError(command.get("error") or "Hermes profile import failed.", status_code=400)
+        return self.mutation_result(self.require_agent_profile(profile.name), warnings=warnings, restart_required=True)
+
+    def install_distribution(self, *, source: str, name: str = "", alias: bool = False, force: bool = False) -> dict[str, Any]:
+        target = normalize_profile_name(name) if name else ""
+        warnings: list[str] = []
+        args = ["profile", "install", source, "-y"]
+        if target:
+            args.extend(["--name", target])
+        if alias:
+            args.append("--alias")
+        if force:
+            args.append("--force")
+        command = self.run_hermes_profile_cli(args, timeout=180)
+        if command.get("missing"):
+            profile, details, fallback_warnings = self.require_store().install_distribution(source=source, name=target, force=force)
+            warnings.extend(fallback_warnings)
+            warnings.append("Hermes CLI was unavailable. Iris installed the distribution with its built-in local fallback.")
+            if alias:
+                try:
+                    self.require_store().create_alias(profile.name)
+                except ManagementError as exc:
+                    warnings.append(exc.error)
+        elif command.get("ok"):
+            profile_name = target or self.profile_name_from_distribution_source(source)
+            profile = self.require_store().profile_summary(profile_name)
+            details = {"stdout": command.get("stdout", "")}
+        else:
+            raise ManagementError(command.get("error") or "Hermes profile distribution install failed.", status_code=400)
+        result = self.mutation_result(self.require_agent_profile(profile.name), warnings=warnings, restart_required=True)
+        return {**result, "distribution": details}
+
+    def update_distribution(self, agent: dict[str, Any], *, force_config: bool = False) -> dict[str, Any]:
+        profile = str(agent["runtimeProfile"])
+        warnings: list[str] = []
+        args = ["profile", "update", profile, "-y"]
+        if force_config:
+            args.append("--force-config")
+        command = self.run_hermes_profile_cli(args, timeout=180)
+        if command.get("missing"):
+            result = self.require_store().update_distribution(profile, force_config=force_config)
+            warnings.append("Hermes CLI was unavailable. Iris updated distribution-owned files with its built-in local fallback.")
+        elif command.get("ok"):
+            result = self.require_store().distribution_info(profile)
+            result["stdout"] = command.get("stdout", "")
+        else:
+            raise ManagementError(command.get("error") or "Hermes profile distribution update failed.", status_code=400)
+        return {"ok": True, "profile": profile, "warnings": warnings, "restartRequired": True, **result}
+
+    def distribution_info(self, agent: dict[str, Any]) -> dict[str, Any]:
+        return self.require_store().distribution_info(str(agent["runtimeProfile"]))
+
+    def profile_alias(self, agent: dict[str, Any]) -> dict[str, Any]:
+        return self.require_store().alias_status(str(agent["runtimeProfile"]))
+
+    def create_profile_alias(self, agent: dict[str, Any], alias: str = "") -> dict[str, Any]:
+        return self.require_store().create_alias(str(agent["runtimeProfile"]), alias)
+
+    def remove_profile_alias(self, agent: dict[str, Any], alias: str = "") -> dict[str, Any]:
+        return self.require_store().remove_alias(str(agent["runtimeProfile"]), alias)
+
+    def profile_name_from_distribution_source(self, source: str) -> str:
+        with tempfile.TemporaryDirectory(prefix="iris_dist_name_") as tmpdir:
+            staged, _provenance = stage_distribution_source(source, Path(tmpdir))
+            manifest = distribution_manifest(staged / "distribution.yaml", staged)
+            if not manifest or not manifest.get("name"):
+                raise ManagementError("Distribution manifest is missing a name.", status_code=400)
+            return normalize_profile_name(str(manifest["name"]))
 
     def list_sessions(self, agent: dict[str, Any], limit: int = 80) -> list[dict[str, Any]]:
         store = self.require_store()
@@ -471,6 +904,58 @@ class HermesRuntimeAdapter:
 
     def gateway_status(self, profile: str) -> dict[str, Any]:
         return self.gateway_control(profile, "status")
+
+    def run_hermes_profile_cli(self, args: list[str], *, timeout: int = PROFILE_CLI_TIMEOUT_SECONDS) -> dict[str, Any]:
+        hermes = self.resolve_hermes_executable()
+        if not hermes:
+            return {
+                "ok": False,
+                "missing": True,
+                "stdout": "",
+                "stderr": "",
+                "status": None,
+                "error": "Hermes CLI was not found.",
+            }
+        env = os.environ.copy()
+        if self.hermes_home:
+            env["HERMES_HOME"] = str(normalize_hermes_home(self.hermes_home))
+        try:
+            completed = subprocess.run(
+                [hermes, *args],
+                shell=False,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                env=env,
+            )
+        except subprocess.TimeoutExpired as exc:
+            return {
+                "ok": False,
+                "missing": False,
+                "stdout": str(exc.stdout or ""),
+                "stderr": str(exc.stderr or ""),
+                "status": None,
+                "error": f"Hermes CLI timed out after {timeout} seconds.",
+            }
+        except OSError as exc:
+            return {
+                "ok": False,
+                "missing": False,
+                "stdout": "",
+                "stderr": "",
+                "status": None,
+                "error": str(exc),
+            }
+        stdout = completed.stdout or ""
+        stderr = completed.stderr or ""
+        return {
+            "ok": completed.returncode == 0,
+            "missing": False,
+            "stdout": stdout,
+            "stderr": stderr,
+            "status": completed.returncode,
+            **({} if completed.returncode == 0 else {"error": stderr.strip() or stdout.strip() or "Hermes CLI command failed."}),
+        }
 
     def gateway_control(self, profile: str, action: str) -> dict[str, Any]:
         clean_profile = validate_profile_name(str(profile or "default"))
@@ -758,7 +1243,13 @@ class HermesRuntimeAdapter:
             return str(explicit)
         default_route = str(routes.get("default") or "")
         if profile and profile != "default":
-            profile_url = profile_iris_gateway_url(self.hermes_home, profile, default_route or DEFAULT_IRIS_GATEWAY_URL)
+            profile_url = profile_iris_gateway_url(
+                self.hermes_home,
+                profile,
+                default_route or DEFAULT_IRIS_GATEWAY_URL,
+                core_store=self.core_store,
+                runtime_id=self.runtime_id,
+            )
             if profile_url:
                 return profile_url
         if default_route:
@@ -768,12 +1259,34 @@ class HermesRuntimeAdapter:
         return derived or DEFAULT_IRIS_GATEWAY_URL
 
 
-def profile_iris_gateway_url(hermes_home: Path | str | None, profile: str, default_url: str) -> str:
+def default_iris_gateway_port(default_url: str = DEFAULT_IRIS_GATEWAY_URL) -> int:
+    parsed = urllib.parse.urlparse(default_url)
+    return int(parsed.port or 8766)
+
+
+def profile_iris_gateway_url(
+    hermes_home: Path | str | None,
+    profile: str,
+    default_url: str,
+    *,
+    core_store: CoreStore | None = None,
+    runtime_id: str = DEFAULT_RUNTIME_ID,
+) -> str:
     if not hermes_home or not profile or profile == "default":
         return ""
     parsed = urllib.parse.urlparse(default_url)
     if parsed.scheme not in {"http", "https"} or not parsed.hostname or not parsed.port:
         return ""
+    host = parsed.hostname
+    if ":" in host and not host.startswith("["):
+        host = f"[{host}]"
+    if core_store:
+        port = core_store.ensure_runtime_profile_port(
+            runtime_id=runtime_id,
+            runtime_profile=profile,
+            default_port=parsed.port,
+        )
+        return urllib.parse.urlunparse((parsed.scheme, f"{host}:{port}", "", "", "", ""))
     profiles_root = normalize_hermes_home(hermes_home) / "profiles"
     try:
         profile_names = sorted(
@@ -784,9 +1297,6 @@ def profile_iris_gateway_url(hermes_home: Path | str | None, profile: str, defau
         return ""
     if profile not in profile_names:
         return ""
-    host = parsed.hostname
-    if ":" in host and not host.startswith("["):
-        host = f"[{host}]"
     return urllib.parse.urlunparse(
         (parsed.scheme, f"{host}:{parsed.port + profile_names.index(profile) + 1}", "", "", "", "")
     )

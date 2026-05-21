@@ -38,7 +38,13 @@ import {
   type IrisCoreGatewayAction,
   type IrisCoreGatewayControlResult,
 } from "../../lib/irisCore";
-import type { HermesMemory, HermesRuntimeConfig, HermesSkill, HermesStatus } from "../../types/hermes";
+import type {
+  HermesMemory,
+  HermesMemoryResetExpectations,
+  HermesRuntimeConfig,
+  HermesSkill,
+  HermesStatus,
+} from "../../types/hermes";
 import { ensureActiveSshTunnel } from "./sshRuntime";
 
 type RefreshOptions = {
@@ -155,7 +161,9 @@ export function useIrisRuntime() {
         queryClient.fetchQuery(memoryQueryOptions(activeConfig, profile)),
         queryClient.fetchQuery(skillsQueryOptions(activeConfig, profile)),
       ]);
-      if (nextMemory.status === "fulfilled") setMemory(nextMemory.value);
+      if (nextMemory.status === "fulfilled" && profile === selectedProfileRef.current) {
+        setMemory(nextMemory.value);
+      }
       if (nextSkills.status === "fulfilled") setSkills(nextSkills.value.skills);
       else setSkills([]);
       return nextStatus;
@@ -202,13 +210,14 @@ export function useIrisRuntime() {
       : result.profile || target || current;
     setCurrentProfile(nextProfile);
     await refreshIris(nextProfile);
-    return `Profile ${action} completed.`;
+    return profileActionMessage(action, result);
   }
 
   async function saveMemoryFile(
     file: "memory" | "user",
     content: string,
     expectedUpdatedAt?: number | null,
+    expectedContentHash?: string | null,
     profileName = selectedProfileRef.current,
   ) {
     const profile = profileName || selectedProfileRef.current || "default";
@@ -218,10 +227,11 @@ export function useIrisRuntime() {
         file,
         content,
         expectedUpdatedAt,
+        expectedContentHash,
       });
-      setMemory(result.memory);
+      if (profile === selectedProfileRef.current) setMemory(result.memory);
       await refreshIris(profile, runtimeConfigRef.current, {
-        loadProfileData: true,
+        loadProfileData: profile === selectedProfileRef.current,
         selectProfile: profile === selectedProfileRef.current,
       });
       return "Memory saved.";
@@ -230,17 +240,23 @@ export function useIrisRuntime() {
     }
   }
 
-  async function resetMemoryFile(file: "memory" | "user" | "all", confirm: string, profileName = selectedProfileRef.current) {
+  async function resetMemoryFile(
+    file: "memory" | "user" | "all",
+    confirm: string,
+    expectations: HermesMemoryResetExpectations = {},
+    profileName = selectedProfileRef.current,
+  ) {
     const profile = profileName || selectedProfileRef.current || "default";
     try {
       const result = await resetMemoryMutation.mutateAsync({
         profile,
         file,
         confirm,
+        ...expectations,
       });
-      setMemory(result.memory);
+      if (profile === selectedProfileRef.current) setMemory(result.memory);
       await refreshIris(profile, runtimeConfigRef.current, {
-        loadProfileData: true,
+        loadProfileData: profile === selectedProfileRef.current,
         selectProfile: profile === selectedProfileRef.current,
       });
       return "Memory reset completed.";
@@ -393,6 +409,18 @@ export function useIrisRuntime() {
 
 function sleep(ms: number) {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+function profileActionMessage(
+  action: ProfileAction,
+  result: { warnings?: string[]; restartRequired?: boolean; adapterInstallRequired?: boolean },
+) {
+  const notes = [
+    ...(result.warnings || []),
+    result.adapterInstallRequired ? "Adapter install needs attention. Run Settings -> Install Hermes adapter." : "",
+    result.restartRequired ? "Restart the Hermes gateway for this agent." : "",
+  ].filter(Boolean);
+  return [`Profile ${action} completed.`, ...notes].join(" ");
 }
 
 function offlineStatusForError(error: unknown, config: HermesRuntimeConfig): HermesStatus {

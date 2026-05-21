@@ -73,7 +73,7 @@ export function runtimeReadinessDetail(readiness: RuntimeReadiness, profileName 
     return "Remote Core is offline. Start Iris Core on that host, then retry.";
   }
   if (readiness === "offline") return "Start Iris Core, then retry.";
-  if (readiness === "gateway-stopped") return `${profileName} gateway is stopped. Start it to send messages.`;
+  if (readiness === "gateway-stopped") return `${profileName} gateway is stopped.`;
   if (readiness === "adapter-unavailable") return "Gateway is running, but the Iris adapter is unreachable. Restart the gateway.";
   if (readiness === "ready") return "";
   return "Core is connected, but runtime readiness is still being checked.";

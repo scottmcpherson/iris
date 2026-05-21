@@ -8,6 +8,7 @@ import { modelCatalogQueryOptions, modelKeys } from "../models";
 import { projectKeys, projectSessionsQueryOptions } from "../projects";
 import { runtimeRouteQueryKey } from "../runtimeKey";
 import { sessionKeys, sessionsQueryOptions } from "../sessions";
+import { skillCatalogQueryOptions, skillKeys } from "../skills";
 import { slashCommandKeys, slashCommandsQueryOptions } from "../slashCommands";
 import { statusKeys, statusQueryOptions } from "../status";
 
@@ -71,6 +72,7 @@ describe("query helpers", () => {
       "sessions",
     ]);
     expect(sessionKeys.detail(routeKey, "session_1")).toEqual(["sessions", routeKey, "detail", "session_1"]);
+    expect(skillKeys.catalog(routeKey, "default")).toEqual(["skills", routeKey, "catalog", "default"]);
   });
 
   it("keeps query options scoped and gated by the owning entity", () => {
@@ -80,6 +82,7 @@ describe("query helpers", () => {
     expect(statusQueryOptions(runtime, "default").queryKey).toEqual(statusKeys.detail(routeKey, "default"));
     expect(sessionsQueryOptions(runtime, "default").queryKey).toEqual(sessionKeys.list(routeKey, "default"));
     expect(modelCatalogQueryOptions(runtime, "default", false).enabled).toBe(false);
+    expect(skillCatalogQueryOptions(runtime, "default", false).enabled).toBe(false);
     expect(slashCommandsQueryOptions(runtime, "default", false).enabled).toBe(false);
     expect(automationsQueryOptions(runtime, "agent_1", true).refetchInterval).toBe(6_000);
     expect(automationsQueryOptions(runtime, "", true).enabled).toBe(false);
