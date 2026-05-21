@@ -4,7 +4,7 @@ import { AlertCircle, Check, Info, Pause, Pencil, Play, Plus, Trash2 } from "luc
 import type { CreateScheduledMessageInput, UpdateScheduledMessageInput } from "./useIrisAutomations";
 import { ProjectMenu } from "../chat/components/ProjectMenu";
 import type { IrisProject } from "../../lib/irisCore";
-import type { HermesAutomation, HermesInboxMessage } from "../../types/hermes";
+import type { HermesAutomation, HermesInboxMessage, HermesProfile, HermesStatus } from "../../types/hermes";
 import { Alert, AlertDescription } from "../../shared/ui/alert";
 import { Badge } from "../../shared/ui/badge";
 import { Button } from "../../shared/ui/button";
@@ -29,8 +29,11 @@ import {
 } from "../../shared/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../shared/ui/tabs";
 import { Textarea } from "../../shared/ui/textarea";
-import type { RuntimeReadiness } from "../../app/runtimeReadiness";
-import { runtimeReadinessDetail, runtimeReadinessGatewayAction } from "../../app/runtimeReadiness";
+import {
+  agentRuntimeReadinessForStatus,
+  runtimeReadinessDetail,
+  runtimeReadinessGatewayAction,
+} from "../../app/runtimeReadiness";
 
 type TabKey = "active" | "paused";
 type ScheduleMode = "delay" | "datetime" | "daily" | "custom";
@@ -44,7 +47,8 @@ type AutomationsViewProps = {
   deliveriesLoading: boolean;
   error: string | null;
   pausedAutomations: HermesAutomation[];
-  runtimeReadiness?: RuntimeReadiness;
+  status: HermesStatus | null;
+  profile: HermesProfile;
   gatewayActionBusy?: boolean;
   gatewayActionBusyAction?: "start" | "restart" | "stop" | null;
   projects: IrisProject[];
@@ -66,7 +70,8 @@ export function AutomationsView({
   deliveriesLoading,
   error,
   pausedAutomations,
-  runtimeReadiness = connected ? "ready" : "offline",
+  status,
+  profile,
   gatewayActionBusy = false,
   gatewayActionBusyAction = null,
   projects,
@@ -108,6 +113,7 @@ export function AutomationsView({
     tab === "active"
       ? "No active automations."
       : "No paused automations.";
+  const runtimeReadiness = agentRuntimeReadinessForStatus(status, connected ? profile : null);
   const runtimeReady = runtimeReadiness === "ready";
   const runtimeAction = runtimeReadinessGatewayAction(runtimeReadiness);
   const runtimeNotice = runtimeReadinessDetail(runtimeReadiness);

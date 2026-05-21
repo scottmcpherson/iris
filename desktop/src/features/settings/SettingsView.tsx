@@ -75,8 +75,8 @@ import type {
   IrisCoreConnectionMode,
   IrisCoreConnectionProfile,
 } from "../../types/hermes";
-import type { RuntimeReadiness } from "../../app/runtimeReadiness";
 import {
+  agentRuntimeReadinessForStatus,
   runtimeReadinessDetail,
   runtimeReadinessGatewayAction,
   runtimeReadinessLabel,
@@ -96,7 +96,6 @@ type SettingsViewProps = {
   onRuntimeChange: (config: HermesRuntimeConfig) => void;
   onRefresh: () => void;
   onProfileAction: ProfileActionHandler;
-  runtimeReadiness?: RuntimeReadiness;
   gatewayActionBusy?: boolean;
   gatewayActionBusyAction?: IrisCoreGatewayAction | null;
   adapterInstallBusy?: boolean;
@@ -146,7 +145,6 @@ export function SettingsView({
   onRuntimeChange,
   onRefresh,
   onProfileAction,
-  runtimeReadiness = "offline",
   gatewayActionBusy = false,
   gatewayActionBusyAction = null,
   adapterInstallBusy = false,
@@ -165,6 +163,7 @@ export function SettingsView({
   const checkedAt = status?.checkedAt ? formatTimestamp(status.checkedAt) : "Not checked";
   const modelDisplay = modelSummary(profile.provider, profile.model);
   const statusConnection = status?.activeConnectionName || activeConnection.name;
+  const runtimeReadiness = agentRuntimeReadinessForStatus(status, profile);
   const runtimeLabel = runtimeReadinessLabel(runtimeReadiness, selectedProfile);
   const runtimeDetail = runtimeReadinessDetail(runtimeReadiness, selectedProfile, runtimeConfig.connectionMode);
   const runtimeGatewayAction = runtimeReadinessGatewayAction(runtimeReadiness);

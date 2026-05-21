@@ -2,15 +2,14 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { AgentList } from "../AgentList";
-import type { HermesProfile } from "../../../types/hermes";
+import type { HermesProfile, HermesStatus } from "../../../types/hermes";
 
 describe("AgentList", () => {
   it("renders button-driven agent actions without the legacy sidebar context menu", () => {
     const html = renderToStaticMarkup(
       createElement(AgentList, {
         profiles: [profileFixture({ name: "health" })],
-        selectedProfile: "health",
-        runtimeReadiness: "ready",
+        status: statusFixture(profileFixture({ name: "health" })),
         gatewayActionBusy: false,
         gatewayActionBusyAction: null,
         gatewayActionBusyProfile: "",
@@ -32,8 +31,7 @@ describe("AgentList", () => {
     const html = renderToStaticMarkup(
       createElement(AgentList, {
         profiles: [profileFixture({ name: "health", gatewayRunning: false })],
-        selectedProfile: "health",
-        runtimeReadiness: "gateway-stopped",
+        status: statusFixture(profileFixture({ name: "health", gatewayRunning: false })),
         gatewayActionBusy: false,
         gatewayActionBusyAction: null,
         gatewayActionBusyProfile: "",
@@ -54,8 +52,7 @@ describe("AgentList", () => {
     const html = renderToStaticMarkup(
       createElement(AgentList, {
         profiles: [profileFixture({ name: "health", gatewayRunning: false })],
-        selectedProfile: "health",
-        runtimeReadiness: "gateway-stopped",
+        status: statusFixture(profileFixture({ name: "health", gatewayRunning: false })),
         gatewayActionBusy: true,
         gatewayActionBusyAction: "start",
         gatewayActionBusyProfile: "health",
@@ -74,8 +71,7 @@ describe("AgentList", () => {
     const html = renderToStaticMarkup(
       createElement(AgentList, {
         profiles: [profileFixture({ name: "health", gatewayRunning: false })],
-        selectedProfile: "health",
-        runtimeReadiness: "offline",
+        status: { ...statusFixture(profileFixture({ name: "health", gatewayRunning: false })), connected: false },
         gatewayActionBusy: false,
         gatewayActionBusyAction: null,
         gatewayActionBusyProfile: "",
@@ -113,5 +109,19 @@ function profileFixture(overrides: Partial<HermesProfile> = {}): HermesProfile {
     estimatedCostUsd: null,
     gatewayRunning: true,
     ...overrides,
+  };
+}
+
+function statusFixture(profile = profileFixture()): HermesStatus {
+  return {
+    ok: true,
+    connected: true,
+    root: "/tmp/hermes",
+    hermesPath: "/tmp/hermes",
+    version: "test",
+    activeProfile: profile,
+    profiles: [profile],
+    checkedAt: 1,
+    activeApiStatus: { ok: true, profile: profile.name },
   };
 }

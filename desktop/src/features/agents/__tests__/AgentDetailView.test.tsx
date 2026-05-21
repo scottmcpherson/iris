@@ -21,7 +21,6 @@ describe("AgentDetailView", () => {
         runtimeConfig: runtimeConfigFixture(),
         memory: memoryFixture(),
         skills: skillsFixture(),
-        runtimeReadiness: "ready",
         gatewayActionBusy: false,
         gatewayActionBusyAction: null,
         adapterInstallBusy: false,
@@ -59,7 +58,6 @@ describe("AgentDetailView", () => {
         runtimeConfig: runtimeConfigFixture(),
         memory: memoryFixture(),
         skills: skillsFixture(),
-        runtimeReadiness: "gateway-stopped",
         gatewayActionBusy: false,
         gatewayActionBusyAction: null,
         adapterInstallBusy: false,
@@ -82,13 +80,12 @@ describe("AgentDetailView", () => {
     const html = renderToStaticMarkup(
       createElement(AgentDetailView, {
         section: "overview",
-        status: statusFixture(),
+        status: { ...statusFixture(), activeApiStatus: { ok: false, profile: "default" } },
         profile: profileFixture(),
         selectedProfile: "default",
         runtimeConfig: runtimeConfigFixture(),
         memory: memoryFixture(),
         skills: skillsFixture(),
-        runtimeReadiness: "adapter-unavailable",
         gatewayActionBusy: false,
         gatewayActionBusyAction: null,
         adapterInstallBusy: false,
@@ -164,6 +161,7 @@ function statusFixture(profile = profileFixture()): HermesStatus {
       ok: true,
       url: "http://127.0.0.1:8765",
     },
+    activeApiStatus: { ok: true, profile: profile.name },
   };
 }
 

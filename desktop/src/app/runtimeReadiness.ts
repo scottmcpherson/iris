@@ -20,6 +20,18 @@ export function runtimeReadinessForStatus(
   return "core-only";
 }
 
+export function agentRuntimeReadinessForStatus(
+  status: HermesStatus | null,
+  profile?: HermesProfile | null,
+): RuntimeReadiness {
+  if (!status?.connected) return "offline";
+  if (!profile?.gatewayRunning) return "gateway-stopped";
+  if (activeApiStatusBelongsToProfile(status, profile) && status.activeApiStatus && !status.activeApiStatus.ok) {
+    return "adapter-unavailable";
+  }
+  return "ready";
+}
+
 export function runtimeGatewayIsReachable(
   status: HermesStatus | null,
   selectedProfile?: HermesProfile | null,
@@ -66,4 +78,10 @@ export function runtimeReadinessGatewayAction(readiness: RuntimeReadiness): "sta
   if (readiness === "gateway-stopped") return "start";
   if (readiness === "adapter-unavailable" || readiness === "core-only") return "restart";
   return null;
+}
+
+function activeApiStatusBelongsToProfile(status: HermesStatus, profile: HermesProfile) {
+  const endpointProfile = status.activeApiStatus?.profile || status.activeApiStatus?.requestedProfile;
+  if (endpointProfile) return endpointProfile === profile.name;
+  return status.activeProfile?.name === profile.name;
 }

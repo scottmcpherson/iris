@@ -20,14 +20,14 @@ afterEach(() => {
 });
 
 describe("AppShell connection status", () => {
-  it("pairs the connection name with the active profile when ready", () => {
+  it("shows the active connection name without agent readiness", () => {
     expect(
       sidebarConnectionStatusLabel(true, {
         ...statusFixture(),
         activeConnectionName: "Mac mini",
         connectionMode: "ssh",
       }),
-    ).toBe("Mac mini · default");
+    ).toBe("Mac mini");
   });
 
   it("falls back to transport-aware labels without a connection name", () => {
@@ -37,17 +37,17 @@ describe("AppShell connection status", () => {
         activeConnectionName: "",
         connectionMode: "ssh",
       }),
-    ).toBe("SSH · default");
+    ).toBe("SSH");
     expect(
       sidebarConnectionStatusLabel(true, {
         ...statusFixture(),
         activeConnectionName: "",
         connectionMode: "managed-local",
       }),
-    ).toBe("Local · default");
+    ).toBe("Local");
   });
 
-  it("appends a degraded runtime state without calling Core disconnected", () => {
+  it("does not append selected-agent readiness to the connection label", () => {
     expect(
       sidebarConnectionStatusLabel(true, {
         ...statusFixture(),
@@ -58,7 +58,7 @@ describe("AppShell connection status", () => {
         activeProfile: { ...profileFixture(), gatewayRunning: false },
         profiles: [{ ...profileFixture(), gatewayRunning: false }],
       }),
-    ).toBe("Mac mini · default gateway stopped");
+    ).toBe("Mac mini");
     expect(
       sidebarConnectionStatusLabel(true, {
         ...statusFixture(),
@@ -66,12 +66,12 @@ describe("AppShell connection status", () => {
         connectionMode: "ssh",
         activeApiStatus: { ok: false },
       }),
-    ).toBe("Mac mini · default adapter unavailable");
+    ).toBe("Mac mini");
   });
 
-  it("uses Core offline when the app is disconnected", () => {
+  it("keeps the active connection in the offline label", () => {
     expect(sidebarConnectionStatusLabel(false, { ...statusFixture(), activeConnectionName: "Local" })).toBe(
-      "Core offline",
+      "Local · Core offline",
     );
   });
 });

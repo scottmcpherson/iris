@@ -1,6 +1,5 @@
 import { offlineProfile } from "../../app/offlineProfile";
 import type { ProfileActionHandler } from "../../app/types";
-import type { RuntimeReadiness } from "../../app/runtimeReadiness";
 import type { IrisCoreGatewayAction } from "../../lib/irisCore";
 import type {
   HermesMemory,
@@ -17,19 +16,17 @@ type AgentsViewProps = {
   detailProfile: string | null;
   status: HermesStatus | null;
   activeProfile: HermesProfile;
-  selectedProfile: string;
   runtimeConfig: HermesRuntimeConfig;
   memory: HermesMemory | null;
   skills: HermesSkill[];
   section: AgentDetailSection;
-  runtimeReadiness: RuntimeReadiness;
   gatewayActionBusy: boolean;
   gatewayActionBusyAction: IrisCoreGatewayAction | null;
   gatewayActionBusyProfile: string;
   adapterInstallBusyProfile: string;
   onDetailProfileChange: (profileName: string | null) => void;
   onSectionChange: (section: AgentDetailSection) => void;
-  onSelectProfile: (profileName: string) => void;
+  onOpenAgent: (profileName: string) => void;
   onRuntimeChange: (config: HermesRuntimeConfig) => void;
   onRefresh: () => void;
   onProfileAction: ProfileActionHandler;
@@ -44,19 +41,17 @@ export function AgentsView({
   detailProfile,
   status,
   activeProfile,
-  selectedProfile,
   runtimeConfig,
   memory,
   skills,
   section,
-  runtimeReadiness,
   gatewayActionBusy,
   gatewayActionBusyAction,
   gatewayActionBusyProfile,
   adapterInstallBusyProfile,
   onDetailProfileChange,
   onSectionChange,
-  onSelectProfile,
+  onOpenAgent,
   onRuntimeChange,
   onRefresh,
   onProfileAction,
@@ -75,8 +70,7 @@ export function AgentsView({
       <div className="tool-view agents-workspace">
         <AgentList
           profiles={profiles}
-          selectedProfile={selectedProfile}
-          runtimeReadiness={runtimeReadiness}
+          status={status}
           gatewayActionBusy={gatewayActionBusy}
           gatewayActionBusyAction={gatewayActionBusyAction}
           gatewayActionBusyProfile={gatewayActionBusyProfile}
@@ -85,9 +79,9 @@ export function AgentsView({
           onGatewayAction={onGatewayAction}
           onInstallAdapter={onInstallAdapter}
           onOpenAgent={(profileName) => {
-            onSelectProfile(profileName);
             onSectionChange("overview");
             onDetailProfileChange(profileName);
+            onOpenAgent(profileName);
           }}
         />
       </div>
@@ -100,11 +94,10 @@ export function AgentsView({
         section={section}
         status={status}
         profile={detailAgentProfile}
-        selectedProfile={selectedProfile}
+        selectedProfile={detailAgentProfile.name}
         runtimeConfig={runtimeConfig}
         memory={memory}
         skills={skills}
-        runtimeReadiness={runtimeReadiness}
         gatewayActionBusy={gatewayActionBusy}
         gatewayActionBusyAction={gatewayActionBusyAction}
         adapterInstallBusy={adapterInstallBusyProfile === detailAgentProfile.name}

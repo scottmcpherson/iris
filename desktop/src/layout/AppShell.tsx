@@ -2,6 +2,7 @@ import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, FormEvent, PointerEvent as ReactPointerEvent, ReactNode } from "react";
 import {
   AlertCircle,
+  Check,
   ChevronDown,
   ChevronRight,
   Copy,
@@ -26,7 +27,6 @@ import { navItems, viewTitle } from "../app/navigation";
 import { loadJsonValue, saveJsonValue, storageKeys } from "../app/storage";
 import type { ProfileActionHandler, View } from "../app/types";
 import { offlineProfile } from "../app/offlineProfile";
-import { runtimeReadinessForStatus } from "../app/runtimeReadiness";
 import type { IrisCoreAgent, IrisProject } from "../lib/irisCore";
 import type { HermesSession, HermesProfile, HermesStatus } from "../types/hermes";
 import {
@@ -73,19 +73,10 @@ const SIDEBAR_MAX_WIDTH = 440;
 export function sidebarConnectionStatusLabel(
   connected: boolean,
   status: HermesStatus | null,
-  selectedProfile = status?.activeProfile?.name || "default",
 ) {
-  if (!connected) return "Core offline";
-
   const connectionLabel = sidebarConnectionName(status);
-  const profile = status?.profiles.find((item) => item.name === selectedProfile) || status?.activeProfile || null;
-  const profileName = profile?.name || selectedProfile;
-  const readiness = runtimeReadinessForStatus(status, profile);
-
-  if (readiness === "ready") return `${connectionLabel} · ${profileName}`;
-  if (readiness === "gateway-stopped") return `${connectionLabel} · ${profileName} gateway stopped`;
-  if (readiness === "adapter-unavailable") return `${connectionLabel} · ${profileName} adapter unavailable`;
-  return `${connectionLabel} · connecting`;
+  if (!connected) return `${connectionLabel} · Core offline`;
+  return connectionLabel;
 }
 
 function sidebarConnectionName(status: HermesStatus | null) {
@@ -119,7 +110,6 @@ type AppShellProps = {
   primaryPane: ReactNode;
   topbarPane?: ReactNode;
   selectedProfile: string;
-  statusProfile?: string;
   status: HermesStatus | null;
   sessions: HermesSession[];
   sessionsByProfile: Record<string, HermesSession[]>;
@@ -171,7 +161,6 @@ export function AppShell({
   primaryPane,
   topbarPane,
   selectedProfile,
-  statusProfile,
   status,
   sessions,
   sessionsByProfile,
@@ -212,7 +201,6 @@ export function AppShell({
   onOpenDiagnostics,
 }: AppShellProps) {
   const profiles = status?.profiles ?? [offlineProfile];
-  const brandStatusProfile = statusProfile || selectedProfile;
   const showSelectedSession = activeView === "chat";
   const [sessionContextMenuKey, setSessionContextMenuKey] = useState("");
   const [profileDialog, setProfileDialog] = useState<ProfileDialog | null>(null);
@@ -250,15 +238,9 @@ export function AppShell({
   const chatsSectionCollapsed = Boolean(collapsedSidebarSections.chats);
   const agentsSectionCollapsed = Boolean(collapsedSidebarSections.agents);
   const pinnedSectionCollapsed = Boolean(collapsedSidebarSections.pinned);
-  const selectedStatusProfile =
-    profiles.find((profile) => profile.name === selectedProfile) ??
-    status?.activeProfile ??
-    offlineProfile;
-  const runtimeReadiness = runtimeReadinessForStatus(status, selectedStatusProfile);
   const statusDotClassName = [
     "status-dot",
-    runtimeReadiness === "ready" ? "connected" : "",
-    connected && runtimeReadiness !== "ready" ? "degraded" : "",
+    connected ? "connected" : "",
   ].filter(Boolean).join(" ");
 
   useEffect(() => {
@@ -462,12 +444,12 @@ export function AppShell({
                 title="Diagnose and recover the runtime"
               >
                 <span className={statusDotClassName} />
-                <span className="brand-status-text">{sidebarConnectionStatusLabel(connected, status, brandStatusProfile)}</span>
+                <span className="brand-status-text">{sidebarConnectionStatusLabel(connected, status)}</span>
               </button>
             ) : (
               <p className="brand-status">
                 <span className={statusDotClassName} />
-                <span className="brand-status-text">{sidebarConnectionStatusLabel(connected, status, brandStatusProfile)}</span>
+                <span className="brand-status-text">{sidebarConnectionStatusLabel(connected, status)}</span>
               </p>
             )}
           </div>
@@ -1128,7 +1110,7 @@ export function AppShell({
                 void runSessionDelete(profileName, session.id, pinKey);
               }}
             >
-              <Trash2 data-icon="inline-start" />
+              {deleteArmed ? <Check data-icon="inline-start" /> : <Trash2 data-icon="inline-start" />}
               {sessionActionBusy ? "Deleting..." : deleteArmed ? "Confirm delete" : "Delete"}
             </ContextMenuItem>
           </ContextMenuGroup>

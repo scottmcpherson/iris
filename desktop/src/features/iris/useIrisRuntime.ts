@@ -158,9 +158,15 @@ export function useIrisRuntime() {
     return `Profile ${action} completed.`;
   }
 
-  async function saveMemoryFile(file: "memory" | "user", content: string, expectedUpdatedAt?: number | null) {
+  async function saveMemoryFile(
+    file: "memory" | "user",
+    content: string,
+    expectedUpdatedAt?: number | null,
+    profileName = selectedProfileRef.current,
+  ) {
+    const profile = profileName || selectedProfileRef.current || "default";
     const result = await saveIrisMemoryFile({
-      profile: selectedProfileRef.current,
+      profile,
       file,
       content,
       expectedUpdatedAt,
@@ -168,20 +174,27 @@ export function useIrisRuntime() {
     });
     if (!result.ok) return result.error || "Memory save failed.";
     setMemory(result.memory);
-    await refreshIris(selectedProfileRef.current);
+    await refreshIris(profile, runtimeConfigRef.current, {
+      loadProfileData: true,
+      selectProfile: profile === selectedProfileRef.current,
+    });
     return "Memory saved.";
   }
 
-  async function resetMemoryFile(file: "memory" | "user" | "all", confirm: string) {
+  async function resetMemoryFile(file: "memory" | "user" | "all", confirm: string, profileName = selectedProfileRef.current) {
+    const profile = profileName || selectedProfileRef.current || "default";
     const result = await resetIrisMemoryFile({
-      profile: selectedProfileRef.current,
+      profile,
       file,
       confirm,
       runtime: runtimeConfigRef.current,
     });
     if (!result.ok) return result.error || "Memory reset failed.";
     setMemory(result.memory);
-    await refreshIris(selectedProfileRef.current);
+    await refreshIris(profile, runtimeConfigRef.current, {
+      loadProfileData: true,
+      selectProfile: profile === selectedProfileRef.current,
+    });
     return "Memory reset completed.";
   }
 

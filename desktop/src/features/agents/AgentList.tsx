@@ -2,7 +2,7 @@ import { useState } from "react";
 import type { FormEvent } from "react";
 import { Bot, Copy, Database, Ellipsis, FolderOpen, Play, Plug, Plus, RotateCw, Sparkles, Trash2, Unplug, Wrench } from "lucide-react";
 import type { ProfileActionHandler } from "../../app/types";
-import type { RuntimeReadiness } from "../../app/runtimeReadiness";
+import { agentRuntimeReadinessForStatus } from "../../app/runtimeReadiness";
 import type { IrisCoreGatewayAction } from "../../lib/irisCore";
 import { formatBytes } from "../../shared/format";
 import {
@@ -23,7 +23,7 @@ import {
   DialogTitle,
 } from "../../shared/ui/dialog";
 import { Input } from "../../shared/ui/input";
-import type { HermesProfile } from "../../types/hermes";
+import type { HermesProfile, HermesStatus } from "../../types/hermes";
 
 type AgentListDialog =
   | { action: "create"; name: string }
@@ -32,8 +32,7 @@ type AgentListDialog =
 
 type AgentListProps = {
   profiles: HermesProfile[];
-  selectedProfile: string;
-  runtimeReadiness: RuntimeReadiness;
+  status: HermesStatus | null;
   gatewayActionBusy: boolean;
   gatewayActionBusyAction: IrisCoreGatewayAction | null;
   gatewayActionBusyProfile: string;
@@ -50,8 +49,7 @@ const inputClassName = "h-[38px] border-menu-border bg-secondary text-menu-hover
 
 export function AgentList({
   profiles,
-  selectedProfile,
-  runtimeReadiness,
+  status,
   gatewayActionBusy,
   gatewayActionBusyAction,
   gatewayActionBusyProfile,
@@ -84,7 +82,7 @@ export function AgentList({
 
       <div className="agent-list-grid">
         {profiles.map((profile) => {
-          const gateway = gatewaySummary(profile, selectedProfile, runtimeReadiness);
+          const gateway = gatewaySummary(agentRuntimeReadinessForStatus(status, profile));
           const pillAction = gateway.action;
           const pillBusy = Boolean(
             pillAction &&
@@ -363,7 +361,7 @@ function agentSubtitle(profile: HermesProfile) {
   return profile.active ? `${summary} / active` : summary;
 }
 
-function gatewaySummary(profile: HermesProfile, selectedProfile: string, runtimeReadiness: RuntimeReadiness) {
+function gatewaySummary(runtimeReadiness: ReturnType<typeof agentRuntimeReadinessForStatus>) {
   if (runtimeReadiness === "offline") {
     return {
       label: "Core offline",
@@ -371,14 +369,14 @@ function gatewaySummary(profile: HermesProfile, selectedProfile: string, runtime
       action: null,
     };
   }
-  if (!profile.gatewayRunning) {
+  if (runtimeReadiness === "gateway-stopped") {
     return {
       label: "Gateway stopped",
       tone: "stopped" as const,
       action: "start" as const,
     };
   }
-  if (profile.name === selectedProfile && runtimeReadiness === "adapter-unavailable") {
+  if (runtimeReadiness === "adapter-unavailable") {
     return {
       label: "Adapter unavailable",
       tone: "degraded" as const,

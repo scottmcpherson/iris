@@ -1,5 +1,4 @@
 import type { ProfileActionHandler } from "../../app/types";
-import type { RuntimeReadiness } from "../../app/runtimeReadiness";
 import type { IrisCoreGatewayAction } from "../../lib/irisCore";
 import type {
   HermesMemory,
@@ -21,7 +20,6 @@ type AgentDetailViewProps = {
   runtimeConfig: HermesRuntimeConfig;
   memory: HermesMemory | null;
   skills: HermesSkill[];
-  runtimeReadiness: RuntimeReadiness;
   gatewayActionBusy: boolean;
   gatewayActionBusyAction: IrisCoreGatewayAction | null;
   adapterInstallBusy: boolean;
@@ -43,7 +41,6 @@ export function AgentDetailView({
   runtimeConfig,
   memory,
   skills,
-  runtimeReadiness,
   gatewayActionBusy,
   gatewayActionBusyAction,
   adapterInstallBusy,
@@ -93,7 +90,6 @@ export function AgentDetailView({
             selectedProfile={profile.name}
             runtimeConfig={runtimeConfig}
             mode="profile"
-            runtimeReadiness={runtimeReadiness}
             gatewayActionBusy={gatewayActionBusy}
             gatewayActionBusyAction={gatewayActionBusyAction}
             adapterInstallBusy={adapterInstallBusy}

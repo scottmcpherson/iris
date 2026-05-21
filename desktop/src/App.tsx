@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { isTauri } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { useLocation } from "@tanstack/react-router";
 import "./App.css";
 import type {
   CommandItem,
@@ -43,6 +44,14 @@ import {
   type IrisCoreGatewayAction,
   type IrisCoreInstallPluginResult,
 } from "./lib/irisCore";
+import { installIrisDeepLinkHandlers } from "./app/routing/deepLinks";
+import {
+  routeIntentToUrl,
+  routePathToIntent,
+  viewForRouteIntent,
+  type IrisRouteIntent,
+} from "./app/routing/routeIntent";
+import { useIrisNavigate } from "./app/routing/useIrisNavigate";
 
 type AppNotificationInput = {
   tone: "info" | "success" | "error";
@@ -56,7 +65,6 @@ type GatewayActionState = {
 };
 
 function App() {
-  const [activeView, setActiveView] = useState<View>("chat");
   const [agentDetailProfile, setAgentDetailProfile] = useState<string | null>(null);
   const [agentSection, setAgentSection] = useState<AgentDetailSection>("overview");
   const [commandMenuOpen, setCommandMenuOpen] = useState(false);
@@ -68,6 +76,23 @@ function App() {
   );
   const appCommandHandlerRef = useRef<(payload: string) => void>(() => {});
   const refreshWithNoticeRef = useRef<() => Promise<void>>(async () => {});
+  const lastAgentRefreshProfileRef = useRef("");
+  const previousSelectedSessionIdRef = useRef<string | null>(null);
+  const warnedMissingProjectIdsRef = useRef<Set<string>>(new Set());
+
+  const location = useLocation({
+    select: (item) => ({
+      pathname: item.pathname,
+      search: item.search as Record<string, unknown>,
+      searchStr: item.searchStr,
+    }),
+  });
+  const irisNavigate = useIrisNavigate();
+  const routeIntent = useMemo(
+    () => routePathToIntent(location.pathname, location.search),
+    [location.pathname, location.searchStr],
+  );
+  const activeView = routeIntent ? viewForRouteIntent(routeIntent) : "chat";
 
   const iris = useIrisRuntime();
   const gatewayActionBusy = Boolean(gatewayActionState);
@@ -84,6 +109,83 @@ function App() {
     },
   });
   const jobs = useIrisAutomations(iris.runtimeConfig, iris.selectedProfile, activeView === "jobs");
+
+  useEffect(() => {
+    if (!routeIntent) {
+      toast.info("Iris could not open that route.", {
+        description: "Opening a new chat instead.",
+      });
+      irisNavigate.openNewChat({}, { replace: true });
+      return;
+    }
+
+    const canonicalUrl = routeIntentToUrl(routeIntent);
+    const currentUrl = `${location.pathname}${location.searchStr}`;
+    if (canonicalUrl !== currentUrl) {
+      irisNavigate.openIntent(routeIntent, { replace: true });
+      return;
+    }
+
+    applyRouteIntent(routeIntent);
+  }, [
+    location.pathname,
+    location.searchStr,
+    projects.projects,
+    projects.selectedProjectId,
+    chat.selectedSessionId,
+    chatProfile,
+    agentDetailProfile,
+    agentSection,
+  ]);
+
+  useEffect(() => {
+    const previous = previousSelectedSessionIdRef.current;
+    previousSelectedSessionIdRef.current = chat.selectedSessionId;
+    if (
+      !previous ||
+      !isOptimisticSessionId(previous) ||
+      !chat.selectedSessionId ||
+      isOptimisticSessionId(chat.selectedSessionId)
+    ) {
+      return;
+    }
+    if (
+      routeIntent?.type === "new-chat" ||
+      (routeIntent?.type === "chat" && routeIntent.sessionId === previous)
+    ) {
+      irisNavigate.openChat(
+        {
+          sessionId: chat.selectedSessionId,
+          profile: chatProfile,
+          projectId: projects.selectedProjectId || undefined,
+        },
+        { replace: true },
+      );
+    }
+  }, [chat.selectedSessionId]);
+
+  useEffect(() => {
+    let disposed = false;
+    let disposeDeepLinks: (() => void) | null = null;
+    installIrisDeepLinkHandlers(
+      (intent) => irisNavigate.openIntent(intent),
+      () => {
+        toast.info("Iris could not open that link.", {
+          description: "The link is not a supported Iris destination.",
+        });
+      },
+    ).then((dispose) => {
+      if (disposed) {
+        dispose();
+        return;
+      }
+      disposeDeepLinks = dispose;
+    });
+    return () => {
+      disposed = true;
+      disposeDeepLinks?.();
+    };
+  }, []);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -129,11 +231,9 @@ function App() {
   const agentProfiles = iris.status?.profiles?.length ? iris.status.profiles : [iris.activeProfile];
   const selectedProfileSummary =
     agentProfiles.find((profile) => profile.name === iris.selectedProfile) || iris.activeProfile;
-  const runtimeReadiness = runtimeReadinessForStatus(iris.status, selectedProfileSummary);
   const chatProfileSummary =
     agentProfiles.find((profile) => profile.name === chatProfile) || selectedProfileSummary;
   const chatRuntimeReadiness = runtimeReadinessForStatus(iris.status, chatProfileSummary);
-  const sidebarStatusProfile = activeView === "chat" ? chatProfile : iris.selectedProfile;
   const modelCatalog = useIrisModelCatalog({
     profile: chatProfile,
     profileSummary: chatProfileSummary,
@@ -268,10 +368,11 @@ function App() {
       return;
     }
     const profileName = match?.profile || targetProfile;
-    setActiveView("chat");
-    projects.selectProject(match?.projectId || null);
-    setChatProfile(profileName);
-    void chat.loadSession(sessionId, profileName);
+    irisNavigate.openChat({
+      sessionId,
+      profile: profileName,
+      projectId: match?.projectId || undefined,
+    });
   }
 
   const commands = useMemo<CommandItem[]>(
@@ -311,7 +412,7 @@ function App() {
     if (payload === "show" || payload === "command-menu") setCommandMenuOpen(true);
     if (payload === "new-chat") {
       setCommandMenuOpen(false);
-      window.dispatchEvent(new CustomEvent("iris://new-session"));
+      irisNavigate.openNewChat({ profile: iris.selectedProfile });
     }
     if (payload === "search") {
       setCommandMenuOpen(false);
@@ -334,16 +435,17 @@ function App() {
               detailProfile={agentDetailProfile}
               profile={agentTopbarProfile}
               section={agentSection}
-              onBack={() => {
-                setAgentDetailProfile(null);
-                setAgentSection("overview");
-              }}
-              onSectionChange={setAgentSection}
+              onBack={() => irisNavigate.openAgent()}
+              onSectionChange={(section) =>
+                irisNavigate.openAgent({
+                  profile: agentDetailProfile || agentTopbarProfile.name,
+                  section,
+                })
+              }
             />
           ) : undefined
         }
         selectedProfile={iris.selectedProfile}
-        statusProfile={sidebarStatusProfile}
         status={iris.status}
         coreApiUrl={resolveCoreApiUrl(iris.runtimeConfig)}
         sessions={sidebarSessions}
@@ -387,28 +489,16 @@ function App() {
         selectedSessionId={chat.selectedSessionId}
         activeSessionIds={chat.activeSessionIds}
         onNewSession={(profileName, projectId) => {
-          setActiveView("chat");
-          if (projectId) {
-            const project = projects.projects.find((item) => item.id === projectId);
-            const agent = project ? projectAgentById.get(project.defaultAgentId) : null;
-            projects.selectProject(projectId);
-            const targetProfile = agent?.runtimeProfile || profileName || chatProfile;
-            setChatProfile(targetProfile);
-            chat.startNewSession(targetProfile);
-            return;
-          }
-          projects.selectProject(null);
-          const targetProfile = profileName || chatProfile;
-          setChatProfile(targetProfile);
-          chat.startNewSession(targetProfile);
+          irisNavigate.openNewChat({
+            profile: profileName || profileForProject(projectId) || chatProfile,
+            projectId,
+          });
         }}
         onEditProfile={(profileName) => {
           if (profileName !== iris.selectedProfile) {
             iris.selectProfile(profileName);
           }
-          setAgentDetailProfile(profileName);
-          setAgentSection("overview");
-          setActiveView("agents");
+          irisNavigate.openAgent({ profile: profileName, section: "overview" });
         }}
         onProfileAction={runProfileActionWithNotice}
         onRefresh={() => void refreshWithNotice()}
@@ -439,16 +529,10 @@ function App() {
           return message;
         }}
         onSelectSession={(profileName, sessionId) => {
-          setActiveView("chat");
-          projects.selectProject(null);
-          setChatProfile(profileName);
-          void chat.loadSession(sessionId, profileName);
+          irisNavigate.openChat({ sessionId, profile: profileName });
         }}
         onSelectProjectSession={(projectId, profileName, sessionId) => {
-          setActiveView("chat");
-          projects.selectProject(projectId);
-          setChatProfile(profileName);
-          void chat.loadSession(sessionId, profileName);
+          irisNavigate.openChat({ sessionId, profile: profileName, projectId });
         }}
         onSelectProfile={(profileName) => {
           iris.selectProfile(profileName);
@@ -459,16 +543,16 @@ function App() {
       <RuntimeDiagnosticsDialog
         open={diagnosticsOpen}
         status={iris.status}
-        selectedProfile={sidebarStatusProfile}
+        selectedProfile={iris.selectedProfile}
         runtimeConfig={iris.runtimeConfig}
         gatewayActionBusy={gatewayActionBusy}
         onOpenChange={setDiagnosticsOpen}
         onRuntimeChange={iris.updateRuntimeConfig}
         onGatewayAction={async (action) => {
-          await runGatewayAction(action, sidebarStatusProfile);
+          await runGatewayAction(action, iris.selectedProfile);
         }}
         onRefresh={() => void iris.refreshIris()}
-        onOpenSettings={() => setActiveView("settings")}
+        onOpenSettings={() => irisNavigate.openSettings()}
       />
       <CommandMenu
         commands={commands}
@@ -483,7 +567,7 @@ function App() {
           runtimeConfig={iris.runtimeConfig}
           onClose={dismissOnboarding}
           onOpenSettings={() => {
-            setActiveView("settings");
+            irisNavigate.openSettings();
             dismissOnboarding();
           }}
           onRefresh={() => void refreshWithNotice()}
@@ -528,11 +612,110 @@ function App() {
   }
 
   function selectView(view: View) {
-    setActiveView(view);
     if (view === "agents") {
-      setAgentDetailProfile(null);
-      setAgentSection("overview");
+      irisNavigate.openAgent();
+      return;
     }
+    if (view === "jobs") {
+      irisNavigate.openAutomations();
+      return;
+    }
+    if (view === "settings") {
+      irisNavigate.openSettings();
+      return;
+    }
+    irisNavigate.openNewChat({ profile: chatProfile });
+  }
+
+  function applyRouteIntent(intent: IrisRouteIntent) {
+    if (intent.type === "new-chat") {
+      applyProjectContext(intent.projectId);
+      const targetProfile = intent.profile || profileForProject(intent.projectId) || chatProfile;
+      if (chatProfile !== targetProfile) setChatProfile(targetProfile);
+      if (chat.selectedSessionId) chat.startNewSession(targetProfile);
+      return;
+    }
+
+    if (intent.type === "chat") {
+      applyProjectContext(intent.projectId);
+      const targetProfile =
+        intent.profile ||
+        profileForSession(intent.sessionId) ||
+        profileForProject(intent.projectId) ||
+        chatProfile ||
+        iris.selectedProfile;
+      if (chatProfile !== targetProfile) setChatProfile(targetProfile);
+      if (chat.selectedSessionId !== intent.sessionId || chatProfile !== targetProfile) {
+        void chat.loadSession(intent.sessionId, targetProfile);
+      }
+      return;
+    }
+
+    if (intent.type === "agents") {
+      if (!intent.profile) {
+        if (agentDetailProfile) setAgentDetailProfile(null);
+        if (agentSection !== "overview") setAgentSection("overview");
+        lastAgentRefreshProfileRef.current = "";
+        return;
+      }
+      if (agentDetailProfile !== intent.profile) setAgentDetailProfile(intent.profile);
+      const nextSection = intent.section || "overview";
+      if (agentSection !== nextSection) setAgentSection(nextSection);
+      if (lastAgentRefreshProfileRef.current !== intent.profile) {
+        lastAgentRefreshProfileRef.current = intent.profile;
+        void iris.refreshIris(intent.profile, iris.runtimeConfig, {
+          loadProfileData: true,
+          selectProfile: false,
+        });
+      }
+      return;
+    }
+
+    if (intent.type === "automations") {
+      applyProjectContext(intent.projectId);
+    }
+  }
+
+  function applyProjectContext(projectId?: string) {
+    if (!projectId) {
+      if (projects.selectedProjectId) projects.selectProject(null);
+      return;
+    }
+    const projectExists = projects.projects.some((project) => project.id === projectId);
+    if (projects.projects.length > 0 && !projectExists) {
+      if (!warnedMissingProjectIdsRef.current.has(projectId)) {
+        warnedMissingProjectIdsRef.current.add(projectId);
+        toast.info("Project not found.", {
+          description: "Iris kept the route open and cleared the project context.",
+        });
+      }
+      if (projects.selectedProjectId) projects.selectProject(null);
+      return;
+    }
+    if (projects.selectedProjectId !== projectId) projects.selectProject(projectId);
+    if (!projects.projectSessionsLoaded[projectId] && !projects.projectSessionsLoading[projectId]) {
+      void projects.refreshProjectSessions(projectId);
+    }
+  }
+
+  function profileForProject(projectId?: string) {
+    if (!projectId) return "";
+    const project = projects.projects.find((item) => item.id === projectId);
+    const agent = project ? projectAgentById.get(project.defaultAgentId) : null;
+    return agent?.runtimeProfile || "";
+  }
+
+  function profileForSession(sessionId: string) {
+    for (const [profileName, sessions] of Object.entries(chat.sessionsByProfile)) {
+      const match = sessions.find((session) => session.id === sessionId);
+      if (match) return sessionProfile(match) || profileName;
+    }
+    for (const sessions of Object.values(sidebarSessionsByProject)) {
+      const match = sessions.find((session) => session.id === sessionId);
+      if (match) return sessionProfile(match);
+    }
+    const match = sidebarSessions.find((session) => session.id === sessionId);
+    return match ? sessionProfile(match) : "";
   }
 
   function pushNotification(notification: AppNotificationInput) {
@@ -558,27 +741,36 @@ function App() {
           detailProfile={agentDetailProfile}
           status={iris.status}
           activeProfile={iris.activeProfile}
-          selectedProfile={iris.selectedProfile}
           runtimeConfig={iris.runtimeConfig}
           memory={iris.memory}
           skills={iris.skills}
           section={agentSection}
-          runtimeReadiness={runtimeReadiness}
           gatewayActionBusy={gatewayActionBusy}
           gatewayActionBusyAction={gatewayActionState?.action || null}
           gatewayActionBusyProfile={gatewayActionState?.profile || ""}
           adapterInstallBusyProfile={adapterInstallBusyProfile}
-          onDetailProfileChange={setAgentDetailProfile}
-          onSectionChange={setAgentSection}
-          onSelectProfile={iris.selectProfile}
+          onDetailProfileChange={(profileName) =>
+            profileName ? irisNavigate.openAgent({ profile: profileName }) : irisNavigate.openAgent()
+          }
+          onSectionChange={(section) =>
+            irisNavigate.openAgent({
+              profile: agentDetailProfile || agentTopbarProfile.name,
+              section,
+            })
+          }
+          onOpenAgent={() => {}}
           onRuntimeChange={iris.updateRuntimeConfig}
           onRefresh={() => void iris.refreshIris()}
           onProfileAction={iris.runProfileAction}
           onGatewayAction={(action, profileName) => void runGatewayAction(action, profileName)}
           onInstallAdapter={(profileName) => void installAdapterForProfile(profileName)}
-          onOpenSettings={() => setActiveView("settings")}
-          onResetMemory={iris.resetMemoryFile}
-          onSaveMemory={iris.saveMemoryFile}
+          onOpenSettings={() => irisNavigate.openSettings()}
+          onResetMemory={(file, confirm) =>
+            iris.resetMemoryFile(file, confirm, agentDetailProfile || iris.selectedProfile)
+          }
+          onSaveMemory={(file, content, expectedUpdatedAt) =>
+            iris.saveMemoryFile(file, content, expectedUpdatedAt, agentDetailProfile || iris.selectedProfile)
+          }
         />
       );
     }
@@ -590,7 +782,6 @@ function App() {
           selectedProfile={iris.selectedProfile}
           runtimeConfig={iris.runtimeConfig}
           mode="settings"
-          runtimeReadiness={runtimeReadiness}
           gatewayActionBusy={gatewayActionBusy}
           gatewayActionBusyAction={gatewayActionState?.action || null}
           adapterInstallBusy={adapterInstallBusyProfile === iris.selectedProfile}
@@ -612,7 +803,8 @@ function App() {
           deliveriesLoading={jobs.deliveriesLoading}
           error={jobs.error}
           pausedAutomations={jobs.pausedAutomations}
-          runtimeReadiness={runtimeReadiness}
+          status={iris.status}
+          profile={iris.activeProfile}
           gatewayActionBusy={gatewayActionBusy}
           gatewayActionBusyAction={gatewayActionState?.action || null}
           projects={projects.projects}
@@ -621,13 +813,7 @@ function App() {
           onCreateScheduledMessage={jobs.createScheduledMessage}
           onOpenDeliveryChat={openDeliveryChat}
           onProjectChange={(projectId) => {
-            projects.selectProject(projectId);
-            if (!projectId) return;
-            const project = projects.projects.find((item) => item.id === projectId);
-            const agent = project ? projectAgentById.get(project.defaultAgentId) : null;
-            if (agent) {
-              setChatProfile(agent.runtimeProfile);
-            }
+            irisNavigate.openAutomations({ projectId: projectId || undefined });
           }}
           onRunJobAction={jobs.runJobAction}
           onGatewayAction={(action) => void runGatewayAction(action)}
@@ -663,15 +849,18 @@ function App() {
         projects={projects.projects}
         selectedProjectId={projects.selectedProjectId}
         onProjectChange={(projectId) => {
-          projects.selectProject(projectId);
-          if (!projectId) return;
-          const project = projects.projects.find((item) => item.id === projectId);
-          const agent = project ? projectAgentById.get(project.defaultAgentId) : null;
-          if (agent) {
-            setChatProfile(agent.runtimeProfile);
-          }
+          const targetProfile = profileForProject(projectId || undefined) || chatProfile;
+          irisNavigate.openNewChat({
+            profile: targetProfile,
+            projectId: projectId || undefined,
+          });
         }}
-        onProfileChange={setChatProfile}
+        onProfileChange={(profileName) =>
+          irisNavigate.openNewChat({
+            profile: profileName,
+            projectId: projects.selectedProjectId || undefined,
+          })
+        }
         requestActive={chat.requestActive}
         onCancel={() => void chat.cancelMessage()}
         modelCatalog={modelCatalog.catalog}
@@ -736,6 +925,10 @@ function isProfileActionFailure(message: string) {
 
 function isSessionActionFailure(message: string) {
   return /\b(error|failed|cannot|could not|does not exist|not found|not allowed|enter|invalid|legacy|http|urlopen|connection refused|refused)\b/i.test(message);
+}
+
+function isOptimisticSessionId(sessionId: string) {
+  return sessionId.startsWith("optimistic-");
 }
 
 export default App;

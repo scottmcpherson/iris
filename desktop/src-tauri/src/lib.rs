@@ -84,9 +84,15 @@ fn python_candidates() -> Vec<String> {
 pub fn run() {
     let core_state = core_process::CoreProcessState::default();
     let ssh_state = ssh_tunnel::SshTunnelState::default();
-    let app = tauri::Builder::default()
+    let builder = tauri::Builder::default()
         .manage(core_state.clone())
-        .manage(ssh_state.clone())
+        .manage(ssh_state.clone());
+    #[cfg(any(target_os = "macos", windows, target_os = "linux"))]
+    let builder = builder.plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            show_main_window(app);
+        }));
+    let app = builder
+        .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_opener::init())
         .setup(move |app| {
             #[cfg(target_os = "macos")]

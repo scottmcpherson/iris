@@ -16,4 +16,8 @@ describe("Tauri desktop configuration", () => {
     expect(devConfig.bundle.icon).toContain("../../icons/tauri-icons/icon.icns");
     expect(config.bundle.icon).toContain("icons/icon.icns");
   });
+
+  it("registers the Iris desktop deep-link scheme", () => {
+    expect(config.plugins?.["deep-link"]?.desktop?.schemes).toContain("iris");
+  });
 });
