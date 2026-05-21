@@ -21,8 +21,6 @@ from typing import Any
 
 
 DEFAULT_CORE_URL = "http://127.0.0.1:8765"
-IRIS_CORE_TOKEN_ACCOUNT_PREFIX = "iris-core-token"
-REMOTE_TOKEN_SERVICE = "Iris Desktop"
 DEFAULT_MAX_ATTACHMENT_SIZE_MB = 250
 
 
@@ -41,9 +39,6 @@ def main() -> None:
         "core_request": core_request,
         "core_attachment_data": core_attachment_data,
         "core_upload_path": core_upload_path,
-        "remote_credential_status": remote_credential_status,
-        "remote_credential_save": remote_credential_save,
-        "remote_credential_delete": remote_credential_delete,
     }
     handler = handlers.get(sys.argv[1])
     if handler is None:
@@ -74,7 +69,7 @@ def core_request(payload: dict[str, Any]) -> dict[str, Any]:
     if path == "/":
         return {"ok": False, "error": "Core request path is required."}
     body = payload.get("body") if isinstance(payload.get("body"), dict) else None
-    return core_json_request(payload, path, method=method, body=body, timeout=12)
+    return core_json_request(payload, path, method=method, body=body, timeout=timeout_seconds(payload, 12))
 
 
 def core_attachment_data(payload: dict[str, Any]) -> dict[str, Any]:
@@ -193,10 +188,10 @@ def core_raw_request(
     headers: dict[str, str],
     timeout: int,
 ) -> dict[str, Any]:
-    token = str(payload.get("coreToken") or "").strip() or read_remote_token("core", connection_id=connection_id_from_payload(payload))
     request_headers = dict(headers)
-    if token:
-        request_headers["Authorization"] = f"Bearer {token}"
+    idempotency_key = str(payload.get("idempotencyKey") or "").strip()
+    if idempotency_key:
+        request_headers["Idempotency-Key"] = idempotency_key
     request = urllib.request.Request(url, data=body, headers=request_headers, method=method)
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
@@ -218,10 +213,7 @@ def core_raw_request(
 
 
 def core_bytes_request(url: str, payload: dict[str, Any], *, timeout: int) -> dict[str, Any]:
-    token = str(payload.get("coreToken") or "").strip() or read_remote_token("core", connection_id=connection_id_from_payload(payload))
     request_headers = {"Accept": "*/*"}
-    if token:
-        request_headers["Authorization"] = f"Bearer {token}"
     request = urllib.request.Request(url, headers=request_headers, method="GET")
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
@@ -356,133 +348,6 @@ def multipart_body(
     return b"".join(chunks), f"multipart/form-data; boundary={boundary}"
 
 
-def remote_credential_status(payload: dict[str, Any]) -> dict[str, Any]:
-    kind = credential_kind(payload.get("kind"))
-    connection_id = connection_id_from_payload(payload)
-    return {"ok": True, "kind": kind, "connectionId": connection_id, **read_remote_token_status(kind, connection_id=connection_id)}
-
-
-def remote_credential_save(payload: dict[str, Any]) -> dict[str, Any]:
-    kind = credential_kind(payload.get("kind"))
-    connection_id = connection_id_from_payload(payload)
-    token = str(payload.get("token") or "").strip()
-    if not token:
-        return {"ok": False, "kind": kind, "connectionId": connection_id, "error": "API token is empty."}
-    backend = credential_backend()
-    if backend == "test-file":
-        test_credential_path(kind, connection_id=connection_id).write_text(token, encoding="utf-8")
-        return {"ok": True, "kind": kind, "connectionId": connection_id, "exists": True, "source": backend}
-    if backend == "macos-keychain":
-        delete_keychain_token(credential_account(kind, connection_id=connection_id))
-        result = subprocess.run(
-            [
-                "security",
-                "add-generic-password",
-                "-U",
-                "-a",
-                credential_account(kind, connection_id=connection_id),
-                "-s",
-                REMOTE_TOKEN_SERVICE,
-                "-w",
-                token,
-            ],
-            capture_output=True,
-            text=True,
-        )
-        if result.returncode == 0:
-            return {"ok": True, "kind": kind, "connectionId": connection_id, "exists": True, "source": backend}
-        return {"ok": False, "kind": kind, "connectionId": connection_id, "error": (result.stderr or result.stdout or "macOS Keychain rejected the token.").strip()}
-    return {"ok": False, "kind": kind, "connectionId": connection_id, "error": "No supported OS credential store is available."}
-
-
-def remote_credential_delete(payload: dict[str, Any]) -> dict[str, Any]:
-    kind = credential_kind(payload.get("kind"))
-    connection_id = connection_id_from_payload(payload)
-    backend = credential_backend()
-    if backend == "test-file":
-        path = test_credential_path(kind, connection_id=connection_id)
-        if path.exists():
-            path.unlink()
-        return {"ok": True, "kind": kind, "connectionId": connection_id, "exists": False, "source": backend}
-    if backend == "macos-keychain":
-        delete_keychain_token(credential_account(kind, connection_id=connection_id))
-    return {"ok": True, "kind": kind, "connectionId": connection_id, "exists": False, "source": backend}
-
-
-def read_remote_token_status(kind: str = "core", *, connection_id: str = "") -> dict[str, Any]:
-    if read_env_token(kind):
-        return {"exists": True, "source": "environment"}
-    token = read_remote_token(kind, connection_id=connection_id, include_env=False)
-    return {"exists": bool(token), "source": credential_backend()}
-
-
-def read_remote_token(kind: str = "core", *, connection_id: str = "", include_env: bool = True) -> str:
-    kind = credential_kind(kind)
-    connection_id = normalize_connection_id(connection_id)
-    if include_env:
-        env_token = read_env_token(kind)
-        if env_token:
-            return env_token
-    if os.environ.get("IRIS_DESKTOP_SECRET_TEST_DIR"):
-        path = test_credential_path(kind, connection_id=connection_id)
-        return path.read_text(encoding="utf-8").strip() if path.exists() else ""
-    if credential_backend() != "macos-keychain":
-        return ""
-    return read_keychain_token(credential_account(kind, connection_id=connection_id))
-
-
-def read_env_token(_kind: str) -> str:
-    return os.environ.get("IRIS_TOKEN", "").strip()
-
-
-def read_keychain_token(account: str) -> str:
-    result = subprocess.run(
-        ["security", "find-generic-password", "-w", "-a", account, "-s", REMOTE_TOKEN_SERVICE],
-        capture_output=True,
-        text=True,
-    )
-    return result.stdout.strip() if result.returncode == 0 else ""
-
-
-def delete_keychain_token(account: str) -> None:
-    subprocess.run(
-        ["security", "delete-generic-password", "-a", account, "-s", REMOTE_TOKEN_SERVICE],
-        capture_output=True,
-        text=True,
-    )
-
-
-def credential_kind(value: Any) -> str:
-    raw = str(value or "").strip().lower()
-    return "core" if raw in {"", "core"} else "core"
-
-
-def credential_account(kind: str, *, connection_id: str = "") -> str:
-    credential_kind(kind)
-    return f"{IRIS_CORE_TOKEN_ACCOUNT_PREFIX}:{normalize_connection_id(connection_id)}"
-
-
-def credential_backend() -> str:
-    if os.environ.get("IRIS_DESKTOP_SECRET_TEST_DIR"):
-        return "test-file"
-    if sys.platform == "darwin":
-        return "macos-keychain"
-    if read_env_token("core"):
-        return "environment"
-    return "unavailable"
-
-
-def test_credential_path(kind: str = "core", *, connection_id: str = "") -> Path:
-    base = Path(os.environ["IRIS_DESKTOP_SECRET_TEST_DIR"]).expanduser()
-    base.mkdir(parents=True, exist_ok=True)
-    path = base / credential_account(kind, connection_id=connection_id).replace("/", "_")
-    try:
-        base.chmod(0o700)
-    except OSError:
-        pass
-    return path
-
-
 def active_runtime_url(runtime: dict[str, Any]) -> str:
     active_id = str(runtime.get("activeConnectionId") or "").strip()
     connections = runtime.get("coreConnections")
@@ -512,6 +377,16 @@ def connection_id_from_payload(payload: dict[str, Any]) -> str:
 def normalize_connection_id(value: str) -> str:
     cleaned = "".join(char if char.isalnum() or char in "._:-" else "_" for char in str(value or "").strip())
     return cleaned[:96] or "core_this_mac"
+
+
+def timeout_seconds(payload: dict[str, Any], default: int) -> int:
+    try:
+        timeout_ms = int(payload.get("timeoutMs") or 0)
+    except (TypeError, ValueError):
+        timeout_ms = 0
+    if timeout_ms <= 0:
+        return default
+    return max(1, min(120, int((timeout_ms + 999) / 1000)))
 
 
 def api_error_text(text: str) -> str:

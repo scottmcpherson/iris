@@ -1,11 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import type { Message, MessageAttachment } from "../../app/types";
 import {
   irisCoreEventToDeliveryMessage,
-  deleteIrisSession,
-  getIrisSessionDetail,
-  getIrisSessions,
-  renameIrisSession,
 } from "../../lib/irisRuntime";
 import {
   irisCoreEventStreamUrl,
@@ -14,13 +11,20 @@ import {
   getIrisCoreEvents,
   getIrisCoreAgentForProfile,
   getIrisCoreLatestEventCursor,
-  sendIrisCoreMessage,
   updateIrisCoreSessionReadState,
   type IrisCoreEvent,
   type CoreMetadata,
 } from "../../lib/irisCore";
 import { irisCoreSessionToHermes } from "../../lib/irisCoreMappings";
 import { resolveCoreApiUrl, runtimeDataRouteKey } from "../../app/runtimeConfig";
+import {
+  sessionDetailQueryOptions,
+  sessionKeys,
+  sessionsQueryOptions,
+  useDeleteSessionMutation,
+  useRenameSessionMutation,
+  useSendMessageMutation,
+} from "../../lib/query";
 import type {
   HermesSession,
   HermesInboxMessage,
@@ -143,12 +147,20 @@ export const STREAM_SAFETY_TIMEOUT_MS = 60_000;
 const STREAM_SAFETY_CHECK_INTERVAL_MS = 5_000;
 const STREAM_SAFETY_TIMEOUT_MESSAGE = "Iris stopped receiving stream updates before the response completed.";
 
+export function resolveDeliveryClientRequestId(clientRequestId: string, replyTo: string, replyToIsActive: boolean) {
+  return clientRequestId || (replyToIsActive ? replyTo : "");
+}
+
 export function useIrisChat({
   profile,
   runtimeConfig,
   isChatViewActive = true,
   onSessionMetadataResolved,
 }: UseIrisChatOptions) {
+  const queryClient = useQueryClient();
+  const renameSessionMutation = useRenameSessionMutation(runtimeConfig);
+  const deleteSessionMutation = useDeleteSessionMutation(runtimeConfig);
+  const sendMessageMutation = useSendMessageMutation(runtimeConfig);
   const [input, setInput] = useState("");
   const [messagesBySession, setMessagesBySession] = useState<Record<string, Message[]>>({});
   const [activeRequestIdsBySession, setActiveRequestIdsBySession] = useState<Record<string, string>>({});
@@ -221,6 +233,18 @@ export function useIrisChat({
   sessionChatIdsBySessionRef.current = sessionChatIdsBySession;
   sessionsByProfileRef.current = sessionsByProfile;
   requestKeyRef.current = requestKey;
+
+  function patchSessionsQuery(profileName: string, updater: (sessions: HermesSession[]) => HermesSession[]) {
+    queryClient.setQueryData<{ sessions: HermesSession[] }>(
+      sessionKeys.list(routeKey, profileName),
+      (current) => current ? { ...current, sessions: updater(current.sessions || []) } : current,
+    );
+  }
+
+  function invalidateSessionQueries(profileName = profile, sessionId = "") {
+    queryClient.invalidateQueries({ queryKey: sessionKeys.list(routeKey, profileName) });
+    if (sessionId) queryClient.invalidateQueries({ queryKey: sessionKeys.detail(routeKey, sessionId) });
+  }
 
   useEffect(() => {
     if (!isChatViewActive || !selectedSessionId) return;
@@ -492,6 +516,9 @@ export function useIrisChat({
             localSession,
           ),
         );
+        patchSessionsQuery(profile, (current) =>
+          upsertSessionForProfile({ [profile]: removeSessionForProfile({ [profile]: current }, profile, linkedFromSessionId)[profile] || [] }, profile, localSession)[profile] || [],
+        );
         setSessionsLoadedByProfile((current) => ({ ...current, [profile]: true }));
         setHistoryErrorsByProfile((current) => ({ ...current, [profile]: null }));
       }
@@ -501,18 +528,16 @@ export function useIrisChat({
       if (gatewayChatId) coreMetadata.chatId = gatewayChatId;
       if (projectId) coreMetadata.projectId = projectId;
       if (switchSelection) coreMetadata.modelSwitch = switchSelection;
-      const result = await sendIrisCoreMessage(
+      const result = await sendMessageMutation.mutateAsync({
         sessionId,
-        {
+        payload: {
           text: displayedPrompt,
           attachments: attachmentRefs,
           model: modelSelection || null,
           clientMessageId: userMessage.id,
           metadata: coreMetadata,
         },
-        runtimeConfig,
-      );
-      if (!result.ok) throw new Error(result.error || "Iris Core did not accept the message.");
+      });
       const canonicalSessionId = result.canonicalSessionId || result.session?.id || result.sessionId || sessionId;
       const acceptedChatId = result.session?.externalChatId ||
         ("runtime" in result ? runtimeChatId(result.runtime) : "") ||
@@ -524,6 +549,12 @@ export function useIrisChat({
             ? removeSessionForProfile(current, profile, sessionId)
             : current;
           return upsertSessionForProfile(withoutPrevious, profile, acceptedSession);
+        });
+        patchSessionsQuery(profile, (current) => {
+          const withoutPrevious = canonicalSessionId !== sessionId
+            ? removeSessionForProfile({ [profile]: current }, profile, sessionId)[profile] || []
+            : current;
+          return upsertSessionForProfile({ [profile]: withoutPrevious }, profile, acceptedSession)[profile] || [];
         });
       }
       if (canonicalSessionId !== sessionId) {
@@ -576,6 +607,7 @@ export function useIrisChat({
       window.setTimeout(() => {
         void pollCoreEvents();
         void refreshSessions({ profileName: profile, silent: true });
+        invalidateSessionQueries(profile, canonicalSessionId);
         refreshSessionDetailSoon(canonicalSessionId, profile, acceptedChatId || gatewayChatId);
       }, 1200);
       return true;
@@ -625,7 +657,7 @@ export function useIrisChat({
       setSessionsLoadingByProfile((current) => ({ ...current, [targetProfile]: true }));
     }
     try {
-      const result = await getIrisSessions(targetProfile, 80, runtimeConfig);
+      const result = await queryClient.fetchQuery(sessionsQueryOptions(runtimeConfig, targetProfile, 80));
       if (!isCurrentRequest(activeRequestKey)) return;
       if (targetProfile === profile) {
         setHistorySource(result.source || null);
@@ -799,12 +831,18 @@ export function useIrisChat({
   async function renameSession(profileName: string, sessionId: string, title: string) {
     const cleanTitle = title.trim();
     if (!cleanTitle) return "Enter a session name.";
-    const result = await renameIrisSession(profileName, sessionId, cleanTitle, runtimeConfig);
-    if (!result.ok || !result.session) {
-      return result.error || "Could not rename this session.";
+    let result: Awaited<ReturnType<typeof renameSessionMutation.mutateAsync>>;
+    try {
+      result = await renameSessionMutation.mutateAsync({ profile: profileName, sessionId, title: cleanTitle });
+    } catch (error) {
+      return error instanceof Error ? error.message : "Could not rename this session.";
     }
+    if (!result.session) return "Could not rename this session.";
     setSessionsByProfile((current) =>
       upsertSessionForProfile(current, profileName, result.session),
+    );
+    patchSessionsQuery(profileName, (current) =>
+      upsertSessionForProfile({ [profileName]: current }, profileName, result.session)[profileName] || [],
     );
     setHistoryErrorsByProfile((current) => ({ ...current, [profileName]: null }));
     return "Session renamed.";
@@ -815,9 +853,10 @@ export function useIrisChat({
     if (activeRequestIdsBySessionRef.current[sessionId]) {
       return "Wait for the active response to finish before deleting this session.";
     }
-    const result = await deleteIrisSession(profileName, sessionId, runtimeConfig);
-    if (!result.ok) {
-      return result.error || "Could not delete this session.";
+    try {
+      await deleteSessionMutation.mutateAsync({ profile: profileName, sessionId });
+    } catch (error) {
+      return error instanceof Error ? error.message : "Could not delete this session.";
     }
     const chatId = latestChatIdForSession(sessionId, profileName);
     const relatedSessionIds = sessionIdsForChatId(
@@ -828,6 +867,9 @@ export function useIrisChat({
     const idsToRemove = [sessionId, ...relatedSessionIds];
     setSessionsByProfile((current) =>
       removeSessionsForProfile(current, profileName, idsToRemove),
+    );
+    patchSessionsQuery(profileName, (current) =>
+      removeSessionsForProfile({ [profileName]: current }, profileName, idsToRemove)[profileName] || [],
     );
     setMessagesBySession((current) => removeSessionValues(current, ...idsToRemove));
     setSessionChatIdsBySession((current) => removeSessionValues(current, ...idsToRemove));
@@ -870,7 +912,7 @@ export function useIrisChat({
       setSessionsLoadingByProfile((current) => ({ ...current, [profileName]: true }));
     }
     try {
-      const result = await getIrisSessionDetail(profileName, sessionId, runtimeConfig);
+      const result = await queryClient.fetchQuery(sessionDetailQueryOptions(runtimeConfig, profileName, sessionId));
       if (!isCurrentRequest(activeRequestKey)) return false;
       if (profileName === profile) {
         setHistorySource(result.source || null);
@@ -1241,10 +1283,15 @@ export function useIrisChat({
         stringMetadata(delivery.metadata, "stream_message_id");
       const clientRequestId = stringMetadata(delivery.metadata, "clientRequestId") ||
         stringMetadata(delivery.metadata, "client_request_id");
-      if (clientRequestId) {
+      const deliveryClientRequestId = resolveDeliveryClientRequestId(
+        clientRequestId,
+        replyTo,
+        Boolean(replyTo && sessionIdForActiveRequest(replyTo)),
+      );
+      if (deliveryClientRequestId) {
         activeRequestTouchedAtRef.current = {
           ...activeRequestTouchedAtRef.current,
-          [clientRequestId]: Date.now(),
+          [deliveryClientRequestId]: Date.now(),
         };
       }
       const isErrorDelivery = stringMetadata(delivery.metadata, "eventType") === "message.assistant.error" ||
@@ -1253,7 +1300,7 @@ export function useIrisChat({
       const isStreamDelivery = Boolean(streamMessageId);
       const isFinalStreamDelivery = isStreamDelivery && streamDeliveryFinalized(delivery.metadata);
       const sessionId =
-        sessionIdForActiveRequest(clientRequestId) ||
+        sessionIdForActiveRequest(deliveryClientRequestId) ||
         (delivery.source === "hermes-cron" ? "" : sessionIdForActiveRequest(replyTo)) ||
         sessionIdForChatId(delivery.chatId);
       if (!sessionId) {
@@ -1276,7 +1323,12 @@ export function useIrisChat({
         relatedSessionIds,
       );
       const completesActiveStream = !isStreamDelivery &&
-        deliveryCompletesActiveStream(existingBeforeMerge, delivery);
+        (
+          deliveryCompletesActiveStream(existingBeforeMerge, delivery) ||
+          Boolean(deliveryClientRequestId && existingBeforeMerge.some(
+            (message) => message.role === "assistant" && message.clientRequestId === deliveryClientRequestId,
+          ))
+        );
 
       handledDelivery = true;
       processedInboxEventIdsRef.current.add(delivery.id);
@@ -1302,10 +1354,10 @@ export function useIrisChat({
           return current;
         }
         const nextMessages = isErrorDelivery
-          ? mergeErrorDelivery(existing, delivery, clientRequestId)
+          ? mergeErrorDelivery(existing, delivery, deliveryClientRequestId)
           : isStreamDelivery
-            ? mergeStreamDelivery(existing, delivery, streamMessageId, isFinalStreamDelivery, clientRequestId)
-            : mergeCompletedDelivery(existing, delivery, replyTo, clientRequestId);
+            ? mergeStreamDelivery(existing, delivery, streamMessageId, isFinalStreamDelivery, deliveryClientRequestId)
+            : mergeCompletedDelivery(existing, delivery, replyTo, deliveryClientRequestId);
         postMergeMessages = nextMessages;
         return setSessionMessages(current, freshRelatedSessionIds, sessionId, nextMessages);
       });
@@ -1316,7 +1368,7 @@ export function useIrisChat({
         : true;
       const shouldClearActive =
         isErrorDelivery ||
-        (clientRequestId && (!isStreamDelivery || isFinalStreamDelivery)) ||
+        (deliveryClientRequestId && (!isStreamDelivery || isFinalStreamDelivery)) ||
         isFinalStreamDelivery ||
         completesActiveStream ||
         (postMergeMessages !== null && !sessionStillStreaming);
@@ -1343,6 +1395,7 @@ export function useIrisChat({
         if (shouldApplyDeliveryReadState(delivery, eventConsumerStartedAtRef.current)) {
           markDeliveredSessionReadState(relatedSessionIds, delivery.cursor);
         }
+        invalidateSessionQueries(profile, sessionId);
         refreshSessionDetailSoon(sessionId, profile, delivery.chatId);
         scheduleSessionTitleResolveSoon(sessionId, delivery.chatId);
       } else {

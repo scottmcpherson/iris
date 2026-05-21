@@ -1,6 +1,7 @@
 import type { HermesProfile, HermesStatus } from "../types/hermes";
 
 export type RuntimeReadiness =
+  | "checking"
   | "offline"
   | "core-only"
   | "gateway-stopped"
@@ -13,6 +14,7 @@ export function runtimeReadinessForStatus(
   status: HermesStatus | null,
   selectedProfile?: HermesProfile | null,
 ): RuntimeReadiness {
+  if (!status) return "checking";
   if (!status?.connected) return "offline";
   if (!runtimeGatewayIsReachable(status, selectedProfile)) return "gateway-stopped";
   if (!status.activeApiStatus?.ok) return "adapter-unavailable";
@@ -48,6 +50,7 @@ export function runtimeReadinessTone(readiness: RuntimeReadiness): RuntimeReadin
 }
 
 export function runtimeReadinessShortLabel(readiness: RuntimeReadiness) {
+  if (readiness === "checking") return "Connecting";
   if (readiness === "offline") return "Offline";
   if (readiness === "gateway-stopped") return "Gateway stopped";
   if (readiness === "adapter-unavailable") return "Adapter unavailable";
@@ -56,6 +59,7 @@ export function runtimeReadinessShortLabel(readiness: RuntimeReadiness) {
 }
 
 export function runtimeReadinessLabel(readiness: RuntimeReadiness, profileName = "default") {
+  if (readiness === "checking") return "Checking Core connection";
   if (readiness === "offline") return "Core offline";
   if (readiness === "gateway-stopped") return `${profileName} gateway stopped`;
   if (readiness === "adapter-unavailable") return `${profileName} adapter unavailable`;
@@ -64,6 +68,7 @@ export function runtimeReadinessLabel(readiness: RuntimeReadiness, profileName =
 }
 
 export function runtimeReadinessDetail(readiness: RuntimeReadiness, profileName = "default", connectionMode = "") {
+  if (readiness === "checking") return "";
   if (readiness === "offline" && connectionMode === "ssh") {
     return "Remote Core is offline. Start Iris Core on that host, then retry.";
   }
@@ -81,7 +86,7 @@ export function runtimeReadinessGatewayAction(readiness: RuntimeReadiness): "sta
 }
 
 function activeApiStatusBelongsToProfile(status: HermesStatus, profile: HermesProfile) {
-  const endpointProfile = status.activeApiStatus?.profile || status.activeApiStatus?.requestedProfile;
+  const endpointProfile = status.activeApiStatus?.requestedProfile || status.activeApiStatus?.profile;
   if (endpointProfile) return endpointProfile === profile.name;
   return status.activeProfile?.name === profile.name;
 }

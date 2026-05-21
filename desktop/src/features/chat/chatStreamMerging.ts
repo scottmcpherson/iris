@@ -31,14 +31,17 @@ export function mergeStreamDelivery(
   const updateMessage = (message: Message): Message => {
     const streamEvents = streamEventsForUpdate(message, liveToolEvents, finalized);
     const replacingPlaceholder = !message.streamMessageId;
+    const nextContent = replacingPlaceholder || operation === "replace"
+      ? messageContent
+      : finalized
+        ? completedContentForStream(message.content, messageContent, operation)
+        : appendDeltaContent(message.content, messageContent);
     return {
       ...message,
       id: streamMessageId,
       streamMessageId,
       ...(clientRequestId ? { clientRequestId } : {}),
-      content: replacingPlaceholder || operation === "replace"
-        ? messageContent
-        : appendDeltaContent(message.content, messageContent),
+      content: nextContent,
       attachments: replacingPlaceholder
         ? (deliveryAttachments.length ? deliveryAttachments : undefined)
         : mergeMessageAttachments(message.attachments, deliveryAttachments),
@@ -174,15 +177,23 @@ function completedStreamingMessage(
   }
   const streamEvents = completedStreamEvents(message);
   const operation = chunkOperation(delivery.metadata);
+  const content = completedContentForStream(message.content, deliveryContent, operation);
   return {
     ...message,
-    content: operation === "replace"
-      ? deliveryContent
-      : appendDeltaContent(message.content, deliveryContent),
+    content,
     attachments: mergeMessageAttachments(message.attachments, deliveryAttachments),
     streaming: false,
     ...(streamEvents?.length ? { streamEvents } : {}),
   };
+}
+
+function completedContentForStream(currentContent: string, deliveryContent: string, operation: "append" | "replace") {
+  if (operation === "replace") return deliveryContent;
+  const current = currentContent.trim();
+  if (current && deliveryContent.trimStart().startsWith(current)) {
+    return deliveryContent;
+  }
+  return appendDeltaContent(currentContent, deliveryContent);
 }
 
 function streamEventsForUpdate(message: Message, liveToolEvents: ReturnType<typeof streamToolEventsFromMetadata>, finalized: boolean) {

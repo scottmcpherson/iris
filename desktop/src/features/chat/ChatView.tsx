@@ -193,6 +193,7 @@ export function ChatView({
   const runtimeReady = runtimeReadiness === "ready";
   const runtimeGatewayAction = runtimeReadinessGatewayAction(runtimeReadiness);
   const runtimeNotice = runtimeReadinessDetail(runtimeReadiness, profile, runtimeConfig.connectionMode);
+  const showRuntimeNotice = shouldShowRuntimeNotice(runtimeReady, runtimeNotice);
   const runtimeGatewayActionLabel = gatewayActionLabel(runtimeGatewayAction, gatewayActionBusy, gatewayActionBusyAction);
   const dictation = useVoiceDictation({
     onRecordingComplete: sendVoiceRecording,
@@ -213,15 +214,13 @@ export function ChatView({
   );
   const modelSelectionLocked = shouldLockComposerModelSelection(composerBusy);
   const modelOptionsAvailable = Boolean(modelCatalog?.providers?.some((provider) => provider.models.length));
-  const modelSelectionDisabled = modelSelectionLocked || dictationBusy || !connected || !runtimeReady || modelLoading || !modelOptionsAvailable;
+  const modelSelectionDisabled = modelSelectionLocked || dictationBusy || !connected || (!modelOptionsAvailable && !displayedModelSelection);
   const modelSelectorTitle = modelSelectionLocked
     ? "Model is locked while this request is active"
     : modelLoading
       ? "Models are loading"
       : !connected
         ? "Connect Iris to select a model"
-        : !runtimeReady
-          ? runtimeNotice || "Runtime is not ready"
         : !modelOptionsAvailable
           ? "No model catalog available"
           : "Change model";
@@ -706,7 +705,7 @@ export function ChatView({
           }}
         />
         <div className="composer-input-wrap">
-          {!runtimeReady ? (
+          {showRuntimeNotice ? (
             <StatusBanner
               tone="degraded"
               icon={AlertCircle}
@@ -1116,6 +1115,10 @@ function gatewayActionLabel(
 
 export function shouldShowVisibleDictationStatus(state: DictationState) {
   return state.status === "error";
+}
+
+export function shouldShowRuntimeNotice(runtimeReady: boolean, runtimeNotice: string) {
+  return Boolean(runtimeNotice) && !runtimeReady;
 }
 
 export function composerModelSelection(

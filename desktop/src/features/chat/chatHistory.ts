@@ -13,6 +13,7 @@ import {
 export function toAppMessages(messages: HermesSessionMessage[]): Message[] {
   const normalized: Message[] = [];
   let pendingToolEvents: HermesStreamToolEvent[] = [];
+  let currentTurnClientRequestId = "";
 
   for (const message of messages) {
     if (isHiddenSessionMessage(message)) {
@@ -35,9 +36,14 @@ export function toAppMessages(messages: HermesSessionMessage[]): Message[] {
       continue;
     }
 
-    const appMessage = toAppMessage(message);
+    let appMessage = toAppMessage(message);
     if (appMessage.role === "assistant" && !appMessage.content.trim() && !appMessage.attachments?.length) {
       continue;
+    }
+    if (appMessage.role === "user") {
+      currentTurnClientRequestId = appMessage.clientRequestId || "";
+    } else if (appMessage.role === "assistant" && !appMessage.clientRequestId && currentTurnClientRequestId) {
+      appMessage = { ...appMessage, clientRequestId: currentTurnClientRequestId };
     }
 
     if (appMessage.role === "assistant" && pendingToolEvents.length) {
@@ -95,12 +101,16 @@ function toAppMessage(message: HermesSessionMessage): Message {
 function clientRequestIdFromHistoryMessage(message: HermesSessionMessage) {
   const metadata = message.metadata || {};
   if (message.role === "user") {
-    return stringMetadata(metadata, "clientMessageId") ||
+    return stringMetadata(metadata, "clientRequestId") ||
+      stringMetadata(metadata, "client_request_id") ||
+      stringMetadata(metadata, "clientMessageId") ||
       stringMetadata(metadata, "client_message_id");
   }
   if (message.role === "assistant") {
     return stringMetadata(metadata, "replyTo") ||
       stringMetadata(metadata, "reply_to") ||
+      stringMetadata(metadata, "clientRequestId") ||
+      stringMetadata(metadata, "client_request_id") ||
       stringMetadata(metadata, "clientMessageId") ||
       stringMetadata(metadata, "client_message_id");
   }

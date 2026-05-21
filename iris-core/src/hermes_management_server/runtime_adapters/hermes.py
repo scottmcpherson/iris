@@ -565,7 +565,7 @@ class HermesRuntimeAdapter:
     ) -> dict[str, Any]:
         adapter_url = self.iris_gateway_url(profile)
         if not self.token and not url_is_loopback(adapter_url):
-            return {"ok": False, "error": f"IRIS_TOKEN is required for non-loopback Iris gateway chat at {adapter_url}."}
+            return {"ok": False, "error": f"Iris Desktop remote access uses SSH to a loopback Core. Configure the Hermes adapter with a loopback IRIS_BASE_URL on the Hermes host instead of {adapter_url}."}
         url = f"{adapter_url.rstrip('/')}/iris/messages"
         metadata_payload = metadata if isinstance(metadata, dict) else {}
         client_request_id = str(
@@ -635,7 +635,7 @@ class HermesRuntimeAdapter:
                 "current": None,
                 "providers": [],
                 "generatedAt": int(time.time()),
-                "error": f"IRIS_TOKEN is required for non-loopback Iris gateway model catalog discovery at {adapter_url}.",
+                "error": f"Iris Desktop remote access uses SSH to a loopback Core. Configure the Hermes adapter with a loopback IRIS_BASE_URL on the Hermes host instead of {adapter_url}.",
             }
         query = urllib.parse.urlencode({"maxModels": max(1, min(int(max_models), 200))})
         url = f"{adapter_url.rstrip('/')}/iris/models?{query}"
@@ -649,7 +649,7 @@ class HermesRuntimeAdapter:
                 "profile": profile,
                 "commands": [],
                 "generatedAt": int(time.time()),
-                "error": f"IRIS_TOKEN is required for non-loopback Iris gateway slash command discovery at {adapter_url}.",
+                "error": f"Iris Desktop remote access uses SSH to a loopback Core. Configure the Hermes adapter with a loopback IRIS_BASE_URL on the Hermes host instead of {adapter_url}.",
             }
         url = f"{adapter_url.rstrip('/')}/iris/slash-commands"
         return adapter_catalog_request(url, self.token, profile, fallback_key="commands")
@@ -661,7 +661,7 @@ class HermesRuntimeAdapter:
                 "ok": False,
                 "items": [],
                 "replaceFrom": 0,
-                "error": f"IRIS_TOKEN is required for non-loopback Iris gateway slash command completion at {adapter_url}.",
+                "error": f"Iris Desktop remote access uses SSH to a loopback Core. Configure the Hermes adapter with a loopback IRIS_BASE_URL on the Hermes host instead of {adapter_url}.",
             }
         url = f"{adapter_url.rstrip('/')}/iris/slash-complete"
         result = http_json(url, method="POST", token=self.token, body={"text": text, "limit": limit})

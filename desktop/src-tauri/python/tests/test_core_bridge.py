@@ -17,76 +17,8 @@ core_bridge = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(core_bridge)
 
 
-def restore_env(values: dict[str, str | None]) -> None:
-    for key, value in values.items():
-        if value is None:
-            os.environ.pop(key, None)
-        else:
-            os.environ[key] = value
-
-
 class IrisBridgeTests(unittest.TestCase):
-    def test_remote_credentials_use_profile_scoped_core_test_store(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            old_value = os.environ.get("IRIS_DESKTOP_SECRET_TEST_DIR")
-            os.environ["IRIS_DESKTOP_SECRET_TEST_DIR"] = directory
-            try:
-                saved = core_bridge.remote_credential_save({"kind": "core", "connectionId": "profile_1", "token": "secret-token"})
-                self.assertTrue(saved["ok"])
-                self.assertEqual(saved["kind"], "core")
-                self.assertEqual(saved["connectionId"], "profile_1")
-                self.assertEqual(saved["source"], "test-file")
-                self.assertEqual(core_bridge.test_credential_path("core", connection_id="profile_1").name, "iris-core-token:profile_1")
-
-                status = core_bridge.remote_credential_status({"kind": "core", "connectionId": "profile_1"})
-                self.assertTrue(status["exists"])
-                self.assertEqual(status["kind"], "core")
-                self.assertEqual(core_bridge.read_remote_token("core", connection_id="profile_1"), "secret-token")
-                self.assertEqual(core_bridge.read_remote_token("core", connection_id="profile_2"), "")
-
-                deleted = core_bridge.remote_credential_delete({"kind": "core", "connectionId": "profile_1"})
-                self.assertTrue(deleted["ok"])
-                self.assertFalse(core_bridge.remote_credential_status({"kind": "core", "connectionId": "profile_1"})["exists"])
-            finally:
-                if old_value is None:
-                    os.environ.pop("IRIS_DESKTOP_SECRET_TEST_DIR", None)
-                else:
-                    os.environ["IRIS_DESKTOP_SECRET_TEST_DIR"] = old_value
-
-    def test_read_env_token_uses_iris_token(self) -> None:
-        removed_token_name = "AGENT" + "UI_TOKEN"
-        removed_core_token_name = "IRIS_" + "CORE_TOKEN"
-        old_values = {
-            "IRIS_TOKEN": os.environ.get("IRIS_TOKEN"),
-            removed_core_token_name: os.environ.get(removed_core_token_name),
-            removed_token_name: os.environ.get(removed_token_name),
-        }
-        os.environ["IRIS_TOKEN"] = "iris-env-token"
-        os.environ[removed_core_token_name] = "legacy-core-token"
-        os.environ[removed_token_name] = "legacy-agent-token"
-        try:
-            self.assertEqual(core_bridge.read_env_token("core"), "iris-env-token")
-            self.assertEqual(core_bridge.read_remote_token("core"), "iris-env-token")
-        finally:
-            restore_env(old_values)
-
-    def test_read_env_token_ignores_legacy_token_names(self) -> None:
-        removed_token_name = "AGENT" + "UI_TOKEN"
-        removed_core_token_name = "IRIS_" + "CORE_TOKEN"
-        old_values = {
-            "IRIS_TOKEN": os.environ.get("IRIS_TOKEN"),
-            removed_core_token_name: os.environ.get(removed_core_token_name),
-            removed_token_name: os.environ.get(removed_token_name),
-        }
-        os.environ.pop("IRIS_TOKEN", None)
-        os.environ[removed_core_token_name] = "legacy-core-token"
-        os.environ[removed_token_name] = "legacy-agent-token"
-        try:
-            self.assertEqual(core_bridge.read_env_token("core"), "")
-        finally:
-            restore_env(old_values)
-
-    def test_core_request_uses_core_url_and_token(self) -> None:
+    def test_core_request_uses_selected_core_url_without_token_injection(self) -> None:
         seen: dict[str, str] = {}
 
         class Handler(BaseHTTPRequestHandler):
@@ -105,40 +37,32 @@ class IrisBridgeTests(unittest.TestCase):
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
 
-        with tempfile.TemporaryDirectory() as directory:
-            old_value = os.environ.get("IRIS_DESKTOP_SECRET_TEST_DIR")
-            os.environ["IRIS_DESKTOP_SECRET_TEST_DIR"] = directory
-            try:
-                core_bridge.remote_credential_save({"kind": "core", "connectionId": "manual_test", "token": "core-token"})
-                result = core_bridge.core_request(
-                    {
-                        "method": "GET",
-                        "path": "/health",
-                        "connectionId": "manual_test",
-                        "runtime": {
-                            "activeConnectionId": "manual_test",
-                            "coreConnections": [
-                                {
-                                    "id": "manual_test",
-                                    "mode": "manual-url",
-                                    "effectiveCoreApiUrl": f"http://127.0.0.1:{server.server_port}",
-                                }
-                            ],
-                        },
-                    }
-                )
-            finally:
-                server.shutdown()
-                server.server_close()
-                if old_value is None:
-                    os.environ.pop("IRIS_DESKTOP_SECRET_TEST_DIR", None)
-                else:
-                    os.environ["IRIS_DESKTOP_SECRET_TEST_DIR"] = old_value
+        try:
+            result = core_bridge.core_request(
+                {
+                    "method": "GET",
+                    "path": "/health",
+                    "connectionId": "ssh_test",
+                    "runtime": {
+                        "activeConnectionId": "ssh_test",
+                        "coreConnections": [
+                            {
+                                "id": "ssh_test",
+                                "mode": "ssh",
+                                "effectiveCoreApiUrl": f"http://127.0.0.1:{server.server_port}",
+                            }
+                        ],
+                    },
+                }
+            )
+        finally:
+            server.shutdown()
+            server.server_close()
 
         self.assertTrue(result["ok"], result)
         self.assertEqual(result["value"], 3)
         self.assertEqual(seen["path"], "/v1/health")
-        self.assertEqual(seen["authorization"], "Bearer core-token")
+        self.assertEqual(seen["authorization"], "")
 
     def test_core_request_supports_put(self) -> None:
         result = core_bridge.core_request({"method": "PUT", "path": ""})
@@ -150,7 +74,7 @@ class IrisBridgeTests(unittest.TestCase):
         self.assertTrue(core_bridge.should_transcode_audio_for_webview("audio/ogg", "voice.ogg"))
         self.assertFalse(core_bridge.should_transcode_audio_for_webview("audio/mp4", "voice.m4a"))
 
-    def test_core_attachment_data_returns_authenticated_data_url(self) -> None:
+    def test_core_attachment_data_returns_data_url_without_token_injection(self) -> None:
         seen: dict[str, str] = {}
 
         class Handler(BaseHTTPRequestHandler):
@@ -169,40 +93,32 @@ class IrisBridgeTests(unittest.TestCase):
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
 
-        with tempfile.TemporaryDirectory() as directory:
-            old_value = os.environ.get("IRIS_DESKTOP_SECRET_TEST_DIR")
-            os.environ["IRIS_DESKTOP_SECRET_TEST_DIR"] = directory
-            try:
-                core_bridge.remote_credential_save({"kind": "core", "connectionId": "manual_test", "token": "core-token"})
-                result = core_bridge.core_attachment_data(
-                    {
-                        "path": "/v1/attachments/att_1/content",
-                        "connectionId": "manual_test",
-                        "runtime": {
-                            "activeConnectionId": "manual_test",
-                            "coreConnections": [
-                                {
-                                    "id": "manual_test",
-                                    "mode": "manual-url",
-                                    "effectiveCoreApiUrl": f"http://127.0.0.1:{server.server_port}",
-                                }
-                            ],
-                        },
-                    }
-                )
-            finally:
-                server.shutdown()
-                server.server_close()
-                if old_value is None:
-                    os.environ.pop("IRIS_DESKTOP_SECRET_TEST_DIR", None)
-                else:
-                    os.environ["IRIS_DESKTOP_SECRET_TEST_DIR"] = old_value
+        try:
+            result = core_bridge.core_attachment_data(
+                {
+                    "path": "/v1/attachments/att_1/content",
+                    "connectionId": "ssh_test",
+                    "runtime": {
+                        "activeConnectionId": "ssh_test",
+                        "coreConnections": [
+                            {
+                                "id": "ssh_test",
+                                "mode": "ssh",
+                                "effectiveCoreApiUrl": f"http://127.0.0.1:{server.server_port}",
+                            }
+                        ],
+                    },
+                }
+            )
+        finally:
+            server.shutdown()
+            server.server_close()
 
         self.assertTrue(result["ok"], result)
         self.assertEqual(result["mimeType"], "audio/mp4")
         self.assertEqual(result["dataUrl"], "data:audio/mp4;base64,YXVkaW8tYnl0ZXM=")
         self.assertEqual(seen["path"], "/v1/attachments/att_1/content")
-        self.assertEqual(seen["authorization"], "Bearer core-token")
+        self.assertEqual(seen["authorization"], "")
 
     def test_core_upload_path_uses_configured_size_limit(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

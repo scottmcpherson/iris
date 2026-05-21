@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { isTauri } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import {
@@ -13,14 +14,24 @@ import {
   cloneIrisAgent,
   createIrisAgent,
   deleteIrisAgent,
-  getIrisMemory,
-  getIrisSkills,
   getIrisStatus,
   renameIrisAgent,
-  resetIrisMemoryFile,
-  saveIrisMemoryFile,
   switchIrisAgent,
 } from "../../lib/irisRuntime";
+import {
+  agentKeys,
+  ensureOk,
+  memoryKeys,
+  memoryQueryOptions,
+  runtimeRouteQueryKey,
+  sessionKeys,
+  skillKeys,
+  skillsQueryOptions,
+  statusKeys,
+  statusQueryOptions,
+  useResetMemoryMutation,
+  useSaveMemoryMutation,
+} from "../../lib/query";
 import {
   controlIrisCoreGateway,
   getIrisCoreAgentForProfile,
@@ -45,7 +56,50 @@ export function useIrisRuntime() {
   const [runtimeConfig, setRuntimeConfig] = useState<HermesRuntimeConfig>(() => loadRuntimeConfig());
   const selectedProfileRef = useRef(selectedProfile);
   const runtimeConfigRef = useRef(runtimeConfig);
-  const statusPollRef = useRef(false);
+  const queryClient = useQueryClient();
+  const saveMemoryMutation = useSaveMemoryMutation(runtimeConfig);
+  const resetMemoryMutation = useResetMemoryMutation(runtimeConfig);
+  const statusQuery = useQuery({
+    ...statusQueryOptions(runtimeConfig, selectedProfile),
+    queryFn: () => loadStatusWithPreparedRuntime(selectedProfile, runtimeConfig, { selectProfile: true }),
+    refetchInterval: () => document.visibilityState === "hidden" ? false : 5_000,
+  });
+  const memoryQuery = useQuery({
+    ...memoryQueryOptions(runtimeConfig, selectedProfile),
+    enabled: Boolean(status?.connected && selectedProfile),
+  });
+  const skillsQuery = useQuery({
+    ...skillsQueryOptions(runtimeConfig, selectedProfile),
+    enabled: Boolean(status?.connected && selectedProfile),
+  });
+  const profileActionMutation = useMutation({
+    mutationFn: async ({
+      action,
+      target,
+      source,
+    }: {
+      action: ProfileAction;
+      target: string;
+      source: string;
+    }) =>
+      action === "create"
+        ? createIrisAgent(target, runtimeConfigRef.current)
+        : action === "clone"
+          ? cloneIrisAgent(source, target, runtimeConfigRef.current)
+          : action === "rename"
+            ? renameIrisAgent(source, target, runtimeConfigRef.current)
+            : action === "delete"
+              ? deleteIrisAgent(source, runtimeConfigRef.current)
+              : switchIrisAgent(target, runtimeConfigRef.current),
+    onSuccess: () => {
+      const activeRouteKey = runtimeRouteQueryKey(runtimeConfigRef.current);
+      queryClient.invalidateQueries({ queryKey: agentKeys.all(activeRouteKey) });
+      queryClient.invalidateQueries({ queryKey: statusKeys.all(activeRouteKey) });
+      queryClient.invalidateQueries({ queryKey: memoryKeys.all(activeRouteKey) });
+      queryClient.invalidateQueries({ queryKey: sessionKeys.all(activeRouteKey) });
+      queryClient.invalidateQueries({ queryKey: skillKeys.all(activeRouteKey) });
+    },
+  });
 
   function setCurrentProfile(profile: string) {
     selectedProfileRef.current = profile;
@@ -55,6 +109,28 @@ export function useIrisRuntime() {
   function setCurrentRuntimeConfig(config: HermesRuntimeConfig) {
     runtimeConfigRef.current = config;
     setRuntimeConfig(config);
+  }
+
+  async function prepareRuntimeConfig(config: HermesRuntimeConfig) {
+    const activeConfig = await ensureActiveSshTunnel(config);
+    if (activeConfig !== config) {
+      setCurrentRuntimeConfig(activeConfig);
+      saveRuntimeConfig(activeConfig);
+    }
+    return activeConfig;
+  }
+
+  async function loadStatusWithPreparedRuntime(
+    profileName: string,
+    config: HermesRuntimeConfig,
+    options: { selectProfile?: boolean } = {},
+  ) {
+    const activeConfig = await prepareRuntimeConfig(config);
+    const nextStatus = await ensureOk(getIrisStatus(activeConfig, profileName), "Iris status failed.");
+    const profile = profileName || nextStatus.activeProfile?.name || "default";
+    setStatus(nextStatus);
+    if (options.selectProfile !== false) setCurrentProfile(profile);
+    return nextStatus;
   }
 
   async function refreshIris(
@@ -67,47 +143,24 @@ export function useIrisRuntime() {
     const selectRefreshedProfile = options.selectProfile !== false;
     const loadProfileData = options.loadProfileData ?? selectRefreshedProfile;
     try {
-      activeConfig = await ensureActiveSshTunnel(config);
-      if (activeConfig !== config) {
-        setCurrentRuntimeConfig(activeConfig);
-        saveRuntimeConfig(activeConfig);
-      }
+      activeConfig = await prepareRuntimeConfig(config);
 
-      const nextStatus = await getIrisStatus(activeConfig, profileName);
-      if (!nextStatus.ok) throw new Error(nextStatus.error || "Iris status failed.");
+      const nextStatus = await queryClient.fetchQuery(statusQueryOptions(activeConfig, profileName));
       const profile = profileName || nextStatus.activeProfile?.name || "default";
       setStatus(nextStatus);
       if (selectRefreshedProfile) setCurrentProfile(profile);
 
       if (!loadProfileData) return nextStatus;
-      const [nextMemory, nextSkills] = await Promise.all([
-        getIrisMemory(profile, activeConfig),
-        getIrisSkills(profile, activeConfig),
+      const [nextMemory, nextSkills] = await Promise.allSettled([
+        queryClient.fetchQuery(memoryQueryOptions(activeConfig, profile)),
+        queryClient.fetchQuery(skillsQueryOptions(activeConfig, profile)),
       ]);
-      if (nextMemory.ok) setMemory(nextMemory);
-      if (nextSkills.ok) setSkills(nextSkills.skills);
+      if (nextMemory.status === "fulfilled") setMemory(nextMemory.value);
+      if (nextSkills.status === "fulfilled") setSkills(nextSkills.value.skills);
       else setSkills([]);
       return nextStatus;
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Could not reach the Tauri bridge.";
-      const offlineStatus: HermesStatus = {
-        ok: false,
-        connected: false,
-        root: "",
-        hermesPath: null,
-        hermesPathSource: null,
-        hermesPathCandidates: [],
-        version: null,
-        checkedAt: Math.floor(Date.now() / 1000),
-        connectionMode: activeConfig.connectionMode,
-        activeConnectionId: activeConfig.activeConnectionId,
-        activeConnectionName: activeCoreConnection(activeConfig).name,
-        coreApiUrl: resolveCoreApiUrl(activeConfig),
-        activeApiUrl: "",
-        error: message,
-        activeProfile: offlineProfile,
-        profiles: [offlineProfile],
-      };
+      const offlineStatus = offlineStatusForError(error, activeConfig);
       setStatus(offlineStatus);
       if (selectRefreshedProfile) {
         setCurrentProfile("default");
@@ -135,17 +188,11 @@ export function useIrisRuntime() {
     const source = sourceProfile || selectedProfileRef.current || "default";
     if (!target && !["delete", "switch"].includes(action)) return "Enter an agent name first.";
     const current = selectedProfileRef.current || "default";
-    const config = runtimeConfigRef.current;
-    const result =
-      action === "create"
-        ? await createIrisAgent(target, config)
-        : action === "clone"
-          ? await cloneIrisAgent(source, target, config)
-          : action === "rename"
-            ? await renameIrisAgent(source, target, config)
-            : action === "delete"
-              ? await deleteIrisAgent(source, config)
-              : await switchIrisAgent(target || current, config);
+    const result = await profileActionMutation.mutateAsync({
+      action,
+      target: action === "switch" ? target || current : target,
+      source,
+    });
 
     if (!result.ok) return result.error || "Agent operation failed.";
     const nextProfile = action === "delete"
@@ -165,37 +212,41 @@ export function useIrisRuntime() {
     profileName = selectedProfileRef.current,
   ) {
     const profile = profileName || selectedProfileRef.current || "default";
-    const result = await saveIrisMemoryFile({
-      profile,
-      file,
-      content,
-      expectedUpdatedAt,
-      runtime: runtimeConfigRef.current,
-    });
-    if (!result.ok) return result.error || "Memory save failed.";
-    setMemory(result.memory);
-    await refreshIris(profile, runtimeConfigRef.current, {
-      loadProfileData: true,
-      selectProfile: profile === selectedProfileRef.current,
-    });
-    return "Memory saved.";
+    try {
+      const result = await saveMemoryMutation.mutateAsync({
+        profile,
+        file,
+        content,
+        expectedUpdatedAt,
+      });
+      setMemory(result.memory);
+      await refreshIris(profile, runtimeConfigRef.current, {
+        loadProfileData: true,
+        selectProfile: profile === selectedProfileRef.current,
+      });
+      return "Memory saved.";
+    } catch (error) {
+      return error instanceof Error ? error.message : "Memory save failed.";
+    }
   }
 
   async function resetMemoryFile(file: "memory" | "user" | "all", confirm: string, profileName = selectedProfileRef.current) {
     const profile = profileName || selectedProfileRef.current || "default";
-    const result = await resetIrisMemoryFile({
-      profile,
-      file,
-      confirm,
-      runtime: runtimeConfigRef.current,
-    });
-    if (!result.ok) return result.error || "Memory reset failed.";
-    setMemory(result.memory);
-    await refreshIris(profile, runtimeConfigRef.current, {
-      loadProfileData: true,
-      selectProfile: profile === selectedProfileRef.current,
-    });
-    return "Memory reset completed.";
+    try {
+      const result = await resetMemoryMutation.mutateAsync({
+        profile,
+        file,
+        confirm,
+      });
+      setMemory(result.memory);
+      await refreshIris(profile, runtimeConfigRef.current, {
+        loadProfileData: true,
+        selectProfile: profile === selectedProfileRef.current,
+      });
+      return "Memory reset completed.";
+    } catch (error) {
+      return error instanceof Error ? error.message : "Memory reset failed.";
+    }
   }
 
   async function runGatewayAction(action: IrisCoreGatewayAction, targetProfile?: string): Promise<IrisCoreGatewayControlResult> {
@@ -270,24 +321,28 @@ export function useIrisRuntime() {
   }
 
   useEffect(() => {
-    void refreshIris();
-  }, []);
+    if (!statusQuery.data) return;
+    setStatus(statusQuery.data);
+    const profile = selectedProfileRef.current || statusQuery.data.activeProfile?.name || "default";
+    if (!selectedProfileRef.current) setCurrentProfile(profile);
+  }, [statusQuery.data]);
 
   useEffect(() => {
-    const interval = window.setInterval(() => {
-      if (statusPollRef.current) return;
-      if (document.visibilityState === "hidden") return;
-      statusPollRef.current = true;
-      void refreshIris(selectedProfileRef.current, runtimeConfigRef.current, {
-        loadProfileData: false,
-        selectProfile: false,
-        silent: true,
-      }).finally(() => {
-        statusPollRef.current = false;
-      });
-    }, 5000);
-    return () => window.clearInterval(interval);
-  }, []);
+    if (!statusQuery.error) return;
+    const offlineStatus = offlineStatusForError(statusQuery.error, runtimeConfigRef.current);
+    setStatus(offlineStatus);
+    setCurrentProfile("default");
+    setSkills([]);
+  }, [statusQuery.error]);
+
+  useEffect(() => {
+    if (memoryQuery.data) setMemory(memoryQuery.data);
+  }, [memoryQuery.data]);
+
+  useEffect(() => {
+    if (skillsQuery.data) setSkills(skillsQuery.data.skills);
+    else if (skillsQuery.error) setSkills([]);
+  }, [skillsQuery.data, skillsQuery.error]);
 
   useEffect(() => {
     if (!isTauri()) return;
@@ -338,4 +393,26 @@ export function useIrisRuntime() {
 
 function sleep(ms: number) {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+function offlineStatusForError(error: unknown, config: HermesRuntimeConfig): HermesStatus {
+  const message = error instanceof Error ? error.message : "Could not reach the Tauri bridge.";
+  return {
+    ok: false,
+    connected: false,
+    root: "",
+    hermesPath: null,
+    hermesPathSource: null,
+    hermesPathCandidates: [],
+    version: null,
+    checkedAt: Math.floor(Date.now() / 1000),
+    connectionMode: config.connectionMode,
+    activeConnectionId: config.activeConnectionId,
+    activeConnectionName: activeCoreConnection(config).name,
+    coreApiUrl: resolveCoreApiUrl(config),
+    activeApiUrl: "",
+    error: message,
+    activeProfile: offlineProfile,
+    profiles: [offlineProfile],
+  };
 }

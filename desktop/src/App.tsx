@@ -51,6 +51,7 @@ import {
   viewForRouteIntent,
   type IrisRouteIntent,
 } from "./app/routing/routeIntent";
+import { shouldResetSelectionForNewChatRoute } from "./app/routing/routeState";
 import { useIrisNavigate } from "./app/routing/useIrisNavigate";
 
 type AppNotificationInput = {
@@ -78,6 +79,7 @@ function App() {
   const refreshWithNoticeRef = useRef<() => Promise<void>>(async () => {});
   const lastAgentRefreshProfileRef = useRef("");
   const previousSelectedSessionIdRef = useRef<string | null>(null);
+  const previousAppliedRouteUrlRef = useRef("");
   const warnedMissingProjectIdsRef = useRef<Set<string>>(new Set());
 
   const location = useLocation({
@@ -121,12 +123,14 @@ function App() {
 
     const canonicalUrl = routeIntentToUrl(routeIntent);
     const currentUrl = `${location.pathname}${location.searchStr}`;
+    const routeChanged = previousAppliedRouteUrlRef.current !== currentUrl;
     if (canonicalUrl !== currentUrl) {
       irisNavigate.openIntent(routeIntent, { replace: true });
       return;
     }
 
-    applyRouteIntent(routeIntent);
+    previousAppliedRouteUrlRef.current = currentUrl;
+    applyRouteIntent(routeIntent, { routeChanged });
   }, [
     location.pathname,
     location.searchStr,
@@ -239,7 +243,6 @@ function App() {
     profileSummary: chatProfileSummary,
     runtimeConfig: iris.runtimeConfig,
     connected: iris.connected,
-    refreshKey: iris.status?.checkedAt || 0,
   });
   const slashCommands = useIrisSlashCommands({
     profile: chatProfile,
@@ -627,12 +630,19 @@ function App() {
     irisNavigate.openNewChat({ profile: chatProfile });
   }
 
-  function applyRouteIntent(intent: IrisRouteIntent) {
+  function applyRouteIntent(intent: IrisRouteIntent, options: { routeChanged: boolean }) {
     if (intent.type === "new-chat") {
       applyProjectContext(intent.projectId);
       const targetProfile = intent.profile || profileForProject(intent.projectId) || chatProfile;
       if (chatProfile !== targetProfile) setChatProfile(targetProfile);
-      if (chat.selectedSessionId) chat.startNewSession(targetProfile);
+      if (
+        shouldResetSelectionForNewChatRoute({
+          routeChanged: options.routeChanged,
+          selectedSessionId: chat.selectedSessionId,
+        })
+      ) {
+        chat.startNewSession(targetProfile);
+      }
       return;
     }
 

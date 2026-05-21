@@ -502,12 +502,15 @@ export function activeRequestCompletedByHistory(
     if (message.role !== "assistant" || message.status !== "completed" || !message.content.trim()) return false;
     if (historyMessageStillStreaming(metadata)) return false;
     const replyTo = stringMetadata(metadata, "replyTo") || stringMetadata(metadata, "reply_to");
-    return replyTo === activeRequestId || metadataReferencesRequest(metadata, activeRequestId);
+    if (replyTo === activeRequestId || metadataReferencesRequest(metadata, activeRequestId)) return true;
+    return !historyMessageHasRequestRoutingMetadata(metadata);
   });
 }
 
 function metadataReferencesRequest(metadata: Record<string, unknown>, activeRequestId: string) {
   return [
+    "clientRequestId",
+    "client_request_id",
     "clientMessageId",
     "client_message_id",
     "idempotencyKey",
@@ -520,6 +523,22 @@ function historyMessageStillStreaming(metadata: Record<string, unknown>) {
   if (booleanMetadata(metadata, "streaming") === true) return true;
   if (booleanMetadata(metadata, "finalize") === false || booleanMetadata(metadata, "final") === false) return true;
   return false;
+}
+
+function historyMessageHasRequestRoutingMetadata(metadata: Record<string, unknown>) {
+  return [
+    "replyTo",
+    "reply_to",
+    "clientRequestId",
+    "client_request_id",
+    "clientMessageId",
+    "client_message_id",
+    "idempotencyKey",
+    "idempotency_key",
+    "irisMessageId",
+    "streamMessageId",
+    "stream_message_id",
+  ].some((key) => Boolean(stringMetadata(metadata, key)));
 }
 
 export function sessionIdsForChatId(

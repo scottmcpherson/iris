@@ -67,6 +67,42 @@ describe("AgentList", () => {
     expect(html).toContain("Starting gateway...");
   });
 
+  it("does not attribute another profile's failed adapter probe to a running agent", () => {
+    const html = renderToStaticMarkup(
+      createElement(AgentList, {
+        profiles: [
+          profileFixture({ name: "default", gatewayRunning: true }),
+          profileFixture({ name: "health", gatewayRunning: false }),
+        ],
+        status: {
+          ...statusFixture(profileFixture({ name: "default", gatewayRunning: true })),
+          profiles: [
+            profileFixture({ name: "default", gatewayRunning: true }),
+            profileFixture({ name: "health", gatewayRunning: false }),
+          ],
+          activeApiStatus: {
+            ok: false,
+            profile: "default",
+            requestedProfile: "health",
+            error: "Iris adapter is for 'default', not 'health'.",
+          },
+        },
+        gatewayActionBusy: false,
+        gatewayActionBusyAction: null,
+        gatewayActionBusyProfile: "",
+        adapterInstallBusyProfile: "",
+        onOpenAgent: noop,
+        onProfileAction: noopProfileAction,
+        onGatewayAction: noop,
+        onInstallAdapter: noop,
+      }),
+    );
+
+    expect(html).toContain("Running");
+    expect(html).toContain("Gateway stopped");
+    expect(html).not.toContain("Adapter unavailable");
+  });
+
   it("does not offer gateway recovery while Core is offline", () => {
     const html = renderToStaticMarkup(
       createElement(AgentList, {

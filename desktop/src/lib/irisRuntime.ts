@@ -1,4 +1,3 @@
-import { invoke } from "@tauri-apps/api/core";
 import {
   activateIrisCoreAgent,
   cloneIrisCoreAgent,
@@ -39,22 +38,11 @@ import type {
   HermesSkills,
   HermesSlashCommandsResult,
   HermesSlashCompletionResult,
-  RemoteCredentialKind,
-  RemoteCredentialStatus,
 } from "../types/hermes";
 import { resolveCoreApiUrl } from "../app/runtimeConfig";
 
 // Compatibility facade: existing desktop UI code still imports Hermes-shaped
 // functions and types, while the active read path is backed by Iris Core.
-
-type BridgeResponse<T> = T & {
-  ok: boolean;
-  error?: string;
-};
-
-async function bridge<T>(action: string, payload: Record<string, unknown> = {}) {
-  return invoke<BridgeResponse<T>>("core_bridge", { action, payload });
-}
 
 export async function getIrisStatus(runtime?: HermesRuntimeConfig, profile?: string) {
   const status = await getIrisCoreStatus(runtime, profile);
@@ -462,18 +450,6 @@ export async function deleteIrisAgent(name: string, runtime?: HermesRuntimeConfi
   if (!agentResult.ok || !agentResult.agent) return { ok: false, profile: name, error: agentResultError(agentResult, "Could not resolve Iris agent.") };
   const result = await deleteIrisCoreAgent(agentResult.agent.id, runtime);
   return profileActionResult(result);
-}
-
-export async function getRemoteCredentialStatus(kind: RemoteCredentialKind, connectionId = "") {
-  return bridge<RemoteCredentialStatus>("remote_credential_status", { kind, connectionId });
-}
-
-export async function saveRemoteCredential(kind: RemoteCredentialKind, token: string, connectionId = "") {
-  return bridge<RemoteCredentialStatus>("remote_credential_save", { kind, token, connectionId });
-}
-
-export async function deleteRemoteCredential(kind: RemoteCredentialKind, connectionId = "") {
-  return bridge<RemoteCredentialStatus>("remote_credential_delete", { kind, connectionId });
 }
 
 function emptyModelCatalog(profile: string, error: string): HermesModelCatalog {

@@ -1,7 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { loadJsonValue, saveJsonValue, storageKeys } from "../../app/storage";
-import { resolveCoreApiUrl } from "../../app/runtimeConfig";
-import { getIrisModelCatalog } from "../../lib/irisRuntime";
+import { useModelCatalogQuery } from "../../lib/query";
 import { stringValue } from "../../shared/strings";
 import type {
   HermesModelCatalog,
@@ -25,32 +24,27 @@ export function useIrisModelCatalog({
   connected,
   refreshKey,
 }: UseIrisModelCatalogOptions) {
-  const [catalogs, setCatalogs] = useState<Record<string, HermesModelCatalog>>({});
-  const [loadingByProfile, setLoadingByProfile] = useState<Record<string, boolean>>({});
-  const [errorsByProfile, setErrorsByProfile] = useState<Record<string, string | null>>({});
   const [draftsByProfile, setDraftsByProfile] = useState<Record<string, HermesModelSelection>>(
     () => loadStoredSelections(),
   );
-  const requestSeqRef = useRef(0);
-  const routeKey = modelCatalogRouteKey(runtimeConfig, profile);
-  const catalog = catalogs[profile] || null;
   const fallbackSelection = selectionFromProfile(profileSummary);
+  const catalogQuery = useModelCatalogQuery(runtimeConfig, profile, connected);
+  const queryError = catalogQuery.error instanceof Error ? catalogQuery.error.message : null;
+  const catalog = connected
+    ? catalogQuery.data || (queryError ? fallbackCatalog(profile, fallbackSelection, catalogQuery.error) : null)
+    : null;
   const draftSelection = resolveDraftSelection(draftsByProfile[profile], catalog, fallbackSelection);
-  const error = errorsByProfile[profile] || catalog?.error || null;
-  const loading = Boolean(loadingByProfile[profile]);
+  const error = queryError || catalog?.error || null;
+  const loading = Boolean(connected && !catalogQuery.data && catalogQuery.isFetching);
 
   useEffect(() => {
     saveStoredSelections(draftsByProfile);
   }, [draftsByProfile]);
 
   useEffect(() => {
-    if (!connected || !profile) {
-      setLoadingByProfile((current) => ({ ...current, [profile]: false }));
-      return undefined;
-    }
-    void refreshModelCatalog();
-    return undefined;
-  }, [connected, profile, routeKey, refreshKey]);
+    if (!connected || !profile || refreshKey == null) return;
+    void catalogQuery.refetch();
+  }, [connected, profile, refreshKey]);
 
   useEffect(() => {
     if (!catalog) return;
@@ -63,35 +57,6 @@ export function useIrisModelCatalog({
       });
     }
   }, [catalog, draftsByProfile, profile]);
-
-  async function refreshModelCatalog() {
-    const requestId = ++requestSeqRef.current;
-    setLoadingByProfile((current) => ({ ...current, [profile]: true }));
-    setErrorsByProfile((current) => ({ ...current, [profile]: null }));
-    try {
-      const result = await getIrisModelCatalog(profile, runtimeConfig);
-      if (requestSeqRef.current !== requestId) return;
-      setCatalogs((current) => ({ ...current, [profile]: result }));
-      setErrorsByProfile((current) => ({
-        ...current,
-        [profile]: result.ok ? null : result.error || "Could not load model catalog.",
-      }));
-    } catch (error) {
-      if (requestSeqRef.current !== requestId) return;
-      setErrorsByProfile((current) => ({
-        ...current,
-        [profile]: error instanceof Error ? error.message : "Could not load model catalog.",
-      }));
-      setCatalogs((current) => ({
-        ...current,
-        [profile]: fallbackCatalog(profile, fallbackSelection, error),
-      }));
-    } finally {
-      if (requestSeqRef.current === requestId) {
-        setLoadingByProfile((current) => ({ ...current, [profile]: false }));
-      }
-    }
-  }
 
   function selectDraftModel(selection: HermesModelSelection) {
     setDraftsByProfile((current) => ({ ...current, [profile]: selection }));
@@ -110,7 +75,7 @@ export function useIrisModelCatalog({
     error,
     providerCount,
     selectDraftModel,
-    refreshModelCatalog,
+    refreshModelCatalog: catalogQuery.refetch,
     modelLabel: modelSelectionLabel(draftSelection),
   };
 }
@@ -135,10 +100,6 @@ export function selectionExistsInCatalog(selection: HermesModelSelection, catalo
 
 export function modelSelectionLabel(selection: HermesModelSelection | null) {
   return selection?.model || "Model";
-}
-
-function modelCatalogRouteKey(runtimeConfig: HermesRuntimeConfig, profile: string) {
-  return [resolveCoreApiUrl(runtimeConfig), profile].join("|");
 }
 
 function selectionFromProfile(profile?: HermesProfile): HermesModelSelection | null {

@@ -7,7 +7,6 @@ import {
   managedLocalConnectionId,
   resolveCoreApiUrl,
   runtimeDataRouteKey,
-  saveRuntimeConfig,
   upsertCoreConnection,
 } from "../runtimeConfig";
 
@@ -85,56 +84,88 @@ describe("runtimeConfig", () => {
     expect(ssh?.ssh?.port).toBe(defaultSshPort);
   });
 
-  it("strips /v1 from effective profile URLs", () => {
+  it("strips /v1 from SSH effective profile URLs", () => {
     const config = upsertCoreConnection(defaultRuntimeConfig, {
-      id: "manual_dev",
-      name: "Dev Core",
-      mode: "manual-url",
+      id: "ssh_dev",
+      name: "Dev SSH",
+      mode: "ssh",
       effectiveCoreApiUrl: "http://127.0.0.1:8766/v1",
-      manual: { url: "http://127.0.0.1:8766/v1", requiresToken: true },
+      ssh: {
+        user: "agent",
+        host: "dev-host",
+        port: 22,
+        remoteCoreHost: "127.0.0.1",
+        remoteCorePort: 8765,
+        localForwardPort: 8766,
+        autoStartRemoteCore: false,
+      },
     }, { activate: true });
 
     expect(resolveCoreApiUrl(config)).toBe("http://127.0.0.1:8766");
   });
 
-  it("persists v2 runtime settings without credential material", () => {
-    const config = upsertCoreConnection(defaultRuntimeConfig, {
-      id: "tailscale_mac_mini",
-      name: "Mac mini",
-      mode: "tailscale",
-      effectiveCoreApiUrl: "http://mac-mini.tailnet.ts.net:8765",
-      tailscale: { host: "mac-mini.tailnet.ts.net", port: 8765, requiresToken: true },
-    }, { activate: true });
+  it("sanitizes legacy manual-url configs back to managed local", () => {
+    localStorage.setItem(
+      "iris.desktop.runtime.v2",
+      JSON.stringify({
+        connectionMode: "manual-url",
+        activeConnectionId: "manual_dev",
+        coreConnections: [
+          {
+            id: "manual_dev",
+            name: "Dev Core",
+            mode: "manual-url",
+            effectiveCoreApiUrl: "http://127.0.0.1:8777",
+            manual: { url: "http://127.0.0.1:8777", requiresToken: false },
+          },
+        ],
+      }),
+    );
 
-    saveRuntimeConfig({
-      ...config,
-      provider: "openai",
-      model: "gpt-5.5",
-    } as typeof config);
-
-    const stored = JSON.parse(localStorage.getItem("iris.desktop.runtime.v2") || "{}");
-    expect(stored.connectionMode).toBe("tailscale");
-    expect(stored.activeConnectionId).toBe("tailscale_mac_mini");
-    expect(stored.coreConnections[1]).toMatchObject({
-      id: "tailscale_mac_mini",
-      effectiveCoreApiUrl: "http://mac-mini.tailnet.ts.net:8765",
-    });
-    expect(JSON.stringify(stored)).not.toContain("secret");
-    expect(stored.remoteToken).toBeUndefined();
+    expect(loadRuntimeConfig()).toEqual(defaultRuntimeConfig);
   });
 
-  it("activates saved profiles by id", () => {
+  it("sanitizes legacy tailscale configs back to managed local", () => {
+    localStorage.setItem(
+      "iris.desktop.runtime.v2",
+      JSON.stringify({
+        connectionMode: "tailscale",
+        activeConnectionId: "tailscale_mac_mini",
+        coreConnections: [
+          {
+            id: "tailscale_mac_mini",
+            name: "Mac mini",
+            mode: "tailscale",
+            effectiveCoreApiUrl: "http://mac-mini.tailnet.ts.net:8765",
+            tailscale: { host: "mac-mini.tailnet.ts.net", port: 8765, requiresToken: true },
+          },
+        ],
+      }),
+    );
+
+    expect(loadRuntimeConfig()).toEqual(defaultRuntimeConfig);
+  });
+
+  it("activates saved SSH profiles by id", () => {
     const config = upsertCoreConnection(defaultRuntimeConfig, {
-      id: "manual_dev",
-      name: "Dev Core",
-      mode: "manual-url",
+      id: "ssh_dev",
+      name: "Dev SSH",
+      mode: "ssh",
       effectiveCoreApiUrl: "http://127.0.0.1:8777",
-      manual: { url: "http://127.0.0.1:8777", requiresToken: false },
+      ssh: {
+        user: "agent",
+        host: "dev-host",
+        port: 22,
+        remoteCoreHost: "127.0.0.1",
+        remoteCorePort: 8765,
+        localForwardPort: 8777,
+        autoStartRemoteCore: false,
+      },
     });
 
-    const active = activateCoreConnection(config, "manual_dev");
+    const active = activateCoreConnection(config, "ssh_dev");
 
-    expect(active.connectionMode).toBe("manual-url");
+    expect(active.connectionMode).toBe("ssh");
     expect(resolveCoreApiUrl(active)).toBe("http://127.0.0.1:8777");
   });
 

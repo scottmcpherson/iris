@@ -1,8 +1,4 @@
-export type IrisCoreConnectionMode =
-  | "managed-local"
-  | "ssh"
-  | "tailscale"
-  | "manual-url";
+export type IrisCoreConnectionMode = "managed-local" | "ssh";
 
 export type IrisCoreConnectionProfile = {
   id: string;
@@ -15,9 +11,6 @@ export type IrisCoreConnectionProfile = {
     autoStart: boolean;
     installLaunchAgent: boolean;
     allowSshTunnel?: boolean;
-    allowTailscale?: boolean;
-    tailscaleHost?: string;
-    tailscalePort?: number;
   };
   ssh?: {
     user: string;
@@ -28,15 +21,6 @@ export type IrisCoreConnectionProfile = {
     remoteCorePort: number;
     localForwardPort: number | "auto";
     autoStartRemoteCore: boolean;
-  };
-  tailscale?: {
-    host: string;
-    port: number;
-    requiresToken: true;
-  };
-  manual?: {
-    url: string;
-    requiresToken: boolean;
   };
 };
 
@@ -156,8 +140,8 @@ export type HermesStatus = {
   connectionMode?: IrisCoreConnectionMode;
   activeConnectionId?: string;
   activeConnectionName?: string;
-  transport?: "sidecar" | "ssh-tunnel" | "tailscale" | "manual-url";
-  hermesOwner?: "this-mac" | "remote-mac" | "custom";
+  transport?: "sidecar" | "ssh-tunnel";
+  hermesOwner?: "this-mac" | "remote-host";
   coreApiUrl?: string;
   activeApiUrl?: string;
   coreVersionStatus?: {
@@ -418,16 +402,5 @@ export type HermesInboxMessagesResult = {
   ok: boolean;
   messages: HermesInboxMessage[];
   cursor: number;
-  error?: string;
-};
-
-export type RemoteCredentialKind = "core";
-
-export type RemoteCredentialStatus = {
-  ok: boolean;
-  kind: RemoteCredentialKind;
-  connectionId?: string;
-  exists: boolean;
-  source: "environment" | "macos-keychain" | "test-file" | "unavailable";
   error?: string;
 };

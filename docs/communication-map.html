@@ -379,7 +379,7 @@
         <li>React UI (Vite, port 1420)</li>
         <li>Tauri Rust shell + tray/menu</li>
         <li>Python bridge subprocess</li>
-        <li>macOS Keychain for token</li>
+        <li>Explicit browser/native Core transports</li>
       </ul>
     </div>
     <div class="node core">
@@ -388,7 +388,7 @@
       <ul>
         <li><code>/v1/*</code> REST surface</li>
         <li><code>/v1/events/stream</code> SSE bus</li>
-        <li>Owns: devices, automations, drafts, attachments</li>
+        <li>Owns: agents, sessions, automations, drafts, attachments</li>
         <li>SQLite at <code>~/.iris/core.sqlite3</code></li>
       </ul>
     </div>
@@ -437,7 +437,7 @@
     <div class="arrow">
       <span class="label">REST API <span class="badge">~40 endpoints</span></span>
       <div class="arrow-line"><span class="line"></span>→<span class="line"></span></div>
-      <span class="protocol">HTTP /v1/* · Bearer token · 2.5s GET / 12s POST timeout</span>
+      <span class="protocol">HTTP /v1/* · browser in Vite, native IPC in packaged Tauri · 2.5s GET / 12s POST timeout</span>
     </div>
     <div class="end right"><span class="node-tag tag-core">Core</span></div>
   </div>
@@ -455,9 +455,9 @@
   <div class="channel-row">
     <div class="end left"><span class="node-tag tag-desktop">React</span></div>
     <div class="arrow">
-      <span class="label">Tauri Python bridge <span class="badge">6 actions</span></span>
+      <span class="label">Tauri Python bridge <span class="badge">3 actions</span></span>
       <div class="arrow-line"><span class="line" style="background:var(--bridge)"></span>↔<span class="line" style="background:var(--bridge)"></span></div>
-      <span class="protocol">invoke("core_bridge") · auth fallback · keychain · path uploads</span>
+      <span class="protocol">invoke("core_bridge") · explicit native Core requests · path uploads · media conversion</span>
     </div>
     <div class="end right"><span class="node-tag tag-core">Core</span></div>
   </div>
@@ -507,7 +507,7 @@
 <!-- ========================================================== -->
 <h2 id="desktop-core">3. Desktop ↔ Core (HTTP REST + SSE)</h2>
 
-<p>The desktop client wraps every endpoint in <code>desktop/src/lib/irisCore.ts</code>. All requests go through <code>coreRequest()</code> in <code>coreTransport.ts</code>, which attempts a direct <code>fetch()</code> first and falls back to the Tauri Python bridge on auth errors (401/403) or timeouts. Most calls run from React hooks under <code>desktop/src/features/</code>.</p>
+<p>The desktop client wraps every endpoint in <code>desktop/src/lib/irisCore.ts</code>. All requests go through <code>coreRequest()</code> in <code>coreTransport.ts</code>, which selects one transport per runtime: browser <code>fetch()</code> for Vite development, or native Tauri IPC for the packaged app. A failed browser request is not retried through native IPC. Most calls run from React hooks under <code>desktop/src/features/</code>.</p>
 
 <div class="tabs" data-tabs="dc">
   <button class="tab active" data-target="dc-status">Health · Runtimes</button>
@@ -519,7 +519,7 @@
   <button class="tab" data-target="dc-projects">Projects</button>
   <button class="tab" data-target="dc-automations">Automations</button>
   <button class="tab" data-target="dc-models">Models · Slash</button>
-  <button class="tab" data-target="dc-devices">Devices · Auth</button>
+  <button class="tab" data-target="dc-auth">Auth</button>
 </div>
 
 <div class="tab-panel active" id="dc-status">
@@ -684,24 +684,22 @@
   </table>
 </div>
 
-<div class="tab-panel" id="dc-devices">
+<div class="tab-panel" id="dc-auth">
   <table>
-    <thead><tr><th></th><th>Endpoint</th><th>Purpose</th><th>Caller</th></tr></thead>
+    <thead><tr><th>Area</th><th>Current behavior</th></tr></thead>
     <tbody>
-      <tr><td><span class="verb GET">GET</span></td><td class="path">/v1/devices</td><td class="purpose">List paired devices</td><td class="cite">main.py:855</td></tr>
-      <tr><td><span class="verb GET">GET</span></td><td class="path">/v1/devices/me</td><td class="purpose">Current device + auth metadata</td><td class="cite">main.py:859</td></tr>
-      <tr><td><span class="verb POST">POST</span></td><td class="path">/v1/devices/pair</td><td class="purpose">New pairing (returns one-time <code>agui_…</code> token)</td><td class="cite">main.py:868</td></tr>
-      <tr><td><span class="verb DELETE">DELETE</span></td><td class="path">/v1/devices/{id}</td><td class="purpose">Revoke (cannot revoke <code>management-token</code>)</td><td class="cite">main.py:884</td></tr>
-      <tr><td><span class="verb POST">POST</span></td><td class="path">/v1/devices/me/cursors</td><td class="purpose">Persist stream cursor per device</td><td class="cite">main.py:893</td></tr>
+      <tr><td>Loopback Core</td><td class="purpose">Allowed without bearer auth when Core is bound to loopback, even if a stale <code>IRIS_TOKEN</code> exists.</td></tr>
+      <tr><td>Management token</td><td class="purpose">Only unsupported low-level non-loopback Core binds require an <code>IRIS_TOKEN</code> management token.</td></tr>
+      <tr><td>Device pairing</td><td class="purpose">Removed from the public Core API; paired device tokens are no longer accepted.</td></tr>
     </tbody>
   </table>
-  <p class="muted" style="font-size:12.5px"><span class="badge">Removed</span> The old <code>/v1/inbox/*</code> routes now return 404. Hermes output uses <code>POST /v1/runtime-deliveries/hermes</code>, and clients consume activity from <code>/v1/events</code> or <code>/v1/events/stream</code>.</p>
+  <p class="muted" style="font-size:12.5px"><span class="badge">Removed</span> The old <code>/v1/devices*</code> and <code>/v1/inbox/*</code> routes now return 404. Hermes output uses <code>POST /v1/runtime-deliveries/hermes</code>, and clients consume activity from <code>/v1/events</code> or <code>/v1/events/stream</code>.</p>
 </div>
 
 <!-- ========================================================== -->
 <h2 id="tauri-bridge">4. Desktop Tauri bridge (React → Rust → Python)</h2>
 
-<p>When direct <code>fetch()</code> to Core fails on auth or timeout, the React layer invokes a Rust Tauri command (<code>core_bridge</code>) that spawns a Python subprocess (<code>desktop/src-tauri/python/core_bridge.py</code>). The Python script reads the bearer token from the macOS Keychain (or env), retries the HTTP call, and returns the result. The same bridge is used for path-based file uploads (avoids loading the file into JS) and for storing/retrieving the Core token.</p>
+<p>In the packaged app, React invokes a Rust Tauri command (<code>core_bridge</code>) that spawns a Python subprocess (<code>desktop/src-tauri/python/core_bridge.py</code>) for Core JSON requests. In Vite/browser development, React uses direct <code>fetch()</code>. The same bridge keeps native-only attachment capabilities: path-based file uploads and attachment byte conversion for WebView playback.</p>
 
 <div class="grid-2">
   <div class="panel">
@@ -709,12 +707,9 @@
     <table>
       <thead><tr><th></th><th>Action</th><th>What it does</th></tr></thead>
       <tbody>
-        <tr><td><span class="verb IPC">IPC</span></td><td class="path">core_request</td><td class="purpose">Re-issues the failed HTTP call w/ keychain token (auth fallback)</td></tr>
+        <tr><td><span class="verb IPC">IPC</span></td><td class="path">core_request</td><td class="purpose">Packaged-app Core HTTP request through native IPC</td></tr>
         <tr><td><span class="verb IPC">IPC</span></td><td class="path">core_attachment_data</td><td class="purpose">Fetch attachment bytes (handles transcoding for inline preview)</td></tr>
         <tr><td><span class="verb IPC">IPC</span></td><td class="path">core_upload_path</td><td class="purpose">Upload by absolute filesystem path (for drag-drop + paste)</td></tr>
-        <tr><td><span class="verb IPC">IPC</span></td><td class="path">remote_credential_status</td><td class="purpose">Returns <code>env</code> / <code>keychain</code> / <code>none</code></td></tr>
-        <tr><td><span class="verb IPC">IPC</span></td><td class="path">remote_credential_save</td><td class="purpose">Write token to macOS Keychain</td></tr>
-        <tr><td><span class="verb IPC">IPC</span></td><td class="path">remote_credential_delete</td><td class="purpose">Remove from Keychain</td></tr>
       </tbody>
     </table>
     <p class="muted" style="font-size:12px;margin-top:10px">Sources: <code>desktop/src-tauri/src/lib.rs</code>, <code>desktop/src-tauri/python/core_bridge.py</code>, dispatched from <code>coreTransport.ts:77</code>.</p>
@@ -736,9 +731,8 @@
   </div>
 </div>
 
-<h4>Token resolution order (used by bridge before retry)</h4>
-<pre>1. <span class="n">IRIS_TOKEN</span>
-2. macOS Keychain  service=<span class="s">"Iris Desktop"</span>  account=<span class="s">"iris-core-token"</span></pre>
+<h4>Core request auth</h4>
+<p class="muted">The bridge no longer resolves Core bearer tokens. Local and SSH product paths reach loopback Core without a user-visible Core credential.</p>
 
 <!-- ========================================================== -->
 <h2 id="core-hermes">5. Core ↔ Hermes adapter (in-process)</h2>
@@ -947,15 +941,15 @@
 </div>
 
 <div class="panel">
-  <div class="panel-title cyan"><span class="dot"></span>Flow C — Auth fallback via Tauri bridge</div>
+  <div class="panel-title cyan"><span class="dot"></span>Flow C — Explicit Core transport selection</div>
   <div class="flow">
-    <div class="step"><div class="num">1</div><div class="desc">React calls <code>coreRequest()</code>; direct <code>fetch()</code> returns 401/403 or times out<span class="src">coreTransport.ts:44-56</span></div></div>
+    <div class="step"><div class="num">1</div><div class="desc">React calls <code>coreRequest()</code>; <code>isTauri()</code> selects a single transport<span class="src">coreTransport.ts</span></div></div>
     <div class="arrow-down">↓</div>
-    <div class="step"><div class="num">2</div><div class="desc">Falls back to <code>invoke("core_bridge", { action: "core_request", payload })</code></div></div>
+    <div class="step"><div class="num">2</div><div class="desc">Browser/Vite uses direct <code>fetch()</code>; packaged Tauri uses <code>invoke("core_bridge", { action: "core_request", payload })</code></div></div>
     <div class="arrow-down">↓</div>
-    <div class="step"><div class="num">3</div><div class="desc">Rust handler spawns Python subprocess <code>core_bridge.py</code></div></div>
+    <div class="step"><div class="num">3</div><div class="desc">A 401/403, timeout, or network failure is returned from the chosen transport; it is not replayed through another transport</div></div>
     <div class="arrow-down">↓</div>
-    <div class="step"><div class="num">4</div><div class="desc">Python reads token (env → Keychain) and re-issues HTTP request</div></div>
+    <div class="step"><div class="num">4</div><div class="desc">Native-only attachment upload and media conversion continue to use explicit bridge actions</div></div>
     <div class="arrow-down">↓</div>
     <div class="step"><div class="num">5</div><div class="desc">Result returned to React as <code>CoreResponse&lt;T&gt;</code></div></div>
   </div>
@@ -969,24 +963,24 @@
   <tbody>
     <tr>
       <td>Desktop → Core</td>
-      <td>Iris device token (<code>agui_…</code>)</td>
-      <td><code>IRIS_TOKEN</code></td>
-      <td><code>Authorization: Bearer …</code></td>
-      <td>Loopback bypass when no management token configured. macOS Keychain stores under service <code>Iris Desktop</code>.</td>
+      <td>None on product paths</td>
+      <td>None</td>
+      <td>Omitted for Local and SSH tunnel paths</td>
+      <td>Local and SSH both reach a loopback Core. Stale <code>IRIS_TOKEN</code> values do not make loopback Core require auth. Paired device tokens and Keychain-backed Core bearer-token storage are removed.</td>
     </tr>
     <tr>
       <td>iris-platform → Core (deliveries)</td>
-      <td>Same Iris token</td>
+      <td>None on product paths</td>
       <td><code>IRIS_TOKEN</code></td>
-      <td><code>Authorization: Bearer …</code></td>
-      <td>Validated by <code>require_runtime_delivery_auth</code>. Omitted only for same-machine loopback when <code>IRIS_TOKEN</code> is unset.</td>
+      <td>Omitted for Local and SSH loopback paths</td>
+      <td>Only unsupported low-level non-loopback Core binds require bearer auth.</td>
     </tr>
     <tr>
       <td>Core adapter → iris-platform (Iris Gateway routes)</td>
-      <td>Same Iris token</td>
+      <td>None on product paths</td>
       <td><code>IRIS_TOKEN</code></td>
-      <td><code>Authorization: Bearer …</code></td>
-      <td>Used by all <code>/iris/messages</code>, <code>/iris/models</code>, <code>/iris/slash-*</code> calls.</td>
+      <td>Omitted for Local and SSH loopback paths</td>
+      <td>Supported local/SSH paths configure the adapter with loopback <code>IRIS_BASE_URL</code> on the Hermes host; installer updates remove stale Iris-managed <code>IRIS_TOKEN</code> entries.</td>
     </tr>
     <tr>
       <td>Core adapter → Hermes Gateway (jobs)</td>
@@ -994,13 +988,6 @@
       <td><code>HERMES_API_TOKEN</code> or Hermes <code>API_SERVER_KEY</code> from <code>$HERMES_HOME/.env</code></td>
       <td><code>Authorization: Bearer …</code></td>
       <td>Different token from the Iris one; only used for <code>/api/jobs/*</code>.</td>
-    </tr>
-    <tr>
-      <td>Token hash storage (Core)</td>
-      <td>SHA-256 hashed</td>
-      <td>—</td>
-      <td>—</td>
-      <td>Format: <code>v1:sha256("iris-core-device-token:v1:{token}")</code>.</td>
     </tr>
   </tbody>
 </table>

@@ -1304,20 +1304,6 @@ class CoreStore:
             row = connection.execute("select * from devices where id = ?", (device_id,)).fetchone()
         return device_from_row(row) if row else None
 
-    def active_device_for_token_hash(self, token_hash: str) -> dict[str, Any] | None:
-        if not token_hash:
-            return None
-        with self.connect() as connection:
-            row = connection.execute(
-                """
-                select * from devices
-                where token_hash = ? and revoked_at is null
-                limit 1
-                """,
-                (token_hash,),
-            ).fetchone()
-        return device_from_row(row) if row else None
-
     def touch_device(self, device_id: str) -> None:
         with self.connect() as connection:
             connection.execute(

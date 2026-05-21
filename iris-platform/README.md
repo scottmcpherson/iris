@@ -34,8 +34,7 @@ hermes plugins install https://github.com/<org>/iris-platform.git --enable
 Set these values where the Hermes gateway process can read them:
 
 ```bash
-export IRIS_BASE_URL="http://<iris-core-host>:8765"
-export IRIS_TOKEN="<iris bearer token>"
+export IRIS_BASE_URL="http://127.0.0.1:8765"
 export IRIS_DEFAULT_CHAT_ID="desktop"
 export IRIS_INBOUND_HOST="127.0.0.1"
 export IRIS_INBOUND_PORT="8766"
@@ -44,10 +43,11 @@ export IRIS_ALLOWED_USERS="iris-user"
 
 Then restart the Hermes gateway process or service.
 
-`IRIS_TOKEN` may be omitted only when `IRIS_BASE_URL` points at loopback
-(`localhost`, `127.0.0.1`, or `::1`). Non-loopback Core traffic requires
-`IRIS_TOKEN`. Explicit Hermes delivery targets should use the `iris:` platform
-prefix.
+For both local Iris and Iris Desktop over SSH, `IRIS_BASE_URL` should point at
+Core on loopback from the Hermes host's point of view. Iris Desktop reaches a
+remote host by opening an SSH tunnel to that host; the adapter still talks to
+`127.0.0.1:8765` on the host running Hermes. Explicit Hermes delivery targets
+should use the `iris:` platform prefix.
 
 Enable gateway streaming in each Hermes profile that should stream into Iris:
 
@@ -59,11 +59,10 @@ streaming:
 `display.streaming` only controls the terminal UI and does not enable platform
 message edits.
 
-Use a private network address for direct remote delivery. Keep Iris Core bound to `127.0.0.1` for local-only use and for Hermes via SSH, or bind it to a private interface only when you intentionally use non-loopback Core traffic with a bearer token or paired device token.
-
-For Hermes via SSH, keep Iris Core and this plugin on the host that owns Hermes. Core can remain bound to `127.0.0.1`; Iris Desktop reaches it through an SSH tunnel, so the plugin can also use loopback config.
-
-For direct private-network setups such as Tailscale, bind Iris Core to the selected private IP and use a paired device token for non-loopback Core traffic. Do not expose Core on a public interface.
+Keep Iris Core and this plugin on the host that owns Hermes. Core should remain
+bound to `127.0.0.1`; Iris Desktop reaches remote hosts through SSH, so the
+plugin can use the same loopback config locally and remotely. Direct
+private-network Core URLs are not a supported Iris Desktop setup path.
 
 ## Chat Inbound
 
@@ -71,13 +70,13 @@ Iris posts user messages to the host running Hermes:
 
 ```bash
 curl -X POST http://127.0.0.1:8766/iris/messages \
-  -H "Authorization: Bearer $IRIS_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"chatId":"desktop","userId":"scott","userName":"Scott","messageId":"test-1","text":"hello"}'
 ```
 
-Omit the `Authorization` header for loopback-only setups where `IRIS_TOKEN` is
-unset.
+Product-supported local and SSH paths normally omit authorization headers
+because traffic is loopback on the Hermes host. `IRIS_TOKEN` is only for
+unsupported low-level non-loopback operator setups, not Iris Desktop.
 
 The adapter converts each POST into a Hermes `MessageEvent` with
 `platform=iris`, so Hermes owns session routing, tool execution, and cron

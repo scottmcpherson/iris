@@ -1,16 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { loadJsonValue, loadStringValue, saveJsonValue, saveStringValue, storageKeys } from "../../app/storage";
 import { resolveCoreApiUrl, runtimeDataRouteKey } from "../../app/runtimeConfig";
-import {
-  createIrisProject,
-  getIrisCoreAgents,
-  getIrisProjectSessions,
-  getIrisProjects,
-  updateIrisProject,
-  type IrisCoreAgent,
-  type IrisProject,
-} from "../../lib/irisCore";
 import { irisCoreSessionToHermes } from "../../lib/irisCoreMappings";
+import {
+  agentsQueryOptions,
+  projectsQueryOptions,
+  projectSessionsQueryOptions,
+  useCreateProjectMutation,
+  useUpdateProjectMutation,
+} from "../../lib/query";
 import type { HermesSession, HermesRuntimeConfig } from "../../types/hermes";
 
 export type ProjectSessionMap = Record<string, HermesSession[]>;
@@ -24,13 +23,17 @@ export type CreateProjectPayload = {
 export type UpdateProjectPayload = CreateProjectPayload;
 
 export function useIrisProjects(runtimeConfig: HermesRuntimeConfig, refreshKey = "") {
-  const [projects, setProjects] = useState<IrisProject[]>([]);
-  const [agents, setAgents] = useState<IrisCoreAgent[]>([]);
+  const queryClient = useQueryClient();
+  const projectsQuery = useQuery(projectsQueryOptions(runtimeConfig));
+  const agentsQuery = useQuery(agentsQueryOptions(runtimeConfig));
+  const createProjectMutation = useCreateProjectMutation(runtimeConfig);
+  const updateProjectMutation = useUpdateProjectMutation(runtimeConfig);
+  const refetchProjectsQuery = projectsQuery.refetch;
+  const refetchAgentsQuery = agentsQuery.refetch;
   const [selectedProjectId, setSelectedProjectIdState] = useState(() =>
     loadStringValue(storageKeys.selectedProjectId, ""),
   );
   const [sessionsByProject, setSessionsByProject] = useState<ProjectSessionMap>({});
-  const [projectsLoading, setProjectsLoading] = useState(false);
   const [projectSessionsLoading, setProjectSessionsLoading] = useState<Record<string, boolean>>({});
   const [projectSessionsLoaded, setProjectSessionsLoaded] = useState<Record<string, boolean>>({});
   const [projectErrors, setProjectErrors] = useState<Record<string, string | null>>({});
@@ -42,6 +45,16 @@ export function useIrisProjects(runtimeConfig: HermesRuntimeConfig, refreshKey =
   const requestKeyRef = useRef(requestKey);
   const previousRouteKeyRef = useRef(routeKey);
   requestKeyRef.current = requestKey;
+  const projects = projectsQuery.data?.projects || [];
+  const agents = agentsQuery.data?.agents || [];
+  const projectsLoading = projectsQuery.isFetching || agentsQuery.isFetching;
+  const mergedProjectErrors = {
+    ...projectErrors,
+    list:
+      projectErrors.list ||
+      (projectsQuery.error instanceof Error ? projectsQuery.error.message : null) ||
+      (agentsQuery.error instanceof Error ? agentsQuery.error.message : null),
+  };
 
   const selectedProject = useMemo(
     () => projects.find((project) => project.id === selectedProjectId) || null,
@@ -51,35 +64,28 @@ export function useIrisProjects(runtimeConfig: HermesRuntimeConfig, refreshKey =
   const refreshProjects = useCallback(async () => {
     const activeRequestKey = requestKey;
     if (!isCurrentRequest(requestKeyRef, activeRequestKey)) return;
-    setProjectsLoading(true);
     try {
-      const [projectResult, agentResult] = await Promise.all([
-        getIrisProjects(runtimeConfig),
-        getIrisCoreAgents(runtimeConfig),
+      const [projectResult] = await Promise.all([
+        refetchProjectsQuery(),
+        refetchAgentsQuery(),
       ]);
       if (!isCurrentRequest(requestKeyRef, activeRequestKey)) return;
-      if (projectResult.ok) {
-        setProjects(projectResult.projects || []);
-        setProjectErrors((current) => ({ ...current, list: null }));
-      } else {
+      if (projectResult.error) {
         setProjectErrors((current) => ({
           ...current,
-          list: projectResult.error || "Could not load projects.",
+          list: projectResult.error instanceof Error ? projectResult.error.message : "Could not load projects.",
         }));
+      } else {
+        setProjectErrors((current) => ({ ...current, list: null }));
       }
-      if (agentResult.ok) setAgents(agentResult.agents || []);
     } catch (error) {
       if (!isCurrentRequest(requestKeyRef, activeRequestKey)) return;
       setProjectErrors((current) => ({
         ...current,
         list: error instanceof Error ? error.message : "Could not load projects.",
       }));
-    } finally {
-      if (isCurrentRequest(requestKeyRef, activeRequestKey)) {
-        setProjectsLoading(false);
-      }
     }
-  }, [runtimeConfig, requestKey]);
+  }, [refetchAgentsQuery, refetchProjectsQuery, requestKey]);
 
   const refreshProjectSessions = useCallback(async (projectId: string) => {
     if (!projectId) return;
@@ -87,16 +93,8 @@ export function useIrisProjects(runtimeConfig: HermesRuntimeConfig, refreshKey =
     if (!isCurrentRequest(requestKeyRef, activeRequestKey)) return;
     setProjectSessionsLoading((current) => ({ ...current, [projectId]: true }));
     try {
-      const result = await getIrisProjectSessions(projectId, 80, runtimeConfig);
+      const result = await queryClient.fetchQuery(projectSessionsQueryOptions(runtimeConfig, projectId, 80));
       if (!isCurrentRequest(requestKeyRef, activeRequestKey)) return;
-      if (!result.ok) {
-        setProjectErrors((current) => ({
-          ...current,
-          [projectId]: result.error || "Could not load project sessions.",
-        }));
-        setProjectSessionsLoaded((current) => ({ ...current, [projectId]: true }));
-        return;
-      }
       setSessionsByProject((current) => ({
         ...current,
         [projectId]: (result.sessions || []).map(irisCoreSessionToHermes),
@@ -115,13 +113,11 @@ export function useIrisProjects(runtimeConfig: HermesRuntimeConfig, refreshKey =
         setProjectSessionsLoading((current) => ({ ...current, [projectId]: false }));
       }
     }
-  }, [runtimeConfig, requestKey]);
+  }, [queryClient, runtimeConfig, requestKey]);
 
   useEffect(() => {
     if (previousRouteKeyRef.current === routeKey) return;
     previousRouteKeyRef.current = routeKey;
-    setProjects([]);
-    setAgents([]);
     setSelectedProjectIdState("");
     saveStringValue(storageKeys.selectedProjectId, "");
     setSessionsByProject({});
@@ -159,24 +155,16 @@ export function useIrisProjects(runtimeConfig: HermesRuntimeConfig, refreshKey =
   ]);
 
   async function createProject(payload: CreateProjectPayload) {
-    const result = await createIrisProject(payload, runtimeConfig);
-    if (!result.ok || !result.project) {
-      throw new Error(result.error || "Could not create project.");
-    }
-    setProjects((current) => [result.project, ...current.filter((project) => project.id !== result.project.id)]);
+    const result = await createProjectMutation.mutateAsync(payload);
+    if (!result.project) throw new Error("Could not create project.");
     selectProject(result.project.id);
     setCollapsedProjectsValue(result.project.id, false);
     return result.project;
   }
 
   async function updateProject(projectId: string, payload: UpdateProjectPayload) {
-    const result = await updateIrisProject(projectId, payload, runtimeConfig);
-    if (!result.ok || !result.project) {
-      throw new Error(result.error || "Could not update project.");
-    }
-    setProjects((current) =>
-      current.map((project) => (project.id === projectId ? result.project : project)),
-    );
+    const result = await updateProjectMutation.mutateAsync({ projectId, payload });
+    if (!result.project) throw new Error("Could not update project.");
     return result.project;
   }
 
@@ -211,7 +199,7 @@ export function useIrisProjects(runtimeConfig: HermesRuntimeConfig, refreshKey =
     projectsLoading,
     projectSessionsLoading,
     projectSessionsLoaded,
-    projectErrors,
+    projectErrors: mergedProjectErrors,
     collapsedProjects,
     createProject,
     updateProject,

@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { invoke, isTauri } from "@tauri-apps/api/core";
 import type { HermesRuntimeConfig } from "../types/hermes";
 import { activeCoreConnection, resolveCoreApiUrl } from "../app/runtimeConfig";
 
@@ -7,7 +7,22 @@ export type CoreResponse<T> = T & {
   error?: string;
 };
 
-type CoreMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
+export type CoreMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
+
+export type CoreRequestOptions = {
+  timeoutMs?: number;
+  idempotencyKey?: string;
+};
+
+type CoreTransport = {
+  request<T>(
+    runtime: HermesRuntimeConfig | undefined,
+    method: CoreMethod,
+    path: string,
+    body?: unknown,
+    options?: CoreRequestOptions,
+  ): Promise<CoreResponse<T>>;
+};
 
 export function coreBaseUrl(runtime?: HermesRuntimeConfig) {
   const base = resolveCoreApiUrl(runtime).replace(/\/+$/, "");
@@ -19,8 +34,19 @@ export async function coreRequest<T>(
   method: CoreMethod,
   path: string,
   body?: unknown,
-  options: { timeoutMs?: number; idempotencyKey?: string } = {},
+  options: CoreRequestOptions = {},
 ): Promise<CoreResponse<T>> {
+  return currentCoreTransport().request(runtime, method, path, body, options);
+}
+
+export const browserCoreTransport: CoreTransport = {
+  async request<T>(
+    runtime: HermesRuntimeConfig | undefined,
+    method: CoreMethod,
+    path: string,
+    body?: unknown,
+    options: CoreRequestOptions = {},
+  ): Promise<CoreResponse<T>> {
   const normalizedPath = path.startsWith("/") ? path : `/${path}`;
   const url = `${coreBaseUrl(runtime)}${normalizedPath}`;
   const controller = typeof AbortController === "undefined" ? null : new AbortController();
@@ -43,22 +69,47 @@ export async function coreRequest<T>(
       body: body === undefined ? undefined : JSON.stringify(body),
     });
     const parsed = await response.json().catch(() => ({}));
-    if (response.status === 401 || response.status === 403) {
-      return coreRequestViaBridge(runtime, method, normalizedPath, body);
-    }
     if (!response.ok && parsed.ok !== false) {
       return { ...(parsed as T), ok: false, error: parsed.error || `HTTP ${response.status}` };
     }
     return parsed as CoreResponse<T>;
-  } catch {
+  } catch (error) {
     if (timedOut && method !== "GET") {
       return { ok: false, error: "timed out" } as CoreResponse<T>;
     }
-    return coreRequestViaBridge(runtime, method, normalizedPath, body);
+    return {
+      ok: false,
+      error: timedOut ? "timed out" : error instanceof Error ? error.message : "Core request failed.",
+    } as CoreResponse<T>;
   } finally {
     if (timeout) clearTimeout(timeout);
   }
-}
+  },
+};
+
+export const tauriCoreTransport: CoreTransport = {
+  async request<T>(
+    runtime: HermesRuntimeConfig | undefined,
+    method: CoreMethod,
+    path: string,
+    body?: unknown,
+    options: CoreRequestOptions = {},
+  ) {
+    const normalizedPath = path.startsWith("/") ? path : `/${path}`;
+    return invoke<CoreResponse<T>>("core_bridge", {
+      action: "core_request",
+      payload: {
+        method,
+        path: normalizedPath,
+        body,
+        runtime,
+        connectionId: activeCoreConnection(runtime)?.id,
+        timeoutMs: options.timeoutMs,
+        idempotencyKey: options.idempotencyKey,
+      },
+    });
+  },
+};
 
 export function coreAttachmentUrl(runtime: HermesRuntimeConfig | undefined, path: string | undefined) {
   if (!path) return "";
@@ -69,20 +120,6 @@ export function coreAttachmentUrl(runtime: HermesRuntimeConfig | undefined, path
   return `${base}${normalizedPath}`;
 }
 
-function coreRequestViaBridge<T>(
-  runtime: HermesRuntimeConfig | undefined,
-  method: CoreMethod,
-  path: string,
-  body?: unknown,
-) {
-  return invoke<CoreResponse<T>>("core_bridge", {
-    action: "core_request",
-    payload: {
-      method,
-      path,
-      body,
-      runtime,
-      connectionId: activeCoreConnection(runtime)?.id,
-    },
-  });
+function currentCoreTransport() {
+  return isTauri() ? tauriCoreTransport : browserCoreTransport;
 }

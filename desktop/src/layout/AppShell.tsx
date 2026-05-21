@@ -83,8 +83,6 @@ function sidebarConnectionName(status: HermesStatus | null) {
   const connectionName = status?.activeConnectionName?.trim();
   if (connectionName) return connectionName;
   if (status?.connectionMode === "ssh") return "SSH";
-  if (status?.connectionMode === "tailscale") return "Tailscale";
-  if (status?.connectionMode === "manual-url") return "Remote";
   return "Local";
 }
 

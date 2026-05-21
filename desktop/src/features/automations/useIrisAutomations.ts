@@ -1,20 +1,20 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import {
-  createIrisCoreAutomation,
-  deleteIrisCoreAutomation,
-  getIrisCoreAutomationEvents,
-  getIrisCoreAgentForProfile,
-  getIrisCoreAutomations,
   getIrisCoreEvents,
-  pauseIrisCoreAutomation,
-  resumeIrisCoreAutomation,
-  runIrisCoreAutomation,
-  updateIrisCoreAutomation,
   type IrisCoreAgent,
   type IrisCoreEvent,
 } from "../../lib/irisCore";
 import { irisCoreEventToDeliveryMessage } from "../../lib/irisRuntime";
 import { resolveCoreApiUrl } from "../../app/runtimeConfig";
+import {
+  automationDeliveriesQueryOptions,
+  useAgentForProfileQuery,
+  useAutomationActionMutation,
+  useAutomationsQuery,
+  useCreateAutomationMutation,
+  useUpdateAutomationMutation,
+} from "../../lib/query";
 import { rawStringValue } from "../../shared/strings";
 import type {
   HermesAutomation,
@@ -66,17 +66,31 @@ export type LegacyCreateScheduledMessageInput = {
 };
 
 export function useIrisAutomations(runtimeConfig: HermesRuntimeConfig, profile = "default", active = true) {
-  const [automations, setAutomations] = useState<HermesAutomation[]>([]);
+  const queryClient = useQueryClient();
+  const agentQuery = useAgentForProfileQuery(runtimeConfig, profile);
+  const resolvedAgent = agentQuery.data?.agent || null;
+  const automationsQuery = useAutomationsQuery(runtimeConfig, resolvedAgent?.id || "", active);
+  const createAutomationMutation = useCreateAutomationMutation(runtimeConfig, resolvedAgent?.id || "");
+  const updateAutomationMutation = useUpdateAutomationMutation(runtimeConfig, resolvedAgent?.id || "");
+  const automationActionMutation = useAutomationActionMutation(runtimeConfig, resolvedAgent?.id || "");
   const [deliveries, setDeliveries] = useState<HermesInboxMessage[]>([]);
   const [deliveriesLoading, setDeliveriesLoading] = useState(false);
   const [deliveriesLoadedKey, setDeliveriesLoadedKey] = useState("");
-  const [loading, setLoading] = useState(false);
   const [busyAutomationId, setBusyAutomationId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const inboxCursorRef = useRef(0);
   const deliveriesRequestRef = useRef(0);
   const deliveriesLoadingStartedAtRef = useRef(0);
   const deliveriesLoadingTimerRef = useRef<number | null>(null);
+  const automations = useMemo(
+    () => automationsQuery.data ? normalizeJobsResult(automationsQuery.data) : [],
+    [automationsQuery.data],
+  );
+  const loading = agentQuery.isFetching || automationsQuery.isFetching;
+  const visibleError =
+    error ||
+    (agentQuery.error instanceof Error ? agentQuery.error.message : null) ||
+    (automationsQuery.error instanceof Error ? automationsQuery.error.message : null);
 
   const activeAutomations = useMemo(
     () => automations.filter((automation) => automation.enabled && automation.status !== "paused" && automation.status !== "error"),
@@ -93,7 +107,7 @@ export function useIrisAutomations(runtimeConfig: HermesRuntimeConfig, profile =
     beginDeliveriesLoading();
     void refresh(requestId, deliveriesScopeKey);
     const timer = window.setInterval(() => {
-      void refreshSilently();
+      void pollDeliveries();
     }, 6000);
     return () => {
       window.clearInterval(timer);
@@ -102,28 +116,18 @@ export function useIrisAutomations(runtimeConfig: HermesRuntimeConfig, profile =
   }, [active, deliveriesScopeKey]);
 
   async function refresh(deliveriesRequestId = deliveriesRequestRef.current, scopeKey = deliveriesScopeKey) {
-    setLoading(true);
     try {
       const agent = await resolveAgent();
       if (!agent) return;
-      await Promise.all([loadJobsForAgent(agent.id), loadRecentDeliveries(agent.id, deliveriesRequestId, true, scopeKey)]);
+      await Promise.all([
+        automationsQuery.refetch(),
+        loadRecentDeliveries(agent.id, deliveriesRequestId, true, scopeKey),
+      ]);
     } catch (error) {
       setError(error instanceof Error ? error.message : "Could not load automations.");
       if (deliveriesRequestId === deliveriesRequestRef.current) {
         finishDeliveriesLoading(deliveriesRequestId, scopeKey, false);
       }
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  async function refreshSilently() {
-    try {
-      const agent = await resolveAgent();
-      if (!agent) return;
-      await Promise.all([pollDeliveries(agent.id), loadJobsForAgent(agent.id)]);
-    } catch {
-      // Background polling should not replace the visible error from an explicit refresh.
     }
   }
 
@@ -131,19 +135,12 @@ export function useIrisAutomations(runtimeConfig: HermesRuntimeConfig, profile =
     try {
       const agent = await resolveAgent();
       if (!agent) return;
-      await loadJobsForAgent(agent.id);
+      await automationsQuery.refetch();
     } catch (error) {
       if (!options.silent) {
         setError(error instanceof Error ? error.message : "Could not load scheduled jobs.");
       }
     }
-  }
-
-  async function loadJobsForAgent(agentId: string) {
-    const result = await getIrisCoreAutomations(agentId, runtimeConfig);
-    if (!result.ok) throw new Error(result.error || "Could not load scheduled jobs.");
-    setAutomations(normalizeJobsResult(result));
-    setError(null);
   }
 
   async function pollDeliveries(agentId?: string) {
@@ -167,13 +164,11 @@ export function useIrisAutomations(runtimeConfig: HermesRuntimeConfig, profile =
     scopeKey = deliveriesScopeKey,
   ) {
     if (showLoading) beginDeliveriesLoading();
-    const result = await getIrisCoreAutomationEvents(50, runtimeConfig, agentId);
+    const result = await queryClient.fetchQuery(automationDeliveriesQueryOptions(runtimeConfig, agentId, 50));
     if (requestId !== deliveriesRequestRef.current) return;
-    const messages = result.ok ? sortDeliveries(automationDeliveryMessagesFromEvents(result.events, profile)) : [];
-    if (result.ok) {
-      inboxCursorRef.current = result.cursor || latestEventCursor(result.events) || inboxCursorRef.current;
-      setDeliveries(messages);
-    }
+    const messages = sortDeliveries(automationDeliveryMessagesFromEvents(result.events, profile));
+    inboxCursorRef.current = result.cursor || latestEventCursor(result.events) || inboxCursorRef.current;
+    setDeliveries(messages);
     finishDeliveriesLoading(requestId, scopeKey, messages.length > 0);
   }
 
@@ -209,8 +204,8 @@ export function useIrisAutomations(runtimeConfig: HermesRuntimeConfig, profile =
   }
 
   async function resolveAgent(): Promise<IrisCoreAgent | null> {
-    const agentResult = await getIrisCoreAgentForProfile(profile, runtimeConfig);
-    if (!agentResult.ok || !agentResult.agent) {
+    const agentResult = agentQuery.data || await agentQuery.refetch().then((result) => result.data);
+    if (!agentResult?.ok || !agentResult.agent) {
       throw new Error(agentError(agentResult) || "Could not resolve Iris agent.");
     }
     return agentResult.agent;
@@ -230,42 +225,38 @@ export function useIrisAutomations(runtimeConfig: HermesRuntimeConfig, profile =
   async function createScheduledMessage(input: CreateScheduledMessageInput | LegacyCreateScheduledMessageInput) {
     const normalized = automationPayloadFromInput(input, profile);
     if (!normalized.ok) return normalized.error;
-    const agentResult = await getIrisCoreAgentForProfile(profile, runtimeConfig);
-    if (!agentResult.ok || !agentResult.agent) return agentError(agentResult) || "Could not resolve Iris agent.";
-    const result = await createIrisCoreAutomation(
-      {
-        agentId: agentResult.agent.id,
+    try {
+      const agent = await resolveAgent();
+      if (!agent) return "Could not resolve Iris agent.";
+      await createAutomationMutation.mutateAsync({
+        agentId: agent.id,
         ...normalized.payload,
-      },
-      runtimeConfig,
-    );
-    if (!result.ok) return result.error || "Could not create scheduled message.";
-    await loadJobs();
-    return "Automation scheduled.";
+      });
+      await loadJobs();
+      return "Automation scheduled.";
+    } catch (error) {
+      return error instanceof Error ? error.message : "Could not create scheduled message.";
+    }
   }
 
   async function updateScheduledMessage(jobId: string, input: UpdateScheduledMessageInput) {
     const normalized = automationPayloadFromInput(input, profile);
     if (!normalized.ok) return normalized.error;
-    const result = await updateIrisCoreAutomation(jobId, normalized.payload, runtimeConfig);
-    if (!result.ok) return result.error || "Could not update scheduled message.";
-    await loadJobs();
-    return "Automation updated.";
+    try {
+      await updateAutomationMutation.mutateAsync({ automationId: jobId, payload: normalized.payload });
+      await loadJobs();
+      return "Automation updated.";
+    } catch (error) {
+      return error instanceof Error ? error.message : "Could not update scheduled message.";
+    }
   }
 
   async function runJobAction(jobId: string, action: "pause" | "resume" | "run" | "delete") {
     setBusyAutomationId(jobId);
     try {
-      const result =
-        action === "pause"
-          ? await pauseIrisCoreAutomation(jobId, runtimeConfig)
-          : action === "resume"
-            ? await resumeIrisCoreAutomation(jobId, runtimeConfig)
-            : action === "run"
-              ? await runIrisCoreAutomation(jobId, runtimeConfig)
-              : await deleteIrisCoreAutomation(jobId, runtimeConfig);
-      if (!result.ok) throw new Error(result.error || `Could not ${action} job.`);
+      await automationActionMutation.mutateAsync({ automationId: jobId, action });
       await loadJobs();
+      if (action === "run") await pollDeliveries();
       return "";
     } catch (error) {
       const message = error instanceof Error ? error.message : `Could not ${action} job.`;
@@ -293,7 +284,7 @@ export function useIrisAutomations(runtimeConfig: HermesRuntimeConfig, profile =
     createScheduledMessage,
     deliveries,
     deliveriesLoading: isAutomationActivityLoading(active, deliveriesLoading, deliveriesLoadedKey, deliveriesScopeKey),
-    error,
+    error: visibleError,
     automations,
     loading,
     pausedAutomations,

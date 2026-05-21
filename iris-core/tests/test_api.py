@@ -169,19 +169,26 @@ def test_core_cors_preflight_allows_idempotency_key(tmp_path):
     assert "Idempotency-Key" in response.headers["access-control-allow-headers"]
 
 
-def test_install_hermes_plugin_copies_payload_and_env_hints(tmp_path, monkeypatch):
+def test_install_hermes_plugin_copies_payload_env_hints_and_removes_stale_iris_token(tmp_path, monkeypatch):
     monkeypatch.setattr("hermes_management_server.main.run_hermes_plugin_enable", lambda _home: {"ok": True})
     hermes_home = tmp_path / ".hermes"
+    hermes_home.mkdir()
+    (hermes_home / ".env").write_text(
+        "API_SERVER_KEY=keep-me\nexport IRIS_TOKEN=stale-managed-token\nCUSTOM_VALUE=still-here\n",
+        encoding="utf-8",
+    )
 
-    result = install_hermes_plugin(str(hermes_home), host="127.0.0.1", port=8765, token="iris-token")
+    result = install_hermes_plugin(str(hermes_home), host="127.0.0.1", port=8765)
 
     assert result["ok"] is True
     assert (hermes_home / "plugins" / "iris-platform" / "plugin.yaml").is_file()
     env_text = (hermes_home / ".env").read_text(encoding="utf-8")
+    assert "API_SERVER_KEY=keep-me" in env_text
+    assert "CUSTOM_VALUE=still-here" in env_text
     assert "IRIS_BASE_URL=http://127.0.0.1:8765" in env_text
     assert "IRIS_INBOUND_HOST=127.0.0.1" in env_text
     assert "IRIS_INBOUND_PORT=8766" in env_text
-    assert "IRIS_TOKEN=iris-token" in env_text
+    assert "IRIS_TOKEN" not in env_text
 
 
 def test_agent_memory_and_skills_endpoints(tmp_path):
@@ -339,6 +346,20 @@ def test_loopback_core_accepts_no_token_when_iris_token_is_unset(tmp_path):
     assert response.status_code == 200
     assert response.json()["ok"] is True
     assert response.json()["service"] == "iris-core"
+
+
+def test_loopback_core_accepts_no_token_when_stale_iris_token_exists(tmp_path):
+    root = tmp_path / ".hermes"
+    root.mkdir()
+    (root / ".env").write_text("IRIS_TOKEN=stale-managed-token\n", encoding="utf-8")
+    app = create_app(Settings(hermes_home=str(root), host="127.0.0.1", core_store_path=str(tmp_path / "core.sqlite3")))
+    client = TestClient(app)
+
+    response = client.get("/v1/health")
+
+    assert response.status_code == 200
+    assert response.json()["ok"] is True
+    assert client.get("/v1/status").json()["core"]["authMode"] == "none"
 
 
 def test_non_loopback_core_requires_iris_token(tmp_path):
@@ -1437,7 +1458,7 @@ def test_runtime_adapter_allows_loopback_gateway_without_iris_token(monkeypatch)
     assert seen[0]["url"] == "http://127.0.0.1:8766/iris/messages"
 
 
-def test_runtime_adapter_requires_iris_token_for_non_loopback_gateway():
+def test_runtime_adapter_guides_non_loopback_gateway_back_to_ssh_loopback():
     runtime = hermes_adapter.local_runtime_config()
     runtime["connection"]["irisGatewayUrls"]["default"] = "http://10.0.0.5:8766"
     adapter = hermes_adapter.HermesRuntimeAdapter(runtime, iris_token="")
@@ -1445,7 +1466,7 @@ def test_runtime_adapter_requires_iris_token_for_non_loopback_gateway():
     result = adapter.models("default")
 
     assert result["ok"] is False
-    assert "IRIS_TOKEN is required for non-loopback Iris gateway" in result["error"]
+    assert "remote access uses SSH to a loopback Core" in result["error"]
 
 
 def test_hermes_jobs_api_token_uses_api_server_key_when_env_override_is_unset(tmp_path, monkeypatch):

@@ -1,8 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { runtimeGatewayIsReachable, runtimeReadinessForStatus } from "../runtimeReadiness";
+import { runtimeGatewayIsReachable, runtimeReadinessDetail, runtimeReadinessForStatus } from "../runtimeReadiness";
 import type { HermesProfile, HermesStatus } from "../../types/hermes";
 
 describe("runtimeReadinessForStatus", () => {
+  it("keeps the initial status fetch separate from confirmed Core offline", () => {
+    expect(runtimeReadinessForStatus(null, profileFixture())).toBe("checking");
+    expect(runtimeReadinessDetail("checking")).toBe("");
+  });
+
   it("separates Core connectivity from runtime readiness", () => {
     expect(runtimeReadinessForStatus({ ...statusFixture(), connected: false }, profileFixture())).toBe("offline");
     expect(

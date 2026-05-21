@@ -9,11 +9,10 @@
 
 ## Credentials
 
-- Remote agent bearer tokens are not stored in `localStorage`.
-- The Settings token field writes to the OS credential store through the bridge.
-- On macOS, the bridge uses Keychain via the `security` command.
-- CI and local automated tests use `IRIS_DESKTOP_SECRET_TEST_DIR` to exercise the credential path without touching a real keychain.
-- `IRIS_TOKEN` is the only Iris-owned bearer secret. Hermes Jobs API calls use `HERMES_API_TOKEN`, or the Hermes `API_SERVER_KEY` discovered by Core from `$HERMES_HOME/.env`.
+- Iris Desktop does not expose manual remote Core bearer-token entry or paired device credentials.
+- Packaged desktop Core traffic uses the native bridge explicitly; browser/Vite development uses browser fetch explicitly.
+- The native bridge no longer reads `IRIS_TOKEN` or macOS Keychain credentials for generic Core request retries.
+- Supported Local and SSH paths keep Core on loopback and do not require Core bearer auth, even if a stale `IRIS_TOKEN` remains in the environment. Hermes Jobs API calls use `HERMES_API_TOKEN`, or the Hermes `API_SERVER_KEY` discovered by Core from `$HERMES_HOME/.env`.
 
 ## Builds
 

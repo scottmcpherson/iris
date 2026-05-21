@@ -20,7 +20,6 @@ export const defaultManagedLocalProfile: IrisCoreConnectionProfile = {
     autoStart: true,
     installLaunchAgent: false,
     allowSshTunnel: true,
-    allowTailscale: false,
   },
 };
 
@@ -32,12 +31,8 @@ export const defaultRuntimeConfig: HermesRuntimeConfig = {
   model: "",
 };
 
-const validModes = new Set<IrisCoreConnectionMode>([
-  "managed-local",
-  "ssh",
-  "tailscale",
-  "manual-url",
-]);
+const validModes = new Set<IrisCoreConnectionMode>(["managed-local", "ssh"]);
+const legacyUnsupportedModes = new Set(["tailscale", "manual-url"]);
 
 export function loadRuntimeConfig(): HermesRuntimeConfig {
   try {
@@ -80,27 +75,16 @@ export function runtimeDataRouteKey(config: HermesRuntimeConfig | undefined) {
       ssh?.remoteCorePort || defaultCorePort,
     ].join("|");
   }
-  if (active.mode === "tailscale") {
-    return [
-      "tailscale",
-      active.id,
-      active.tailscale?.host || "",
-      active.tailscale?.port || defaultCorePort,
-    ].join("|");
-  }
   return [active.mode, active.id, resolveCoreApiUrl(config)].join("|");
 }
 
 export function connectionTransport(profile: IrisCoreConnectionProfile | undefined) {
   if (profile?.mode === "ssh") return "ssh-tunnel" as const;
-  if (profile?.mode === "tailscale") return "tailscale" as const;
-  if (profile?.mode === "manual-url") return "manual-url" as const;
   return "sidecar" as const;
 }
 
 export function hermesOwner(profile: IrisCoreConnectionProfile | undefined) {
-  if (profile?.mode === "ssh" || profile?.mode === "tailscale") return "remote-mac" as const;
-  if (profile?.mode === "manual-url") return "custom" as const;
+  if (profile?.mode === "ssh") return "remote-host" as const;
   return "this-mac" as const;
 }
 
@@ -184,7 +168,9 @@ export function connectionIdFromParts(prefix: string, parts: Array<string | numb
 function parseRuntimeConfig(value: Record<string, unknown>): HermesRuntimeConfig | null {
   if (!value || typeof value !== "object") return null;
   const mode = value.connectionMode;
-  if (!isConnectionMode(mode)) return null;
+  const modeIsSupported = isConnectionMode(mode);
+  const requestedMode = modeIsSupported ? mode : "managed-local";
+  if (!modeIsSupported && !legacyUnsupportedModes.has(String(mode))) return null;
   const rawConnections = Array.isArray(value.coreConnections) ? value.coreConnections : [];
   const coreConnections = rawConnections
     .map((connection) => normalizeProfile(connection))
@@ -192,10 +178,11 @@ function parseRuntimeConfig(value: Record<string, unknown>): HermesRuntimeConfig
   if (!coreConnections.length) return null;
   const withManagedLocal = ensureManagedLocalProfile(coreConnections);
   const activeConnectionId =
+    modeIsSupported &&
     typeof value.activeConnectionId === "string" &&
     withManagedLocal.some((connection) => connection.id === value.activeConnectionId)
       ? value.activeConnectionId
-      : withManagedLocal.find((connection) => connection.mode === mode)?.id || managedLocalConnectionId;
+      : withManagedLocal.find((connection) => connection.mode === requestedMode)?.id || managedLocalConnectionId;
   const active = withManagedLocal.find((connection) => connection.id === activeConnectionId);
   if (!active) return null;
   return {
@@ -225,7 +212,7 @@ function normalizeProfile(value: unknown): IrisCoreConnectionProfile | null {
   if (!isConnectionMode(mode)) return null;
   const id = cleanId(record.id) || connectionIdFromParts(`core_${mode}`, [stringValue(record.name), stringValue(record.effectiveCoreApiUrl)]);
   const name = cleanName(record.name) || defaultNameForMode(mode);
-  const effectiveCoreApiUrl = effectiveUrlForProfile(mode, record) || defaultCoreApiUrl;
+  const effectiveCoreApiUrl = effectiveUrlForProfile(record) || defaultCoreApiUrl;
   const profile: IrisCoreConnectionProfile = {
     id,
     name,
@@ -242,9 +229,6 @@ function normalizeProfile(value: unknown): IrisCoreConnectionProfile | null {
       autoStart: booleanValue(local?.autoStart, true),
       installLaunchAgent: booleanValue(local?.installLaunchAgent, false),
       allowSshTunnel: booleanValue(local?.allowSshTunnel, true),
-      allowTailscale: booleanValue(local?.allowTailscale, false),
-      tailscaleHost: stringValue(local?.tailscaleHost),
-      tailscalePort: validPort(local?.tailscalePort) || port,
     };
     profile.effectiveCoreApiUrl = `http://127.0.0.1:${port}`;
   } else if (mode === "ssh") {
@@ -265,24 +249,6 @@ function normalizeProfile(value: unknown): IrisCoreConnectionProfile | null {
       autoStartRemoteCore: booleanValue(ssh?.autoStartRemoteCore, false),
     };
     profile.effectiveCoreApiUrl = normalizeServerUrl(record.effectiveCoreApiUrl) || defaultCoreApiUrl;
-  } else if (mode === "tailscale") {
-    const tailscale = objectValue(record.tailscale);
-    const host = stringValue(tailscale?.host) || hostnameFromUrl(effectiveCoreApiUrl);
-    const port = validPort(tailscale?.port) || portFromUrl(effectiveCoreApiUrl) || defaultCorePort;
-    profile.tailscale = {
-      host,
-      port,
-      requiresToken: true,
-    };
-    profile.effectiveCoreApiUrl = host ? `http://${host}:${port}` : effectiveCoreApiUrl;
-  } else {
-    const manual = objectValue(record.manual);
-    const url = normalizeServerUrl(manual?.url) || effectiveCoreApiUrl;
-    profile.manual = {
-      url,
-      requiresToken: booleanValue(manual?.requiresToken, true),
-    };
-    profile.effectiveCoreApiUrl = url;
   }
 
   return profile;
@@ -299,16 +265,9 @@ function ensureManagedLocalProfile(profiles: IrisCoreConnectionProfile[]) {
   ];
 }
 
-function effectiveUrlForProfile(mode: IrisCoreConnectionMode, record: Record<string, unknown>) {
+function effectiveUrlForProfile(record: Record<string, unknown>) {
   const explicit = normalizeServerUrl(record.effectiveCoreApiUrl);
   if (explicit) return explicit;
-  if (mode === "manual-url") return normalizeServerUrl(objectValue(record.manual)?.url);
-  if (mode === "tailscale") {
-    const tailscale = objectValue(record.tailscale);
-    const host = stringValue(tailscale?.host);
-    const port = validPort(tailscale?.port) || defaultCorePort;
-    return host ? `http://${host}:${port}` : "";
-  }
   return "";
 }
 
@@ -356,17 +315,7 @@ function portFromUrl(value: string) {
   }
 }
 
-function hostnameFromUrl(value: string) {
-  try {
-    return new URL(value).hostname;
-  } catch {
-    return "";
-  }
-}
-
 function defaultNameForMode(mode: IrisCoreConnectionMode) {
   if (mode === "ssh") return "Remote host over SSH";
-  if (mode === "tailscale") return "Remote host over Tailscale";
-  if (mode === "manual-url") return "Manual URL";
   return "Local";
 }

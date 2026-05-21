@@ -535,7 +535,7 @@ export function SettingsView({
             <CardHeader>
               <div>
                 <CardTitle>SSH connections</CardTitle>
-                <CardDescription>Use any SSH hostname, including a Tailscale MagicDNS name.</CardDescription>
+                <CardDescription>Use any SSH hostname or address for the remote host.</CardDescription>
               </div>
               <CardAction>
                 <Button size="appSmall" onClick={() => setSshDialogOpen(true)}>
@@ -863,7 +863,6 @@ function isProfileActionFailure(message: string) {
 function transportLabel(connection: IrisCoreConnectionProfile) {
   const transport = connectionTransport(connection);
   if (transport === "ssh-tunnel") return "SSH tunnel";
-  if (transport === "tailscale") return "SSH";
   return "Sidecar";
 }
 

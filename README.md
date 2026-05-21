@@ -1,11 +1,11 @@
 # Iris
 
-Iris is a monorepo for local-first agent control surfaces, including Iris Desktop and Iris Core. Hermes remains the first runtime backend through the Iris Hermes Adapter; Iris owns the user-facing app model, device/auth layer, and routing surface while runtime-owned records stay in their runtime source of truth.
+Iris is a monorepo for local-first agent control surfaces, including Iris Desktop and Iris Core. Hermes remains the first runtime backend through the Iris Hermes Adapter; Iris owns the user-facing app model, local/SSH connection boundary, and routing surface while runtime-owned records stay in their runtime source of truth.
 
 ## Workspace Layout
 
 - `desktop/`: Iris Desktop, a Tauri 2, React 18, TypeScript, and Tailwind desktop app.
-- `iris-core/`: Iris Core, a FastAPI control plane used by Iris clients for agents, sessions, automations, devices, runtime routing, and Hermes compatibility metadata.
+- `iris-core/`: Iris Core, a FastAPI control plane used by Iris clients for agents, sessions, automations, runtime routing, and Hermes compatibility metadata.
 - `scripts/`: root developer helpers for setup and coordinated startup.
 
 ## First-Time Setup
@@ -64,11 +64,11 @@ Iris Desktop always talks to Iris Core, and Core must run on the machine that ow
 
 For Hermes via SSH, start Iris Core on the remote host first, install or update the Hermes adapter there, restart the Hermes gateway, then add the SSH endpoint from Iris setup or Settings. Iris uses system OpenSSH with `BatchMode=yes`, so host keys, SSH config, and ssh-agent should be prepared outside the app.
 
-Direct private-network Core URLs and paired device tokens are still supported by Iris Core for advanced deployments, but the visible desktop setup flow currently focuses on Local and SSH.
+SSH is the supported remote path. Iris Desktop does not expose direct private-network Core URLs, Tailscale-specific Core mode, manual URL mode, or device pairing.
 
 ## Iris Core API
 
-Iris Core is the local-first control plane for Iris at `http://127.0.0.1:8765/v1`. It owns devices, auth, runtime routing, and Core-only coordination, and connects to Hermes through the Iris Hermes Adapter.
+Iris Core is the local-first control plane for Iris at `http://127.0.0.1:8765/v1`. It owns agents, sessions, automations, runtime routing, and Core-only coordination, and connects to Hermes through the Iris Hermes Adapter.
 
 Core stores Core-owned state at `~/.iris/core.sqlite3` by default. Hermes remains the source of truth for Hermes profiles, sessions, messages, models, commands, and jobs; Core normalizes those records through runtime adapters instead of copying them into SQLite. Existing default installs are migrated from `~/.agent-ui/core.sqlite3` with backups before duplicate runtime-owned tables are dropped. Iris Desktop sessions create short-lived Core draft targets and send messages through Core, while Hermes platform deliveries land in `/v1/runtime-deliveries/hermes` and replay through the in-memory `/v1/events` live buffer.
 
@@ -76,7 +76,7 @@ Product terminology uses "sessions" for user-facing work threads. Core API route
 
 ## Iris Hermes Adapter
 
-The easiest path is inside Iris Desktop: use first-run setup or Settings -> Local -> Service management -> Install Iris adapter. The packaged app runs the version-matched Core installer, copies the bundled `iris-platform` plugin, writes Hermes `.env` hints, enables the plugin when the Hermes CLI is available, and then requires a Hermes gateway restart.
+The easiest path is inside Iris Desktop: use first-run setup or Settings -> Local -> Service management -> Install Iris adapter. The packaged app runs the version-matched Core installer, copies the bundled `iris-platform` plugin, writes Hermes `.env` hints, removes stale Iris-managed `IRIS_TOKEN` entries, enables the plugin when the Hermes CLI is available, and then requires a Hermes gateway restart.
 
 The same installer is available from the Core binary:
 
@@ -97,8 +97,6 @@ For manual configuration, set these values where the Hermes gateway process can 
 
 ```bash
 IRIS_BASE_URL=http://127.0.0.1:8765
-# Optional for loopback; required when IRIS_BASE_URL is non-loopback.
-IRIS_TOKEN=replace-with-a-local-token
 IRIS_INBOUND_HOST=127.0.0.1
 IRIS_INBOUND_PORT=8766
 # Optional routing/user defaults.
@@ -106,7 +104,7 @@ IRIS_DEFAULT_CHAT_ID=desktop
 IRIS_ALLOWED_USERS=iris-user
 ```
 
-Same-machine loopback development can omit `IRIS_TOKEN`; auth headers are omitted in that mode. Remote or other non-loopback Core/plugin traffic requires `IRIS_TOKEN`. Core uses `HERMES_API_TOKEN` when set, otherwise it discovers Hermes' `API_SERVER_KEY` from `$HERMES_HOME/.env` for Jobs API calls.
+For both local Iris and SSH remote hosts, the adapter should use loopback from the Hermes host's point of view. Iris Desktop reaches remote Core through an SSH tunnel, so auth headers are normally omitted on the adapter/Core path. Core uses `HERMES_API_TOKEN` when set, otherwise it discovers Hermes' `API_SERVER_KEY` from `$HERMES_HOME/.env` for Jobs API calls.
 
 Enable Hermes gateway streaming in the selected Hermes profile config. This is a top-level setting, separate from `display.streaming`:
 
@@ -133,12 +131,11 @@ Smoke test inbound session delivery:
 
 ```bash
 curl -X POST http://127.0.0.1:8766/iris/messages \
-  -H "Authorization: Bearer $IRIS_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"chatId":"desktop","messageId":"manual-test","userId":"iris-user","userName":"Iris User","text":"Say hello from Iris."}'
 ```
 
-Omit the `Authorization` header when both sides are using loopback and `IRIS_TOKEN` is unset. The old `/v1/inbox/*` Core routes are gone; Hermes deliveries use `POST /v1/runtime-deliveries/hermes`.
+The old `/v1/inbox/*` Core routes are gone; Hermes deliveries use `POST /v1/runtime-deliveries/hermes`.
 
 ## Verification
 

@@ -10,6 +10,7 @@ import {
   preserveLocalScheduledDeliveries,
   preserveLocalSessionProjectMetadata,
   preserveActiveSessionTitles,
+  resolveDeliveryClientRequestId,
   scheduleDedupedTimer,
   sessionMetadataShouldPropagate,
   shouldApplySessionDetailSelection,
@@ -107,6 +108,12 @@ describe("Iris chat inbox merging", () => {
     expect(shouldRetryUnmappedDelivery(0)).toBe(true);
     expect(shouldRetryUnmappedDelivery(1)).toBe(true);
     expect(shouldRetryUnmappedDelivery(2)).toBe(false);
+  });
+
+  it("uses active replyTo metadata when completed deliveries omit clientRequestId", () => {
+    expect(resolveDeliveryClientRequestId("", "client-message-1", true)).toBe("client-message-1");
+    expect(resolveDeliveryClientRequestId("", "client-message-1", false)).toBe("");
+    expect(resolveDeliveryClientRequestId("client-message-2", "client-message-1", true)).toBe("client-message-2");
   });
 
   it("does not let replayed historical deliveries rewrite read state on restart", () => {
@@ -383,6 +390,83 @@ describe("Iris chat inbox merging", () => {
         clientRequestId: "user-1",
       },
     ]);
+  });
+
+  it("replaces finalized stream content when the final chunk repeats the streamed prefix", () => {
+    const existing: Message[] = [
+      { id: "user-1", role: "user", content: "test", clientRequestId: "user-1" },
+      {
+        id: "stream-1",
+        role: "assistant",
+        content: "Test",
+        streaming: true,
+        streamMessageId: "stream-1",
+        clientRequestId: "user-1",
+      },
+    ];
+
+    const merged = mergeStreamDelivery(
+      existing,
+      inboxMessage({
+        id: "stream-1:final",
+        content: "Test received.",
+        metadata: {
+          streamMessageId: "stream-1",
+          chunkOperation: "append",
+          streaming: false,
+          finalize: true,
+        },
+      }),
+      "stream-1",
+      true,
+      "user-1",
+    );
+
+    expect(merged).toHaveLength(2);
+    expect(merged[1]).toMatchObject({
+      id: "stream-1",
+      role: "assistant",
+      content: "Test received.",
+      streaming: false,
+      streamMessageId: "stream-1",
+      clientRequestId: "user-1",
+    });
+  });
+
+  it("appends finalized stream tail chunks when the final chunk is only a delta", () => {
+    const existing: Message[] = [
+      { id: "user-1", role: "user", content: "hello", clientRequestId: "user-1" },
+      {
+        id: "stream-1",
+        role: "assistant",
+        content: "Hello, w",
+        streaming: true,
+        streamMessageId: "stream-1",
+        clientRequestId: "user-1",
+      },
+    ];
+
+    const merged = mergeStreamDelivery(
+      existing,
+      inboxMessage({
+        id: "stream-1:final",
+        content: "orld!",
+        metadata: {
+          streamMessageId: "stream-1",
+          chunkOperation: "append",
+          streaming: false,
+          finalize: true,
+        },
+      }),
+      "stream-1",
+      true,
+      "user-1",
+    );
+
+    expect(merged[1]).toMatchObject({
+      content: "Hello, world!",
+      streaming: false,
+    });
   });
 
   it("normalizes live tool metadata into stream tool events", () => {
@@ -1157,6 +1241,39 @@ describe("clientRequestId dedup", () => {
     });
   });
 
+  it("replaces active stream content when completed delivery repeats the streamed prefix", () => {
+    const existing: Message[] = [
+      { id: "uuid-user", role: "user", content: "test", clientRequestId: "uuid-user" },
+      {
+        id: "stream-1",
+        role: "assistant",
+        content: "Test",
+        streaming: true,
+        streamMessageId: "stream-1",
+        clientRequestId: "uuid-user",
+      },
+    ];
+
+    const merged = mergeCompletedDelivery(
+      existing,
+      inboxMessage({
+        id: "delivery-99",
+        content: "Test received.",
+        metadata: { replyTo: "uuid-user" },
+      }),
+      "uuid-user",
+      "uuid-user",
+    );
+
+    expect(merged).toHaveLength(2);
+    expect(merged[1]).toMatchObject({
+      role: "assistant",
+      content: "Test received.",
+      streaming: false,
+      clientRequestId: "uuid-user",
+    });
+  });
+
   it("replaces active stream content for non-monotonic replace chunks", () => {
     const existing: Message[] = [
       { id: "uuid-user", role: "user", content: "hi", clientRequestId: "uuid-user" },
@@ -1239,6 +1356,52 @@ describe("clientRequestId dedup", () => {
     const merged = mergeMessageLists(local, history);
 
     expect(merged.map((message) => message.id)).toEqual(["12345", "12346"]);
+  });
+
+  it("infers assistant history clientRequestId from the preceding user turn", () => {
+    const history = toAppMessages([
+      {
+        id: "history-user",
+        sessionId: "session-1",
+        role: "user",
+        content: "test",
+        status: "completed",
+        toolName: "",
+        timestamp: 1,
+        metadata: { clientRequestId: "client-message-1" },
+      },
+      {
+        id: "history-assistant",
+        sessionId: "session-1",
+        role: "assistant",
+        content: "Test received.",
+        status: "completed",
+        toolName: "",
+        timestamp: 2,
+        metadata: { sessionId: "external-session", toolCalls: [] },
+      },
+    ]);
+
+    expect(history[1]).toMatchObject({
+      id: "history-assistant",
+      role: "assistant",
+      clientRequestId: "client-message-1",
+    });
+    expect(
+      mergeMessageLists(
+        [
+          { id: "client-message-1", role: "user", content: "test", clientRequestId: "client-message-1" },
+          {
+            id: "optimistic-assistant",
+            role: "assistant",
+            content: "Thinking...",
+            streaming: true,
+            clientRequestId: "client-message-1",
+          },
+        ],
+        history,
+      ).map((message) => message.id),
+    ).toEqual(["history-user", "history-assistant"]);
   });
 
   it("does not merge history by content when clientRequestId is absent on both sides", () => {
@@ -1700,6 +1863,36 @@ describe("Iris chat session detail loading", () => {
             toolName: "",
             timestamp: 2,
             metadata: { replyTo: "client-message-1", streaming: false, finalize: true },
+          },
+        ],
+        "client-message-1",
+      ),
+    ).toBe(true);
+  });
+
+  it("recognizes adjacent completed assistant history when Hermes omits reply metadata", () => {
+    expect(
+      activeRequestCompletedByHistory(
+        [
+          {
+            id: "history-user-1",
+            sessionId: "session-1",
+            role: "user",
+            content: "Hello",
+            status: "completed",
+            toolName: "",
+            timestamp: 1,
+            metadata: { clientRequestId: "client-message-1" },
+          },
+          {
+            id: "assistant-1",
+            sessionId: "session-1",
+            role: "assistant",
+            content: "Done",
+            status: "completed",
+            toolName: "",
+            timestamp: 2,
+            metadata: { sessionId: "external-session", toolCalls: [] },
           },
         ],
         "client-message-1",

@@ -62,8 +62,6 @@ from .models import (
     CoreSessionUpdateRequest,
     CoreMessageCreateRequest,
     SessionReadStateUpdateRequest,
-    DeviceCursorUpdateRequest,
-    DevicePairRequest,
     ErrorResponse,
     HealthResponse,
     ProjectSessionLinkRequest,
@@ -75,7 +73,7 @@ from .models import (
 )
 from .runtime_registry import RuntimeRegistry
 from .runtime_adapters.hermes_store import checked_at, normalize_hermes_home
-from .security import ManagementError, device_token_hash, host_is_loopback, make_auth_dependency
+from .security import ManagementError, host_is_loopback, make_auth_dependency
 from . import __version__
 
 
@@ -841,59 +839,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         }
 
     register_attachment_routes(app, require_auth)
-
-    @app.get("/v1/devices")
-    async def core_devices(_auth: None = Depends(require_auth)) -> dict[str, Any]:
-        return {"ok": True, "devices": core_store.list_devices()}
-
-    @app.get("/v1/devices/me")
-    async def core_current_device(request: Request, _auth: None = Depends(require_auth)) -> dict[str, Any]:
-        device = getattr(request.state, "iris_device", None)
-        return {
-            "ok": True,
-            "device": device if isinstance(device, dict) else None,
-            "auth": core_auth_payload(request.app),
-        }
-
-    @app.post("/v1/devices/pair")
-    async def core_pair_device(pairing: DevicePairRequest, _auth: None = Depends(require_auth)) -> dict[str, Any]:
-        raw_token = f"agui_{secrets.token_urlsafe(32)}"
-        device = core_store.create_device(
-            name=pairing.name,
-            kind=pairing.kind,
-            token_hash=device_token_hash(raw_token),
-            metadata=pairing.metadata,
-        )
-        return {
-            "ok": True,
-            "device": device,
-            "token": raw_token,
-            "tokenShownOnce": True,
-        }
-
-    @app.delete("/v1/devices/{device_id}")
-    async def core_revoke_device(device_id: str, _auth: None = Depends(require_auth)) -> dict[str, Any]:
-        if device_id == "management-token":
-            raise ManagementError("The management token cannot be revoked through the device API.", status_code=400)
-        device = core_store.revoke_device(device_id)
-        if not device:
-            raise ManagementError("Device was not found.", status_code=404)
-        return {"ok": True, "device": device}
-
-    @app.post("/v1/devices/me/cursors")
-    async def core_update_device_cursor(
-        cursor: DeviceCursorUpdateRequest,
-        request: Request,
-        _auth: None = Depends(require_auth),
-    ) -> dict[str, Any]:
-        device = getattr(request.state, "iris_device", None)
-        device_id = str(device.get("id") or "") if isinstance(device, dict) else ""
-        if not device_id.startswith("dev_"):
-            raise ManagementError("A paired device token is required for device cursors.", status_code=401)
-        return {
-            "ok": True,
-            "cursor": core_store.upsert_device_cursor(device_id, cursor.streamName, cursor.lastCursor),
-        }
 
     @app.get("/v1/status", response_model=StatusResponse)
     async def status(_auth: None = Depends(require_auth)) -> StatusResponse:
@@ -1997,7 +1942,6 @@ async def core_agent_gateway_action(app: FastAPI, agent_id: str, action: str) ->
 def install_iris_hermes_plugin_for_app(app: FastAPI) -> dict[str, Any]:
     settings: Settings = app.state.settings
     hermes_home = str(normalize_hermes_home(settings.hermes_home or os.environ.get("HERMES_HOME") or "~/.hermes"))
-    token = getattr(app.state, "management_token", "") or iris_token(hermes_home)
     inbound_port = getattr(settings, "iris_inbound_port", None) or DEFAULT_IRIS_INBOUND_PORT
     installations: list[dict[str, Any]] = []
     for index, target_home in enumerate(hermes_plugin_install_homes(hermes_home)):
@@ -2006,7 +1950,6 @@ def install_iris_hermes_plugin_for_app(app: FastAPI) -> dict[str, Any]:
                 str(target_home),
                 host=settings.host,
                 port=settings.port,
-                token=token,
                 inbound_port=int(inbound_port) + index,
             )
         except SystemExit as exc:
@@ -2081,14 +2024,10 @@ def profile_summary_from_agent(agent: dict[str, Any]) -> ProfileSummary:
 
 def core_auth_payload(request_app: FastAPI) -> dict[str, Any]:
     settings: Settings = request_app.state.settings
-    devices = request_app.state.core_store.list_devices()
-    active_devices = [device for device in devices if device.get("revokedAt") is None]
     remote_auth_required = not host_is_loopback(settings.host)
     return {
-        "authMode": "bearer" if request_app.state.management_token or remote_auth_required else "none",
+        "authMode": "bearer" if remote_auth_required else "none",
         "remoteAuthRequired": remote_auth_required,
-        "deviceCount": len(devices),
-        "activeDeviceCount": len(active_devices),
     }
 
 
@@ -3070,7 +3009,6 @@ def install_hermes_plugin(
     *,
     host: str,
     port: int,
-    token: str = "",
     inbound_port: int = DEFAULT_IRIS_INBOUND_PORT,
 ) -> dict[str, Any]:
     source = bundled_iris_platform_path()
@@ -3088,8 +3026,8 @@ def install_hermes_plugin(
             "IRIS_BASE_URL": f"http://{host}:{port}",
             "IRIS_INBOUND_HOST": host,
             "IRIS_INBOUND_PORT": str(inbound_port),
-            **({"IRIS_TOKEN": token} if token else {}),
         },
+        remove_keys={"IRIS_TOKEN"},
     )
     hermes_result = run_hermes_plugin_enable(target_home)
     result = {
@@ -3114,21 +3052,30 @@ def bundled_iris_platform_path() -> Path:
     return Path(__file__).resolve().parent / "payload" / "iris-platform"
 
 
-def update_plugin_env_hints(path: Path, values: dict[str, str]) -> None:
+def update_plugin_env_hints(path: Path, values: dict[str, str], *, remove_keys: set[str] | None = None) -> None:
     existing: list[str] = []
     if path.exists():
         existing = path.read_text(encoding="utf-8").splitlines()
-    managed_keys = set(values)
+    managed_keys = set(values) | set(remove_keys or set())
     next_lines = [
         line
         for line in existing
-        if not any(line.startswith(f"{key}=") for key in managed_keys)
+        if not any(env_line_defines_key(line, key) for key in managed_keys)
     ]
     for key, value in values.items():
         if value:
             next_lines.append(f"{key}={shell_env_value(value)}")
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("\n".join(next_lines).rstrip() + "\n", encoding="utf-8")
+
+
+def env_line_defines_key(line: str, key: str) -> bool:
+    stripped = line.strip()
+    if not stripped or stripped.startswith("#"):
+        return False
+    if stripped.startswith("export "):
+        stripped = stripped[len("export "):].lstrip()
+    return stripped.startswith(f"{key}=")
 
 
 def shell_env_value(value: str) -> str:
@@ -3377,7 +3324,6 @@ def cli() -> None:
             settings.hermes_home or str(normalize_hermes_home(None)),
             host=settings.host,
             port=settings.port,
-            token=settings.token or "",
             inbound_port=inbound_port,
         )
         return

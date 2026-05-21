@@ -16,9 +16,7 @@ import {
   getIrisCoreLatestEventCursor,
   getIrisCoreAttachmentDataUrl,
   getIrisCoreStatus,
-  pairIrisCoreDevice,
   renameIrisCoreAgent,
-  revokeIrisCoreDevice,
   resetIrisCoreAgentMemory,
   saveIrisCoreAgentMemory,
   saveIrisCoreAgentSkill,
@@ -30,15 +28,18 @@ import {
 } from "../irisCore";
 import { defaultRuntimeConfig } from "../../app/runtimeConfig";
 
-const invoke = vi.fn();
+const invoke = vi.hoisted(() => vi.fn());
+const tauriRuntime = vi.hoisted(() => ({ value: false }));
 
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: (...args: unknown[]) => invoke(...args),
+  isTauri: () => tauriRuntime.value,
 }));
 
 describe("irisCore", () => {
   beforeEach(() => {
     invoke.mockReset();
+    tauriRuntime.value = false;
   });
 
   afterEach(() => {
@@ -46,7 +47,7 @@ describe("irisCore", () => {
     vi.useRealTimers();
   });
 
-  it("falls back through the native bridge when Core requires bearer auth", async () => {
+  it("returns browser 401 responses without native fallback", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async () => ({
@@ -55,20 +56,31 @@ describe("irisCore", () => {
         json: async () => ({ ok: false, error: "Bearer token is required." }),
       })),
     );
+
+    const result = await getIrisCoreEvents(7, 50, defaultRuntimeConfig, "agent_default");
+
+    expect(result).toEqual({ ok: false, error: "Bearer token is required." });
+    expect(invoke).not.toHaveBeenCalled();
+  });
+
+  it("uses native transport immediately in Tauri", async () => {
+    tauriRuntime.value = true;
+    const fetch = vi.fn();
+    vi.stubGlobal("fetch", fetch);
     invoke.mockResolvedValue({ ok: true, events: [], cursor: 7 });
 
     const result = await getIrisCoreEvents(7, 50, defaultRuntimeConfig, "agent_default");
 
     expect(result).toEqual({ ok: true, events: [], cursor: 7 });
+    expect(fetch).not.toHaveBeenCalled();
     expect(invoke).toHaveBeenCalledWith("core_bridge", {
       action: "core_request",
-      payload: {
+      payload: expect.objectContaining({
         method: "GET",
         path: "/events?after=7&limit=50&agentId=agent_default",
-        body: undefined,
         runtime: defaultRuntimeConfig,
         connectionId: "core_local",
-      },
+      }),
     });
   });
 
@@ -571,6 +583,43 @@ describe("irisCore", () => {
     expect(result.attachment.downloadUrl).toBe("http://127.0.0.1:8765/v1/attachments/att_123/content");
   });
 
+  it("routes local-path attachment uploads through the explicit native action", async () => {
+    invoke.mockResolvedValue({
+      ok: true,
+      attachment: {
+        id: "att_local",
+        name: "notes.txt",
+        kind: "code",
+        mimeType: "text/plain",
+        size: 12,
+        previewUrl: "",
+        downloadUrl: "/v1/attachments/att_local/content",
+      },
+    });
+
+    const result = await uploadIrisCoreAttachment(
+      {
+        localPath: "/tmp/notes.txt",
+        name: "notes.txt",
+        mimeType: "text/plain",
+        profile: "default",
+        messageId: "client-message-1",
+      },
+      defaultRuntimeConfig,
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.attachment.downloadUrl).toBe("http://127.0.0.1:8765/v1/attachments/att_local/content");
+    expect(invoke).toHaveBeenCalledWith("core_bridge", {
+      action: "core_upload_path",
+      payload: expect.objectContaining({
+        localPath: "/tmp/notes.txt",
+        runtime: defaultRuntimeConfig,
+        connectionId: "core_local",
+      }),
+    });
+  });
+
   it("does not rewrite browser or Tauri local preview URLs as Core paths", () => {
     expect(irisCoreAttachmentUrl(defaultRuntimeConfig, "asset://localhost/%2FUsers%2Fscott%2FDesktop%2Fphoto.png")).toBe(
       "asset://localhost/%2FUsers%2Fscott%2FDesktop%2Fphoto.png",
@@ -603,8 +652,6 @@ describe("irisCore", () => {
     await createIrisCoreAgentSkill("agent_default", { name: "Skill", category: "personal", content: "# Skill" }, defaultRuntimeConfig);
     await saveIrisCoreAgentSkill("agent_default", "skill_1", { name: "Skill", category: "personal", content: "# Skill" }, defaultRuntimeConfig);
     await createIrisCoreAgent({ name: "research" }, defaultRuntimeConfig);
-    await pairIrisCoreDevice({ name: "MacBook", kind: "desktop", metadata: { network: "tailscale" } }, defaultRuntimeConfig);
-    await revokeIrisCoreDevice("dev_123", defaultRuntimeConfig);
     await cloneIrisCoreAgent("agent_default", { name: "copy" }, defaultRuntimeConfig);
     await renameIrisCoreAgent("agent_default", { name: "renamed" }, defaultRuntimeConfig);
     await deleteIrisCoreAgent("agent_default", defaultRuntimeConfig);
@@ -620,8 +667,6 @@ describe("irisCore", () => {
       ["POST", "/v1/agents/agent_default/skills"],
       ["PUT", "/v1/agents/agent_default/skills/skill_1"],
       ["POST", "/v1/agents"],
-      ["POST", "/v1/devices/pair"],
-      ["DELETE", "/v1/devices/dev_123"],
       ["POST", "/v1/agents/agent_default/clone"],
       ["PATCH", "/v1/agents/agent_default"],
       ["DELETE", "/v1/agents/agent_default"],

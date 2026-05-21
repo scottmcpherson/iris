@@ -145,17 +145,6 @@ class ProjectSessionLinkRequest(BaseModel):
     sessionId: str
 
 
-class DeviceCursorUpdateRequest(BaseModel):
-    streamName: str = "global"
-    lastCursor: int
-
-
-class DevicePairRequest(BaseModel):
-    name: str = "Iris device"
-    kind: str = "desktop"
-    metadata: dict[str, Any] = Field(default_factory=dict)
-
-
 class RuntimeDeliveryHermesRequest(BaseModel):
     runtimeId: str = "runtime_local_hermes"
     profile: str = "default"

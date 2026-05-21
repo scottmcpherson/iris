@@ -1,6 +1,5 @@
-import { useEffect, useRef, useState } from "react";
-import { resolveCoreApiUrl } from "../../app/runtimeConfig";
-import { getIrisSlashCommands } from "../../lib/irisRuntime";
+import { useEffect } from "react";
+import { useSlashCommandsQuery } from "../../lib/query";
 import type {
   HermesRuntimeConfig,
   HermesSlashCommand,
@@ -20,64 +19,26 @@ export function useIrisSlashCommands({
   connected,
   refreshKey,
 }: UseIrisSlashCommandsOptions) {
-  const [catalogs, setCatalogs] = useState<Record<string, HermesSlashCommandsResult>>({});
-  const [loadingByKey, setLoadingByKey] = useState<Record<string, boolean>>({});
-  const [errorsByKey, setErrorsByKey] = useState<Record<string, string | null>>({});
-  const requestSeqRef = useRef(0);
-  const routeKey = slashCommandRouteKey(runtimeConfig, profile);
-  const cacheKey = `${profile}|${routeKey}`;
-  const catalog = catalogs[cacheKey] || null;
-  const loading = Boolean(loadingByKey[cacheKey]);
-  const error = errorsByKey[cacheKey] || catalog?.error || null;
+  const query = useSlashCommandsQuery(runtimeConfig, profile, connected);
+  const catalog = query.data ? normalizeSlashCommandsResult(profile, query.data) : null;
+  const queryError = query.error instanceof Error ? query.error.message : null;
+  const loading = Boolean(connected && query.isFetching);
+  const error = queryError || catalog?.error || null;
   const warning = catalog?.warning || null;
   const commands = connected ? catalog?.commands || [] : [];
 
   useEffect(() => {
-    if (!connected || !profile) {
-      setLoadingByKey((current) => ({ ...current, [cacheKey]: false }));
-      return undefined;
-    }
-    void refreshSlashCommands();
-    return undefined;
-  }, [connected, profile, routeKey, refreshKey]);
-
-  async function refreshSlashCommands() {
-    if (!connected || !profile) return;
-    const requestId = ++requestSeqRef.current;
-    setLoadingByKey((current) => ({ ...current, [cacheKey]: true }));
-    setErrorsByKey((current) => ({ ...current, [cacheKey]: null }));
-    try {
-      const result = await getIrisSlashCommands(profile, runtimeConfig);
-      if (requestSeqRef.current !== requestId) return;
-      setCatalogs((current) => ({ ...current, [cacheKey]: normalizeSlashCommandsResult(profile, result) }));
-      setErrorsByKey((current) => ({
-        ...current,
-        [cacheKey]: result.ok ? null : result.error || "Could not load slash commands.",
-      }));
-    } catch (error) {
-      if (requestSeqRef.current !== requestId) return;
-      setErrorsByKey((current) => ({
-        ...current,
-        [cacheKey]: error instanceof Error ? error.message : "Could not load slash commands.",
-      }));
-    } finally {
-      if (requestSeqRef.current === requestId) {
-        setLoadingByKey((current) => ({ ...current, [cacheKey]: false }));
-      }
-    }
-  }
+    if (!connected || !profile || refreshKey == null) return;
+    void query.refetch();
+  }, [connected, profile, refreshKey]);
 
   return {
     commands,
     loading,
     error,
     warning,
-    refreshSlashCommands,
+    refreshSlashCommands: query.refetch,
   };
-}
-
-function slashCommandRouteKey(runtimeConfig: HermesRuntimeConfig, profile: string) {
-  return [resolveCoreApiUrl(runtimeConfig), profile].join("|");
 }
 
 function normalizeSlashCommandsResult(

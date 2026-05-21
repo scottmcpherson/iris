@@ -6,6 +6,7 @@ import {
   shouldLockComposerModelSelection,
   shouldRenderMessageBody,
   shouldShowChatEmptyState,
+  shouldShowRuntimeNotice,
   shouldShowVisibleDictationStatus,
 } from "../ChatView";
 
@@ -129,6 +130,14 @@ describe("composer model selection", () => {
     expect(composerModelSelection(false, profileDraft, sessionModel)).toEqual(sessionModel);
     expect(composerModelSelection(false, profileDraft, sessionModel, sessionDraft)).toEqual(sessionDraft);
     expect(composerModelSelection(true, profileDraft, sessionModel, sessionDraft)).toEqual(profileDraft);
+  });
+});
+
+describe("composer runtime notice", () => {
+  it("stays hidden while runtime readiness is still checking", () => {
+    expect(shouldShowRuntimeNotice(false, "")).toBe(false);
+    expect(shouldShowRuntimeNotice(false, "Start Iris Core, then retry.")).toBe(true);
+    expect(shouldShowRuntimeNotice(true, "")).toBe(false);
   });
 });
 

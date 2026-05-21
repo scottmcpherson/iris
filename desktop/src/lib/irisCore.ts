@@ -253,38 +253,8 @@ export type IrisCoreAttachment = {
   downloadUrl?: string;
 };
 
-export type IrisCoreDevice = {
-  id: string;
-  name: string;
-  kind: string;
-  createdAt?: number;
-  lastSeenAt?: number | null;
-  revokedAt?: number | null;
-  metadata?: CoreMetadata;
-};
-
 export async function getIrisCoreAgents(runtime?: HermesRuntimeConfig) {
   return coreRequest<{ agents: IrisCoreAgent[] }>(runtime, "GET", "/agents");
-}
-
-export async function pairIrisCoreDevice(
-  payload: { name: string; kind: string; metadata?: CoreMetadata },
-  runtime?: HermesRuntimeConfig,
-) {
-  return coreRequest<{ device: IrisCoreDevice; token: string; tokenShownOnce: boolean }>(
-    runtime,
-    "POST",
-    "/devices/pair",
-    payload,
-  );
-}
-
-export async function revokeIrisCoreDevice(deviceId: string, runtime?: HermesRuntimeConfig) {
-  return coreRequest<{ device: IrisCoreDevice }>(
-    runtime,
-    "DELETE",
-    `/devices/${encodeURIComponent(deviceId)}`,
-  );
 }
 
 export async function getIrisCoreStatus(runtime?: HermesRuntimeConfig, profile?: string) {
@@ -799,7 +769,7 @@ export async function getIrisCoreAttachmentDataUrl(
         return { ok: false, dataUrl: "", mimeType, error: `HTTP ${response.status}` };
       }
     } catch {
-      // Fall through to the native bridge; it can attach stored Core credentials.
+      // Fall through to the native bridge for WebView-only media conversion.
     }
   }
 
@@ -889,7 +859,7 @@ function versionMismatchMessage(mode: HermesRuntimeConfig["connectionMode"], cor
   if (mode === "managed-local") {
     return `Version mismatch: bundled Iris Core is ${coreLabel}, but Iris Desktop is ${clientLabel}. Rebuild or reinstall Iris locally.`;
   }
-  if (mode === "ssh" || mode === "tailscale") {
+  if (mode === "ssh") {
     return `Version mismatch: the remote host is running Iris Core ${coreLabel}, but local Iris Desktop is ${clientLabel}. Update the remote host so both Iris installs match.`;
   }
   return `Version mismatch: Iris Core is ${coreLabel}, but Iris Desktop is ${clientLabel}. Use matching Iris builds.`;

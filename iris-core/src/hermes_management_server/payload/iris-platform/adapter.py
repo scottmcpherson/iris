@@ -779,7 +779,7 @@ def iris_config_error(base_url: str, token: str) -> str:
         return ""
     if url_is_loopback(base_url):
         return ""
-    return "IRIS_TOKEN is required when IRIS_BASE_URL is not a loopback URL."
+    return "Iris Desktop remote access uses SSH to a loopback Core. Set IRIS_BASE_URL to loopback on the Hermes host; non-loopback IRIS_BASE_URL is unsupported by Iris Desktop."
 
 
 def check_requirements() -> bool:
@@ -808,7 +808,7 @@ def register(ctx) -> None:
         validate_config=validate_config,
         is_connected=is_connected,
         required_env=["IRIS_BASE_URL"],
-        install_hint="Set IRIS_BASE_URL for loopback use. Set IRIS_TOKEN as well for non-loopback Core traffic, then restart the Hermes gateway.",
+        install_hint="Set IRIS_BASE_URL to a loopback Core URL on the Hermes host, then restart the Hermes gateway. For remote Iris Desktop access, use SSH to that host.",
         max_message_length=0,
         pii_safe=False,
         emoji="A",

@@ -9,7 +9,7 @@ import {
   Store,
   X,
 } from "lucide-react";
-import { getIrisSkillDetail, saveIrisSkill } from "../../lib/irisRuntime";
+import { useSaveSkillMutation, useSkillDetailQuery } from "../../lib/query";
 import { CodeEditor } from "../../shared/CodeEditor";
 import { Alert, AlertDescription } from "../../shared/ui/alert";
 import { Badge } from "../../shared/ui/badge";
@@ -111,6 +111,11 @@ export function SkillsView({
   const isSearching = query.trim().length > 0;
 
   const selectedSkill = allSkills.find((skill) => skillKey(skill) === selectedKey);
+  const selectedSkillId = selectedSkill && !isVirtualSkill(selectedSkill)
+    ? selectedSkill.id || selectedSkill.path
+    : "";
+  const skillDetailQuery = useSkillDetailQuery(runtimeConfig, profile, selectedSkillId);
+  const saveSkillMutation = useSaveSkillMutation(runtimeConfig);
   const draftMeta = useMemo(() => extractDraftMetadata(draftContent), [draftContent]);
   const hasFrontmatter = draftContent.trimStart().startsWith("---");
   const editorMetadata = useMemo(
@@ -163,7 +168,6 @@ export function SkillsView({
   }
 
   useEffect(() => {
-    let cancelled = false;
     if (!selectedSkill) {
       if (!selectedKey.startsWith("draft://")) setDetail(null);
       return;
@@ -179,25 +183,16 @@ export function SkillsView({
       return;
     }
 
-    void getIrisSkillDetail(profile, selectedSkill.id || selectedSkill.path, runtimeConfig)
-      .then((result) => {
-        if (cancelled) return;
-        if (!result.ok) throw new Error(result.error || "Could not load skill.");
-        setDetail(result);
-        setDraftName(result.name);
-        setDraftCategory(result.category);
-        setDraftContent(result.content);
-      })
-      .catch((error) => {
-        if (cancelled) return;
-        const message = error instanceof Error ? error.message : "Could not load skill.";
-        setNotice(message);
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [profile, runtimeConfig, selectedSkill]);
+    if (skillDetailQuery.data) {
+      setDetail(skillDetailQuery.data);
+      setDraftName(skillDetailQuery.data.name);
+      setDraftCategory(skillDetailQuery.data.category);
+      setDraftContent(skillDetailQuery.data.content);
+    } else if (skillDetailQuery.error) {
+      const message = skillDetailQuery.error instanceof Error ? skillDetailQuery.error.message : "Could not load skill.";
+      setNotice(message);
+    }
+  }, [selectedKey, selectedSkill, skillDetailQuery.data, skillDetailQuery.error]);
 
   function createNewSkill() {
     const nextDetail = virtualSkillDetail(
@@ -224,16 +219,14 @@ export function SkillsView({
     setIsSaving(true);
     setNotice("");
     try {
-      const result = await saveIrisSkill({
+      const result = await saveSkillMutation.mutateAsync({
         profile,
         id: detail && !isVirtualPath(detail.path) ? detail.id : undefined,
         path: detail && !isVirtualPath(detail.path) ? detail.path : undefined,
         name: draftName,
         category: draftCategory,
         content: draftContent,
-        runtime: runtimeConfig,
       });
-      if (!result.ok) throw new Error(result.error || "Could not save skill.");
       setDetail(result.skill);
       setSelectedKey(result.skill.path);
       setNotice("Skill saved.");

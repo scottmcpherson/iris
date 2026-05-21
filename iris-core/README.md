@@ -1,12 +1,12 @@
 # Iris Core
 
-Iris Core is the local-first control plane for Iris. It owns devices, auth, runtime routing, and Core-only coordination, and connects to Hermes through the Iris Hermes Adapter. Hermes itself remains untouched and remains the source of truth for Hermes profiles, sessions, messages, jobs, memory, skills, models, and command catalogs. Normal Iris sessions enter Hermes through the `iris` platform adapter, while this service exposes normalized adapter-backed records and live delivery events over HTTP from the machine where Hermes is running.
+Iris Core is the local-first control plane for Iris. It owns agents, sessions, automations, runtime routing, and Core-only coordination, and connects to Hermes through the Iris Hermes Adapter. Hermes itself remains untouched and remains the source of truth for Hermes profiles, sessions, messages, jobs, memory, skills, models, and command catalogs. Normal Iris sessions enter Hermes through the `iris` platform adapter, while this service exposes normalized adapter-backed records and live delivery events over HTTP from the machine where Hermes is running.
 
 Product terminology uses "sessions" for user-facing work threads. Hermes-level adapter metadata may still carry lower-level `chat` identifiers when Hermes requires them.
 
 This service lives in the `iris-core/` workspace of the Iris monorepo.
 
-The default bind address is `127.0.0.1`. For remote desktop use, the current Iris app prefers SSH tunneling to a loopback-bound Core on the host that owns Hermes. For direct private-network Core URLs, use a bearer token or paired device token and avoid public port forwarding. Non-loopback binds require `IRIS_TOKEN` or an active paired device token.
+The default bind address is `127.0.0.1`. For remote desktop use, Iris Desktop opens an SSH tunnel to a loopback-bound Core on the host that owns Hermes. SSH is the supported remote access and auth boundary.
 
 ## Install
 
@@ -56,14 +56,13 @@ Environment variables are also supported:
 export HERMES_HOME="$HOME/.hermes"
 export IRIS_CORE_HOST="127.0.0.1"
 export IRIS_CORE_PORT="8765"
-export IRIS_TOKEN="replace-with-a-long-random-token"
 export IRIS_CORE_CORS_ORIGINS="http://localhost:3000"
 iris-core
 ```
 
 If `HERMES_HOME` points at a named profile such as `~/.hermes/profiles/work`, the server normalizes the root back to `~/.hermes`. The `default` profile maps to the root; named profiles map to `~/.hermes/profiles/<name>`.
 
-Same-machine loopback development can omit `IRIS_TOKEN`; auth headers are omitted in that mode. Remote or other non-loopback Core/plugin traffic requires `IRIS_TOKEN`. Core uses `HERMES_API_TOKEN` when set, otherwise it discovers Hermes' `API_SERVER_KEY` from `$HERMES_HOME/.env` for Jobs API calls. The old `/v1/inbox/*` routes are gone; Hermes deliveries use `POST /v1/runtime-deliveries/hermes`.
+Same-machine loopback development does not require `IRIS_TOKEN`; auth headers are omitted in that mode even if a stale token remains in the environment. For remote Iris Desktop, keep Core bound to loopback on the Hermes host and use SSH tunneling. Core uses `HERMES_API_TOKEN` when set, otherwise it discovers Hermes' `API_SERVER_KEY` from `$HERMES_HOME/.env` for Jobs API calls. The old `/v1/inbox/*` routes are gone; Hermes deliveries use `POST /v1/runtime-deliveries/hermes`.
 
 Core-owned service state defaults to `~/.iris/core.sqlite3`. On startup, the default `~/.agent-ui/core.sqlite3` path is migrated into `~/.iris/core.sqlite3` with timestamped backups, then duplicate runtime-owned tables are removed. To run the migration manually:
 
@@ -99,7 +98,7 @@ The Core binary carries a version-matched `iris-platform` payload and can instal
 iris-core install-hermes-plugin --hermes-home ~/.hermes --host 127.0.0.1 --port 8765
 ```
 
-The command copies the bundled plugin to `$HERMES_HOME/plugins/iris-platform`, runs `hermes plugins enable iris-platform` when the Hermes CLI is available, updates `.env` hints for `IRIS_BASE_URL`, `IRIS_TOKEN` when set, `IRIS_INBOUND_HOST`, and `IRIS_INBOUND_PORT` (default `8766`), then prints a reminder to restart the Hermes gateway. Use `--inbound-port` if the Hermes plugin listener needs a non-default port.
+The command copies the bundled plugin to `$HERMES_HOME/plugins/iris-platform`, runs `hermes plugins enable iris-platform` when the Hermes CLI is available, updates `.env` hints for `IRIS_BASE_URL`, `IRIS_INBOUND_HOST`, and `IRIS_INBOUND_PORT` (default `8766`), removes stale Iris-managed `IRIS_TOKEN` entries, then prints a reminder to restart the Hermes gateway. Use `--inbound-port` if the Hermes plugin listener needs a non-default port.
 
 ## Remote Host Setup
 
@@ -123,92 +122,6 @@ Core remains bound to `127.0.0.1` on the remote host, and the default SSH tunnel
 HERMES_HOME="$HOME/.hermes" iris-core --host 127.0.0.1 --port 8765
 ```
 
-### Direct Private-Network Mode
-
-SSH is the default remote setup path in Iris Desktop. Direct private-network Core URLs are still available for advanced deployments where Core is intentionally bound to a private interface such as a Tailscale address. In that mode, each client needs a bearer token or paired device token.
-
-On the Hermes host, create a temporary management token:
-
-```bash
-export IRIS_TOKEN="$(openssl rand -base64 32)"
-```
-
-Start Iris Core on the Hermes host:
-
-```bash
-HERMES_HOME="$HOME/.hermes" \
-IRIS_TOKEN="$IRIS_TOKEN" \
-iris-core --host 100.x.y.z --port 8765
-```
-
-Pair each client and copy the returned `token` once:
-
-```bash
-curl -X POST http://<private-core-host>:8765/v1/devices/pair \
-  -H "Authorization: Bearer $IRIS_TOKEN" \
-  -H "Content-Type: application/json" \
-  --data '{"name":"Workstation","kind":"desktop","metadata":{"network":"private"}}'
-```
-
-Clients should connect to:
-
-```text
-http://<private-core-host>:8765/v1
-```
-
-Example:
-
-```bash
-curl -H "Authorization: Bearer <paired-device-token>" \
-  http://<private-core-host>:8765/v1/agents
-```
-
-Do not default to public interfaces such as `0.0.0.0`. Prefer a specific `100.x.y.z` address:
-
-```bash
-iris-core --host 100.x.y.z --port 8765
-```
-
-Do not expose this service directly to the public internet without TLS and bearer-token auth. Memory and skills may contain sensitive local context.
-
-## Device Auth
-
-Pair a device:
-
-```bash
-curl -X POST http://127.0.0.1:8765/v1/devices/pair \
-  -H "Content-Type: application/json" \
-  --data '{"name":"Local desktop","kind":"desktop"}'
-```
-
-When `IRIS_TOKEN` is set, include it as a bearer token on the pairing request. The pairing response shows the device token once. Core stores only a token hash.
-
-List devices:
-
-```bash
-curl -H "Authorization: Bearer $IRIS_TOKEN" \
-  http://127.0.0.1:8765/v1/devices
-```
-
-Revoke a device:
-
-```bash
-curl -X DELETE -H "Authorization: Bearer $IRIS_TOKEN" \
-  http://127.0.0.1:8765/v1/devices/dev_...
-```
-
-Verify a second client without Hermes filesystem access:
-
-```bash
-curl -H "Authorization: Bearer <paired-device-token>" \
-  'http://<private-core-host>:8765/v1/sessions?agentId=<agent-id>'
-
-curl -H "Authorization: Bearer <paired-device-token>" \
-  'http://<private-core-host>:8765/v1/events?after=0&limit=50&agentId=<agent-id>'
-```
-
-The second client needs only the Core URL and paired device token. It should not read `~/.hermes`, Hermes SQLite files, or the Iris Core SQLite file directly.
-
 ## LaunchAgent Service
 
 For a durable local agent host on macOS, install Core as a LaunchAgent:
@@ -221,7 +134,7 @@ iris-core service uninstall
 
 The service label is `com.nousresearch.iris-core`. The plist lives at `~/Library/LaunchAgents/com.nousresearch.iris-core.plist`, with logs under `~/Library/Logs/Iris/`.
 
-For SSH access from another host, keep the service bound to `127.0.0.1`. For direct private-network access, bind to the selected private IP, pair per-device tokens, and keep CORS disabled unless a browser client has an explicit trusted origin.
+For SSH access from another host, keep the service bound to `127.0.0.1`.
 
 ## API
 
@@ -231,10 +144,10 @@ All responses are JSON. Errors use:
 { "ok": false, "error": "..." }
 ```
 
-When `IRIS_TOKEN` is set, or when Core is bound to a non-loopback host, include either the Iris token or a paired device token:
+Supported Iris Desktop paths keep Core bound to loopback and do not require Core bearer auth, including when a stale `IRIS_TOKEN` exists. Binding Core to a non-loopback host is not supported by Iris Desktop; low-level operators who do that must configure and include an Iris management token:
 
 ```http
-Authorization: Bearer <token>
+Authorization: Bearer <IRIS_TOKEN>
 ```
 
 ### Health
