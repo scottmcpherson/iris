@@ -39,11 +39,11 @@ export function AgentTopbar({
   onSectionChange,
 }: AgentTopbarProps) {
   if (!detailProfile) {
-    return <div className="agent-topbar agent-topbar-list" aria-hidden="true" />;
+    return <div className="grid items-center w-full min-w-0 agent-topbar-list" aria-hidden="true" />;
   }
 
   return (
-    <div className="agent-topbar agent-topbar-detail">
+    <div className="grid items-center w-full min-w-0 agent-topbar-detail">
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <Button
@@ -77,7 +77,7 @@ export function AgentTopbar({
                   <span className="agent-switcher-item-avatar" aria-hidden="true">
                     <Bot size={14} />
                   </span>
-                  <span className="agent-switcher-item-main">
+                  <span className="grid gap-0.5 min-w-0">
                     <strong>{item.name}</strong>
                     <small>{agentSubtitle(item)}</small>
                   </span>
@@ -97,13 +97,13 @@ export function AgentTopbar({
             })}
           </DropdownMenuGroup>
           <DropdownMenuSeparator />
-          <DropdownMenuItem className="agent-switcher-manage" onSelect={onManageAgents}>
+          <DropdownMenuItem className="font-semibold" onSelect={onManageAgents}>
             <Settings2 data-icon="inline-start" size={14} />
             Manage agents…
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
-      <div className="agent-topbar-spacer" aria-hidden="true" />
+      <div className="min-w-0" aria-hidden="true" />
       <div className="agent-topbar-actions">
         <Tabs value={section} onValueChange={(value) => onSectionChange(value as AgentDetailSection)}>
           <TabsList

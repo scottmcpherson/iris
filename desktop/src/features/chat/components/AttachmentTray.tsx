@@ -18,7 +18,7 @@ export function AttachmentTray({ attachments, onRemove }: AttachmentTrayProps) {
   if (!attachments.length) return null;
 
   return (
-    <div className="attachment-tray" aria-label="Attached files">
+    <div className="flex flex-wrap gap-2 pt-0.5 px-1 pb-2" aria-label="Attached files">
       {attachments.map((attachment) => (
         <div
           key={attachment.id}
@@ -34,7 +34,7 @@ export function AttachmentTray({ attachments, onRemove }: AttachmentTrayProps) {
               <AttachmentKindIcon attachment={attachment} />
             </span>
           )}
-          <span className="attachment-name">{attachment.name}</span>
+          <span className="min-w-0 overflow-hidden text-xs font-bold text-ellipsis whitespace-nowrap">{attachment.name}</span>
           <span className="attachment-size">
             {attachment.uploadStatus === "error"
               ? "error"

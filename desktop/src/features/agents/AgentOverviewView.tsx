@@ -120,7 +120,7 @@ export function AgentOverviewView({
     : null;
 
   return (
-    <div className="agent-overview-view">
+    <div className="grid content-start gap-3 min-w-0 min-h-0">
       <div className="agent-overview-top">
         <Card className="agent-overview-card agent-overview-card-health">
           <CardHeader>
@@ -149,8 +149,8 @@ export function AgentOverviewView({
               </Button>
             </div>
           </CardHeader>
-          <CardContent className="agent-overview-card-body">
-            <div className="diagnostics-rows">
+          <CardContent className="grid content-start gap-2.5 p-0">
+            <div className="grid gap-2">
               <DiagnosticRow
                 label="Iris Core"
                 sublabel={coreSublabel}
@@ -185,8 +185,8 @@ export function AgentOverviewView({
             </CardTitle>
             <CardDescription>{profile.path || "Profile path unavailable"}</CardDescription>
           </CardHeader>
-          <CardContent className="agent-overview-card-body">
-            <div className="agent-overview-stats">
+          <CardContent className="grid content-start gap-2.5 p-0">
+            <div className="grid grid-cols-3 gap-2 min-w-0">
               <ProfileStat label="Runtime" value={selectedProfile} />
               <ProfileStat label="Sessions" value={`${profile.sessionCount}`} />
               <ProfileStat label="Memory" value={formatBytes(profile.memoryBytes)} />
@@ -208,7 +208,7 @@ export function AgentOverviewView({
             <span>Runtime configuration</span>
           </CardTitle>
         </CardHeader>
-        <CardContent className="agent-overview-card-body">
+        <CardContent className="grid content-start gap-2.5 p-0">
           <ModelCard summary={modelDisplay} rawModel={profile.model} provider={profile.provider} />
         </CardContent>
       </Card>
@@ -269,8 +269,8 @@ function AgentDangerZone({
   return (
     <>
       <Card className="agent-danger-zone agent-overview-card">
-        <CardContent className="agent-danger-zone-content">
-          <div className="agent-danger-zone-text">
+        <CardContent className="flex flex-wrap items-center justify-between gap-3">
+          <div className="grid gap-0.5 min-w-0">
             <strong>Delete this agent</strong>
             <span>
               {isDefault
@@ -340,7 +340,7 @@ function ModelCard({
 }) {
   const [open, setOpen] = useState(false);
   return (
-    <Collapsible open={open} onOpenChange={setOpen} className="model-card">
+    <Collapsible open={open} onOpenChange={setOpen} className="min-w-0">
       <CollapsibleTrigger className="model-card-summary">
         <Server />
         <span>

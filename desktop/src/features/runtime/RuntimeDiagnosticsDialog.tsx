@@ -1,3 +1,4 @@
+import "./runtime.css";
 import { useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { toast } from "sonner";
@@ -212,7 +213,7 @@ export function RuntimeDiagnosticsDialog({
           <DialogTitle>{runtimeReadinessShortLabel(readiness)}</DialogTitle>
         </DialogHeader>
 
-        <div className="diagnostics-rows">
+        <div className="grid gap-2">
           <DiagnosticRow
             label="Iris Core"
             sublabel={connectionSummary(connection, status)}
@@ -247,7 +248,7 @@ export function RuntimeDiagnosticsDialog({
           />
         ) : null}
 
-        <DialogFooter className="diagnostics-footer">
+        <DialogFooter className="flex justify-end gap-2">
           <Button
             variant="appNeutral"
             size="appSmall"
@@ -273,7 +274,7 @@ function RemoteCommandHint({ label, command }: { label: string; command: string 
   return (
     <div className="diagnostics-remote-hint">
       <p>{label}</p>
-      <div className="diagnostics-remote-command">
+      <div className="flex items-center gap-2 flex-wrap">
         <code>{command}</code>
         <Button
           variant="appNeutral"

@@ -154,7 +154,7 @@ export function AgentConfigurationView({
             </Button>
           </div>
         </CardHeader>
-        <CardContent className="agent-overview-card-body">
+        <CardContent className="grid content-start gap-2.5 p-0">
           <CodeEditor
             value={soulDraft}
             onChange={setSoulDraft}
@@ -200,8 +200,8 @@ export function AgentConfigurationView({
               </Button>
             </div>
           </CardHeader>
-          <CardContent className="agent-overview-card-body">
-            <dl className="profile-config-summary">
+          <CardContent className="grid content-start gap-2.5 p-0">
+            <dl className="grid gap-2 m-0">
               <div>
                 <dt>Provider</dt>
                 <dd>{provider}</dd>
@@ -242,11 +242,11 @@ export function AgentConfigurationView({
               </Button>
             </div>
           </CardHeader>
-          <CardContent className="agent-overview-card-body">
+          <CardContent className="grid content-start gap-2.5 p-0">
             <div className="profile-config-pill-summary">
               {envKeys.length} {envKeys.length === 1 ? "variable" : "variables"}
             </div>
-            <div className="profile-env-key-list">
+            <div className="flex flex-wrap gap-1.5 min-h-7">
               {envKeys.length ? envKeys.map((key) => <span key={key}>{key}</span>) : <em>No keys set</em>}
             </div>
           </CardContent>
@@ -303,7 +303,7 @@ export function AgentConfigurationView({
               </DropdownMenu>
             </div>
           </CardHeader>
-          <CardContent className="agent-overview-card-body">
+          <CardContent className="grid content-start gap-2.5 p-0">
             <p className="profile-config-muted">
               {distribution?.source
                 ? `Source: ${distribution.source}`
@@ -333,7 +333,7 @@ export function AgentConfigurationView({
               </Button>
             </div>
           </CardHeader>
-          <CardContent className="agent-overview-card-body">
+          <CardContent className="grid content-start gap-2.5 p-0">
             <div className="profile-config-alias-row">
               <Input
                 value={aliasDraft}

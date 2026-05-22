@@ -1,0 +1,84 @@
+
+.diagnostics-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--muted);
+}
+
+.diagnostics-row.ready {
+  border-color: var(--status-ready-border);
+  background: var(--status-ready-fill);
+  color: var(--status-ready-text);
+}
+
+.diagnostics-row.degraded {
+  border-color: var(--status-degraded-border);
+  background: var(--status-degraded-fill);
+  color: var(--status-degraded-text);
+}
+
+.diagnostics-row.offline {
+  border-color: var(--status-offline-border);
+  background: var(--status-offline-fill);
+  color: var(--status-offline-text);
+}
+
+.diagnostics-row-icon {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  color: currentColor;
+}
+
+.diagnostics-row-text strong {
+  flex: 0 1 auto;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--foreground);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.diagnostics-row-text span {
+  flex: 0 1 auto;
+  min-width: 0;
+  font-size: 11px;
+  color: var(--muted-foreground);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.diagnostics-remote-hint {
+  display: grid;
+  gap: 6px;
+  padding: 10px 12px;
+  border: 1px dashed var(--menu-border);
+  border-radius: 10px;
+  background: var(--muted);
+}
+
+.diagnostics-remote-hint p {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.diagnostics-remote-command code {
+  flex: 1 1 0;
+  min-width: 0;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: var(--shadow-tint-strong);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  color: var(--foreground);
+  overflow-x: auto;
+  white-space: nowrap;
+}

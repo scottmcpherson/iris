@@ -9,7 +9,7 @@ import {
 
 export function StreamToolEvents({ events }: { events: HermesStreamToolEvent[] }) {
   return (
-    <div className="tool-progress-list" aria-label="Live tool activity">
+    <div className="grid gap-1 min-w-0 max-w-full mt-1.5" aria-label="Live tool activity">
       {events.map((event) => {
         const detail = toolEventDetail(event);
         const key = event.callId || event.id || `${event.toolName}-${event.label}`;

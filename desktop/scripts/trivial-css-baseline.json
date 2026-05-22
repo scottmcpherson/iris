@@ -1,0 +1,442 @@
+[
+  {
+    "file": "src/features/agents/agents.css",
+    "selector": ".agent-content-frame"
+  },
+  {
+    "file": "src/features/agents/agents.css",
+    "selector": ".agent-detail-title"
+  },
+  {
+    "file": "src/features/agents/agents.css",
+    "selector": ".agent-list-dialog-body"
+  },
+  {
+    "file": "src/features/agents/agents.css",
+    "selector": ".agent-list-grid"
+  },
+  {
+    "file": "src/features/agents/agents.css",
+    "selector": ".agent-list-main"
+  },
+  {
+    "file": "src/features/agents/agents.css",
+    "selector": ".agent-list-main, .agent-list-stat"
+  },
+  {
+    "file": "src/features/agents/agents.css",
+    "selector": ".agent-list-menu-trigger"
+  },
+  {
+    "file": "src/features/agents/agents.css",
+    "selector": ".agent-list-row-primary, .agent-list-row-stats"
+  },
+  {
+    "file": "src/features/agents/agents.css",
+    "selector": ".agent-list-row-stats"
+  },
+  {
+    "file": "src/features/agents/agents.css",
+    "selector": ".agent-list-stat"
+  },
+  {
+    "file": "src/features/agents/agents.css",
+    "selector": ".agent-metadata-strip"
+  },
+  {
+    "file": "src/features/agents/agents.css",
+    "selector": ".agent-overview-card-header-actions"
+  },
+  {
+    "file": "src/features/agents/agents.css",
+    "selector": ".agent-overview-top"
+  },
+  {
+    "file": "src/features/agents/agents.css",
+    "selector": ".agent-switcher-item"
+  },
+  {
+    "file": "src/features/agents/agents.css",
+    "selector": ".agent-switcher-menu"
+  },
+  {
+    "file": "src/features/agents/agents.css",
+    "selector": ".agent-switcher-trigger-chevron"
+  },
+  {
+    "file": "src/features/agents/agents.css",
+    "selector": ".agent-switcher-trigger-name"
+  },
+  {
+    "file": "src/features/agents/agents.css",
+    "selector": ".agent-topbar-list"
+  },
+  {
+    "file": "src/features/agents/agents.css",
+    "selector": ".profile-config-alias-row"
+  },
+  {
+    "file": "src/features/agents/agents.css",
+    "selector": ".profile-config-dialog"
+  },
+  {
+    "file": "src/features/agents/agents.css",
+    "selector": ".profile-config-dialog-editor"
+  },
+  {
+    "file": "src/features/agents/agents.css",
+    "selector": ".profile-config-editor"
+  },
+  {
+    "file": "src/features/agents/agents.css",
+    "selector": ".profile-config-row-2"
+  },
+  {
+    "file": "src/features/agents/agents.css",
+    "selector": ".profile-configuration-view"
+  },
+  {
+    "file": "src/features/agents/agents.css",
+    "selector": ".profile-node"
+  },
+  {
+    "file": "src/features/agents/agents.css",
+    "selector": ".profile-node-button, .sidebar-session"
+  },
+  {
+    "file": "src/features/agents/agents.css",
+    "selector": ".profile-node-row"
+  },
+  {
+    "file": "src/features/agents/agents.css",
+    "selector": ".profile-tree"
+  },
+  {
+    "file": "src/features/agents/agents.css",
+    "selector": ".profile-tree"
+  },
+  {
+    "file": "src/features/agents/agents.css",
+    "selector": ".profile-tree-actions"
+  },
+  {
+    "file": "src/features/agents/agents.css",
+    "selector": ".profile-tree-header"
+  },
+  {
+    "file": "src/features/agents/agents.css",
+    "selector": ".profile-tree-header, .profile-tree-actions"
+  },
+  {
+    "file": "src/features/agents/agents.css",
+    "selector": ".routing-summary"
+  },
+  {
+    "file": "src/features/agents/agents.css",
+    "selector": ".usage-dashboard"
+  },
+  {
+    "file": "src/features/automations/automations.css",
+    "selector": ".delivery-row"
+  },
+  {
+    "file": "src/features/automations/automations.css",
+    "selector": ".job-row-title"
+  },
+  {
+    "file": "src/features/automations/automations.css",
+    "selector": ".jobs-body"
+  },
+  {
+    "file": "src/features/automations/automations.css",
+    "selector": ".jobs-detail-grid"
+  },
+  {
+    "file": "src/features/automations/automations.css",
+    "selector": ".jobs-form-field"
+  },
+  {
+    "file": "src/features/automations/automations.css",
+    "selector": ".jobs-form-grid"
+  },
+  {
+    "file": "src/features/automations/automations.css",
+    "selector": ".jobs-form-wide-control"
+  },
+  {
+    "file": "src/features/automations/automations.css",
+    "selector": ".jobs-header"
+  },
+  {
+    "file": "src/features/automations/automations.css",
+    "selector": ".jobs-list-section, .jobs-activity-section, .jobs-detail-section"
+  },
+  {
+    "file": "src/features/automations/automations.css",
+    "selector": ".jobs-view"
+  },
+  {
+    "file": "src/features/chat/chat.css",
+    "selector": ".chat-workspace"
+  },
+  {
+    "file": "src/features/chat/chat.css",
+    "selector": ".composer-recording-waveform"
+  },
+  {
+    "file": "src/features/chat/chat.css",
+    "selector": ".composer-toolbar, .composer-tools"
+  },
+  {
+    "file": "src/features/chat/chat.css",
+    "selector": ".composer-tools"
+  },
+  {
+    "file": "src/features/chat/chat.css",
+    "selector": ".message"
+  },
+  {
+    "file": "src/features/chat/chat.css",
+    "selector": ".message-attachments"
+  },
+  {
+    "file": "src/features/chat/chat.css",
+    "selector": ".message-audio-main"
+  },
+  {
+    "file": "src/features/chat/chat.css",
+    "selector": ".message-list"
+  },
+  {
+    "file": "src/features/chat/chat.css",
+    "selector": ".new-chat-center"
+  },
+  {
+    "file": "src/features/chat/chat.css",
+    "selector": ".pinned-list"
+  },
+  {
+    "file": "src/features/chat/chat.css",
+    "selector": ".session-branch"
+  },
+  {
+    "file": "src/features/chat/chat.css",
+    "selector": ".session-column"
+  },
+  {
+    "file": "src/features/chat/chat.css",
+    "selector": ".sidebar-session-row"
+  },
+  {
+    "file": "src/features/chat/chat.css",
+    "selector": ".tool-view"
+  },
+  {
+    "file": "src/features/iris/iris.css",
+    "selector": ".connection-profile-summary"
+  },
+  {
+    "file": "src/features/iris/iris.css",
+    "selector": ".connection-switch-field"
+  },
+  {
+    "file": "src/features/iris/iris.css",
+    "selector": ".core-connection-actions"
+  },
+  {
+    "file": "src/features/iris/iris.css",
+    "selector": ".core-connection-fields"
+  },
+  {
+    "file": "src/features/iris/iris.css",
+    "selector": ".core-connection-heading"
+  },
+  {
+    "file": "src/features/iris/iris.css",
+    "selector": ".core-connection-heading, .core-connection-title, .core-connection-actions"
+  },
+  {
+    "file": "src/features/iris/iris.css",
+    "selector": ".core-connection-title"
+  },
+  {
+    "file": "src/features/iris/iris.css",
+    "selector": ".core-status-grid"
+  },
+  {
+    "file": "src/features/iris/iris.css",
+    "selector": ".core-status-grid, .settings-field-grid"
+  },
+  {
+    "file": "src/features/iris/iris.css",
+    "selector": ".core-status-strip"
+  },
+  {
+    "file": "src/features/iris/iris.css",
+    "selector": ".runtime-diagnostics-dialog"
+  },
+  {
+    "file": "src/features/iris/iris.css",
+    "selector": ".runtime-field"
+  },
+  {
+    "file": "src/features/iris/iris.css",
+    "selector": ".service-card-title"
+  },
+  {
+    "file": "src/features/iris/iris.css",
+    "selector": ".ssh-dialog-fields"
+  },
+  {
+    "file": "src/features/memory/memory.css",
+    "selector": ".memory-capacity-grid"
+  },
+  {
+    "file": "src/features/memory/memory.css",
+    "selector": ".memory-diff-scroll"
+  },
+  {
+    "file": "src/features/memory/memory.css",
+    "selector": ".memory-history-header"
+  },
+  {
+    "file": "src/features/memory/memory.css",
+    "selector": ".memory-history-split"
+  },
+  {
+    "file": "src/features/polish/polish.css",
+    "selector": ".growth-row"
+  },
+  {
+    "file": "src/features/polish/polish.css",
+    "selector": ".onboarding-heading"
+  },
+  {
+    "file": "src/features/polish/polish.css",
+    "selector": ".onboarding-local-fields"
+  },
+  {
+    "file": "src/features/settings/settings.css",
+    "selector": ".permission-row"
+  },
+  {
+    "file": "src/features/settings/settings.css",
+    "selector": ".settings-advanced"
+  },
+  {
+    "file": "src/features/settings/settings.css",
+    "selector": ".settings-row"
+  },
+  {
+    "file": "src/features/settings/settings.css",
+    "selector": ".settings-substatus"
+  },
+  {
+    "file": "src/features/settings/settings.css",
+    "selector": ".settings-view-general"
+  },
+  {
+    "file": "src/features/settings/settings.css",
+    "selector": ".setup-step"
+  },
+  {
+    "file": "src/features/settings/settings.css",
+    "selector": ".setup-step-copy"
+  },
+  {
+    "file": "src/features/settings/settings.css",
+    "selector": ".token-actions-row"
+  },
+  {
+    "file": "src/features/settings/settings.css",
+    "selector": ".token-input-row"
+  },
+  {
+    "file": "src/features/settings/settings.css",
+    "selector": ".token-input-row"
+  },
+  {
+    "file": "src/features/skills/skills.css",
+    "selector": ".code-editor-wrap"
+  },
+  {
+    "file": "src/features/skills/skills.css",
+    "selector": ".skill-code-editor"
+  },
+  {
+    "file": "src/features/skills/skills.css",
+    "selector": ".skill-detail-footer"
+  },
+  {
+    "file": "src/features/skills/skills.css",
+    "selector": ".skill-detail-header"
+  },
+  {
+    "file": "src/features/skills/skills.css",
+    "selector": ".skill-detail-panel"
+  },
+  {
+    "file": "src/features/skills/skills.css",
+    "selector": ".skill-grid, .settings-list, .permission-board, .runtime-panel, .profile-workflows"
+  },
+  {
+    "file": "src/features/skills/skills.css",
+    "selector": ".skill-group"
+  },
+  {
+    "file": "src/features/skills/skills.css",
+    "selector": ".skill-list-panel"
+  },
+  {
+    "file": "src/features/skills/skills.css",
+    "selector": ".skill-list-panel, .skill-detail-panel"
+  },
+  {
+    "file": "src/features/skills/skills.css",
+    "selector": ".skill-row"
+  },
+  {
+    "file": "src/features/skills/skills.css",
+    "selector": ".skill-row-copy"
+  },
+  {
+    "file": "src/features/skills/skills.css",
+    "selector": ".skill-row-title"
+  },
+  {
+    "file": "src/features/skills/skills.css",
+    "selector": ".skills-browser"
+  },
+  {
+    "file": "src/features/skills/skills.css",
+    "selector": ".skills-lower-grid"
+  },
+  {
+    "file": "src/features/skills/skills.css",
+    "selector": ".skills-workspace"
+  },
+  {
+    "file": "src/styles/app-shell.css",
+    "selector": ".brand-name"
+  },
+  {
+    "file": "src/styles/app-shell.css",
+    "selector": ".content-grid"
+  },
+  {
+    "file": "src/styles/app-shell.css",
+    "selector": ".nav-list"
+  },
+  {
+    "file": "src/styles/app-shell.css",
+    "selector": ".primary-pane"
+  },
+  {
+    "file": "src/styles/app-shell.css",
+    "selector": ".view-header"
+  },
+  {
+    "file": "src/styles/app-shell.css",
+    "selector": ".view-icon, .skill-icon"
+  }
+]

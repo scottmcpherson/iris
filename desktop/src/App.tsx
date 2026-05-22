@@ -3,6 +3,7 @@ import { isTauri } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { useLocation } from "@tanstack/react-router";
 import "./App.css";
+import "./features/iris/iris.css";
 import type {
   CommandItem,
   ProfileAction,

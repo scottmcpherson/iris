@@ -1,3 +1,4 @@
+import "./memory.css";
 import { useEffect, useMemo, useState } from "react";
 import {
   AlertTriangle,
@@ -136,7 +137,7 @@ export function MemoryView({
   }, [profile, memoryFile.content, userFile.content]);
 
   return (
-    <div className="memory-workspace">
+    <div className="relative grid self-start content-start gap-3 min-w-0 min-h-0 pb-[30px]">
       <div className="memory-capacity-grid">
         {(["memory", "user"] as MemoryFileKey[]).map((file) => {
           const fileData = files[file];
@@ -167,7 +168,7 @@ export function MemoryView({
                   </Button>
                 </div>
               </CardHeader>
-              <CardContent className="agent-overview-card-body">
+              <CardContent className="grid content-start gap-2.5 p-0">
                 <CapacityBar chars={chars} limit={limit} capacity={capacity} />
                 <div className="memory-capacity-meta">
                   <span>{countLines(fileData.content)} lines</span>
@@ -211,7 +212,7 @@ export function MemoryView({
             </Button>
           </div>
         </CardHeader>
-        <CardContent className="agent-overview-card-body memory-editor-body">
+        <CardContent className="grid content-start gap-2.5 p-0 memory-editor-body">
           <div className="memory-editor-toolbar">
             <Tabs
               value={activeFile}
@@ -273,11 +274,11 @@ export function MemoryView({
             </CollapsibleTrigger>
           </CardHeader>
           <CollapsibleContent forceMount>
-            <CardContent className="agent-overview-card-body memory-history-body">
+            <CardContent className="grid content-start gap-2.5 p-0 pt-3 gap-3">
               {activeHistory.length ? (
                 <div className="memory-history-split">
                   <ScrollArea className="memory-revision-list">
-                    <div className="memory-revision-list-inner">
+                    <div className="grid content-start gap-1.5 p-2">
                       {activeHistory.map((entry) => (
                         <button
                           key={entry.id}
@@ -311,7 +312,7 @@ export function MemoryView({
                   </div>
                 </div>
               ) : (
-                <Empty className="memory-history-empty">
+                <Empty className="py-4 px-3 min-h-0">
                   <EmptyHeader>
                     <EmptyTitle>No revisions yet</EmptyTitle>
                     <EmptyDescription>
@@ -330,10 +331,10 @@ export function MemoryView({
         <span>
           External memory providers (Honcho, Mem0, and others) are configured on the Hermes host.
         </span>
-        <Info size={13} className="memory-providers-info" />
+        <Info size={13} className="ml-auto" />
       </div>
 
-      <div className="memory-footer-actions">
+      <div className="flex justify-end">
         <Button
           variant="appDanger"
           size="appSmall"
@@ -432,14 +433,14 @@ function CapacityBar({
   capacity: ReturnType<typeof capacityFor>;
 }) {
   return (
-    <div className="memory-capacity-bar-wrap">
+    <div className="grid gap-1.5 min-w-0">
       <div className="memory-capacity-bar-track" role="progressbar" aria-valuemin={0} aria-valuemax={limit} aria-valuenow={Math.min(chars, limit)}>
         <div
           className={`memory-capacity-bar-fill tone-${capacity.tone}`}
           style={{ width: `${Math.min(100, capacity.percent)}%` }}
         />
       </div>
-      <div className="memory-capacity-bar-meta">
+      <div className="flex items-baseline justify-between gap-2.5 min-w-0">
         <strong>
           {chars.toLocaleString()} / {limit.toLocaleString()}
         </strong>

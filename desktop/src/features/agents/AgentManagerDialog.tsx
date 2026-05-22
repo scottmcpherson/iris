@@ -41,8 +41,8 @@ export function AgentManagerDialog({
 }: AgentManagerDialogProps) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="agent-manager-dialog sm:max-w-[680px]">
-        <DialogHeader className="agent-manager-dialog-header">
+      <DialogContent className="gap-3.5 pt-[18px] px-[18px] pb-4 sm:max-w-[680px]">
+        <DialogHeader className="gap-1">
           <DialogTitle>Manage agents</DialogTitle>
           <DialogDescription>
             Create, switch, or remove agent profiles. Each agent has its own memory, skills, and runtime.

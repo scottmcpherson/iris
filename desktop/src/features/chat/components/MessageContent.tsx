@@ -31,7 +31,7 @@ export function MessageContent({ message }: { message: Message }) {
       {hasToolEvents ? <StreamToolEvents events={message.streamEvents || []} /> : null}
       {content && !thinking ? <MarkdownMessage content={message.content} streaming={message.streaming} /> : null}
       {message.streaming ? (
-        <span className="thinking-shimmer streaming-thinking-indicator" aria-label={ASSISTANT_THINKING_TEXT}>
+        <span className="thinking-shimmer mt-1.5" aria-label={ASSISTANT_THINKING_TEXT}>
           {ASSISTANT_THINKING_TEXT}
         </span>
       ) : null}

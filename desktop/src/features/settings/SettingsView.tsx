@@ -1,3 +1,4 @@
+import "./settings.css";
 import { invoke } from "@tauri-apps/api/core";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
@@ -225,8 +226,8 @@ export function SettingsView({
   }
 
   return (
-    <div className="tool-view settings-view settings-view-general">
-      <div className="settings-toolbar">
+    <div className="tool-view gap-4 settings-view-general">
+      <div className="flex items-center justify-between gap-3 min-w-0">
         <div>
           <h1>Settings</h1>
         </div>
@@ -245,7 +246,7 @@ export function SettingsView({
         <span className="core-status-strip-field">
           Core <strong>{status?.version || "Unknown"}</strong>
         </span>
-        <span className="core-status-strip-spacer" />
+        <span className="flex-auto" />
         <span className="core-status-strip-checked">
           {status?.connected ? `Checked ${checkedAt}` : `Offline · ${checkedAt}`}
         </span>
@@ -266,7 +267,7 @@ export function SettingsView({
         </Alert>
       ) : null}
 
-      <Tabs value={modeTab} onValueChange={(value) => setModeTab(value as SettingsConnectionTab)} className="core-mode-tabs">
+      <Tabs value={modeTab} onValueChange={(value) => setModeTab(value as SettingsConnectionTab)} className="min-w-0">
         <TabsList>
           <TabsTrigger value="managed-local">
             <Server data-icon="inline-start" />
@@ -284,17 +285,17 @@ export function SettingsView({
               <CardTitle>Local</CardTitle>
               <CardDescription>Iris Core runs locally and uses local Hermes.</CardDescription>
             </CardHeader>
-            <CardContent className="settings-mode-content">
-              <FieldSet className="settings-form-group">
+            <CardContent className="grid gap-3.5">
+              <FieldSet className="grid gap-2.5 min-w-0 p-0 border-0">
                 <h3 className="settings-form-group-title">Connection</h3>
                 <FieldGroup className="settings-field-grid">
                   <TextField id="local-port" label="Core port" value={localDraft.port} onChange={(port) => setLocalDraft({ ...localDraft, port })} />
                   <TextField id="local-hermes-home" label="Hermes home" value={localDraft.hermesHome} placeholder="~/.hermes" onChange={(hermesHome) => setLocalDraft({ ...localDraft, hermesHome })} />
                 </FieldGroup>
               </FieldSet>
-              <FieldSet className="settings-form-group">
+              <FieldSet className="grid gap-2.5 min-w-0 p-0 border-0">
                 <h3 className="settings-form-group-title">Startup</h3>
-                <FieldGroup className="settings-switch-list">
+                <FieldGroup className="gap-2.5">
                   <SwitchField
                     id="local-autostart"
                     label="Start managed Core when Iris opens"
@@ -312,7 +313,7 @@ export function SettingsView({
                 </FieldGroup>
               </FieldSet>
             </CardContent>
-            <CardFooter className="settings-action-row">
+            <CardFooter className="flex-wrap items-center gap-2">
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <Button variant="appNeutral" size="appSmall">
@@ -336,7 +337,7 @@ export function SettingsView({
                   </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
-              <span className="settings-action-spacer" />
+              <span className="flex-auto" />
               <Button size="appSmall" onClick={() => void saveLocalProfile()}>
                 <Plug data-icon="inline-start" />
                 Save
@@ -375,7 +376,7 @@ export function SettingsView({
                 </Button>
               </CardAction>
             </CardHeader>
-            <CardContent className="settings-mode-content">
+            <CardContent className="grid gap-3.5">
               <ConnectionList
                 profiles={profilesByMode.ssh}
                 activeId={activeConnection.id}
@@ -429,7 +430,7 @@ function ConnectionList({
     return <p className="settings-empty-text">No saved profiles.</p>;
   }
   return (
-    <div className="connection-profile-list">
+    <div className="grid gap-2">
       {profiles.map((profile) => {
         const connected = profile.id === connectedId;
         const selected = profile.id === activeId;
@@ -513,7 +514,7 @@ function SwitchField({
   onCheckedChange: (checked: boolean) => void;
 }) {
   return (
-    <Field orientation="horizontal" className="settings-switch-field">
+    <Field orientation="horizontal" className="min-h-8 items-center">
       <Switch id={id} checked={checked} onCheckedChange={onCheckedChange} />
       <FieldContent>
         <FieldLabel htmlFor={id}>{label}</FieldLabel>

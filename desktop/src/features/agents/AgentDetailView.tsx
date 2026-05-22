@@ -115,7 +115,7 @@ export function AgentDetailView({
   }
 
   return (
-    <AgentContentFrame layout="record" className="agent-detail-workspace">
+    <AgentContentFrame layout="record" className="content-start">
       <AgentOverviewView
         status={status}
         profile={profile}

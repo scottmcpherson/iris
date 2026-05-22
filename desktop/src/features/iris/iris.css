@@ -1,0 +1,503 @@
+.connection-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+  height: 32px;
+  padding: 0 11px;
+  border: 1px solid var(--input);
+  border-radius: 999px;
+  color: var(--text-secondary);
+  background: var(--muted);
+  font-size: 12px;
+}
+
+.runtime-panel {
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  align-items: end;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--muted);
+}
+
+.runtime-panel .settings-row,
+.runtime-panel .runtime-field.wide {
+  grid-column: 1 / -1;
+}
+
+.service-card {
+  display: grid;
+  align-content: start;
+  gap: 10px;
+  min-width: 0;
+  padding: 11px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--shadow-tint-soft);
+}
+
+.service-card [data-slot="card-header"],
+.service-card-title,
+.service-card footer {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.service-card [data-slot="card-header"] {
+  justify-content: space-between;
+  gap: 10px;
+  padding: 0;
+}
+
+.service-card-title {
+  gap: 7px;
+}
+
+.service-card [data-slot="card-header"] strong {
+  overflow: hidden;
+  color: var(--foreground);
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.service-card [data-slot="card-header"] [data-slot="badge"],
+.service-card footer {
+  color: var(--muted-foreground);
+  font-size: 11px;
+}
+
+.service-card [data-slot="card-header"] [data-slot="badge"] {
+  max-width: 54%;
+  overflow: hidden;
+  padding: 3px 7px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--muted);
+  cursor: help;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.service-health-dot {
+  width: 8px;
+  height: 8px;
+  flex: 0 0 auto;
+  border-radius: 999px;
+  background: var(--accent-rose);
+  box-shadow: 0 0 0 3px var(--status-offline-tint);
+}
+
+.service-health-dot.online {
+  background: var(--accent-success-soft);
+  box-shadow: 0 0 0 3px var(--status-ready-faint);
+}
+
+.service-health-dot.degraded {
+  background: var(--accent-warm-amber);
+  box-shadow: 0 0 0 3px var(--status-degraded-tint);
+}
+
+.service-card .runtime-field.wide,
+.service-card .token-field {
+  grid-column: auto;
+}
+
+.service-card footer {
+  justify-content: flex-start;
+  gap: 8px;
+  line-height: 1.25;
+}
+
+.service-card footer em {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.service-card footer em {
+  color: var(--accent-warning);
+  font-style: normal;
+}
+
+.runtime-field {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.runtime-field [data-slot="field-label"] {
+  color: var(--muted-foreground);
+  font-size: 11px;
+  font-weight: 750;
+}
+
+.runtime-field [data-slot="input"],
+.runtime-field [data-slot="select-trigger"],
+.profile-workflows [data-slot="input"] {
+  height: 32px;
+  border-radius: 8px;
+  padding: 0 10px;
+}
+
+.core-connection-form {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  padding: 11px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--muted);
+}
+
+.core-connection-heading,
+.core-connection-title,
+.core-connection-actions {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.core-connection-heading {
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0;
+}
+
+.core-connection-heading > div {
+  flex: 1 1 260px;
+  min-width: 0;
+}
+
+.core-connection-heading [data-slot="card-action"] {
+  display: flex;
+  flex: 0 0 auto;
+  min-width: max-content;
+  max-width: 100%;
+}
+
+.core-connection-title {
+  gap: 8px;
+}
+
+.core-connection-heading strong {
+  overflow: hidden;
+  color: var(--foreground);
+  font-size: 14px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.core-connection-heading [data-slot="card-title"] {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--foreground);
+  font-size: 14px;
+  line-height: 1.25;
+}
+
+.core-connection-heading [data-slot="card-description"] {
+  margin-top: 4px;
+  max-width: 760px;
+  color: var(--muted-foreground);
+  line-height: 1.35;
+}
+
+.core-connection-heading [data-slot="badge"] {
+  flex: 0 0 auto;
+  overflow: visible;
+  width: max-content;
+  max-width: none;
+  padding: 3px 7px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--muted-foreground);
+  background: var(--muted);
+  font-size: 11px;
+  text-overflow: clip;
+  white-space: nowrap;
+}
+
+.core-connection-fields {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  align-items: start;
+  gap: 8px;
+  min-width: 0;
+  padding: 0;
+}
+
+.core-connection-pending {
+  overflow: hidden;
+  color: var(--accent-warning);
+  font-size: 11px;
+  font-style: normal;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.core-connection-actions {
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.core-mode-tabs [data-slot="tabs-list"] {
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.core-status-grid,
+.settings-field-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 8px;
+  min-width: 0;
+}
+
+.ssh-connection-dialog {
+  width: min(580px, calc(100vw - 56px));
+  max-height: min(86vh, 720px);
+  overflow: auto;
+  padding: 0;
+  border-color: var(--accent);
+  border-radius: 8px;
+  background: var(--surface-card-deep);
+  color: var(--foreground);
+  box-shadow: 0 28px 90px var(--shadow-tint-deep);
+}
+
+.ssh-connection-dialog [data-slot="dialog-header"] {
+  gap: 5px;
+  padding: 18px 20px 16px;
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+}
+
+.ssh-connection-dialog [data-slot="dialog-title"] {
+  color: var(--foreground);
+  font-size: 20px;
+  line-height: 1.2;
+  letter-spacing: 0;
+}
+
+.ssh-connection-dialog [data-slot="dialog-description"] {
+  max-width: 460px;
+  color: var(--muted-foreground);
+  font-size: 13px;
+  line-height: 1.42;
+}
+
+.ssh-connection-dialog [data-slot="dialog-close"] {
+  top: 16px;
+  right: 16px;
+  color: var(--muted-foreground);
+}
+
+.ssh-dialog-fields {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(132px, 0.36fr);
+  align-items: end;
+  gap: 12px;
+}
+
+.ssh-dialog-fields > [data-slot="field"]:nth-child(2),
+.ssh-dialog-fields > [data-slot="field"]:nth-child(5) {
+  grid-column: 1 / -1;
+}
+
+.ssh-dialog-fields [data-slot="field-label"] {
+  color: var(--muted-foreground);
+  font-size: 11px;
+  font-weight: 750;
+}
+
+.ssh-dialog-fields [data-slot="input"] {
+  height: 38px;
+  border-radius: 8px;
+  font-size: 13px;
+}
+
+.ssh-auth-toggle {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  width: max-content;
+  min-width: min(240px, 100%);
+  height: var(--agent-topbar-control-height, 34px);
+  min-height: var(--agent-topbar-control-height, 34px);
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid var(--menu-border);
+  border-radius: 8px;
+  background: var(--secondary);
+}
+
+.ssh-auth-toggle [data-slot="toggle-group-item"] {
+  min-width: 96px;
+  height: calc(100% - 1px);
+  min-height: 0;
+  border: 0;
+  border-radius: 7px;
+  color: var(--menu-muted-foreground);
+  background: transparent;
+  font-size: 12px;
+  font-weight: 750;
+  line-height: 1;
+}
+
+.ssh-auth-toggle [data-slot="toggle-group-item"][data-state="on"] {
+  color: var(--menu-hover-foreground);
+  background: var(--menu-hover);
+  box-shadow: none;
+}
+
+.ssh-dialog-actions {
+  align-items: center;
+  flex-direction: row;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: flex-end;
+  padding: 16px 20px 18px;
+  border-top: 1px solid var(--border);
+}
+
+.ssh-dialog-actions [data-variant="appLink"] {
+  color: var(--muted-foreground);
+}
+
+@media (max-width: 640px) {
+  .ssh-connection-dialog {
+    width: calc(100vw - 28px);
+  }
+
+  .ssh-connection-dialog [data-slot="dialog-header"],
+  .ssh-dialog-fieldset,
+  .ssh-dialog-actions {
+    padding-right: 16px;
+    padding-left: 16px;
+  }
+
+  .ssh-dialog-fields {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .ssh-dialog-fields > [data-slot="field"] {
+    grid-column: 1 / -1;
+  }
+}
+
+.core-status-grid {
+  padding: 0;
+}
+
+.core-status-strip {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 2px 0;
+}
+
+.core-status-strip .service-health-dot {
+  flex: 0 0 auto;
+}
+
+.core-status-strip-name {
+  color: var(--foreground);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.core-status-strip-sep {
+  color: var(--menu-disabled);
+  font-size: 12px;
+}
+
+.core-status-strip-field {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted-foreground);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.core-status-strip-field strong {
+  color: var(--foreground);
+  font-weight: 500;
+}
+
+.core-status-strip-checked {
+  color: var(--muted-foreground);
+  font-size: 11.5px;
+  white-space: nowrap;
+}
+
+.connection-profile-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) max-content auto;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--shadow-tint-soft);
+}
+
+.connection-profile-summary {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.connection-profile-summary strong,
+.connection-profile-summary span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.connection-profile-summary strong {
+  color: var(--foreground);
+  font-size: 13px;
+}
+
+.connection-profile-summary span {
+  color: var(--muted-foreground);
+  font-size: 11px;
+}
+
+.connection-switch-field {
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  min-width: 142px;
+}
+
+.connection-switch-field [data-slot="field-label"] {
+  width: auto;
+  color: var(--muted-foreground);
+  font-size: 12px;
+  font-weight: 750;
+  white-space: nowrap;
+}
+
+.connection-profile-row[data-connected="true"] .connection-switch-field [data-slot="field-label"] {
+  color: var(--accent-success-soft);
+}
+
+.runtime-field [data-slot="input"]::placeholder,
+.profile-workflows [data-slot="input"]::placeholder {
+  color: var(--muted-foreground);
+}
+
+.runtime-diagnostics-dialog {
+  width: min(520px, calc(100vw - 56px));
+  display: grid;
+  gap: 14px;
+}

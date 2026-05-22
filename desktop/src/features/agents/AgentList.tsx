@@ -73,7 +73,7 @@ export function AgentList({
   const content = (
     <>
       {isDialog ? (
-        <div className="agent-list-dialog-actions">
+        <div className="flex justify-end gap-2">
           <Button
             type="button"
             size="appSmall"
@@ -85,7 +85,7 @@ export function AgentList({
           </Button>
         </div>
       ) : (
-        <div className="agent-list-header">
+        <div className="flex items-end justify-between gap-4">
           <div>
             <h1>Agent Profiles</h1>
           </div>
@@ -256,7 +256,7 @@ export function AgentList({
   return isDialog ? (
     <div className="agent-list-dialog-body">{content}</div>
   ) : (
-    <AgentContentFrame layout="index" className="agent-list-workspace">
+    <AgentContentFrame layout="index" className="content-start gap-[18px]">
       {content}
     </AgentContentFrame>
   );

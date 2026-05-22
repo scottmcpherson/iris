@@ -1,3 +1,4 @@
+import "./automations.css";
 import { useState } from "react";
 import type { FormEvent } from "react";
 import { AlertCircle, Check, Info, Pause, Pencil, Play, Plus, Trash2 } from "lucide-react";
@@ -196,11 +197,11 @@ export function AutomationsView({
 
   return (
     <div className="jobs-view">
-      <header className="jobs-header agent-list-header">
+      <header className="jobs-header flex items-end justify-between gap-4">
         <div>
           <h1>Automations</h1>
         </div>
-        <div className="jobs-header-actions">
+        <div className="absolute right-0 bottom-[18px] flex items-center gap-2 ml-auto">
           <Button
             type="button"
             size="icon-md"
@@ -269,10 +270,10 @@ export function AutomationsView({
                   </DialogDescription>
                 </div>
               </DialogHeader>
-              <form className="jobs-form" onSubmit={submitSchedule}>
+              <form className="grid gap-0" onSubmit={submitSchedule}>
                 <FieldGroup className="jobs-form-grid">
                   {/* Mirrors Hermes _MAX_NAME_LENGTH=200 and _MAX_PROMPT_LENGTH=5000. */}
-                  <Field className="jobs-form-field jobs-form-prompt">
+                  <Field className="jobs-form-field col-start-1 col-end-[-1]">
                     <FieldLabel>Name</FieldLabel>
                     <Input
                       value={name}
@@ -281,7 +282,7 @@ export function AutomationsView({
                       onChange={(event) => setName(event.target.value)}
                     />
                   </Field>
-                  <Field className="jobs-form-field jobs-form-prompt">
+                  <Field className="jobs-form-field col-start-1 col-end-[-1]">
                     <FieldLabel>Prompt</FieldLabel>
                     <Textarea
                       value={prompt}
@@ -290,7 +291,7 @@ export function AutomationsView({
                       onChange={(event) => setPrompt(event.target.value)}
                     />
                   </Field>
-                  <Field className="jobs-form-field jobs-form-prompt">
+                  <Field className="jobs-form-field col-start-1 col-end-[-1]">
                     <FieldLabel>Schedule</FieldLabel>
                     <Select value={scheduleMode} onValueChange={(value) => setScheduleMode(value as ScheduleMode)}>
                       <SelectTrigger className="w-full">
@@ -306,9 +307,9 @@ export function AutomationsView({
                       </SelectContent>
                     </Select>
                   </Field>
-                  <Field className="jobs-form-field jobs-project-field">
+                  <Field className="jobs-form-field self-end">
                     <FieldLabel>Project</FieldLabel>
-                    <div className="composer-project-menu-wrap jobs-project-menu-wrap">
+                    <div className="relative inline-flex min-w-0">
                       <ProjectMenu
                         projects={projects}
                         selectedProjectId={selectedProjectId}
@@ -389,7 +390,7 @@ export function AutomationsView({
                   ) : null}
                 </FieldGroup>
                 <div className="jobs-form-footer">
-                  <div className="jobs-form-status">
+                  <div className="grid gap-1 min-w-0">
                     <FieldDescription className="jobs-schedule-preview">{preview}</FieldDescription>
                     {formNotice ? (
                       <Alert
@@ -400,7 +401,7 @@ export function AutomationsView({
                       </Alert>
                     ) : null}
                   </div>
-                  <div className="jobs-form-action">
+                  <div className="flex flex-none items-center justify-end gap-2">
                     <Button type="button" variant="appNeutral" size="appSmall" onClick={cancelEditing} disabled={formBusy}>
                       Cancel
                     </Button>
@@ -473,7 +474,7 @@ export function AutomationsView({
         <section className="jobs-activity-section">
           <p className="eyebrow">Recent activity</p>
           {deliveries.length ? (
-            <div className="delivery-list">
+            <div className="grid gap-2">
               {deliveries.map((delivery) => (
                 <DeliveryRow
                   key={delivery.id}
@@ -522,7 +523,7 @@ function JobList({
   if (!jobs.length) return <AutomationEmptyState>{emptyText}</AutomationEmptyState>;
 
   return (
-    <div className="job-list">
+    <div className="grid gap-2">
       {jobs.map((job) => {
         const busy = busyJobId === job.id || !runtimeReady;
         const meta = jobMetaLine(job);
@@ -532,12 +533,12 @@ function JobList({
             key={job.id}
             className={selected ? "job-row selected" : "job-row"}
           >
-            <CardHeader className="job-row-head">
+            <CardHeader className="flex items-center justify-between gap-3 min-w-0">
               <div className="job-row-title">
                 <span className={`job-status-dot status-${job.status}`} aria-hidden />
                 <strong>{job.name}</strong>
               </div>
-              <div className="job-row-actions">
+              <div className="flex flex-none gap-1.5">
                 <Button
                   type="button"
                   variant="appIcon"
@@ -607,7 +608,7 @@ function JobList({
                 </Button>
               </div>
             </CardHeader>
-            <CardContent className="job-row-content">
+            <CardContent className="grid gap-1.5 p-0">
               {meta ? <p className="job-row-meta">{meta}</p> : null}
               {job.prompt ? <p className="job-row-prompt">{job.prompt}</p> : null}
             </CardContent>
@@ -629,14 +630,14 @@ function JobDetail({
 }) {
   return (
     <Card className="jobs-detail-section" id={`job-detail-${job.id}`}>
-      <CardHeader className="jobs-detail-heading">
+      <CardHeader className="flex items-start justify-between gap-3">
         <div>
           <p className="eyebrow">Job detail</p>
           <h2>{job.name}</h2>
         </div>
         <Badge variant="secondary" className={`jobs-detail-status status-${job.status}`}>{job.status}</Badge>
       </CardHeader>
-      <CardContent className="jobs-detail-content">
+      <CardContent className="grid gap-1.5 p-0">
         <dl className="jobs-detail-grid">
           <div>
             <dt>Schedule</dt>
@@ -661,10 +662,10 @@ function JobDetail({
             <AlertDescription>{job.lastError || job.lastDeliveryError}</AlertDescription>
           </Alert>
         ) : null}
-        <div className="jobs-detail-history">
+        <div className="grid gap-2 mt-3.5">
           <p className="eyebrow">Run history</p>
           {deliveries.length ? (
-            <div className="delivery-list compact">
+            <div className="grid gap-2 compact">
               {deliveries.map((delivery) => (
                 <DeliveryRow
                   key={delivery.id}
@@ -697,7 +698,7 @@ function DeliveryRow({
 }) {
   return (
     <Card className={compact ? "delivery-row compact" : "delivery-row"}>
-      <div className="delivery-row-main">
+      <div className="min-w-0">
         <p className="delivery-row-content">{delivery.content}</p>
         <span className="delivery-row-meta">
           <Button type="button" variant="appLink" onClick={() => onOpenDeliveryChat(delivery)}>

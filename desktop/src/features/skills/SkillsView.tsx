@@ -1,3 +1,4 @@
+import "./skills.css";
 import { useEffect, useMemo, useState } from "react";
 import {
   ChevronDown,
@@ -423,10 +424,10 @@ export function SkillsView({
     <div className="skills-workspace">
       <div className="skills-browser">
         <aside className="skill-list-panel">
-          <div className={`skill-list-controls ${isSearchExpanded ? "is-searching" : ""}`}>
+          <div className={`flex items-center gap-2 pt-0 px-0.5 pb-1 min-h-8 ${isSearchExpanded ? "is-searching" : ""}`}>
             {isSearchExpanded ? (
               <>
-                <div className="skill-search-expanded">
+                <div className="relative flex-auto flex items-center min-w-0">
                   <Search aria-hidden="true" />
                   <Input
                     autoFocus
@@ -452,7 +453,7 @@ export function SkillsView({
             ) : (
               <>
                 <h2 className="skill-list-title">Skills</h2>
-                <div className="skill-list-actions">
+                <div className="flex-none flex items-center gap-1.5">
                   <Button
                     type="button"
                     variant="appIcon"
@@ -469,7 +470,7 @@ export function SkillsView({
                         type="button"
                         variant="appIcon"
                         size="icon-sm"
-                        className="skill-list-source-trigger"
+                        className="relative"
                         aria-label="Source filter"
                         title="Source"
                       >
@@ -523,7 +524,7 @@ export function SkillsView({
                     <span className="skill-group-count">{group.rows.length}</span>
                   </Button>
                   {expanded ? (
-                    <div className="skill-group-body">
+                    <div className="flex flex-col gap-1 mt-1">
                       {group.rows.map((row) => (
                         <Button
                           key={row.key}
@@ -627,9 +628,9 @@ export function SkillsView({
                 <AlertDescription>{notice}</AlertDescription>
               </Alert>
             ) : (
-              <span className="skill-detail-footer-spacer" aria-hidden="true" />
+              <span className="block min-w-0" aria-hidden="true" />
             )}
-            <div className="skill-detail-actions">
+            <div className="flex items-center justify-end gap-2 min-w-0">
               {selectedInstalled ? (
                 <Button
                   type="button"

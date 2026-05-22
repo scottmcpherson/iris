@@ -427,7 +427,7 @@ export function AppShell({
       </Button>
       <aside className="sidebar">
         <div className="window-drag-zone" data-tauri-drag-region />
-        <div className="brand-block">
+        <div className="flex items-center flex-none gap-3 min-h-11 pt-0 px-2 pb-[18px]">
           <div className="brand-mark">
             <img src={irisSidebarIcon} alt="" draggable={false} />
           </div>
@@ -442,12 +442,12 @@ export function AppShell({
                 title="Diagnose and recover the runtime"
               >
                 <span className={statusDotClassName} />
-                <span className="brand-status-text">{sidebarConnectionStatusLabel(connected, status)}</span>
+                <span className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap">{sidebarConnectionStatusLabel(connected, status)}</span>
               </button>
             ) : (
               <p className="brand-status">
                 <span className={statusDotClassName} />
-                <span className="brand-status-text">{sidebarConnectionStatusLabel(connected, status)}</span>
+                <span className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap">{sidebarConnectionStatusLabel(connected, status)}</span>
               </p>
             )}
           </div>
@@ -680,11 +680,11 @@ export function AppShell({
                             <ProfileFolderIcon size={16} />
                             <span>{profile.name}</span>
                           </Button>
-                          <div className="profile-row-actions">
+                          <div className="flex items-center gap-0.5 pr-0">
                             <DropdownMenu onOpenChange={(open) => {
                               if (open) closeSidebarMenus();
                             }}>
-                              <div className="profile-menu-wrap">
+                              <div className="relative flex items-center">
                                 <DropdownMenuTrigger asChild>
                                   <Button
                                     type="button"
@@ -723,7 +723,7 @@ export function AppShell({
                             <Button
                               type="button"
                               variant="ghost"
-                              className="profile-row-action profile-new-chat-action"
+                              className="profile-row-action opacity-[0.76]"
                               title={`Start new session in ${profile.name}`}
                               aria-label={`Start new session in ${profile.name}`}
                               onClick={(event) => {
@@ -771,7 +771,7 @@ export function AppShell({
         <Button
           type="button"
           variant="ghost"
-          className={activeView === "settings" ? "nav-item sidebar-settings active" : "nav-item sidebar-settings"}
+          className={activeView === "settings" ? "nav-item flex-none mt-3 active" : "nav-item flex-none mt-3"}
           aria-label="Settings"
           onClick={() => onSelectView("settings")}
           title="Settings"
@@ -794,7 +794,7 @@ export function AppShell({
           {topbarPane ?? (
             <>
               {activeView === "chat" ? (
-                <div className="topbar-title">
+                <div className="min-w-0 pointer-events-none">
                   <p>{viewTitle(activeView)}</p>
                   <span>{coreApiUrl}</span>
                 </div>
@@ -906,7 +906,7 @@ export function AppShell({
                 <ProjectFolderIcon size={16} />
                 <span>{project.name}</span>
               </Button>
-              <div className="profile-row-actions">
+              <div className="flex items-center gap-0.5 pr-0">
                 <DropdownMenu onOpenChange={(open) => {
                   if (open) closeSidebarMenus();
                 }}>
@@ -936,7 +936,7 @@ export function AppShell({
                 <Button
                   type="button"
                   variant="ghost"
-                  className="profile-row-action profile-new-chat-action"
+                  className="profile-row-action opacity-[0.76]"
                   title={`Start new session in ${project.name}`}
                   aria-label={`Start new session in ${project.name}`}
                   onClick={(event) => {

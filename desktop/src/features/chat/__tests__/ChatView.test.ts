@@ -65,10 +65,12 @@ describe("composer responsive layout", () => {
   it("keeps the model selector available at narrow widths", async () => {
     // @ts-expect-error The desktop tsconfig intentionally omits Node types, but Vitest runs in Node.
     const { readFileSync } = await import("node:fs");
-    const appCss = readFileSync(new URL("../../../App.css", import.meta.url), "utf8") as string;
+    const chatSource = readFileSync(new URL("../ChatView.tsx", import.meta.url), "utf8") as string;
 
-    expect(appCss).not.toMatch(/\.composer-model-menu-wrap\s*{[^}]*display:\s*none/i);
-    expect(appCss).toMatch(/\.composer-model-menu-wrap\s*{[^}]*display:\s*inline-flex/i);
+    // The model menu wrap must stay inline-flex (never display:none) so the
+    // selector remains reachable at narrow composer widths.
+    expect(chatSource).toContain('<div className="relative inline-flex">');
+    expect(chatSource).not.toMatch(/className=["'][^"']*\bhidden\b[^"']*["'][^>]*ModelMenu/);
   });
 
   it("keeps the slash command menu taller than the textarea wrapper", async () => {

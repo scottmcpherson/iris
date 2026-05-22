@@ -41,9 +41,9 @@ export function SshConnectionDialog({
           <DialogTitle>Add SSH connection</DialogTitle>
           <DialogDescription>Connect to a remote host using an SSH endpoint and optional identity file.</DialogDescription>
         </DialogHeader>
-        <FieldSet className="ssh-dialog-fieldset">
+        <FieldSet className="min-h-0 pt-4 px-5 pb-0 border-0">
           <FieldGroup className="ssh-dialog-fields">
-            <Field className="ssh-auth-field">
+            <Field className="col-start-1 col-end-[-1] justify-self-center w-max max-w-full">
               <ToggleGroup
                 type="single"
                 className="ssh-auth-toggle"

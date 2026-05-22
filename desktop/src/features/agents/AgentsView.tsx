@@ -1,3 +1,4 @@
+import "./agents.css";
 import { offlineProfile } from "../../app/offlineProfile";
 import type { ProfileActionHandler } from "../../app/types";
 import type { IrisCoreGatewayAction } from "../../lib/irisCore";

@@ -29,13 +29,13 @@ export function DiagnosticRow({
       <span className="diagnostics-row-icon" aria-hidden>
         {ok ? <CheckCircle2 size={16} /> : <AlertCircle size={16} />}
       </span>
-      <div className="diagnostics-row-text">
+      <div className="flex-1 inline-flex items-baseline gap-2 min-w-0 overflow-hidden">
         <strong>{label}</strong>
         {sublabel ? <span>{sublabel}</span> : null}
       </div>
       {action ? (
         <Button
-          className="diagnostics-row-action"
+          className="flex-none ml-auto"
           variant="appNeutral"
           size="appSmall"
           disabled={action.disabled}

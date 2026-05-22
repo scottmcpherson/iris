@@ -36,13 +36,13 @@ describe("AgentDetailView", () => {
     expect(html).toContain("http://127.0.0.1:8765");
     expect(html).toContain("agent-content-frame");
     expect(html).toContain("data-layout=\"record\"");
-    expect(html).toContain("agent-overview-view");
+    expect(html).toContain("grid content-start gap-3 min-w-0 min-h-0");
     expect(html).toContain("Profile metadata");
     expect(html).not.toContain("default ready");
     expect(html).not.toContain("Restart gateway");
     expect(html).toContain("Configure in Settings");
-    expect(html).not.toContain("tool-view settings-view");
-    expect(html).not.toContain("settings-toolbar");
+    expect(html).not.toContain("tool-view gap-4");
+    expect(html).not.toContain("flex items-center justify-between gap-3 min-w-0");
     expect(html).not.toContain("Routes and credentials");
     expect(html).not.toContain("Connection details are shared across the app");
     expect(html).not.toContain("Memory overview");
@@ -124,8 +124,8 @@ describe("AgentDetailView", () => {
 
     expect(html).toContain("agent-content-frame");
     expect(html).toContain("data-layout=\"workbench\"");
-    expect(html).toContain("memory-workspace");
-    expect(html).not.toContain("tool-view memory-workspace");
+    expect(html).toContain("relative grid self-start content-start gap-3 min-w-0 min-h-0 pb-[30px]");
+    expect(html).not.toContain("tool-view relative grid self-start content-start gap-3 min-w-0 min-h-0 pb-[30px]");
     expect(html).not.toContain("agent-subview");
   });
 
@@ -150,7 +150,7 @@ describe("AgentDetailView", () => {
       onResetMemory: async () => "",
     });
 
-    expect(html).toContain("memory-workspace");
+    expect(html).toContain("relative grid self-start content-start gap-3 min-w-0 min-h-0 pb-[30px]");
     expect(html).not.toContain("Remember the overview should stay focused.");
     expect(html).not.toContain("User profile notes.");
   });

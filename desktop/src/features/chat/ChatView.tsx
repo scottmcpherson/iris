@@ -1,3 +1,4 @@
+import "./chat.css";
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type {
   CSSProperties,
@@ -641,7 +642,7 @@ export function ChatView({
           <StickToBottom
             key={transcriptScrollKey}
             className={[
-              "message-list-frame",
+              "relative h-full min-h-0 overflow-hidden",
               transcriptScrollSettling ? "message-list-frame-settling" : "",
             ].filter(Boolean).join(" ")}
             initial="instant"
@@ -699,7 +700,7 @@ export function ChatView({
       >
         <input
           ref={fileInputRef}
-          className="composer-file-input"
+          className="absolute w-px h-px overflow-hidden opacity-0 pointer-events-none"
           type="file"
           multiple
           onChange={(event) => {
@@ -707,7 +708,7 @@ export function ChatView({
             event.target.value = "";
           }}
         />
-        <div className="composer-input-wrap">
+        <div className="relative min-w-0">
           {showRuntimeNotice ? (
             <StatusBanner
               tone="degraded"
@@ -771,8 +772,8 @@ export function ChatView({
         </div>
         <AttachmentTray attachments={attachments} onRemove={removeAttachment} />
         <div className={["composer-toolbar", dictationToolbarOpen ? "recording" : ""].filter(Boolean).join(" ")}>
-          <div className="composer-tools composer-tools-left">
-            <div className="composer-add-menu-wrap">
+          <div className="composer-tools flex-auto">
+            <div className="relative inline-flex">
               <DropdownMenu open={addMenuOpen} onOpenChange={setAddMenuOpen}>
                 <DropdownMenuTrigger asChild>
                   <Button
@@ -800,7 +801,7 @@ export function ChatView({
                 </DropdownMenuContent>
               </DropdownMenu>
             </div>
-            <div className="composer-profile-menu-wrap">
+            <div className="relative inline-flex">
               <ProfileMenu
                 profile={profile}
                 profiles={profiles}
@@ -813,7 +814,7 @@ export function ChatView({
                 onSelect={selectProfile}
               />
             </div>
-            <div className="composer-project-menu-wrap">
+            <div className="relative inline-flex">
               <ProjectMenu
                 projects={projects}
                 selectedProjectId={selectedProjectId}
@@ -827,7 +828,7 @@ export function ChatView({
               />
             </div>
           </div>
-          <div className="composer-tools composer-actions">
+          <div className="composer-tools flex-none">
             {dictationToolbarOpen ? (
               <DictationWaveform
                 state={dictation.state}
@@ -836,7 +837,7 @@ export function ChatView({
               />
             ) : (
               <>
-                <div className="composer-model-menu-wrap">
+                <div className="relative inline-flex">
                   <ModelMenu
                     open={modelMenuOpen}
                     disabled={modelSelectionDisabled}
@@ -1161,7 +1162,7 @@ function MessageEvents({ events }: { events?: HermesParsedEvents }) {
   ].filter(([, count]) => Number(count) > 0);
 
   return (
-    <div className="event-strip">
+    <div className="flex flex-wrap gap-1.5 mt-2.5">
       {rows.map(([label, count]) => (
         <span key={String(label)}>
           {label}: {count}

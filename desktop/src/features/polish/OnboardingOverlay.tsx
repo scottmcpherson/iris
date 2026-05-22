@@ -1,3 +1,4 @@
+import "./polish.css";
 import { invoke } from "@tauri-apps/api/core";
 import { useEffect, useMemo, useState } from "react";
 import { ChevronLeft, Plug, RefreshCw, Server, Terminal, Wrench, X } from "lucide-react";
@@ -155,7 +156,7 @@ export function OnboardingOverlay({
       }}
     >
       <DialogContent className="onboarding-card" showCloseButton={false}>
-        <Button variant="appIcon" size="icon-md" className="onboarding-close" title="Close onboarding" onClick={onClose}>
+        <Button variant="appIcon" size="icon-md" className="absolute top-3 right-3" title="Close onboarding" onClick={onClose}>
           <X size={15} />
         </Button>
 
@@ -177,7 +178,7 @@ export function OnboardingOverlay({
               <ChevronLeft size={14} />
               Back
             </button>
-            <div className="onboarding-compact-row">
+            <div className="flex items-baseline justify-between gap-3 min-w-0">
               <DialogTitle>{path === "local" ? "Local Hermes" : "Hermes via SSH"}</DialogTitle>
               <span className="onboarding-progress">{readyCount} of {rows.length} ready</span>
             </div>
@@ -188,7 +189,7 @@ export function OnboardingOverlay({
         )}
 
         {isChoose ? (
-          <div className="onboarding-path-grid">
+          <div className="grid grid-cols-2 gap-2.5">
             <Card className="onboarding-path-card" onClick={() => setPath("local")}>
               <CardHeader>
                 <Server />
@@ -219,7 +220,7 @@ export function OnboardingOverlay({
         ) : null}
 
         {path === "local" ? (
-          <div className="onboarding-setup-panel">
+          <div className="grid gap-3.5 min-w-0">
             <FieldGroup className="onboarding-local-fields">
               <Field>
                 <FieldLabel htmlFor="onboarding-hermes-home">Hermes home</FieldLabel>
@@ -250,11 +251,11 @@ export function OnboardingOverlay({
                 <AlertDescription>{localMessage}</AlertDescription>
               </Alert>
             ) : null}
-            <div className="onboarding-actions">
+            <div className="flex flex-wrap items-center justify-between gap-2.5">
               <button type="button" className="onboarding-footer-link" onClick={onOpenSettings}>
                 Open Settings
               </button>
-              <div className="onboarding-actions-group">
+              <div className="flex flex-wrap items-center justify-end gap-2 ml-auto">
                 <Button variant="appGhost" size="appSmall" onClick={onRefresh}>
                   <RefreshCw data-icon="inline-start" />
                   Check again
@@ -273,7 +274,7 @@ export function OnboardingOverlay({
         ) : null}
 
         {path === "ssh" ? (
-          <div className="onboarding-setup-panel">
+          <div className="grid gap-3.5 min-w-0">
             <ol className="setup-steps">
               {sshRows.map((row, index) => (
                 <SetupStep key={row.label} index={index + 1} {...row} />
@@ -287,11 +288,11 @@ export function OnboardingOverlay({
             <p className="onboarding-remediation">
               If Iris Core is offline, start it on the remote host, keep it bound to 127.0.0.1, then retry the tunnel.
             </p>
-            <div className="onboarding-actions">
+            <div className="flex flex-wrap items-center justify-between gap-2.5">
               <button type="button" className="onboarding-footer-link" onClick={onOpenSettings}>
                 Open Settings
               </button>
-              <div className="onboarding-actions-group">
+              <div className="flex flex-wrap items-center justify-end gap-2 ml-auto">
                 <Button
                   variant="appNeutral"
                   size="appSmall"
