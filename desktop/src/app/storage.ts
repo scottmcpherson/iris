@@ -10,6 +10,7 @@ export const storageKeys = {
   collapsedProjects: "iris.desktop.sidebar.collapsedProjects",
   selectedProjectId: "iris.desktop.selectedProjectId",
   pinnedSessions: "hermes.desktop.sidebar.pinnedSessions",
+  lastViewedAgent: "iris.desktop.agents.lastViewed",
 } as const;
 
 export function loadJsonValue<T>(key: string, fallback: T): T {

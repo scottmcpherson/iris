@@ -9,7 +9,6 @@ import type {
   HermesStatus,
 } from "../../types/hermes";
 import { AgentDetailView } from "./AgentDetailView";
-import { AgentList } from "./AgentList";
 import type { AgentDetailSection } from "./types";
 
 type AgentsViewProps = {
@@ -21,7 +20,6 @@ type AgentsViewProps = {
   section: AgentDetailSection;
   gatewayActionBusy: boolean;
   gatewayActionBusyAction: IrisCoreGatewayAction | null;
-  gatewayActionBusyProfile: string;
   adapterInstallBusyProfile: string;
   onDetailProfileChange: (profileName: string | null) => void;
   onSectionChange: (section: AgentDetailSection) => void;
@@ -54,7 +52,6 @@ export function AgentsView({
   section,
   gatewayActionBusy,
   gatewayActionBusyAction,
-  gatewayActionBusyProfile,
   adapterInstallBusyProfile,
   onDetailProfileChange,
   onSectionChange,
@@ -71,29 +68,6 @@ export function AgentsView({
   const profiles = status?.profiles?.length ? status.profiles : [offlineProfile];
   const detailAgentProfile =
     profiles.find((profile) => profile.name === detailProfile) ?? activeProfile;
-
-  if (!detailProfile) {
-    return (
-      <div className="tool-view agents-workspace">
-        <AgentList
-          profiles={profiles}
-          status={status}
-          gatewayActionBusy={gatewayActionBusy}
-          gatewayActionBusyAction={gatewayActionBusyAction}
-          gatewayActionBusyProfile={gatewayActionBusyProfile}
-          adapterInstallBusyProfile={adapterInstallBusyProfile}
-          onProfileAction={onProfileAction}
-          onGatewayAction={onGatewayAction}
-          onInstallAdapter={onInstallAdapter}
-          onOpenAgent={(profileName) => {
-            onSectionChange("overview");
-            onDetailProfileChange(profileName);
-            onOpenAgent(profileName);
-          }}
-        />
-      </div>
-    );
-  }
 
   return (
     <div className="tool-view agents-workspace">

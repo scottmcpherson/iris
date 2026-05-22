@@ -10,8 +10,11 @@ describe("AgentTopbar", () => {
       createElement(AgentTopbar, {
         detailProfile: null,
         profile: profileFixture(),
+        profiles: [profileFixture()],
+        status: null,
         section: "overview",
-        onBack: noop,
+        onSwitchAgent: noop,
+        onManageAgents: noop,
         onSectionChange: noop,
       }),
     );
@@ -20,20 +23,25 @@ describe("AgentTopbar", () => {
     expect(html).not.toContain("127.0.0.1");
   });
 
-  it("renders the agent detail title without the runtime pill or avatar", () => {
+  it("renders the agent switcher trigger with the current agent name and no breadcrumb", () => {
     const html = renderToStaticMarkup(
       createElement(AgentTopbar, {
         detailProfile: "default",
         profile: profileFixture(),
+        profiles: [profileFixture()],
+        status: null,
         section: "overview",
-        onBack: noop,
+        onSwitchAgent: noop,
+        onManageAgents: noop,
         onSectionChange: noop,
       }),
     );
 
-    expect(html).toContain("Agents / default");
+    expect(html).toContain("agent-switcher-trigger");
+    expect(html).toContain(">default<");
+    expect(html).not.toContain("Agents / default");
     expect(html).not.toContain("agent-topbar-runtime-pill");
-    expect(html).not.toContain("agent-avatar");
+    expect(html).not.toContain("All agents");
   });
 });
 

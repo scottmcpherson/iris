@@ -32,6 +32,8 @@ type AgentListDialog =
   | { action: "clone"; source: string; name: string }
   | { action: "delete"; source: string; name: string };
 
+export type AgentListVariant = "page" | "dialog";
+
 type AgentListProps = {
   profiles: HermesProfile[];
   status: HermesStatus | null;
@@ -39,6 +41,7 @@ type AgentListProps = {
   gatewayActionBusyAction: IrisCoreGatewayAction | null;
   gatewayActionBusyProfile: string;
   adapterInstallBusyProfile: string;
+  variant?: AgentListVariant;
   onOpenAgent: (profileName: string) => void;
   onProfileAction: ProfileActionHandler;
   onGatewayAction: (action: IrisCoreGatewayAction, profileName: string) => void;
@@ -56,6 +59,7 @@ export function AgentList({
   gatewayActionBusyAction,
   gatewayActionBusyProfile,
   adapterInstallBusyProfile,
+  variant = "page",
   onOpenAgent,
   onProfileAction,
   onGatewayAction,
@@ -64,23 +68,38 @@ export function AgentList({
   const [dialog, setDialog] = useState<AgentListDialog | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const isDialog = variant === "dialog";
 
-  return (
-    <AgentContentFrame layout="index" className="agent-list-workspace">
-      <div className="agent-list-header">
-        <div>
-          <h1>Agent Profiles</h1>
+  const content = (
+    <>
+      {isDialog ? (
+        <div className="agent-list-dialog-actions">
+          <Button
+            type="button"
+            size="appSmall"
+            aria-label="Create agent"
+            onClick={openCreateDialog}
+          >
+            <Plus data-icon="inline-start" />
+            New agent
+          </Button>
         </div>
-        <Button
-          type="button"
-          size="icon-md"
-          aria-label="Create agent"
-          title="Create agent"
-          onClick={openCreateDialog}
-        >
-          <Plus data-icon="inline-start" />
-        </Button>
-      </div>
+      ) : (
+        <div className="agent-list-header">
+          <div>
+            <h1>Agent Profiles</h1>
+          </div>
+          <Button
+            type="button"
+            size="icon-md"
+            aria-label="Create agent"
+            title="Create agent"
+            onClick={openCreateDialog}
+          >
+            <Plus data-icon="inline-start" />
+          </Button>
+        </div>
+      )}
 
       <div className="agent-list-grid">
         {profiles.map((profile) => {
@@ -231,6 +250,14 @@ export function AgentList({
         })}
       </div>
       {dialog ? renderDialog() : null}
+    </>
+  );
+
+  return isDialog ? (
+    <div className="agent-list-dialog-body">{content}</div>
+  ) : (
+    <AgentContentFrame layout="index" className="agent-list-workspace">
+      {content}
     </AgentContentFrame>
   );
 

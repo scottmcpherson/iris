@@ -8,6 +8,7 @@ import type {
   ProfileAction,
   View,
 } from "./app/types";
+import { AgentManagerDialog } from "./features/agents/AgentManagerDialog";
 import { AgentsView } from "./features/agents/AgentsView";
 import { AgentTopbar } from "./features/agents/AgentTopbar";
 import type { AgentDetailSection } from "./features/agents/types";
@@ -26,7 +27,13 @@ import { OnboardingOverlay } from "./features/polish/OnboardingOverlay";
 import { RuntimeDiagnosticsDialog } from "./features/runtime/RuntimeDiagnosticsDialog";
 import { AppShell } from "./layout/AppShell";
 import { globalShortcutActionForKey } from "./app/keyboardShortcuts";
-import { loadBooleanValue, saveBooleanValue, storageKeys } from "./app/storage";
+import {
+  loadBooleanValue,
+  loadStringValue,
+  saveBooleanValue,
+  saveStringValue,
+  storageKeys,
+} from "./app/storage";
 import { resolveCoreApiUrl } from "./app/runtimeConfig";
 import {
   runtimeReadinessForStatus,
@@ -72,6 +79,7 @@ function App() {
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
   const [gatewayActionState, setGatewayActionState] = useState<GatewayActionState | null>(null);
   const [adapterInstallBusyProfile, setAdapterInstallBusyProfile] = useState("");
+  const [manageAgentsOpen, setManageAgentsOpen] = useState(false);
   const [onboardingOpen, setOnboardingOpen] = useState(
     () => !loadBooleanValue(storageKeys.onboardingDismissed),
   );
@@ -437,8 +445,17 @@ function App() {
             <AgentTopbar
               detailProfile={agentDetailProfile}
               profile={agentTopbarProfile}
+              profiles={agentProfiles}
+              status={iris.status}
               section={agentSection}
-              onBack={() => irisNavigate.openAgent()}
+              onSwitchAgent={(profileName) =>
+                irisNavigate.openAgent({ profile: profileName, section: "overview" })
+              }
+              onManageAgents={() => {
+                // Defer so the dropdown finishes closing before the dialog opens,
+                // otherwise the dropdown portal can sit on top of the dialog overlay.
+                requestAnimationFrame(() => setManageAgentsOpen(true));
+              }}
               onSectionChange={(section) =>
                 irisNavigate.openAgent({
                   profile: agentDetailProfile || agentTopbarProfile.name,
@@ -557,6 +574,22 @@ function App() {
         onRefresh={() => void iris.refreshIris()}
         onOpenSettings={() => irisNavigate.openSettings()}
       />
+      <AgentManagerDialog
+        open={manageAgentsOpen}
+        profiles={agentProfiles}
+        status={iris.status}
+        gatewayActionBusy={gatewayActionBusy}
+        gatewayActionBusyAction={gatewayActionState?.action || null}
+        gatewayActionBusyProfile={gatewayActionState?.profile || ""}
+        adapterInstallBusyProfile={adapterInstallBusyProfile}
+        onOpenChange={setManageAgentsOpen}
+        onOpenAgent={(profileName) =>
+          irisNavigate.openAgent({ profile: profileName, section: "overview" })
+        }
+        onProfileAction={iris.runProfileAction}
+        onGatewayAction={(action, profileName) => void runGatewayAction(action, profileName)}
+        onInstallAdapter={(profileName) => void installAdapterForProfile(profileName)}
+      />
       <CommandMenu
         commands={commands}
         open={commandMenuOpen}
@@ -616,7 +649,7 @@ function App() {
 
   function selectView(view: View) {
     if (view === "agents") {
-      irisNavigate.openAgent();
+      irisNavigate.openAgent({ profile: resolveAgentForSidebar(), section: "overview" });
       return;
     }
     if (view === "jobs") {
@@ -628,6 +661,15 @@ function App() {
       return;
     }
     irisNavigate.openNewChat({ profile: chatProfile });
+  }
+
+  function resolveAgentForSidebar() {
+    const stored = loadStringValue(storageKeys.lastViewedAgent).trim();
+    const availableNames = agentProfiles.map((profile) => profile.name);
+    if (stored && availableNames.includes(stored)) return stored;
+    if (agentDetailProfile && availableNames.includes(agentDetailProfile)) return agentDetailProfile;
+    if (iris.selectedProfile && availableNames.includes(iris.selectedProfile)) return iris.selectedProfile;
+    return iris.activeProfile.name;
   }
 
   function applyRouteIntent(intent: IrisRouteIntent, options: { routeChanged: boolean }) {
@@ -663,14 +705,16 @@ function App() {
 
     if (intent.type === "agents") {
       if (!intent.profile) {
-        if (agentDetailProfile) setAgentDetailProfile(null);
-        if (agentSection !== "overview") setAgentSection("overview");
-        lastAgentRefreshProfileRef.current = "";
+        const fallback = resolveAgentForSidebar();
+        if (fallback) {
+          irisNavigate.openAgent({ profile: fallback, section: "overview" }, { replace: true });
+        }
         return;
       }
       if (agentDetailProfile !== intent.profile) setAgentDetailProfile(intent.profile);
       const nextSection = intent.section || "overview";
       if (agentSection !== nextSection) setAgentSection(nextSection);
+      saveStringValue(storageKeys.lastViewedAgent, intent.profile);
       if (lastAgentRefreshProfileRef.current !== intent.profile) {
         lastAgentRefreshProfileRef.current = intent.profile;
         void iris.refreshIris(intent.profile, iris.runtimeConfig, {
@@ -756,7 +800,6 @@ function App() {
           section={agentSection}
           gatewayActionBusy={gatewayActionBusy}
           gatewayActionBusyAction={gatewayActionState?.action || null}
-          gatewayActionBusyProfile={gatewayActionState?.profile || ""}
           adapterInstallBusyProfile={adapterInstallBusyProfile}
           onDetailProfileChange={(profileName) =>
             profileName ? irisNavigate.openAgent({ profile: profileName }) : irisNavigate.openAgent()
