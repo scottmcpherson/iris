@@ -68,7 +68,7 @@ export function CommandMenu({ commands, open, onClose }: CommandMenuProps) {
                 <CommandIcon data-icon="inline-start" />
                 <span className="grid min-w-0 gap-0.5">
                   <strong className="truncate font-[760]">{command.label}</strong>
-                  <small className="truncate text-xs text-menu-muted-foreground group-data-[selected=true]:text-[#b7bfcc]">
+                  <small className="truncate text-xs text-menu-muted-foreground group-data-[selected=true]:text-menu-selected-muted-foreground">
                     {command.detail}
                   </small>
                 </span>

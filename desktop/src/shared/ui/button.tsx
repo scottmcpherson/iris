@@ -11,7 +11,7 @@ const buttonVariants = cva(
       variant: {
         default: "bg-primary text-primary-foreground hover:bg-primary/90",
         destructive:
-          "bg-destructive text-white hover:bg-destructive/90 focus-visible:ring-destructive/20 dark:bg-destructive/60 dark:focus-visible:ring-destructive/40",
+          "bg-destructive text-destructive-foreground hover:bg-destructive/90 focus-visible:ring-destructive/20 dark:bg-destructive/60 dark:focus-visible:ring-destructive/40",
         outline:
           "border border-menu-border bg-background shadow-xs hover:bg-accent hover:text-accent-foreground",
         secondary:
@@ -34,17 +34,17 @@ const buttonVariants = cva(
         attachmentRemove:
           "rounded-full border-0 bg-transparent text-composer-attachment-remove shadow-none hover:bg-composer-attachment-remove-hover hover:text-composer-attachment-remove-hover-foreground focus-visible:bg-composer-attachment-remove-hover focus-visible:text-composer-attachment-remove-hover-foreground",
         appNeutral:
-          "border border-menu-border bg-secondary text-menu-foreground shadow-[inset_0_1px_0_rgba(255,255,255,0.05)] hover:bg-menu-hover hover:text-menu-hover-foreground",
+          "border border-menu-border bg-secondary text-menu-foreground shadow-[inset_0_1px_0_var(--inset-highlight)] hover:bg-menu-hover hover:text-menu-hover-foreground",
         appGhost:
           "border border-menu-border bg-secondary text-menu-foreground hover:bg-menu-hover hover:text-menu-hover-foreground",
         appDanger:
-          "border border-[#ff8372]/25 bg-[#ff8372]/10 text-[#ffe9e6] hover:bg-[#ff8372]/20",
+          "border border-app-danger-base/25 bg-app-danger-base/10 text-app-danger-foreground hover:bg-app-danger-base/20",
         appIcon:
           "border border-menu-border bg-secondary text-menu-foreground hover:bg-menu-hover hover:text-menu-hover-foreground",
         appIconDanger:
-          "border border-white/[0.075] bg-white/[0.045] text-[#f2b9ac] hover:bg-white/[0.085]",
+          "border border-app-icon-danger-border bg-app-icon-danger-bg text-app-icon-danger-foreground hover:bg-app-icon-danger-bg-hover",
         appIconConfirm:
-          "border border-[#f2b9ac] bg-[#f2b9ac] text-[#1c1110] hover:bg-[#f2b9ac]/90",
+          "border border-app-icon-confirm-accent bg-app-icon-confirm-accent text-app-icon-confirm-foreground hover:bg-app-icon-confirm-accent/90",
         appLink:
           "h-auto border-0 bg-transparent p-0 text-inherit shadow-none hover:bg-transparent hover:underline",
       },

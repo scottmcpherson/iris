@@ -1231,7 +1231,7 @@ export function AppShell({
               >
                 <MessageSquare data-icon="inline-start" />
                 <span className="truncate">{item.session.title}</span>
-                <small className="truncate text-xs text-menu-muted-foreground group-data-[selected=true]:text-[#b7bfcc]">
+                <small className="truncate text-xs text-menu-muted-foreground group-data-[selected=true]:text-menu-selected-muted-foreground">
                   {item.sourceLabel}
                 </small>
                 <CommandShortcut>{`⌘${index + 1}`}</CommandShortcut>
