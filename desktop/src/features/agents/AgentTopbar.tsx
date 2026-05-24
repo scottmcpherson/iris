@@ -39,7 +39,12 @@ export function AgentTopbar({
   onSectionChange,
 }: AgentTopbarProps) {
   if (!detailProfile) {
-    return <div className="grid items-center w-full min-w-0 agent-topbar-list" aria-hidden="true" />;
+    return (
+      <div
+        className="grid items-center w-full min-w-0 grid-cols-[minmax(0,1fr)_auto] gap-[14px] min-h-[44px]"
+        aria-hidden="true"
+      />
+    );
   }
 
   return (
@@ -56,11 +61,13 @@ export function AgentTopbar({
             <span className="agent-switcher-trigger-avatar" aria-hidden="true">
               <Bot size={16} />
             </span>
-            <span className="agent-switcher-trigger-name">{profile.name}</span>
-            <ChevronDown size={14} className="agent-switcher-trigger-chevron" aria-hidden="true" />
+            <span className="font-bold tracking-[-0.01em] whitespace-nowrap overflow-hidden text-ellipsis max-w-[240px]">
+              {profile.name}
+            </span>
+            <ChevronDown size={14} className="agent-switcher-trigger-chevron opacity-60 -ml-px flex-none" aria-hidden="true" />
           </Button>
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="start" sideOffset={6} className="agent-switcher-menu">
+        <DropdownMenuContent align="start" sideOffset={6} className="w-[320px] p-1">
           <DropdownMenuGroup>
             {profiles.map((item) => {
               const readiness = agentRuntimeReadinessForStatus(status, item);
@@ -69,7 +76,7 @@ export function AgentTopbar({
               return (
                 <DropdownMenuItem
                   key={item.name}
-                  className="agent-switcher-item"
+                  className="grid grid-cols-[auto_minmax(0,1fr)_auto_auto] items-center gap-2.5 px-[9px] py-[7px] cursor-pointer"
                   onSelect={() => {
                     if (!isCurrent) onSwitchAgent(item.name);
                   }}

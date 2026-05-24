@@ -207,7 +207,7 @@ export function RuntimeDiagnosticsDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="runtime-diagnostics-dialog">
+      <DialogContent className="w-[min(520px,calc(100vw-56px))] grid gap-[14px]">
         <DialogHeader>
           <DialogDescription>Runtime diagnostics</DialogDescription>
           <DialogTitle>{runtimeReadinessShortLabel(readiness)}</DialogTitle>

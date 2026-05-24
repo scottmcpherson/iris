@@ -161,7 +161,7 @@ export function OnboardingOverlay({
         </Button>
 
         {isChoose ? (
-          <DialogHeader className="onboarding-heading">
+          <DialogHeader className="onboarding-heading grid gap-1.5 min-w-0">
             <p className="eyebrow">First run</p>
             <DialogTitle>Connect Iris to Hermes</DialogTitle>
             <DialogDescription className="onboarding-copy">
@@ -169,7 +169,7 @@ export function OnboardingOverlay({
             </DialogDescription>
           </DialogHeader>
         ) : (
-          <DialogHeader className="onboarding-heading compact">
+          <DialogHeader className="onboarding-heading compact grid gap-1.5 min-w-0">
             <button
               type="button"
               className="onboarding-back-link"
@@ -221,7 +221,7 @@ export function OnboardingOverlay({
 
         {path === "local" ? (
           <div className="grid gap-3.5 min-w-0">
-            <FieldGroup className="onboarding-local-fields">
+            <FieldGroup className="onboarding-local-fields grid grid-cols-[minmax(0,1fr)_90px] gap-2.5">
               <Field>
                 <FieldLabel htmlFor="onboarding-hermes-home">Hermes home</FieldLabel>
                 <Input
@@ -331,11 +331,11 @@ export function OnboardingOverlay({
 
 function SetupStep({ index, label, detail, status }: { index: number; label: string; detail: string; status: StepStatus }) {
   return (
-    <li className={`setup-step status-${status}`}>
+    <li className={`setup-step status-${status} grid grid-cols-[22px_minmax(0,1fr)] items-center gap-3 px-1 py-2 min-w-0`}>
       <span className="setup-step-marker" aria-hidden="true">
         {status === "done" ? "✓" : index}
       </span>
-      <span className="setup-step-copy">
+      <span className="setup-step-copy grid grid-cols-[minmax(0,auto)_minmax(0,1fr)] items-baseline gap-x-2.5 min-w-0">
         <strong>{label}</strong>
         <small>{detail}</small>
       </span>

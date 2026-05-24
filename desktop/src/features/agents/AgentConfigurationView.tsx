@@ -121,7 +121,7 @@ export function AgentConfigurationView({
   }
 
   return (
-    <div className="profile-configuration-view">
+    <div className="profile-configuration-view grid content-start gap-3 min-w-0 min-h-0">
       <Card className="agent-overview-card profile-config-soul-card">
         <CardHeader>
           <CardTitle>
@@ -129,7 +129,7 @@ export function AgentConfigurationView({
             <span>SOUL.md</span>
           </CardTitle>
           <CardDescription>{identity?.soul.path || identity?.path || "Loading profile…"}</CardDescription>
-          <div className="agent-overview-card-header-actions">
+          <div className="flex flex-none row-start-1 row-span-2 col-start-2 gap-1.5">
             <Button
               variant="appIcon"
               size="icon-sm"
@@ -159,7 +159,7 @@ export function AgentConfigurationView({
             value={soulDraft}
             onChange={setSoulDraft}
             spellCheck
-            className="profile-config-editor"
+            className="profile-config-editor min-h-[280px]"
             metadata={[{ label: "file", value: "SOUL.md" }]}
           />
           <div className={`profile-config-save-state ${soulDirty ? "dirty" : ""}`}>
@@ -168,7 +168,7 @@ export function AgentConfigurationView({
         </CardContent>
       </Card>
 
-      <div className="profile-config-row-2">
+      <div className="profile-config-row-2 grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)] items-stretch gap-3 min-w-0">
         <Card className="agent-overview-card">
           <CardHeader>
             <CardTitle>
@@ -176,7 +176,7 @@ export function AgentConfigurationView({
               <span>Model</span>
             </CardTitle>
             <CardDescription>{identity?.config.path || "config.yaml"}</CardDescription>
-            <div className="agent-overview-card-header-actions">
+            <div className="flex flex-none row-start-1 row-span-2 col-start-2 gap-1.5">
               <Button
                 variant="appIcon"
                 size="icon-sm"
@@ -225,7 +225,7 @@ export function AgentConfigurationView({
               <span>Environment</span>
             </CardTitle>
             <CardDescription>{identity?.env.path || ".env status unavailable"}</CardDescription>
-            <div className="agent-overview-card-header-actions">
+            <div className="flex flex-none row-start-1 row-span-2 col-start-2 gap-1.5">
               <Button
                 variant="appIcon"
                 size="icon-sm"
@@ -253,7 +253,7 @@ export function AgentConfigurationView({
         </Card>
       </div>
 
-      <div className="profile-config-row-2">
+      <div className="profile-config-row-2 grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)] items-stretch gap-3 min-w-0">
         <Card className="agent-overview-card">
           <CardHeader>
             <CardTitle>
@@ -265,7 +265,7 @@ export function AgentConfigurationView({
                 ? `${distribution.name}${distribution.version ? ` · ${distribution.version}` : ""}`
                 : "Local Hermes profile"}
             </CardDescription>
-            <div className="agent-overview-card-header-actions">
+            <div className="flex flex-none row-start-1 row-span-2 col-start-2 gap-1.5">
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <Button
@@ -319,7 +319,7 @@ export function AgentConfigurationView({
               <span>CLI alias</span>
             </CardTitle>
             <CardDescription>{alias?.exists ? alias.path : "No wrapper alias found"}</CardDescription>
-            <div className="agent-overview-card-header-actions">
+            <div className="flex flex-none row-start-1 row-span-2 col-start-2 gap-1.5">
               <Button
                 variant="appIconDanger"
                 size="icon-sm"
@@ -334,7 +334,7 @@ export function AgentConfigurationView({
             </div>
           </CardHeader>
           <CardContent className="grid content-start gap-2.5 p-0">
-            <div className="profile-config-alias-row">
+            <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-2 items-center">
               <Input
                 value={aliasDraft}
                 onChange={(event) => setAliasDraft(event.target.value)}
@@ -356,7 +356,7 @@ export function AgentConfigurationView({
       </div>
 
       <Dialog open={configDialogOpen} onOpenChange={setConfigDialogOpen}>
-        <DialogContent className="profile-config-dialog">
+        <DialogContent className="profile-config-dialog w-[min(720px,92vw)] max-w-[min(720px,92vw)] sm:max-w-[min(720px,92vw)] max-h-[88vh] min-h-0 grid-rows-[auto_minmax(0,1fr)_auto] overflow-hidden">
           <DialogHeader>
             <DialogTitle>Edit config.yaml</DialogTitle>
             <DialogDescription>{identity?.config.path || "config.yaml"}</DialogDescription>
@@ -364,7 +364,7 @@ export function AgentConfigurationView({
           <CodeEditor
             value={configDraft}
             onChange={setConfigDraft}
-            className="profile-config-dialog-editor"
+            className="profile-config-dialog-editor min-h-[280px] h-full"
             metadata={[{ label: "file", value: "config.yaml" }]}
           />
           <DialogFooter>

@@ -121,14 +121,14 @@ export function AgentOverviewView({
 
   return (
     <div className="grid content-start gap-3 min-w-0 min-h-0">
-      <div className="agent-overview-top">
+      <div className="agent-overview-top grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)] items-stretch gap-3 min-w-0">
         <Card className="agent-overview-card agent-overview-card-health">
           <CardHeader>
             <CardTitle>
               <Activity className="agent-overview-card-icon" />
               <span>Runtime health</span>
             </CardTitle>
-            <div className="agent-overview-card-header-actions">
+            <div className="flex flex-none row-start-1 row-span-2 col-start-2 gap-1.5">
               <Button
                 variant="appIcon"
                 size="icon-sm"
@@ -269,7 +269,7 @@ function AgentDangerZone({
   return (
     <>
       <Card className="agent-danger-zone agent-overview-card">
-        <CardContent className="flex flex-wrap items-center justify-between gap-3">
+        <CardContent className="flex flex-wrap items-center justify-between gap-3 p-0">
           <div className="grid gap-0.5 min-w-0">
             <strong>Delete this agent</strong>
             <span>

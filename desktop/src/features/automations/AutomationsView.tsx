@@ -196,8 +196,8 @@ export function AutomationsView({
   }
 
   return (
-    <div className="jobs-view">
-      <header className="jobs-header flex items-end justify-between gap-4">
+    <div className="jobs-view grid-rows-[auto_minmax(0,1fr)] h-full overflow-hidden">
+      <header className="jobs-header relative flex items-end justify-between gap-4 w-[min(calc(100%-96px),var(--chat-content-max-width))] mx-auto pt-[30px] pb-[18px]">
         <div>
           <h1>Automations</h1>
         </div>
@@ -215,7 +215,8 @@ export function AutomationsView({
         </div>
       </header>
 
-      <div className="jobs-body">
+      <div className="jobs-body-scroll min-h-0 overflow-auto">
+      <div className="jobs-body grid content-start gap-[18px] w-[min(calc(100%-96px),var(--chat-content-max-width))] mx-auto pt-[22px] pb-[30px]">
         {error ? (
           <Alert variant="destructive" className="jobs-alert">
             <AlertCircle />
@@ -271,9 +272,9 @@ export function AutomationsView({
                 </div>
               </DialogHeader>
               <form className="grid gap-0" onSubmit={submitSchedule}>
-                <FieldGroup className="jobs-form-grid">
+                <FieldGroup className="jobs-form-grid grid grid-cols-[minmax(0,1fr)_minmax(0,0.78fr)] gap-3.5 items-end pt-[18px] px-5">
                   {/* Mirrors Hermes _MAX_NAME_LENGTH=200 and _MAX_PROMPT_LENGTH=5000. */}
-                  <Field className="jobs-form-field col-start-1 col-end-[-1]">
+                  <Field className="jobs-form-field grid gap-1.5 min-w-0 col-start-1 col-end-[-1]">
                     <FieldLabel>Name</FieldLabel>
                     <Input
                       value={name}
@@ -282,7 +283,7 @@ export function AutomationsView({
                       onChange={(event) => setName(event.target.value)}
                     />
                   </Field>
-                  <Field className="jobs-form-field col-start-1 col-end-[-1]">
+                  <Field className="jobs-form-field grid gap-1.5 min-w-0 col-start-1 col-end-[-1]">
                     <FieldLabel>Prompt</FieldLabel>
                     <Textarea
                       value={prompt}
@@ -291,7 +292,7 @@ export function AutomationsView({
                       onChange={(event) => setPrompt(event.target.value)}
                     />
                   </Field>
-                  <Field className="jobs-form-field col-start-1 col-end-[-1]">
+                  <Field className="jobs-form-field grid gap-1.5 min-w-0 col-start-1 col-end-[-1]">
                     <FieldLabel>Schedule</FieldLabel>
                     <Select value={scheduleMode} onValueChange={(value) => setScheduleMode(value as ScheduleMode)}>
                       <SelectTrigger className="w-full">
@@ -307,7 +308,7 @@ export function AutomationsView({
                       </SelectContent>
                     </Select>
                   </Field>
-                  <Field className="jobs-form-field self-end">
+                  <Field className="jobs-form-field grid gap-1.5 min-w-0 self-end">
                     <FieldLabel>Project</FieldLabel>
                     <div className="relative inline-flex min-w-0">
                       <ProjectMenu
@@ -328,7 +329,7 @@ export function AutomationsView({
                     </div>
                   </Field>
                   {scheduleMode === "delay" ? (
-                    <Field className="jobs-form-field jobs-form-wide-control">
+                    <Field className="jobs-form-field jobs-form-wide-control grid gap-1.5 min-w-0 col-span-2">
                       <FieldLabel>Minutes</FieldLabel>
                       <Input
                         type="number"
@@ -340,19 +341,19 @@ export function AutomationsView({
                     </Field>
                   ) : null}
                   {scheduleMode === "datetime" ? (
-                    <Field className="jobs-form-field jobs-form-wide-control">
+                    <Field className="jobs-form-field jobs-form-wide-control grid gap-1.5 min-w-0 col-span-2">
                       <FieldLabel>Run at</FieldLabel>
                       <Input type="datetime-local" value={runAt} onChange={(event) => setRunAt(event.target.value)} />
                     </Field>
                   ) : null}
                   {scheduleMode === "daily" ? (
-                    <Field className="jobs-form-field jobs-form-wide-control">
+                    <Field className="jobs-form-field jobs-form-wide-control grid gap-1.5 min-w-0 col-span-2">
                       <FieldLabel>Time</FieldLabel>
                       <Input type="time" value={dailyTime} onChange={(event) => setDailyTime(event.target.value)} />
                     </Field>
                   ) : null}
                   {scheduleMode === "custom" ? (
-                    <Field className="jobs-form-field jobs-form-wide-control">
+                    <Field className="jobs-form-field jobs-form-wide-control grid gap-1.5 min-w-0 col-span-2">
                       <FieldLabel>Custom schedule</FieldLabel>
                       <Input
                         value={customSchedule}
@@ -361,7 +362,7 @@ export function AutomationsView({
                       />
                     </Field>
                   ) : null}
-                  <Field className="jobs-form-field">
+                  <Field className="jobs-form-field grid gap-1.5 min-w-0">
                     <FieldLabel>Repeat</FieldLabel>
                     <Select value={repeatMode} onValueChange={(value) => setRepeatMode(value as RepeatMode)}>
                       <SelectTrigger className="w-full">
@@ -377,7 +378,7 @@ export function AutomationsView({
                     </Select>
                   </Field>
                   {repeatMode === "count" ? (
-                    <Field className="jobs-form-field">
+                    <Field className="jobs-form-field grid gap-1.5 min-w-0">
                       <FieldLabel>Runs</FieldLabel>
                       <Input
                         type="number"
@@ -415,7 +416,7 @@ export function AutomationsView({
           </Dialog>
         ) : null}
 
-        <section className="jobs-list-section">
+        <section className="jobs-list-section grid gap-2.5 min-w-0">
           <Tabs value={tab} onValueChange={(value) => setTab(value as TabKey)} className="gap-2">
             <TabsList
               aria-label="Automation status"
@@ -471,7 +472,7 @@ export function AutomationsView({
           />
         ) : null}
 
-        <section className="jobs-activity-section">
+        <section className="jobs-activity-section grid gap-2.5 min-w-0">
           <p className="eyebrow">Recent activity</p>
           {deliveries.length ? (
             <div className="grid gap-2">
@@ -488,6 +489,7 @@ export function AutomationsView({
             <AutomationEmptyState>{automationActivityEmptyText(deliveriesLoading)}</AutomationEmptyState>
           )}
         </section>
+      </div>
       </div>
     </div>
   );
@@ -534,7 +536,7 @@ function JobList({
             className={selected ? "job-row selected" : "job-row"}
           >
             <CardHeader className="flex items-center justify-between gap-3 min-w-0">
-              <div className="job-row-title">
+              <div className="job-row-title flex items-center gap-[9px] min-w-0">
                 <span className={`job-status-dot status-${job.status}`} aria-hidden />
                 <strong>{job.name}</strong>
               </div>
@@ -629,7 +631,7 @@ function JobDetail({
   onOpenDeliveryChat: (delivery: HermesInboxMessage) => void;
 }) {
   return (
-    <Card className="jobs-detail-section" id={`job-detail-${job.id}`}>
+    <Card className="jobs-detail-section grid gap-2.5 min-w-0" id={`job-detail-${job.id}`}>
       <CardHeader className="flex items-start justify-between gap-3">
         <div>
           <p className="eyebrow">Job detail</p>
@@ -638,7 +640,7 @@ function JobDetail({
         <Badge variant="secondary" className={`jobs-detail-status status-${job.status}`}>{job.status}</Badge>
       </CardHeader>
       <CardContent className="grid gap-1.5 p-0">
-        <dl className="jobs-detail-grid">
+        <dl className="jobs-detail-grid grid grid-cols-4 gap-2.5 mt-3">
           <div>
             <dt>Schedule</dt>
             <dd>{scheduleDisplay(job) || "Manual"}</dd>
@@ -697,7 +699,7 @@ function DeliveryRow({
   onOpenDeliveryChat: (delivery: HermesInboxMessage) => void;
 }) {
   return (
-    <Card className={compact ? "delivery-row compact" : "delivery-row"}>
+    <Card className={compact ? "delivery-row compact grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 px-3.5 py-3" : "delivery-row grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 px-3.5 py-3"}>
       <div className="min-w-0">
         <p className="delivery-row-content">{delivery.content}</p>
         <span className="delivery-row-meta">

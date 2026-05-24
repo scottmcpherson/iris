@@ -89,7 +89,7 @@ export function AgentDetailView({
 
   if (section === "skills") {
     return (
-      <AgentContentFrame layout="workbench">
+      <AgentContentFrame layout="workbench" fillsHeight>
         <SkillsView
           profile={selectedProfile}
           runtimeConfig={runtimeConfig}

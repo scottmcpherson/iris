@@ -634,11 +634,11 @@ export function ChatView({
         </div>
       ) : null}
       {newChat ? (
-        <div className="new-chat-center">
+        <div className="new-chat-center w-[min(100%,var(--chat-content-max-width))] mt-0 mb-6 mx-0 text-center">
           <h1>What should we work on in {profile}?</h1>
         </div>
       ) : (
-        <div className="chat-workspace">
+        <div className="grid grid-cols-[minmax(0,1fr)] min-h-0">
           <StickToBottom
             key={transcriptScrollKey}
             className={[
@@ -649,7 +649,7 @@ export function ChatView({
             resize={transcriptResizeBehavior}
             role="log"
           >
-            <StickToBottom.Content className="session-column" scrollClassName="message-list">
+            <StickToBottom.Content className="session-column flex flex-col justify-start w-[min(calc(100%-96px),var(--chat-content-max-width))] min-h-full mx-auto" scrollClassName="message-list h-full min-h-0 overflow-auto pt-[52px] pb-7 px-7">
               {renderedMessages.length ? (
                 renderedMessages.map((message) => (
                   <MessageRow
@@ -661,7 +661,7 @@ export function ChatView({
                 ))
               ) : showEmptyState ? (
                 <div className="empty-state">
-                  <div className="view-icon">
+                  <div className="view-icon w-9 h-9 rounded-[10px]">
                     <Sparkles size={18} />
                   </div>
                   <strong>
@@ -771,8 +771,8 @@ export function ChatView({
           ) : null}
         </div>
         <AttachmentTray attachments={attachments} onRemove={removeAttachment} />
-        <div className={["composer-toolbar", dictationToolbarOpen ? "recording" : ""].filter(Boolean).join(" ")}>
-          <div className="composer-tools flex-auto">
+        <div className={["composer-toolbar flex items-center justify-between gap-2 min-w-0", dictationToolbarOpen ? "recording" : ""].filter(Boolean).join(" ")}>
+          <div className="composer-tools flex items-center gap-2 min-w-0 justify-start flex-auto">
             <div className="relative inline-flex">
               <DropdownMenu open={addMenuOpen} onOpenChange={setAddMenuOpen}>
                 <DropdownMenuTrigger asChild>
@@ -828,7 +828,7 @@ export function ChatView({
               />
             </div>
           </div>
-          <div className="composer-tools flex-none">
+          <div className="composer-tools flex items-center gap-2 min-w-0 justify-start flex-none">
             {dictationToolbarOpen ? (
               <DictationWaveform
                 state={dictation.state}
@@ -914,7 +914,7 @@ const MessageRow = memo(function MessageRow({
   entering: boolean;
 }) {
   return (
-    <article className={["message", message.role, entering ? "message-entering" : ""].filter(Boolean).join(" ")}>
+    <article className={["message flex flex-col gap-[7px] w-full min-w-0 mb-[22px]", message.role, entering ? "message-entering" : ""].filter(Boolean).join(" ")}>
       {message.role === "system" ? (
         <div className="message-kicker">
           <Sparkles size={14} />
@@ -969,7 +969,7 @@ function DictationWaveform({
 
   return (
     <div className="composer-recording-wave-wrap" role={state.status === "error" ? "alert" : "status"} aria-live="polite">
-      <div className="composer-recording-waveform" style={waveformStyle} aria-hidden="true">
+      <div className="composer-recording-waveform relative flex flex-[0_1_96px] items-center justify-center min-w-[58px] max-w-[112px] h-[22px] overflow-hidden" style={waveformStyle} aria-hidden="true">
         {Array.from({ length: DICTATION_WAVEFORM_BAR_COUNT }, (_, index) => (
           <span
             key={`dictation-waveform-bar-${index}`}

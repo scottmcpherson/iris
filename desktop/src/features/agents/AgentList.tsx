@@ -101,7 +101,7 @@ export function AgentList({
         </div>
       )}
 
-      <div className="agent-list-grid">
+      <div className="agent-list-grid grid content-start gap-2 min-h-0">
         {profiles.map((profile) => {
           const gateway = gatewaySummary(agentRuntimeReadinessForStatus(status, profile));
           const pillAction = gateway.action;
@@ -138,11 +138,11 @@ export function AgentList({
                 }
               }}
             >
-              <span className="agent-list-row-primary">
+              <span className="agent-list-row-primary flex items-center gap-[13px] min-w-0">
                 <span className="agent-avatar">
                   <Bot size={18} />
                 </span>
-                <span className="agent-list-main">
+                <span className="agent-list-main grid min-w-0 gap-1">
                   <strong>{profile.name}</strong>
                   <small>{agentSubtitle(profile)}</small>
                 </span>
@@ -172,18 +172,18 @@ export function AgentList({
                   <strong>{gateway.label}</strong>
                 </span>
               )}
-              <span className="agent-list-row-stats">
-                <span className="agent-list-stat">
+              <span className="agent-list-row-stats flex items-center gap-4 min-w-0 justify-end">
+                <span className="agent-list-stat grid grid-cols-[auto_minmax(0,1fr)] gap-x-1.5 gap-y-0.5 items-center min-w-0 opacity-[0.86]">
                   <FolderOpen size={15} />
                   <strong>{profile.sessionCount}</strong>
                   <small>Sessions</small>
                 </span>
-                <span className="agent-list-stat">
+                <span className="agent-list-stat grid grid-cols-[auto_minmax(0,1fr)] gap-x-1.5 gap-y-0.5 items-center min-w-0 opacity-[0.86]">
                   <Database size={15} />
                   <strong>{formatBytes(profile.memoryBytes)}</strong>
                   <small>Memory</small>
                 </span>
-                <span className="agent-list-stat">
+                <span className="agent-list-stat grid grid-cols-[auto_minmax(0,1fr)] gap-x-1.5 gap-y-0.5 items-center min-w-0 opacity-[0.86]">
                   <Sparkles size={15} />
                   <strong>{profile.skillCount}</strong>
                   <small>Skills</small>
@@ -194,7 +194,7 @@ export function AgentList({
                   <Button
                     type="button"
                     variant="ghost"
-                    className="profile-row-action agent-list-menu-trigger"
+                    className="profile-row-action agent-list-menu-trigger flex-none"
                     aria-label={`More actions for ${profile.name}`}
                     title={`More actions for ${profile.name}`}
                     onClick={(event) => event.stopPropagation()}
@@ -254,7 +254,7 @@ export function AgentList({
   );
 
   return isDialog ? (
-    <div className="agent-list-dialog-body">{content}</div>
+    <div className="agent-list-dialog-body grid gap-3 min-w-0 max-h-[min(560px,calc(100vh-220px))] overflow-y-auto -mx-1 px-1 pb-1">{content}</div>
   ) : (
     <AgentContentFrame layout="index" className="content-start gap-[18px]">
       {content}

@@ -421,9 +421,9 @@ export function SkillsView({
   const selectedPath = detail?.path || (connected ? `No skill selected for ${profile}` : "Iris Core is offline");
 
   return (
-    <div className="skills-workspace">
-      <div className="skills-browser">
-        <aside className="skill-list-panel">
+    <div className="grid grid-rows-[minmax(0,1fr)] content-stretch min-w-0 min-h-0 h-full overflow-hidden">
+      <div className="skills-browser grid grid-cols-[minmax(270px,34%)_minmax(0,1fr)] gap-3 min-w-0 min-h-0 h-full overflow-hidden">
+        <aside className="skill-list-panel grid grid-rows-[auto_minmax(0,1fr)] gap-2 min-w-0 min-h-0 overflow-x-hidden">
           <div className={`flex items-center gap-2 pt-0 px-0.5 pb-1 min-h-8 ${isSearchExpanded ? "is-searching" : ""}`}>
             {isSearchExpanded ? (
               <>
@@ -506,12 +506,12 @@ export function SkillsView({
               </>
             )}
           </div>
-          <div className="skill-grid">
+          <div className="skill-grid grid gap-2">
             {groupedRows.length ? groupedRows.map((group) => {
               const expanded = isGroupExpanded(group.key);
               const ChevronIcon = expanded ? ChevronDown : ChevronRight;
               return (
-                <div key={group.key} className="skill-group">
+                <div key={group.key} className="skill-group flex flex-col">
                   <Button
                     type="button"
                     variant="ghost"
@@ -530,14 +530,14 @@ export function SkillsView({
                           key={row.key}
                           type="button"
                           variant="ghost"
-                          className={`skill-row ${row.key === selectedKey ? "active" : ""}`}
+                          className={`skill-row grid grid-cols-[auto_minmax(0,1fr)_max-content] min-h-16 px-3.5 pt-[11px] pb-3 ${row.key === selectedKey ? "active" : ""}`}
                           onClick={() => requestSelection(row.key)}
                         >
-                          <div className="skill-icon">
+                          <div className="skill-icon w-9 h-9 rounded-[10px]">
                             <FileCode2 />
                           </div>
-                          <div className="skill-row-copy">
-                            <p className="skill-row-title">{row.skill.name}</p>
+                          <div className="grid content-center gap-[3px] min-w-0 overflow-hidden">
+                            <p className="m-0 font-[750] text-sm leading-[1.16] overflow-hidden text-ellipsis whitespace-nowrap">{row.skill.name}</p>
                             <span className="skill-row-description">{row.skill.description}</span>
                             {row.conflict ? <span className="skill-row-meta">conflict</span> : null}
                           </div>
@@ -576,8 +576,8 @@ export function SkillsView({
           </div>
         </aside>
 
-        <section className="skill-detail-panel">
-          <div className="skill-detail-header">
+        <section className="grid grid-rows-[auto_minmax(0,1fr)_auto] gap-2.5 min-w-0 min-h-0 overflow-hidden">
+          <div className="skill-detail-header grid grid-cols-[minmax(0,1fr)_auto] items-start gap-3.5">
             <div>
               <h2>{selectedTitle}</h2>
               <span>{selectedPath}</span>
@@ -622,7 +622,7 @@ export function SkillsView({
             </Empty>
           )}
 
-          <div className="skill-detail-footer">
+          <div className="skill-detail-footer grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3">
             {notice ? (
               <Alert className="settings-notice skill-detail-notice">
                 <AlertDescription>{notice}</AlertDescription>

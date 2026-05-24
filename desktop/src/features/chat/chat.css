@@ -35,12 +35,6 @@
   padding: 48px;
 }
 
-.new-chat-center {
-  width: min(100%, var(--chat-content-max-width));
-  margin: 0 0 24px;
-  text-align: center;
-}
-
 .new-chat-center h1 {
   margin: 0;
   color: var(--foreground);
@@ -108,13 +102,6 @@
   outline-offset: 2px;
 }
 
-.message-list {
-  height: 100%;
-  min-height: 0;
-  overflow: auto;
-  padding: 52px 28px 28px;
-}
-
 .message-list-frame-settling .message-list {
   scrollbar-width: none;
 }
@@ -123,21 +110,6 @@
   display: none;
   width: 0;
   height: 0;
-}
-
-.chat-workspace {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  min-height: 0;
-}
-
-.session-column {
-  display: flex;
-  flex-direction: column;
-  justify-content: flex-start;
-  width: min(calc(100% - 96px), var(--chat-content-max-width));
-  min-height: 100%;
-  margin: 0 auto;
 }
 
 .chat-scroll-bottom-button {
@@ -190,23 +162,6 @@
   padding-right: 0;
   padding-bottom: 10px;
   padding-left: 0;
-}
-
-.pinned-list {
-  display: grid;
-  gap: 1px;
-  margin-top: 9px;
-}
-
-.session-branch {
-  display: grid;
-  gap: var(--sidebar-tree-row-gap);
-  padding: 0;
-}
-
-.sidebar-session-row {
-  position: relative;
-  border-radius: 8px;
 }
 
 .sidebar-session-row:hover,
@@ -366,15 +321,6 @@
   line-height: 1.5;
 }
 
-.message {
-  display: flex;
-  flex-direction: column;
-  gap: 7px;
-  width: 100%;
-  min-width: 0;
-  margin-bottom: 22px;
-}
-
 .message-entering {
   animation: rise-in 220ms ease both;
 }
@@ -390,14 +336,6 @@
   margin-left: 0;
 }
 
-.message-attachments {
-  display: flex;
-  justify-content: flex-end;
-  align-self: flex-end;
-  flex-wrap: wrap;
-  gap: 10px;
-  max-width: min(74%, 720px);
-}
 
 .message.assistant .message-attachments {
   align-self: flex-start;
@@ -543,13 +481,6 @@
 .message-audio-waveform:focus-visible {
   outline: 2px solid var(--outline-emphasis);
   outline-offset: 2px;
-}
-
-.message-audio-main {
-  display: grid;
-  grid-template-rows: 24px 18px;
-  flex: 1 1 auto;
-  min-width: 0;
 }
 
 .message-audio-waveform {
@@ -1097,19 +1028,6 @@
   color: var(--muted-foreground);
 }
 
-.composer-toolbar,
-.composer-tools {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  min-width: 0;
-}
-
-.composer-tools {
-  justify-content: flex-start;
-}
-
 .composer-toolbar.recording {
   gap: 8px;
 }
@@ -1129,18 +1047,6 @@
   color: var(--text-secondary);
   background: var(--muted);
   box-shadow: inset 0 1px 0 var(--border-subtle);
-}
-
-.composer-recording-waveform {
-  position: relative;
-  display: flex;
-  flex: 0 1 96px;
-  align-items: center;
-  justify-content: center;
-  min-width: 58px;
-  max-width: 112px;
-  height: 22px;
-  overflow: hidden;
 }
 
 .composer-recording-waveform::before {
@@ -1249,13 +1155,6 @@
   background: var(--accent-cool-soft);
   font-size: 11px;
   font-weight: 700;
-}
-
-.tool-view {
-  align-content: start;
-  gap: 18px;
-  overflow: auto;
-  padding: 30px;
 }
 
 .syntax-strip {

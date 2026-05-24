@@ -138,7 +138,7 @@ export function MemoryView({
 
   return (
     <div className="relative grid self-start content-start gap-3 min-w-0 min-h-0 pb-[30px]">
-      <div className="memory-capacity-grid">
+      <div className="memory-capacity-grid grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)] items-stretch gap-3 min-w-0">
         {(["memory", "user"] as MemoryFileKey[]).map((file) => {
           const fileData = files[file];
           const chars = fileData.content.length;
@@ -156,7 +156,7 @@ export function MemoryView({
                   <span>{fileLabels[file]}</span>
                 </CardTitle>
                 <CardDescription>{fileDescriptions[file]}</CardDescription>
-                <div className="agent-overview-card-header-actions">
+                <div className="flex flex-none row-start-1 row-span-2 col-start-2 gap-1.5">
                   <Button
                     variant="appIcon"
                     size="icon-sm"
@@ -187,7 +187,7 @@ export function MemoryView({
             <span>Edit memory</span>
           </CardTitle>
           <CardDescription>{syncCaption}</CardDescription>
-          <div className="agent-overview-card-header-actions">
+          <div className="flex flex-none row-start-1 row-span-2 col-start-2 gap-1.5">
             <Button
               variant="appIcon"
               size="icon-sm"
@@ -259,7 +259,7 @@ export function MemoryView({
 
       <Card className="agent-overview-card memory-history-card">
         <Collapsible defaultOpen={Boolean(activeHistory.length)}>
-          <CardHeader className="memory-history-header">
+          <CardHeader className="grid-cols-[minmax(0,1fr)] gap-0 p-0">
             <CollapsibleTrigger asChild>
               <button type="button" className="memory-history-trigger">
                 <History className="agent-overview-card-icon" />
@@ -276,7 +276,7 @@ export function MemoryView({
           <CollapsibleContent forceMount>
             <CardContent className="grid content-start gap-2.5 p-0 pt-3 gap-3">
               {activeHistory.length ? (
-                <div className="memory-history-split">
+                <div className="memory-history-split grid grid-cols-[minmax(220px,0.9fr)_minmax(0,1.6fr)] gap-3 min-h-[240px]">
                   <ScrollArea className="memory-revision-list">
                     <div className="grid content-start gap-1.5 p-2">
                       {activeHistory.map((entry) => (
@@ -306,7 +306,7 @@ export function MemoryView({
                         -{historyDiff.removed}
                       </span>
                     </div>
-                    <ScrollArea className="memory-diff-scroll">
+                    <ScrollArea className="max-h-[320px]">
                       <pre className="memory-diff-output">{formatDiff(historyDiff.lines)}</pre>
                     </ScrollArea>
                   </div>

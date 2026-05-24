@@ -1,3 +1,5 @@
+import { cn } from "./ui/utils";
+
 export type CodeEditorMetadata = {
   label: string;
   value: string;
@@ -21,7 +23,7 @@ export function CodeEditor({
   className = "",
 }: CodeEditorProps) {
   return (
-    <div className={className ? `code-editor-wrap ${className}` : "code-editor-wrap"}>
+    <div className={cn("grid grid-rows-[auto_minmax(0,1fr)] min-h-0", className)}>
       {metadata.length ? (
         <div className="syntax-strip">
           {metadata.map((item) => (
@@ -29,7 +31,7 @@ export function CodeEditor({
           ))}
         </div>
       ) : null}
-      <div className="skill-code-editor">
+      <div className="skill-code-editor grid grid-cols-[44px_minmax(0,1fr)] min-h-0">
         <pre aria-hidden="true">{lineNumbers(value)}</pre>
         <textarea
           readOnly={readOnly}

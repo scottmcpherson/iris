@@ -432,7 +432,7 @@ export function AppShell({
             <img src={irisSidebarIcon} alt="" draggable={false} />
           </div>
           <div>
-            <p className="brand-name">Iris</p>
+            <p className="brand-name text-[13px] font-bold">Iris</p>
             {onOpenDiagnostics ? (
               <button
                 type="button"
@@ -453,7 +453,7 @@ export function AppShell({
           </div>
         </div>
 
-        <nav className="nav-list" aria-label="Primary">
+        <nav className="grid flex-none gap-[3px] m-0 mb-[22px]" aria-label="Primary">
           {navItems.map((item) => {
             const Icon = item.icon;
             const isNewChatAction = item.id === "chat";
@@ -507,11 +507,11 @@ export function AppShell({
         <div className="sidebar-scroll-region">
           {pinnedSessionItems.length ? (
             <div className="sidebar-section pinned-tree">
-              <div className="profile-tree-header">
+              <div className="profile-tree-header flex items-stretch justify-between gap-2.5 pl-2 pr-0">
                 {renderSidebarSectionToggle("pinned", "Pinned", pinnedSectionCollapsed)}
               </div>
               {!pinnedSectionCollapsed ? (
-                <div className="pinned-list" id="sidebar-pinned-section">
+                <div className="grid gap-px mt-[9px]" id="sidebar-pinned-section">
                   {pinnedSessionItems.map((item) =>
                     renderSessionRow(item.profileName, item.session, {
                       pinnedSection: true,
@@ -527,10 +527,10 @@ export function AppShell({
 
           {sidebarOrganization === "projects" ? (
             <>
-              <div className="sidebar-section profile-tree projects-tree">
-                <div className="profile-tree-header">
+              <div className="sidebar-section profile-tree projects-tree flex flex-none flex-col min-h-0 px-0">
+                <div className="profile-tree-header flex items-stretch justify-between gap-2.5 pl-2 pr-0">
                   {renderSidebarSectionToggle("projects", "Projects", projectsSectionCollapsed)}
-                  <div className="profile-tree-actions sidebar-section-actions">
+                  <div className="profile-tree-actions sidebar-section-actions flex items-center gap-[5px]">
                     <Button
                       type="button"
                       variant="ghost"
@@ -566,8 +566,8 @@ export function AppShell({
                 ) : null}
               </div>
 
-              <div className="sidebar-section profile-tree chats-tree">
-                <div className="profile-tree-header">
+              <div className="sidebar-section profile-tree chats-tree flex flex-none flex-col min-h-0 px-0">
+                <div className="profile-tree-header flex items-stretch justify-between gap-2.5 pl-2 pr-0">
                   {renderSidebarSectionToggle("chats", "Sessions", chatsSectionCollapsed)}
                 </div>
                 {!chatsSectionCollapsed ? (
@@ -603,10 +603,10 @@ export function AppShell({
               </div>
             </>
           ) : (
-            <div className="sidebar-section profile-tree">
-              <div className="profile-tree-header">
+            <div className="sidebar-section profile-tree flex flex-none flex-col min-h-0 px-0">
+              <div className="profile-tree-header flex items-stretch justify-between gap-2.5 pl-2 pr-0">
                 {renderSidebarSectionToggle("agents", "Agents", agentsSectionCollapsed)}
-                <div className="profile-tree-actions sidebar-section-actions">
+                <div className="profile-tree-actions sidebar-section-actions flex items-center">
                   <Button
                     type="button"
                     variant="ghost"
@@ -658,12 +658,12 @@ export function AppShell({
                         visibleProfileSessions.length > 0);
                     const ProfileFolderIcon = collapsed ? Folder : FolderOpen;
                     return (
-                      <div key={profile.name} className="profile-node">
-                        <div className="profile-node-row">
+                      <div key={profile.name} className="profile-node grid gap-[var(--sidebar-tree-row-gap)]">
+                        <div className="profile-node-row relative grid grid-cols-[minmax(0,1fr)_auto] items-center min-w-0 rounded-[8px]">
                           <Button
                             type="button"
                             variant="ghost"
-                            className="profile-node-button"
+                            className="profile-node-button rounded-[8px] text-left"
                             aria-expanded={!collapsed}
                             onClick={() => {
                               const willExpand = collapsed;
@@ -738,7 +738,7 @@ export function AppShell({
                           </div>
                         </div>
                         {showSessionBranch ? (
-                          <div className="session-branch">
+                          <div className="grid gap-(--sidebar-tree-row-gap) p-0">
                             {profileError ? <div className="history-notice">{profileError}</div> : null}
                             {visibleProfileSessions.length ? (
                               visibleProfileSessions.map((session) =>
@@ -789,7 +789,10 @@ export function AppShell({
       </aside>
 
       <main className="workspace">
-        <header className={topbarPane ? "topbar custom-topbar" : "topbar"}>
+        <header
+          className={topbarPane ? "topbar custom-topbar" : "topbar"}
+          data-topbar-variant={activeView === "agents" ? "compact" : "default"}
+        >
           <div className="topbar-drag-zone" data-tauri-drag-region />
           {topbarPane ?? (
             <>
@@ -815,11 +818,11 @@ export function AppShell({
 
         <section
           className={[
-            "content-grid",
+            "content-grid row-start-3 grid grid-cols-[minmax(0,1fr)] h-full min-h-0 overflow-hidden p-0 gap-0",
             activeView === "chat" ? "chat-content" : "",
           ].filter(Boolean).join(" ")}
         >
-          <div className={activeView === "chat" ? "primary-pane chat-primary-pane" : "primary-pane"}>
+          <div className={activeView === "chat" ? "primary-pane chat-primary-pane min-w-0 min-h-0" : "primary-pane min-w-0 min-h-0"}>
             {primaryPane}
           </div>
         </section>
@@ -880,16 +883,16 @@ export function AppShell({
     const profileName = defaultAgent?.runtimeProfile || selectedProfile;
 
     return (
-      <div key={project.id} className="profile-node project-node">
+      <div key={project.id} className="profile-node project-node grid gap-[var(--sidebar-tree-row-gap)]">
         <ContextMenu onOpenChange={(open) => {
           if (open) closeSidebarMenus();
         }}>
           <ContextMenuTrigger asChild>
-            <div className="profile-node-row">
+            <div className="profile-node-row relative grid grid-cols-[minmax(0,1fr)_auto] items-center min-w-0 rounded-[8px]">
               <Button
                 type="button"
                 variant="ghost"
-                className="profile-node-button"
+                className="profile-node-button rounded-[8px] text-left"
                 aria-expanded={!collapsed}
                 onClick={() => {
                   const willExpand = collapsed;
@@ -960,7 +963,7 @@ export function AppShell({
           </ContextMenuContent>
         </ContextMenu>
         {showSessionBranch ? (
-          <div className="session-branch">
+          <div className="grid gap-(--sidebar-tree-row-gap) p-0">
             {projectError ? <div className="history-notice">{projectError}</div> : null}
             {visibleProjectSessions.length ? (
               visibleProjectSessions.map((session) => {
@@ -1010,7 +1013,7 @@ export function AppShell({
     const deleteArmed = confirmDeleteSessionKey === pinKey;
     const deleteDisabled = sessionActionBusy || activeSessionIds.includes(session.id);
     const rowClassName = [
-      "sidebar-session-row",
+      "sidebar-session-row relative rounded-[8px]",
       selected ? "active" : "",
       contextTarget ? "context-target" : "",
       running ? "running" : "",
@@ -1049,7 +1052,7 @@ export function AppShell({
             <Button
               type="button"
               variant="ghost"
-              className="sidebar-session"
+              className="sidebar-session rounded-[8px] text-left"
               onClick={options.onSelect || (() => onSelectSession(profileName, session.id))}
             >
               <span>{session.title}</span>

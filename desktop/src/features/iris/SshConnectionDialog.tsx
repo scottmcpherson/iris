@@ -42,7 +42,7 @@ export function SshConnectionDialog({
           <DialogDescription>Connect to a remote host using an SSH endpoint and optional identity file.</DialogDescription>
         </DialogHeader>
         <FieldSet className="min-h-0 pt-4 px-5 pb-0 border-0">
-          <FieldGroup className="ssh-dialog-fields">
+          <FieldGroup className="ssh-dialog-fields grid grid-cols-[minmax(0,1fr)_minmax(132px,0.36fr)] items-end gap-3">
             <Field className="col-start-1 col-end-[-1] justify-self-center w-max max-w-full">
               <ToggleGroup
                 type="single"

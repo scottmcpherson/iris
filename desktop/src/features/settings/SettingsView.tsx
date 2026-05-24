@@ -226,14 +226,15 @@ export function SettingsView({
   }
 
   return (
-    <div className="tool-view gap-4 settings-view-general">
+    <div className="tool-view overflow-auto">
+      <div className="settings-view-general grid gap-4 content-start w-[min(calc(100%-96px),var(--chat-content-max-width))] mx-auto py-[30px]">
       <div className="flex items-center justify-between gap-3 min-w-0">
         <div>
           <h1>Settings</h1>
         </div>
       </div>
 
-      <div className="core-status-strip" data-online={status?.connected ? "true" : "false"}>
+      <div className="core-status-strip flex flex-wrap items-center gap-2.5 min-w-0 py-0.5" data-online={status?.connected ? "true" : "false"}>
         <span className={status?.connected ? "service-health-dot online" : "service-health-dot offline"} />
         <span className="core-status-strip-name">{statusConnection}</span>
         <span className="core-status-strip-sep" aria-hidden>·</span>
@@ -288,7 +289,7 @@ export function SettingsView({
             <CardContent className="grid gap-3.5">
               <FieldSet className="grid gap-2.5 min-w-0 p-0 border-0">
                 <h3 className="settings-form-group-title">Connection</h3>
-                <FieldGroup className="settings-field-grid">
+                <FieldGroup className="grid grid-cols-[repeat(auto-fit,minmax(210px,1fr))] gap-2 min-w-0">
                   <TextField id="local-port" label="Core port" value={localDraft.port} onChange={(port) => setLocalDraft({ ...localDraft, port })} />
                   <TextField id="local-hermes-home" label="Hermes home" value={localDraft.hermesHome} placeholder="~/.hermes" onChange={(hermesHome) => setLocalDraft({ ...localDraft, hermesHome })} />
                 </FieldGroup>
@@ -405,6 +406,7 @@ export function SettingsView({
           />
         </TabsContent>
       </Tabs>
+      </div>
     </div>
   );
 }
@@ -437,13 +439,13 @@ function ConnectionList({
         const switchId = `connection-${profile.id}`;
         return (
           <div className="connection-profile-row" key={profile.id} data-connected={connected ? "true" : "false"}>
-            <div className="connection-profile-summary">
+            <div className="connection-profile-summary grid gap-[3px] min-w-0">
               <strong>{profile.name}</strong>
               <span>{profileSubtitle(profile)}</span>
             </div>
             <Field
               orientation="horizontal"
-              className="connection-switch-field"
+              className="connection-switch-field items-center justify-end gap-2.5 min-w-[142px]"
               data-disabled={busy ? "true" : undefined}
             >
               <FieldLabel htmlFor={switchId}>

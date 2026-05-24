@@ -47,7 +47,7 @@ export function MessageAttachments({
   runtimeConfig: HermesRuntimeConfig;
 }) {
   return (
-    <div className="message-attachments" aria-label="Attached files">
+    <div className="message-attachments flex justify-end self-end flex-wrap gap-2.5 max-w-[min(74%,720px)]" aria-label="Attached files">
       {attachments.map((attachment) => {
         const previewUrl = attachmentPreviewUrl(attachment, runtimeConfig);
         const contentUrl = attachmentContentUrl(attachment, runtimeConfig);
@@ -346,7 +346,7 @@ function AudioAttachmentPlayer({
       >
         {playing ? <Pause size={18} fill="currentColor" /> : <Play size={19} fill="currentColor" />}
       </Button>
-      <div className="message-audio-main">
+      <div className="grid grid-rows-[24px_18px] flex-auto min-w-0">
         <Button
           type="button"
           variant="ghost"
