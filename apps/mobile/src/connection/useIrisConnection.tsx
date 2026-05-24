@@ -1,9 +1,10 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { getHealth, type IrisCoreClient } from "@iris/core-client";
 import { createMobileCoreClient } from "../lib/coreClient";
-import type { SavedConnectionProfile } from "./pairingPayload";
+import { isDirectCoreConnectionProfile, isSshConnectionProfile, type SavedConnectionProfile } from "./pairingPayload";
 import {
   clearConnectionProfile,
+  type ConnectionAuth,
   loadSavedConnectionAuth,
   loadSavedConnectionProfile,
   saveConnectionAuth,
@@ -15,7 +16,6 @@ import {
   SshAuthRequiredError,
   SshHostKeyUnverifiedError,
   SshTunnelUnavailableError,
-  type SshAuthMethod,
   type SshTunnelSession,
 } from "./sshTunnel";
 
@@ -34,8 +34,8 @@ type IrisConnectionContextValue = {
   state: MobileConnectionState;
   client: IrisCoreClient | null;
   clientKey: string;
-  pair: (profile: SavedConnectionProfile, auth: SshAuthMethod) => Promise<void>;
-  connect: (profile?: SavedConnectionProfile, auth?: SshAuthMethod) => Promise<void>;
+  pair: (profile: SavedConnectionProfile, auth: ConnectionAuth) => Promise<void>;
+  connect: (profile?: SavedConnectionProfile, auth?: ConnectionAuth) => Promise<void>;
   readHostKey: (profile: SavedConnectionProfile) => Promise<string>;
   disconnect: () => Promise<void>;
   forget: () => Promise<void>;
@@ -46,10 +46,15 @@ const IrisConnectionContext = createContext<IrisConnectionContextValue | null>(n
 export function IrisConnectionProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<MobileConnectionState>({ status: "unpaired" });
   const [tunnel, setTunnel] = useState<SshTunnelSession | null>(null);
+  const [directToken, setDirectToken] = useState("");
 
   const client = useMemo(() => {
-    return state.status === "connected" && tunnel ? createMobileCoreClient(state.localCoreUrl, tunnel.fetch) : null;
-  }, [state, tunnel]);
+    if (state.status !== "connected") return null;
+    if (isDirectCoreConnectionProfile(state.profile)) {
+      return directToken ? createMobileCoreClient(state.localCoreUrl, globalThis.fetch.bind(globalThis), directToken) : null;
+    }
+    return tunnel ? createMobileCoreClient(state.localCoreUrl, tunnel.fetch) : null;
+  }, [directToken, state, tunnel]);
   const clientKey = state.status === "connected" ? state.localCoreUrl : "unpaired";
 
   const readHostKey = useCallback(async (profile: SavedConnectionProfile) => {
@@ -57,7 +62,7 @@ export function IrisConnectionProvider({ children }: { children: ReactNode }) {
     return result.hostKeyFingerprint;
   }, []);
 
-  const connect = useCallback(async (overrideProfile?: SavedConnectionProfile, overrideAuth?: SshAuthMethod) => {
+  const connect = useCallback(async (overrideProfile?: SavedConnectionProfile, overrideAuth?: ConnectionAuth) => {
     const profile = overrideProfile || ("profile" in state ? state.profile : null);
     if (!profile) {
       setState({ status: "unpaired" });
@@ -70,7 +75,35 @@ export function IrisConnectionProvider({ children }: { children: ReactNode }) {
     }
     setState({ status: "connecting", profile });
     try {
+      if (isDirectCoreConnectionProfile(profile)) {
+        if (auth.kind !== "core-token") {
+          setState({ status: "blocked", profile, reason: "auth-required" });
+          return;
+        }
+        const nextClient = createMobileCoreClient(profile.coreUrl, globalThis.fetch.bind(globalThis), auth.token);
+        const health = await getHealth(nextClient);
+        if (!health.ok) {
+          setState({ status: "disconnected", profile, error: health.error || "Iris Core health check failed." });
+          return;
+        }
+        await saveConnectionProfile(profile);
+        await saveConnectionAuth(auth);
+        setTunnel(null);
+        setDirectToken(auth.token);
+        setState({
+          status: "connected",
+          profile,
+          localCoreUrl: profile.coreUrl,
+          hostKeyFingerprint: "",
+        });
+        return;
+      }
+      if (!isSshConnectionProfile(profile) || auth.kind === "core-token") {
+        setState({ status: "blocked", profile, reason: "ssh-unavailable" });
+        return;
+      }
       const nextTunnel = await connectSshTunnel(profile, auth);
+      setDirectToken("");
       const nextClient = createMobileCoreClient(nextTunnel.localCoreUrl, nextTunnel.fetch);
       const health = await getHealth(nextClient);
       if (!health.ok) {
@@ -114,7 +147,7 @@ export function IrisConnectionProvider({ children }: { children: ReactNode }) {
     }
   }, [state]);
 
-  const pair = useCallback(async (profile: SavedConnectionProfile, auth: SshAuthMethod) => {
+  const pair = useCallback(async (profile: SavedConnectionProfile, auth: ConnectionAuth) => {
     await saveConnectionProfile(profile);
     await saveConnectionAuth(auth);
     await connect(profile, auth);
@@ -123,6 +156,7 @@ export function IrisConnectionProvider({ children }: { children: ReactNode }) {
   const disconnect = useCallback(async () => {
     await tunnel?.disconnect();
     setTunnel(null);
+    setDirectToken("");
     if ("profile" in state) {
       setState({ status: "disconnected", profile: state.profile });
     } else {
@@ -133,6 +167,7 @@ export function IrisConnectionProvider({ children }: { children: ReactNode }) {
   const forget = useCallback(async () => {
     await tunnel?.disconnect();
     setTunnel(null);
+    setDirectToken("");
     await clearConnectionProfile();
     setState({ status: "unpaired" });
   }, [tunnel]);

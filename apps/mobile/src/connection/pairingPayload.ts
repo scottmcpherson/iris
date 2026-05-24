@@ -3,27 +3,33 @@ export type IrisMobilePairingPayloadV1 = {
   version: 1;
   hostId: string;
   hostLabel: string;
-  ssh: {
-    host: string;
-    port: number;
-    userHint?: string;
-  };
   core: {
-    remoteHost: "127.0.0.1";
-    remotePort: number;
+    url: string;
     apiBasePath: "/v1";
   };
   pairing: {
-    nonce: string;
+    code: string;
     expiresAt: number;
-    desktopPublicKey?: string;
   };
 };
 
-export type SavedConnectionProfile = {
+type SavedConnectionProfileBase = {
   id: string;
   hostId: string;
   hostLabel: string;
+  createdAt: number;
+  updatedAt: number;
+};
+
+export type DirectCoreConnectionProfile = SavedConnectionProfileBase & {
+  transport: "direct-core";
+  coreUrl: string;
+  apiBasePath: "/v1";
+  deviceId?: string;
+};
+
+export type SshConnectionProfile = SavedConnectionProfileBase & {
+  transport: "ssh";
   sshHost: string;
   sshPort: number;
   username: string;
@@ -31,9 +37,9 @@ export type SavedConnectionProfile = {
   remoteCorePort: number;
   apiBasePath: "/v1";
   hostKeyFingerprint?: string;
-  createdAt: number;
-  updatedAt: number;
 };
+
+export type SavedConnectionProfile = DirectCoreConnectionProfile | SshConnectionProfile;
 
 export type PairingParseResult =
   | { ok: true; payload: IrisMobilePairingPayloadV1 }
@@ -58,19 +64,13 @@ export function parsePairingPayload(raw: string, nowSeconds = Math.floor(Date.no
   if (!candidate.hostId || !candidate.hostLabel) {
     return { ok: false, error: "Pairing payload is missing host identity fields." };
   }
-  if (!candidate.ssh || typeof candidate.ssh.host !== "string" || !candidate.ssh.host.trim()) {
-    return { ok: false, error: "Pairing payload is missing an SSH host." };
-  }
-  if (!validPort(candidate.ssh.port)) {
-    return { ok: false, error: "Pairing payload has an invalid SSH port." };
-  }
-  if (!candidate.core || candidate.core.remoteHost !== "127.0.0.1" || candidate.core.apiBasePath !== "/v1") {
+  if (!candidate.core || candidate.core.apiBasePath !== "/v1" || typeof candidate.core.url !== "string") {
     return { ok: false, error: "Pairing payload has an unsupported Core target." };
   }
-  if (!validPort(candidate.core.remotePort)) {
-    return { ok: false, error: "Pairing payload has an invalid Core port." };
+  if (!normalizeCoreUrl(candidate.core.url)) {
+    return { ok: false, error: "Pairing payload has an invalid Core URL." };
   }
-  if (!candidate.pairing?.nonce || typeof candidate.pairing.expiresAt !== "number") {
+  if (!candidate.pairing?.code || typeof candidate.pairing.expiresAt !== "number") {
     return { ok: false, error: "Pairing payload is missing expiration metadata." };
   }
   if (candidate.pairing.expiresAt <= nowSeconds) {
@@ -82,25 +82,38 @@ export function parsePairingPayload(raw: string, nowSeconds = Math.floor(Date.no
 
 export function profileFromPairingPayload(
   payload: IrisMobilePairingPayloadV1,
-  username: string,
-  sshHost = payload.ssh.host,
+  deviceId = "",
 ): SavedConnectionProfile {
   const now = Math.floor(Date.now() / 1000);
   return {
-    id: `${payload.hostId}:${payload.ssh.port}`,
+    id: `${payload.hostId}:direct-core`,
     hostId: payload.hostId,
     hostLabel: payload.hostLabel,
-    sshHost: sshHost.trim(),
-    sshPort: payload.ssh.port,
-    username: username.trim() || payload.ssh.userHint || "",
-    remoteCoreHost: payload.core.remoteHost,
-    remoteCorePort: payload.core.remotePort,
+    transport: "direct-core",
+    coreUrl: normalizeCoreUrl(payload.core.url),
     apiBasePath: payload.core.apiBasePath,
+    deviceId,
     createdAt: now,
     updatedAt: now,
   };
 }
 
-function validPort(value: unknown) {
-  return typeof value === "number" && Number.isInteger(value) && value > 0 && value <= 65535;
+export function isDirectCoreConnectionProfile(profile: SavedConnectionProfile): profile is DirectCoreConnectionProfile {
+  return profile.transport === "direct-core";
+}
+
+export function isSshConnectionProfile(profile: SavedConnectionProfile): profile is SshConnectionProfile {
+  return profile.transport === "ssh";
+}
+
+function normalizeCoreUrl(value: string) {
+  try {
+    const url = new URL(value);
+    if (!["http:", "https:"].includes(url.protocol) || !url.hostname || !url.port) return "";
+    const path = url.pathname.replace(/\/+$/u, "") || "/v1";
+    if (path !== "/v1") return "";
+    return `${url.origin}/v1`;
+  } catch {
+    return "";
+  }
 }

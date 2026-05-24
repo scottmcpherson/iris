@@ -15,7 +15,7 @@ public class IrisSshModule: Module {
       let session = NMSSHSession(host: host, port: port, andUsername: username)
       session.fingerprintHash = NMSSHSessionHash.SHA1
       guard session.connect() else {
-        throw IrisSshError.message("Could not connect to SSH host.")
+        throw IrisSshError.message(connectionFailureMessage(session: session, host: host, port: port))
       }
       let fingerprint = try normalizedFingerprint(session.fingerprint(NMSSHSessionHash.SHA1))
       session.disconnect()
@@ -35,7 +35,7 @@ public class IrisSshModule: Module {
       let session = NMSSHSession(host: host, port: port, andUsername: username)
       session.fingerprintHash = NMSSHSessionHash.SHA1
       guard session.connect() else {
-        throw IrisSshError.message("Could not connect to SSH host.")
+        throw IrisSshError.message(connectionFailureMessage(session: session, host: host, port: port))
       }
       let fingerprint = try normalizedFingerprint(session.fingerprint(NMSSHSessionHash.SHA1))
       guard fingerprintMatches(fingerprint, expectedFingerprint) else {
@@ -93,8 +93,25 @@ public class IrisSshModule: Module {
   }
 }
 
-private enum IrisSshError: Error {
+private enum IrisSshError: LocalizedError {
   case message(String)
+
+  var errorDescription: String? {
+    switch self {
+    case .message(let message):
+      return message
+    }
+  }
+}
+
+private func connectionFailureMessage(session: NMSSHSession, host: String, port: Int) -> String {
+  let fallback = "Could not connect to SSH host \(host):\(port). Check that Tailscale is connected, the host resolves from this phone, and Remote Login/SSH is enabled on the desktop."
+  guard let detail = session.lastError?.localizedDescription.trimmingCharacters(in: .whitespacesAndNewlines),
+        !detail.isEmpty,
+        !detail.contains("absence of an active session") else {
+    return fallback
+  }
+  return "\(fallback) SSH error: \(detail)"
 }
 
 private func parseJson(_ value: String) throws -> [String: Any] {

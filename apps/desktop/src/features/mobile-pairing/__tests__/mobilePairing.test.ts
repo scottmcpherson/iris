@@ -1,29 +1,20 @@
-import { describe, expect, it, vi } from "vitest";
-import { createMobilePairingPayload, pairingPayloadHasSecrets, validateMobilePairingPayload } from "../mobilePairing";
+import { describe, expect, it } from "vitest";
+import { coreUrlFromDraft, createMobilePairingPayload, pairingPayloadHasSecrets, validateMobilePairingPayload } from "../mobilePairing";
 
 describe("mobile pairing payload", () => {
-  it("generates a short-lived SSH-only payload", () => {
-    vi.spyOn(globalThis.crypto, "getRandomValues").mockImplementation((array) => {
-      if (array) {
-        new Uint8Array(array.buffer, array.byteOffset, array.byteLength).fill(1);
-      }
-      return array;
-    });
+  it("generates a direct Core payload with a one-time pairing code", () => {
     const payload = createMobilePairingPayload({
       hostId: "local",
       hostLabel: "Local",
-      sshHost: "macbook-pro.local",
-      sshPort: "22",
-      userHint: "scott",
-      remoteCorePort: "8765",
-    }, 1000);
+      coreHost: "100.110.38.56",
+      corePort: "8765",
+    }, { code: "mp_test", expiresAt: 1300 });
 
     expect(payload).toMatchObject({
       kind: "iris-mobile-pairing",
       version: 1,
-      ssh: { host: "macbook-pro.local", port: 22, userHint: "scott" },
-      core: { remoteHost: "127.0.0.1", remotePort: 8765, apiBasePath: "/v1" },
-      pairing: { expiresAt: 1300 },
+      core: { url: "http://100.110.38.56:8765/v1", apiBasePath: "/v1" },
+      pairing: { code: "mp_test", expiresAt: 1300 },
     });
     expect(validateMobilePairingPayload(payload, 1000)).toBe(true);
     expect(pairingPayloadHasSecrets(payload)).toBe(false);
@@ -33,25 +24,30 @@ describe("mobile pairing payload", () => {
     const payload = createMobilePairingPayload({
       hostId: "local",
       hostLabel: "Local",
-      sshHost: "macbook-pro.local",
-      sshPort: "22",
-      userHint: "",
-      remoteCorePort: "8765",
-    }, 1000);
+      coreHost: "100.110.38.56",
+      corePort: "8765",
+    }, { code: "mp_test", expiresAt: 1300 });
 
     expect(validateMobilePairingPayload(payload, 1301)).toBe(false);
   });
 
-  it("rejects payloads without an SSH host", () => {
+  it("rejects payloads without a Core host", () => {
     const payload = createMobilePairingPayload({
       hostId: "local",
       hostLabel: "Local",
-      sshHost: "",
-      sshPort: "22",
-      userHint: "",
-      remoteCorePort: "8765",
-    }, 1000);
+      coreHost: "",
+      corePort: "8765",
+    }, { code: "mp_test", expiresAt: 1300 });
 
     expect(validateMobilePairingPayload(payload, 1000)).toBe(false);
+  });
+
+  it("accepts an explicit Core URL in the host field", () => {
+    expect(coreUrlFromDraft({
+      hostId: "local",
+      hostLabel: "Local",
+      coreHost: "https://agents-mac-mini.tailebda16.ts.net:8765",
+      corePort: "8765",
+    })).toBe("https://agents-mac-mini.tailebda16.ts.net:8765/v1");
   });
 });

@@ -20,12 +20,15 @@ import {
   FieldSet,
 } from "../../shared/ui/field";
 import { Input } from "../../shared/ui/input";
+import { coreRequest } from "../../lib/coreTransport";
 import type { HermesRuntimeConfig } from "../../types/hermes";
 import {
+  coreUrlFromDraft,
   createMobilePairingPayload,
   defaultMobilePairingDraft,
   pairingPayloadHasSecrets,
   validateMobilePairingPayload,
+  type MobilePairingCode,
   type MobilePairingDraft,
 } from "./mobilePairing";
 
@@ -37,20 +40,26 @@ type MobilePairingDialogProps = {
 
 export function MobilePairingDialog({ open, runtimeConfig, onOpenChange }: MobilePairingDialogProps) {
   const [draft, setDraft] = useState<MobilePairingDraft>(() => defaultMobilePairingDraft(runtimeConfig));
-  const [nonceSeed, setNonceSeed] = useState(0);
+  const [pairingCode, setPairingCode] = useState<MobilePairingCode | null>(null);
+  const [pairingError, setPairingError] = useState("");
+  const [pairingBusy, setPairingBusy] = useState(false);
   const [qrDataUrl, setQrDataUrl] = useState("");
-  const payload = useMemo(() => createMobilePairingPayload(draft), [draft, nonceSeed]);
+  const payload = useMemo(() => createMobilePairingPayload(draft, pairingCode), [draft, pairingCode]);
   const payloadText = useMemo(() => JSON.stringify(payload, null, 2), [payload]);
-  const expiresAt = new Date(payload.pairing.expiresAt * 1000).toLocaleTimeString();
+  const expiresAt = payload.pairing.expiresAt ? new Date(payload.pairing.expiresAt * 1000).toLocaleTimeString() : "Not generated";
   const payloadIsValid = validateMobilePairingPayload(payload);
   const payloadHasSecrets = pairingPayloadHasSecrets(payload);
-  const canScanPayload = payloadIsValid && !payloadHasSecrets;
-  const payloadStatus = payloadStatusText(draft, payloadIsValid, payloadHasSecrets);
+  const canScanPayload = payloadIsValid && !payloadHasSecrets && !pairingBusy;
+  const payloadStatus = payloadStatusText(draft, payloadIsValid, payloadHasSecrets, pairingBusy, pairingError);
 
   useEffect(() => {
     if (open) {
-      setDraft(defaultMobilePairingDraft(runtimeConfig));
-      setNonceSeed((value) => value + 1);
+      const nextDraft = defaultMobilePairingDraft(runtimeConfig);
+      setDraft(nextDraft);
+      void regeneratePairingCode(nextDraft);
+    } else {
+      setPairingCode(null);
+      setPairingError("");
     }
   }, [open, runtimeConfig]);
 
@@ -79,13 +88,44 @@ export function MobilePairingDialog({ open, runtimeConfig, onOpenChange }: Mobil
     toast.success("Mobile pairing payload copied.");
   }
 
+  async function regeneratePairingCode(nextDraft = draft) {
+    setPairingBusy(true);
+    setPairingError("");
+    setPairingCode(null);
+    const coreUrl = coreUrlFromDraft(nextDraft);
+    if (!coreUrl) {
+      setPairingBusy(false);
+      setPairingError("Enter a Tailscale-reachable Core host before scanning.");
+      return;
+    }
+    const result = await coreRequest<{ code: string; expiresAt: number }>(
+      runtimeConfig,
+      "POST",
+      "/mobile/pairing-codes",
+      {
+        hostLabel: nextDraft.hostLabel,
+        coreUrl,
+        metadata: { source: "iris-desktop" },
+      },
+      { timeoutMs: 5000 },
+    );
+    setPairingBusy(false);
+    if (!result.ok || !result.code || !result.expiresAt) {
+      const error = result.error || "Could not create a mobile pairing code.";
+      setPairingError(error);
+      toast.error(error);
+      return;
+    }
+    setPairingCode({ code: result.code, expiresAt: result.expiresAt });
+  }
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-[680px]">
         <DialogHeader>
           <DialogTitle>Pair Mobile Device</DialogTitle>
           <DialogDescription>
-            Scan this QR code from Iris Mobile. The code expires quickly and contains no private keys, passwords, or Core tokens.
+            Scan this QR code from Iris Mobile. It contains a short-lived pairing code, not a reusable Core token or SSH key.
           </DialogDescription>
         </DialogHeader>
 
@@ -96,7 +136,7 @@ export function MobilePairingDialog({ open, runtimeConfig, onOpenChange }: Mobil
                 <img src={qrDataUrl} alt="Iris Mobile pairing QR code" className="size-[240px]" />
               ) : (
                 <div className="grid min-h-[240px] place-items-center px-4 text-center text-[13px] text-muted-foreground">
-                  Enter a reachable SSH host before scanning.
+                  Enter a Tailscale-reachable Core host before scanning.
                 </div>
               )}
             </div>
@@ -109,18 +149,14 @@ export function MobilePairingDialog({ open, runtimeConfig, onOpenChange }: Mobil
           </div>
 
           <FieldSet className="grid gap-3 border-0 p-0">
-            <FieldLegend className="sr-only">Mobile SSH connection details</FieldLegend>
+            <FieldLegend className="sr-only">Mobile Core connection details</FieldLegend>
             <FieldDescription>
-              The phone connects through SSH, then forwards Iris Core from the desktop host.
+              The phone connects directly to Iris Core over Tailscale, then authenticates with a phone-generated device token.
             </FieldDescription>
             <FieldGroup className="grid gap-3">
               <PairingTextField id="mobile-host-label" label="Host label" value={draft.hostLabel} onChange={(hostLabel) => setDraft({ ...draft, hostLabel })} />
-              <PairingTextField id="mobile-ssh-host" label="SSH host" value={draft.sshHost} onChange={(sshHost) => setDraft({ ...draft, sshHost })} />
-              <div className="grid grid-cols-2 gap-2">
-                <PairingTextField id="mobile-ssh-port" label="SSH port" value={draft.sshPort} onChange={(sshPort) => setDraft({ ...draft, sshPort })} />
-                <PairingTextField id="mobile-core-port" label="Core port" value={draft.remoteCorePort} onChange={(remoteCorePort) => setDraft({ ...draft, remoteCorePort })} />
-              </div>
-              <PairingTextField id="mobile-user-hint" label="User hint" value={draft.userHint} onChange={(userHint) => setDraft({ ...draft, userHint })} />
+              <PairingTextField id="mobile-core-host" label="Core host" value={draft.coreHost} onChange={(coreHost) => setDraft({ ...draft, coreHost })} />
+              <PairingTextField id="mobile-core-port" label="Core port" value={draft.corePort} onChange={(corePort) => setDraft({ ...draft, corePort })} />
             </FieldGroup>
           </FieldSet>
         </div>
@@ -131,9 +167,9 @@ export function MobilePairingDialog({ open, runtimeConfig, onOpenChange }: Mobil
         </details>
 
         <DialogFooter>
-          <Button variant="appNeutral" size="appSmall" onClick={() => setNonceSeed((value) => value + 1)}>
+          <Button variant="appNeutral" size="appSmall" disabled={pairingBusy} onClick={() => void regeneratePairingCode()}>
             <RefreshCw data-icon="inline-start" />
-            Regenerate QR
+            {pairingBusy ? "Generating" : "Regenerate QR"}
           </Button>
           <Button variant="appNeutral" size="appSmall" disabled={!canScanPayload} onClick={() => void copyPayload()}>
             <Copy data-icon="inline-start" />
@@ -149,11 +185,19 @@ export function MobilePairingDialog({ open, runtimeConfig, onOpenChange }: Mobil
   );
 }
 
-function payloadStatusText(draft: MobilePairingDraft, payloadIsValid: boolean, payloadHasSecrets: boolean) {
-  if (!draft.sshHost.trim()) return "Enter the desktop SSH host before scanning.";
-  if (!payloadIsValid) return "Review required SSH and Core fields before scanning.";
+function payloadStatusText(
+  draft: MobilePairingDraft,
+  payloadIsValid: boolean,
+  payloadHasSecrets: boolean,
+  pairingBusy: boolean,
+  pairingError: string,
+) {
+  if (pairingBusy) return "Creating a one-time pairing code.";
+  if (pairingError) return pairingError;
+  if (!draft.coreHost.trim()) return "Enter the Tailscale Core host before scanning.";
+  if (!payloadIsValid) return "Review required Core fields before scanning.";
   if (payloadHasSecrets) return "Payload needs review before scanning.";
-  return "Ready to scan. No secret fields detected.";
+  return "Ready to scan. The phone will generate and store its own device token.";
 }
 
 function PairingTextField({

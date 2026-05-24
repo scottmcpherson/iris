@@ -6,18 +6,12 @@ const payload = {
   version: 1,
   hostId: "macbook-pro-scott",
   hostLabel: "Scott's MacBook Pro",
-  ssh: {
-    host: "macbook-pro.local",
-    port: 22,
-    userHint: "scott",
-  },
   core: {
-    remoteHost: "127.0.0.1",
-    remotePort: 8765,
+    url: "http://100.110.38.56:8765/v1",
     apiBasePath: "/v1",
   },
   pairing: {
-    nonce: "nonce",
+    code: "mp_test",
     expiresAt: 1780000000,
   },
 } as const;
@@ -33,14 +27,13 @@ describe("mobile pairing payload", () => {
     expect(result).toMatchObject({ ok: false });
   });
 
-  it("creates an SSH-only saved profile", () => {
-    const profile = profileFromPairingPayload(payload, "scott", "192.168.1.20");
+  it("creates a direct Core saved profile", () => {
+    const profile = profileFromPairingPayload(payload, "dev_iphone");
     expect(profile).toMatchObject({
-      sshHost: "192.168.1.20",
-      sshPort: 22,
-      remoteCoreHost: "127.0.0.1",
-      remoteCorePort: 8765,
+      transport: "direct-core",
+      coreUrl: "http://100.110.38.56:8765/v1",
       apiBasePath: "/v1",
+      deviceId: "dev_iphone",
     });
   });
 });

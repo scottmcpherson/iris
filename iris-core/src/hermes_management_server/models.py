@@ -34,6 +34,19 @@ class StatusResponse(BaseModel):
     core: dict[str, Any] = Field(default_factory=dict)
 
 
+class MobilePairingCodeCreateRequest(BaseModel):
+    hostLabel: str = "Iris Desktop"
+    coreUrl: str = ""
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class MobilePairingRedeemRequest(BaseModel):
+    code: str
+    deviceName: str = "Iris Mobile"
+    deviceTokenHash: str
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
 class ProfileSummary(BaseModel):
     name: str
     path: str

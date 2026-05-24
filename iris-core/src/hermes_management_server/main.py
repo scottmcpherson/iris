@@ -69,6 +69,8 @@ from .models import (
     CoreSessionCreateRequest,
     CoreSessionUpdateRequest,
     CoreMessageCreateRequest,
+    MobilePairingCodeCreateRequest,
+    MobilePairingRedeemRequest,
     SessionReadStateUpdateRequest,
     ErrorResponse,
     HealthResponse,
@@ -81,7 +83,7 @@ from .models import (
 )
 from .runtime_registry import RuntimeRegistry
 from .runtime_adapters.hermes_store import checked_at, normalize_hermes_home
-from .security import ManagementError, host_is_loopback, make_auth_dependency
+from .security import ManagementError, device_token_hash_is_valid, host_is_loopback, make_auth_dependency
 from . import __version__
 
 
@@ -94,6 +96,7 @@ ACTIVE_SESSION_RUNTIME_MISSING_GRACE_SECONDS = 5 * 60
 DEFAULT_IRIS_INBOUND_PORT = 8766
 DEFAULT_RUNTIME_THREAD_LIMIT = 16
 DEFAULT_RUNTIME_CALL_TIMEOUT_SECONDS = 30
+MOBILE_PAIRING_CODE_TTL_SECONDS = 5 * 60
 
 logger = logging.getLogger(__name__)
 
@@ -787,6 +790,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.active_sessions = {}
     app.state.active_sessions_by_chat = {}
     app.state.accepted_client_messages = {}
+    app.state.mobile_pairing_codes = {}
     if app_settings.cors_origins:
         app.add_middleware(
             CORSMiddleware,
@@ -844,6 +848,54 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "hermesHome": str(hermes_root),
             "profilesRootExists": (hermes_root / "profiles").is_dir(),
             "core": core_store.health(),
+        }
+
+    @app.post("/v1/mobile/pairing-codes")
+    async def mobile_pairing_code(
+        request: MobilePairingCodeCreateRequest,
+        _auth: None = Depends(require_auth),
+    ) -> dict[str, Any]:
+        prune_mobile_pairing_codes(app)
+        code = f"mp_{secrets.token_urlsafe(24)}"
+        expires_at = now() + MOBILE_PAIRING_CODE_TTL_SECONDS
+        app.state.mobile_pairing_codes[mobile_pairing_code_hash(code)] = {
+            "hostLabel": str(request.hostLabel or "Iris Desktop").strip()[:120] or "Iris Desktop",
+            "coreUrl": str(request.coreUrl or "").strip()[:512],
+            "metadata": request.metadata if isinstance(request.metadata, dict) else {},
+            "createdAt": now(),
+            "expiresAt": expires_at,
+        }
+        return {
+            "ok": True,
+            "code": code,
+            "expiresAt": expires_at,
+        }
+
+    @app.post("/v1/mobile/pair")
+    async def mobile_pair(
+        request: MobilePairingRedeemRequest,
+    ) -> dict[str, Any]:
+        prune_mobile_pairing_codes(app)
+        code_hash = mobile_pairing_code_hash(request.code)
+        pairing = app.state.mobile_pairing_codes.pop(code_hash, None)
+        if not pairing or int(pairing.get("expiresAt") or 0) <= now():
+            raise ManagementError("Pairing code is invalid or expired.", status_code=401)
+        if not device_token_hash_is_valid(request.deviceTokenHash):
+            raise ManagementError("Device token hash is invalid.")
+        device = core_store.create_device(
+            name=request.deviceName,
+            kind="mobile",
+            token_hash=request.deviceTokenHash,
+            metadata={
+                **(request.metadata if isinstance(request.metadata, dict) else {}),
+                "pairedVia": "mobile-qr",
+                "hostLabel": pairing.get("hostLabel", ""),
+                "coreUrl": pairing.get("coreUrl", ""),
+            },
+        )
+        return {
+            "ok": True,
+            "device": device,
         }
 
     register_attachment_routes(app, require_auth)
@@ -3343,6 +3395,22 @@ def job_timestamp(job: dict[str, Any], *keys: str) -> int | None:
 
 def json_dumps(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+
+
+def mobile_pairing_code_hash(code: str) -> str:
+    return stable_hash("mobile-pairing-code", str(code or "").strip(), length=64)
+
+
+def prune_mobile_pairing_codes(app: FastAPI) -> None:
+    pairings = getattr(app.state, "mobile_pairing_codes", {})
+    if not isinstance(pairings, dict):
+        app.state.mobile_pairing_codes = {}
+        return
+    cutoff = now()
+    for code_hash, pairing in list(pairings.items()):
+        expires_at = int(pairing.get("expiresAt") or 0) if isinstance(pairing, dict) else 0
+        if expires_at <= cutoff:
+            pairings.pop(code_hash, None)
 
 
 def install_hermes_plugin(

@@ -6,78 +6,66 @@ export type IrisMobilePairingPayloadV1 = {
   version: 1;
   hostId: string;
   hostLabel: string;
-  ssh: {
-    host: string;
-    port: number;
-    userHint?: string;
-  };
   core: {
-    remoteHost: "127.0.0.1";
-    remotePort: number;
+    url: string;
     apiBasePath: "/v1";
   };
   pairing: {
-    nonce: string;
+    code: string;
     expiresAt: number;
-    desktopPublicKey?: string;
   };
 };
 
 export type MobilePairingDraft = {
   hostId: string;
   hostLabel: string;
-  sshHost: string;
-  sshPort: string;
-  userHint: string;
-  remoteCorePort: string;
+  coreHost: string;
+  corePort: string;
+};
+
+export type MobilePairingCode = {
+  code: string;
+  expiresAt: number;
 };
 
 export function defaultMobilePairingDraft(runtimeConfig: HermesRuntimeConfig): MobilePairingDraft {
   const activeConnection = activeCoreConnection(runtimeConfig);
   const ssh = activeConnection.mode === "ssh" ? activeConnection.ssh : null;
-  const remoteCorePort = ssh?.remoteCorePort || portFromUrl(resolveCoreApiUrl(runtimeConfig)) || defaultCorePort;
+  const coreUrl = resolveCoreApiUrl(runtimeConfig);
+  const remoteCorePort = ssh?.remoteCorePort || portFromUrl(coreUrl) || defaultCorePort;
   return {
     hostId: sanitizeHostId(activeConnection.id || "iris-desktop"),
     hostLabel: activeConnection.name || "Iris Desktop",
-    sshHost: ssh?.host || "",
-    sshPort: String(ssh?.port || 22),
-    userHint: ssh?.user || "",
-    remoteCorePort: String(remoteCorePort),
+    coreHost: ssh?.host || nonLoopbackHostFromUrl(coreUrl),
+    corePort: String(remoteCorePort),
   };
 }
 
 export function createMobilePairingPayload(
   draft: MobilePairingDraft,
-  nowSeconds = Math.floor(Date.now() / 1000),
+  pairingCode: MobilePairingCode | null,
 ): IrisMobilePairingPayloadV1 {
   return {
     kind: "iris-mobile-pairing",
     version: 1,
     hostId: draft.hostId.trim() || "iris-desktop",
     hostLabel: draft.hostLabel.trim() || "Iris Desktop",
-    ssh: {
-      host: draft.sshHost.trim(),
-      port: parsePort(draft.sshPort, 22),
-      ...(draft.userHint.trim() ? { userHint: draft.userHint.trim() } : {}),
-    },
     core: {
-      remoteHost: "127.0.0.1",
-      remotePort: parsePort(draft.remoteCorePort, defaultCorePort),
+      url: coreUrlFromDraft(draft),
       apiBasePath: "/v1",
     },
     pairing: {
-      nonce: randomBase64Url(18),
-      expiresAt: nowSeconds + 5 * 60,
+      code: pairingCode?.code || "",
+      expiresAt: pairingCode?.expiresAt || 0,
     },
   };
 }
 
 export function validateMobilePairingPayload(payload: IrisMobilePairingPayloadV1, nowSeconds = Math.floor(Date.now() / 1000)) {
   if (payload.kind !== "iris-mobile-pairing" || payload.version !== 1) return false;
-  if (!payload.hostId || !payload.hostLabel || !payload.ssh.host) return false;
-  if (!validPort(payload.ssh.port) || !validPort(payload.core.remotePort)) return false;
-  if (payload.core.remoteHost !== "127.0.0.1" || payload.core.apiBasePath !== "/v1") return false;
-  if (!payload.pairing.nonce || payload.pairing.expiresAt <= nowSeconds) return false;
+  if (!payload.hostId || !payload.hostLabel || !payload.core.url) return false;
+  if (!normalizeServerUrl(payload.core.url) || payload.core.apiBasePath !== "/v1") return false;
+  if (!payload.pairing.code || payload.pairing.expiresAt <= nowSeconds) return false;
   return true;
 }
 
@@ -99,6 +87,37 @@ function portFromUrl(value: string) {
   }
 }
 
+export function coreUrlFromDraft(draft: MobilePairingDraft) {
+  const host = draft.coreHost.trim();
+  if (!host) return "";
+  const explicit = normalizeServerUrl(host);
+  if (explicit) return `${explicit}/v1`;
+  const port = parsePort(draft.corePort, defaultCorePort);
+  const bracketedHost = host.includes(":") && !host.startsWith("[") ? `[${host}]` : host;
+  return `http://${bracketedHost}:${port}/v1`;
+}
+
+function normalizeServerUrl(value: string) {
+  try {
+    const url = new URL(value);
+    if (!["http:", "https:"].includes(url.protocol) || !url.hostname || !url.port) return "";
+    const path = url.pathname.replace(/\/+$/u, "") || "/";
+    if (path !== "/" && path !== "/v1") return "";
+    return url.origin;
+  } catch {
+    return "";
+  }
+}
+
+function nonLoopbackHostFromUrl(value: string) {
+  try {
+    const url = new URL(value);
+    return ["127.0.0.1", "localhost", "::1", "[::1]"].includes(url.hostname) ? "" : url.hostname;
+  } catch {
+    return "";
+  }
+}
+
 function parsePort(value: string, fallback: number) {
   const parsed = Number.parseInt(value, 10);
   return validPort(parsed) ? parsed : fallback;
@@ -106,12 +125,4 @@ function parsePort(value: string, fallback: number) {
 
 function validPort(value: unknown) {
   return typeof value === "number" && Number.isInteger(value) && value > 0 && value <= 65535;
-}
-
-function randomBase64Url(byteLength: number) {
-  const bytes = new Uint8Array(byteLength);
-  globalThis.crypto.getRandomValues(bytes);
-  let binary = "";
-  for (const byte of bytes) binary += String.fromCharCode(byte);
-  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
 }

@@ -1,27 +1,25 @@
 import { useState } from "react";
 import { StyleSheet, Text, View } from "react-native";
 import { CameraView, useCameraPermissions } from "expo-camera";
+import * as Device from "expo-device";
 import { AppScreen } from "../components/AppScreen";
 import { Button } from "../components/Button";
 import { TextField } from "../components/TextField";
 import { parsePairingPayload, profileFromPairingPayload, type IrisMobilePairingPayloadV1 } from "../connection/pairingPayload";
+import { createDeviceToken, redeemMobilePairing } from "../connection/mobilePairing";
 import { useIrisConnection } from "../connection/useIrisConnection";
 import { useTheme } from "../theme/useTheme";
 
 export function PairScreen() {
   const theme = useTheme();
   const styles = createStyles(theme);
-  const { pair, readHostKey, state } = useIrisConnection();
+  const { pair, state } = useIrisConnection();
   const [permission, requestPermission] = useCameraPermissions();
   const [payload, setPayload] = useState<IrisMobilePairingPayloadV1 | null>(null);
   const [rawPayload, setRawPayload] = useState("");
-  const [sshHost, setSshHost] = useState("");
-  const [username, setUsername] = useState("");
-  const [password, setPassword] = useState("");
-  const [hostKeyFingerprint, setHostKeyFingerprint] = useState("");
   const [error, setError] = useState("");
   const [scanned, setScanned] = useState(false);
-  const [verifying, setVerifying] = useState(false);
+  const [pairing, setPairing] = useState(false);
 
   function acceptRawPayload(value: string) {
     const result = parsePairingPayload(value);
@@ -30,54 +28,22 @@ export function PairScreen() {
       return;
     }
     setPayload(result.payload);
-    setSshHost(result.payload.ssh.host);
-    setUsername(result.payload.ssh.userHint || "");
-    setHostKeyFingerprint("");
     setError("");
   }
 
-  function updateSshHost(value: string) {
-    setSshHost(value);
-    setHostKeyFingerprint("");
-  }
-
-  function updateUsername(value: string) {
-    setUsername(value);
-    setHostKeyFingerprint("");
-  }
-
-  async function verifyHostKey() {
+  async function pairAndConnect() {
     if (!payload) return;
-    const profile = profileFromPairingPayload(payload, username, sshHost);
-    if (!profile.username) {
-      setError("Enter the SSH username before verifying the host key.");
-      return;
-    }
-    setVerifying(true);
+    const token = createDeviceToken();
+    setPairing(true);
     setError("");
     try {
-      setHostKeyFingerprint(await readHostKey(profile));
+      const result = await redeemMobilePairing(payload, token, Device.deviceName || "Iris Mobile");
+      await pair(profileFromPairingPayload(payload, result.deviceId), { kind: "core-token", token });
     } catch (nextError) {
-      setError(nextError instanceof Error ? nextError.message : "Could not read the SSH host key.");
+      setError(nextError instanceof Error ? nextError.message : "Could not pair with Iris Core.");
     } finally {
-      setVerifying(false);
+      setPairing(false);
     }
-  }
-
-  async function saveAndConnect() {
-    if (!payload) return;
-    if (!password) {
-      setError("Enter the SSH password before connecting.");
-      return;
-    }
-    if (!hostKeyFingerprint) {
-      setError("Verify and trust the SSH host key before connecting.");
-      return;
-    }
-    await pair(
-      { ...profileFromPairingPayload(payload, username, sshHost), hostKeyFingerprint },
-      { kind: "password", password },
-    );
   }
 
   return (
@@ -104,29 +70,16 @@ export function PairScreen() {
       {payload ? (
         <View style={styles.panel}>
           <Text style={styles.title}>{payload.hostLabel}</Text>
-          <Text style={styles.body}>SSH is required. The phone must be able to reach this desktop host.</Text>
-          <TextField label="SSH host" value={sshHost} onChangeText={updateSshHost} />
-          <TextField label="Username" value={username} onChangeText={updateUsername} />
-          <TextField label="Password" value={password} onChangeText={setPassword} secureTextEntry />
-          {hostKeyFingerprint ? (
-            <View style={styles.fingerprintPanel}>
-              <Text style={styles.fingerprintLabel}>SSH host key</Text>
-              <Text selectable style={styles.fingerprintValue}>{hostKeyFingerprint}</Text>
-            </View>
-          ) : null}
-          {hostKeyFingerprint ? (
-            <Button
-              label={state.status === "connecting" ? "Connecting" : "Trust Host and Connect"}
-              disabled={state.status === "connecting"}
-              onPress={() => void saveAndConnect()}
-            />
-          ) : (
-            <Button
-              label={verifying ? "Verifying" : "Verify Host Key"}
-              disabled={verifying}
-              onPress={() => void verifyHostKey()}
-            />
-          )}
+          <Text style={styles.body}>Iris Mobile will connect directly to this Core over Tailscale.</Text>
+          <View style={styles.fingerprintPanel}>
+            <Text style={styles.fingerprintLabel}>Core URL</Text>
+            <Text selectable style={styles.fingerprintValue}>{payload.core.url}</Text>
+          </View>
+          <Button
+            label={pairing || state.status === "connecting" ? "Pairing" : "Pair and Connect"}
+            disabled={pairing || state.status === "connecting"}
+            onPress={() => void pairAndConnect()}
+          />
         </View>
       ) : null}
 

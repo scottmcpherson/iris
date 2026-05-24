@@ -1,4 +1,4 @@
-import type { SavedConnectionProfile } from "./pairingPayload";
+import { isSshConnectionProfile, type SavedConnectionProfile, type SshConnectionProfile } from "./pairingPayload";
 import {
   nativeReadHostKeyFingerprint,
   nativeSshConnect,
@@ -41,6 +41,9 @@ let activeAdapter: SshTunnelAdapter = {
   async connect({ profile, auth }) {
     if (!auth) {
       throw new SshAuthRequiredError();
+    }
+    if (!isSshConnectionProfile(profile)) {
+      throw new SshTunnelUnavailableError();
     }
     if (!profile.hostKeyFingerprint) {
       throw new SshHostKeyUnverifiedError();
@@ -89,6 +92,9 @@ export class SshHostKeyUnverifiedError extends Error {
 }
 
 export function readSshHostKeyFingerprint(profile: SavedConnectionProfile) {
+  if (!isSshConnectionProfile(profile)) {
+    throw new SshTunnelUnavailableError();
+  }
   return nativeReadHostKeyFingerprint({
     host: profile.sshHost,
     port: profile.sshPort,
@@ -96,7 +102,7 @@ export function readSshHostKeyFingerprint(profile: SavedConnectionProfile) {
   });
 }
 
-function createRequestForwardingFetch(sessionId: string, profile: SavedConnectionProfile): typeof fetch {
+function createRequestForwardingFetch(sessionId: string, profile: SshConnectionProfile): typeof fetch {
   return async (input, init = {}) => {
     const url = new URL(typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url);
     const method = (init.method || (typeof input !== "string" && !(input instanceof URL) ? input.method : "GET")).toUpperCase();

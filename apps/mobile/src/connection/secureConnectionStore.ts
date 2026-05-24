@@ -2,6 +2,9 @@ import * as SecureStore from "expo-secure-store";
 import type { SavedConnectionProfile } from "./pairingPayload";
 import type { SshAuthMethod } from "./sshTunnel";
 
+export type CoreTokenAuth = { kind: "core-token"; token: string };
+export type ConnectionAuth = SshAuthMethod | CoreTokenAuth;
+
 const connectionProfileKey = "iris.mobile.connectionProfile.v1";
 const connectionAuthKey = "iris.mobile.connectionAuth.v1";
 
@@ -27,14 +30,14 @@ export async function loadSavedConnectionAuth() {
   const raw = await SecureStore.getItemAsync(connectionAuthKey);
   if (!raw) return null;
   try {
-    return JSON.parse(raw) as SshAuthMethod;
+    return JSON.parse(raw) as ConnectionAuth;
   } catch {
     await SecureStore.deleteItemAsync(connectionAuthKey);
     return null;
   }
 }
 
-export async function saveConnectionAuth(auth: SshAuthMethod) {
+export async function saveConnectionAuth(auth: ConnectionAuth) {
   await SecureStore.setItemAsync(connectionAuthKey, JSON.stringify(auth));
 }
 

@@ -1,6 +1,7 @@
 import { StyleSheet, Text, View } from "react-native";
 import { AppScreen } from "../components/AppScreen";
 import { Button } from "../components/Button";
+import { isDirectCoreConnectionProfile, type SavedConnectionProfile } from "../connection/pairingPayload";
 import { useIrisConnection } from "../connection/useIrisConnection";
 import { useTheme } from "../theme/useTheme";
 
@@ -16,8 +17,8 @@ export function ConnectionStatusScreen() {
         <Text style={styles.title}>{profile ? profile.hostLabel : "No paired host"}</Text>
         <Text style={styles.body}>
           {profile
-            ? `${profile.username || "User"}@${profile.sshHost}:${profile.sshPort} -> ${profile.remoteCoreHost}:${profile.remoteCorePort}`
-            : "Scan a desktop pairing QR code to save an SSH-only connection profile."}
+            ? profileSummary(profile)
+            : "Scan a desktop pairing QR code to save a direct Core connection profile."}
         </Text>
         {state.status === "blocked" ? <Text style={styles.warning}>{blockedText(state.reason)}</Text> : null}
         {state.status === "disconnected" && state.error ? <Text style={styles.warning}>{state.error}</Text> : null}
@@ -40,7 +41,14 @@ function blockedText(reason: "host-key-changed" | "host-key-unverified" | "auth-
   if (reason === "host-key-unverified") {
     return "The SSH host key must be verified before connecting.";
   }
-  return "SSH authentication is required before reconnecting.";
+  return "Connection credentials are required before reconnecting.";
+}
+
+function profileSummary(profile: SavedConnectionProfile) {
+  if (isDirectCoreConnectionProfile(profile)) {
+    return profile.coreUrl;
+  }
+  return `${profile.username || "User"}@${profile.sshHost}:${profile.sshPort} -> ${profile.remoteCoreHost}:${profile.remoteCorePort}`;
 }
 
 function createStyles(theme: ReturnType<typeof useTheme>) {

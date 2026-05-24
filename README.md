@@ -83,9 +83,9 @@ SSH is the supported remote path. Iris Desktop does not expose direct private-ne
 
 ## Iris Mobile Pairing
 
-Iris Mobile pairs from Settings -> Pair mobile device in Iris Desktop. The desktop QR code contains a short-lived SSH/Core routing payload only: host label, SSH host/port/user hint, remote Core loopback port, nonce, and expiration. It does not contain a password, private key, Core token, or long-lived credential.
+Iris Mobile pairs from Settings -> Pair mobile device in Iris Desktop. The desktop QR code contains a short-lived pairing code and a Tailscale-reachable Iris Core URL. It does not contain a password, private key, reusable Core token, or SSH credential.
 
-Mobile V1 is SSH-only. The phone must be able to SSH into the desktop Mac, verify the host key, then call Iris Core through the native SSH bridge. The current development build uses SSH request forwarding to the desktop's `127.0.0.1:<core-port>` and stores the accepted host-key fingerprint plus SSH password in mobile secure storage. If the QR hostname is not reachable from the phone, edit the SSH host on mobile before saving the profile.
+Mobile V1 connects directly to Iris Core over Tailscale. During pairing, the phone creates its own device credential, sends only the credential hash to Core, and stores the raw credential in iOS secure storage. After pairing, Core accepts that device credential as app-level authorization for mobile requests. Core can stay unauthenticated for local loopback and SSH-tunnel callers, while non-loopback Tailscale callers must present a valid management token or paired mobile device token.
 
 ## Iris Core API
 
