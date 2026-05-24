@@ -1,0 +1,310 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "streamdown/styles.css";
+
+@source "../../node_modules/streamdown/dist/*.js";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-text-secondary: var(--text-secondary);
+  --color-text-tertiary: var(--text-tertiary);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-menu: var(--menu);
+  --color-menu-foreground: var(--menu-foreground);
+  --color-menu-muted-foreground: var(--menu-muted-foreground);
+  --color-menu-border: var(--menu-border);
+  --color-menu-hover: var(--menu-hover);
+  --color-menu-hover-foreground: var(--menu-hover-foreground);
+  --color-menu-disabled: var(--menu-disabled);
+  --color-menu-danger: var(--menu-danger);
+  --color-menu-confirm: var(--menu-confirm);
+  --color-menu-confirm-foreground: var(--menu-confirm-foreground);
+  --color-menu-confirm-hover: var(--menu-confirm-hover);
+  --color-composer-icon-foreground: var(--composer-icon-foreground);
+  --color-composer-pill-foreground: var(--composer-pill-foreground);
+  --color-composer-button-hover: var(--composer-button-hover);
+  --color-composer-button-active: var(--composer-button-active);
+  --color-composer-button-disabled: var(--composer-button-disabled);
+  --color-composer-attachment-remove: var(--composer-attachment-remove);
+  --color-composer-attachment-remove-hover: var(--composer-attachment-remove-hover);
+  --color-composer-attachment-remove-hover-foreground: var(--composer-attachment-remove-hover-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-status-ready-fill: var(--status-ready-fill);
+  --color-status-ready-border: var(--status-ready-border);
+  --color-status-ready-text: var(--status-ready-text);
+  --color-status-degraded-fill: var(--status-degraded-fill);
+  --color-status-degraded-border: var(--status-degraded-border);
+  --color-status-degraded-text: var(--status-degraded-text);
+  --color-status-offline-fill: var(--status-offline-fill);
+  --color-status-offline-border: var(--status-offline-border);
+  --color-status-offline-text: var(--status-offline-text);
+  --color-menu-selected-muted-foreground: var(--menu-selected-muted-foreground);
+  --color-app-danger-base: var(--app-danger-base);
+  --color-app-danger-foreground: var(--app-danger-foreground);
+  --color-app-icon-danger-bg: var(--app-icon-danger-bg);
+  --color-app-icon-danger-bg-hover: var(--app-icon-danger-bg-hover);
+  --color-app-icon-danger-border: var(--app-icon-danger-border);
+  --color-app-icon-danger-foreground: var(--app-icon-danger-foreground);
+  --color-app-icon-confirm-accent: var(--app-icon-confirm-accent);
+  --color-app-icon-confirm-foreground: var(--app-icon-confirm-foreground);
+  --color-accent-warning: var(--accent-warning);
+  --color-accent-danger: var(--accent-danger);
+  --color-accent-cool: var(--accent-cool);
+  --color-accent-cool-soft: var(--accent-cool-soft);
+  --color-accent-cool-strong: var(--accent-cool-strong);
+  --color-border-subtle: var(--border-subtle);
+  --color-border-strong: var(--border-strong);
+  --color-surface-deep: var(--surface-deep);
+  --color-surface-elevated: var(--surface-elevated);
+  --color-surface-card-deep: var(--surface-card-deep);
+  --color-surface-card-translucent: var(--surface-card-translucent);
+  --color-surface-overlay: var(--surface-overlay);
+  --color-status-ready-emphasis: var(--status-ready-emphasis);
+  --color-status-ready-medium: var(--status-ready-medium);
+  --color-status-ready-faint: var(--status-ready-faint);
+  --color-status-degraded-emphasis: var(--status-degraded-emphasis);
+  --color-status-degraded-medium: var(--status-degraded-medium);
+  --color-status-degraded-faint: var(--status-degraded-faint);
+  --color-status-degraded-ring: var(--status-degraded-ring);
+  --color-status-degraded-tint: var(--status-degraded-tint);
+  --color-status-offline-emphasis: var(--status-offline-emphasis);
+  --color-status-offline-medium: var(--status-offline-medium);
+  --color-status-offline-faint: var(--status-offline-faint);
+  --color-status-offline-shadow: var(--status-offline-shadow);
+  --color-status-offline-tint: var(--status-offline-tint);
+  --color-status-offline-ring: var(--status-offline-ring);
+  --color-accent-warning-strong: var(--accent-warning-strong);
+  --color-accent-warm-amber: var(--accent-warm-amber);
+  --color-accent-rose: var(--accent-rose);
+  --color-accent-rose-soft: var(--accent-rose-soft);
+  --color-accent-rose-muted: var(--accent-rose-muted);
+  --color-accent-rose-deep: var(--accent-rose-deep);
+  --color-accent-rose-fill: var(--accent-rose-fill);
+  --color-accent-rose-light: var(--accent-rose-light);
+  --color-accent-cool-tint: var(--accent-cool-tint);
+  --color-outline-emphasis: var(--outline-emphasis);
+  --color-outline-warm: var(--outline-warm);
+  --color-accent-cool-bright: var(--accent-cool-bright);
+  --color-accent-cool-pale: var(--accent-cool-pale);
+  --color-accent-success: var(--accent-success);
+  --color-accent-success-soft: var(--accent-success-soft);
+  --color-accent-success-dark: var(--accent-success-dark);
+  --color-pure-white: var(--pure-white);
+  --color-link: var(--link-color);
+  --color-inset-highlight: var(--inset-highlight);
+  --color-dialog-overlay: var(--dialog-overlay);
+  --shadow-tint-soft: var(--shadow-tint-soft);
+  --shadow-tint-medium: var(--shadow-tint-medium);
+  --shadow-tint-strong: var(--shadow-tint-strong);
+  --shadow-tint-deep: var(--shadow-tint-deep);
+  --shadow-context-menu: var(--menu-shadow);
+  --radius-sm: calc(var(--radius) - 2px);
+  --radius-md: var(--radius);
+  --radius-lg: calc(var(--radius) + 2px);
+  --radius-xl: calc(var(--radius) + 4px);
+}
+
+:root {
+  --button-primary-bg: #f4f1ea;
+  --button-primary-bg-hover: #ffffff;
+  --button-primary-fg: #0a0d13;
+  --top-glow-noise: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140' viewBox='0 0 140 140'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.78' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23noise)' opacity='0.024'/%3E%3C/svg%3E");
+  --top-glow-gradient: radial-gradient(ellipse 80% 58% at 50% 0%, rgba(255, 255, 255, 0.04), transparent 62%);
+  --radius: 8px;
+  --surface-reading-max: 800px;
+  --surface-data-max: 1040px;
+  --background: #07080b;
+  --foreground: #f5f2ea;
+  --card: #0d0f14;
+  --card-foreground: #f4f0e8;
+  --popover: #10131a;
+  --popover-foreground: #f4f0e8;
+  --primary: var(--button-primary-bg);
+  --primary-foreground: var(--button-primary-fg);
+  --secondary: rgba(255, 255, 255, 0.055);
+  --secondary-foreground: #dce0e8;
+  --muted: rgba(255, 255, 255, 0.045);
+  --muted-foreground: #8e96a5;
+  --text-secondary: #c9d0dc;
+  --text-tertiary: #aeb5c1;
+  --accent: rgba(255, 255, 255, 0.085);
+  --accent-foreground: var(--foreground);
+  --accent-danger: #f2b9ac;
+  --accent-warning: #d7c58e;
+  --destructive: #c85d57;
+  --destructive-foreground: #fff7f5;
+  --menu: rgba(20, 23, 30, 0.98);
+  --menu-foreground: #d7dde8;
+  --menu-muted-foreground: var(--muted-foreground);
+  --menu-border: rgba(255, 255, 255, 0.11);
+  --menu-hover: var(--accent);
+  --menu-hover-foreground: #fffaf1;
+  --menu-disabled: #6f7784;
+  --menu-danger: #f0b6aa;
+  --menu-confirm: rgba(220, 78, 52, 0.18);
+  --menu-confirm-foreground: #ffd2c7;
+  --menu-confirm-hover: rgba(220, 78, 52, 0.26);
+  --composer-icon-foreground: var(--text-tertiary);
+  --composer-pill-foreground: #aab2c0;
+  --composer-button-hover: var(--input);
+  --composer-button-active: rgba(255, 255, 255, 0.095);
+  --composer-button-disabled: #828b99;
+  --composer-attachment-remove: #9ca3af;
+  --composer-attachment-remove-hover: var(--border);
+  --composer-attachment-remove-hover-foreground: var(--foreground);
+  --shadow-tint-soft: rgba(0, 0, 0, 0.14);
+  --shadow-tint-medium: rgba(0, 0, 0, 0.22);
+  --shadow-tint-strong: rgba(0, 0, 0, 0.38);
+  --shadow-tint-deep: rgba(0, 0, 0, 0.52);
+  --menu-shadow: 0 16px 36px var(--shadow-tint-strong);
+  --border: rgba(255, 255, 255, 0.08);
+  --border-subtle: rgba(255, 255, 255, 0.065);
+  --border-strong: rgba(255, 255, 255, 0.16);
+  --input: rgba(255, 255, 255, 0.075);
+  --ring: rgba(244, 241, 234, 0.42);
+  --accent-cool: rgba(142, 215, 255, 0.22);
+  --accent-cool-soft: rgba(142, 215, 255, 0.08);
+  --accent-cool-strong: rgba(142, 215, 255, 0.5);
+  --outline-emphasis: rgba(255, 255, 255, 0.7);
+  --surface-deep: #0a0d13;
+  --surface-elevated: #25272c;
+  --surface-card-deep: #11141a;
+  --surface-card-translucent: rgba(13, 15, 20, 0.88);
+  --surface-overlay: rgba(38, 42, 50, 0.98);
+  --status-ready-fill: rgba(74, 222, 128, 0.08);
+  --status-ready-border: rgba(74, 222, 128, 0.22);
+  --status-ready-text: #c5ecd3;
+  --status-ready-emphasis: rgba(128, 212, 154, 0.45);
+  --status-ready-medium: rgba(128, 212, 154, 0.16);
+  --status-ready-faint: rgba(117, 204, 136, 0.12);
+  --status-degraded-fill: rgba(217, 164, 65, 0.1);
+  --status-degraded-border: rgba(217, 164, 65, 0.26);
+  --status-degraded-text: #ecd49c;
+  --status-degraded-emphasis: rgba(238, 188, 88, 0.55);
+  --status-degraded-medium: rgba(238, 188, 88, 0.22);
+  --status-degraded-faint: rgba(232, 189, 116, 0.15);
+  --status-degraded-ring: rgba(217, 164, 65, 0.45);
+  --status-degraded-tint: rgba(217, 164, 65, 0.15);
+  --status-offline-fill: rgba(235, 124, 98, 0.08);
+  --status-offline-border: rgba(235, 124, 98, 0.22);
+  --status-offline-text: var(--accent-danger);
+  --status-offline-emphasis: rgba(245, 101, 101, 0.4);
+  --status-offline-medium: rgba(235, 124, 98, 0.2);
+  --status-offline-faint: rgba(242, 185, 172, 0.14);
+  --status-offline-shadow: rgba(82, 31, 23, 0.25);
+  --status-offline-tint: rgba(214, 111, 99, 0.12);
+  --status-offline-ring: rgba(240, 154, 105, 0.55);
+  --accent-warning-strong: #e7c977;
+  --accent-warm-amber: #d9a441;
+  --accent-rose: #d66f63;
+  --accent-rose-soft: #d18a82;
+  --accent-rose-muted: #b57b75;
+  --accent-rose-deep: #8b5c58;
+  --accent-rose-fill: #ffd6d6;
+  --accent-rose-light: #f4c3b7;
+  --accent-cool-tint: #c8cdfa;
+  --accent-cool-bright: #89c7ff;
+  --accent-cool-pale: #b9dff5;
+  --accent-success: #7fc89a;
+  --accent-success-soft: #bfe8cb;
+  --accent-success-dark: #6f9b7d;
+  --outline-warm: rgba(240, 233, 220, 0.42);
+  --ring-soft: rgba(244, 241, 234, 0.14);
+  --ring-strong: rgba(244, 241, 234, 0.48);
+  --ring-faint: rgba(245, 242, 234, 0.18);
+  --surface-modal: rgba(24, 27, 33, 0.92);
+  --surface-backdrop: rgba(10, 12, 16, 0.76);
+  --surface-backdrop-soft: rgba(9, 11, 16, 0.68);
+  --surface-shroud: rgba(12, 13, 15, 0.55);
+  --surface-cool-haze: rgba(230, 235, 242, 0.6);
+  --text-secondary-translucent: rgba(204, 211, 222, 0.92);
+  --muted-foreground-tint: rgba(142, 150, 165, 0.18);
+  --muted-foreground-tint-strong: rgba(142, 150, 165, 0.35);
+  --muted-foreground-cool: rgba(138, 154, 171, 0.08);
+  --accent-dusty: rgba(120, 136, 168, 0.2);
+  --pure-white: #ffffff;
+  --link-color: #d8d2c7;
+  --inset-highlight: rgba(255, 255, 255, 0.05);
+  --dialog-overlay: rgba(0, 0, 0, 0.5);
+  --menu-selected-muted-foreground: #b7bfcc;
+  --app-danger-base: #ff8372;
+  --app-danger-foreground: #ffe9e6;
+  --app-icon-danger-bg: var(--muted);
+  --app-icon-danger-bg-hover: var(--accent);
+  --app-icon-danger-border: var(--input);
+  --app-icon-danger-foreground: var(--accent-danger);
+  --app-icon-confirm-accent: var(--accent-danger);
+  --app-icon-confirm-foreground: #1c1110;
+  --body-background:
+    linear-gradient(120deg, rgba(42, 50, 64, 0.34), transparent 42%),
+    linear-gradient(180deg, #111318 0%, #07080b 100%);
+  --app-shell-background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.045), transparent 28%),
+    #08090d;
+  --brand-mark-gradient: linear-gradient(135deg, #e9f7ff, #f3d89b);
+  --message-audio-track-bg: rgba(232, 237, 245, 0.42);
+  --thinking-shimmer-gradient: linear-gradient(
+    110deg,
+    #87909f 0%,
+    #87909f 34%,
+    #f2efe6 46%,
+    #aeb7c6 54%,
+    #87909f 66%,
+    #87909f 100%
+  );
+  --memory-capacity-ready-fill: linear-gradient(
+    90deg,
+    rgba(117, 204, 136, 0.85),
+    rgba(150, 220, 165, 0.95)
+  );
+  --memory-capacity-warning-fill: linear-gradient(
+    90deg,
+    rgba(231, 201, 119, 0.85),
+    rgba(243, 173, 84, 0.95)
+  );
+  --memory-capacity-over-fill: linear-gradient(
+    90deg,
+    rgba(220, 105, 80, 0.9),
+    rgba(240, 130, 110, 1)
+  );
+  --agent-list-actionable-bg: linear-gradient(
+    90deg,
+    rgba(238, 188, 88, 0.06) 0%,
+    rgba(255, 255, 255, 0.035) 60%
+  );
+  --agent-list-actionable-bg-hover: linear-gradient(
+    90deg,
+    rgba(238, 188, 88, 0.1) 0%,
+    rgba(142, 215, 255, 0.06) 70%
+  );
+  --onboarding-card-background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.07), transparent 34%),
+    rgba(13, 15, 21, 0.98);
+  color: var(--foreground);
+  background: var(--background);
+  font-family:
+    -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display",
+    "Helvetica Neue", Arial, sans-serif;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}

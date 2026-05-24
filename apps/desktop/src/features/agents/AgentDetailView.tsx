@@ -75,7 +75,7 @@ export function AgentDetailView({
 
   if (section === "memory") {
     return (
-      <AgentContentFrame layout="record">
+      <AgentContentFrame layout="workbench">
         <MemoryView
           memory={detailMemory}
           profile={selectedProfile}
@@ -102,7 +102,7 @@ export function AgentDetailView({
 
   if (section === "configuration") {
     return (
-      <AgentContentFrame layout="record">
+      <AgentContentFrame layout="workbench">
         <AgentConfigurationView
           profile={selectedProfile}
           runtimeConfig={runtimeConfig}

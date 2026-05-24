@@ -1,4 +1,6 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
+import { createIrisCoreClient } from "@iris/core-client";
+import type { IrisCoreClient } from "@iris/core-client";
 import type { HermesRuntimeConfig } from "../types/hermes";
 import { activeCoreConnection, resolveCoreApiUrl } from "../app/runtimeConfig";
 
@@ -37,6 +39,31 @@ export async function coreRequest<T>(
   options: CoreRequestOptions = {},
 ): Promise<CoreResponse<T>> {
   return currentCoreTransport().request(runtime, method, path, body, options);
+}
+
+export function desktopIrisCoreClient(runtime?: HermesRuntimeConfig): IrisCoreClient {
+  return createIrisCoreClient({
+    baseUrl: coreBaseUrl(runtime),
+    fetch: async (input, init = {}) => {
+      const requestUrl = new URL(String(input));
+      const path = `${requestUrl.pathname.replace(/^\/v1\b/u, "") || "/"}${requestUrl.search}`;
+      const headers = new Headers(init.headers);
+      const body = typeof init.body === "string" && init.body
+        ? JSON.parse(init.body)
+        : undefined;
+      const result = await coreRequest(
+        runtime,
+        (init.method || "GET") as CoreMethod,
+        path,
+        body,
+        { idempotencyKey: headers.get("Idempotency-Key") || undefined },
+      );
+      return new Response(JSON.stringify(result), {
+        status: result.ok ? 200 : 500,
+        headers: { "Content-Type": "application/json" },
+      });
+    },
+  });
 }
 
 export const browserCoreTransport: CoreTransport = {

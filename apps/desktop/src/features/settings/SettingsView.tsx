@@ -8,6 +8,7 @@ import {
   Plug,
   RotateCw,
   Server,
+  Smartphone,
   Terminal,
   Unplug,
   Wrench,
@@ -58,6 +59,7 @@ import type {
 import { SshConnectionDialog } from "../iris/SshConnectionDialog";
 import { sshTargetLabel } from "../iris/sshConnectionDraft";
 import { useSshConnectionManager } from "../iris/useSshConnectionManager";
+import { MobilePairingDialog } from "../mobile-pairing/MobilePairingDialog";
 
 type SettingsViewProps = {
   status: HermesStatus | null;
@@ -108,6 +110,7 @@ export function SettingsView({
   const [modeTab, setModeTab] = useState<SettingsConnectionTab>(() => settingsTabFromMode(runtimeConfig.connectionMode));
   const [localDraft, setLocalDraft] = useState(() => localDraftFromProfile(activeConnection));
   const [sshDialogOpen, setSshDialogOpen] = useState(false);
+  const [mobilePairingOpen, setMobilePairingOpen] = useState(false);
   const [sidecarStatus, setSidecarStatus] = useState<CoreSidecarStatus | null>(null);
   const [busyAction, setBusyAction] = useState("");
   const sshManager = useSshConnectionManager({ runtimeConfig, onRuntimeChange, onRefresh });
@@ -250,6 +253,14 @@ export function SettingsView({
         <span className="core-status-strip-checked">
           {status?.connected ? `Checked ${checkedAt}` : `Offline · ${checkedAt}`}
         </span>
+        <Button
+          variant="appNeutral"
+          size="appSmall"
+          onClick={() => setMobilePairingOpen(true)}
+        >
+          <Smartphone data-icon="inline-start" />
+          Pair mobile device
+        </Button>
         <Button
           variant="appNeutral"
           size="appSmall"
@@ -405,6 +416,11 @@ export function SettingsView({
           />
         </TabsContent>
       </Tabs>
+      <MobilePairingDialog
+        open={mobilePairingOpen}
+        runtimeConfig={runtimeConfig}
+        onOpenChange={setMobilePairingOpen}
+      />
       </div>
     </div>
   );

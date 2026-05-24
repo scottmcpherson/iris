@@ -63,7 +63,6 @@ describe("shouldRenderMessageBody", () => {
 
 describe("composer responsive layout", () => {
   it("keeps the model selector available at narrow widths", async () => {
-    // @ts-expect-error The desktop tsconfig intentionally omits Node types, but Vitest runs in Node.
     const { readFileSync } = await import("node:fs");
     const chatSource = readFileSync(new URL("../ChatView.tsx", import.meta.url), "utf8") as string;
 
@@ -74,7 +73,6 @@ describe("composer responsive layout", () => {
   });
 
   it("keeps the slash command menu taller than the textarea wrapper", async () => {
-    // @ts-expect-error The desktop tsconfig intentionally omits Node types, but Vitest runs in Node.
     const { readFileSync } = await import("node:fs");
     const menuSource = readFileSync(
       new URL("../components/SlashCommandMenu.tsx", import.meta.url),
@@ -97,7 +95,6 @@ describe("composer responsive layout", () => {
   });
 
   it("clears slash menu dismissal after the slash token changes", async () => {
-    // @ts-expect-error The desktop tsconfig intentionally omits Node types, but Vitest runs in Node.
     const { readFileSync } = await import("node:fs");
     const chatSource = readFileSync(new URL("../ChatView.tsx", import.meta.url), "utf8") as string;
 

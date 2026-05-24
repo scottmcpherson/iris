@@ -5,6 +5,8 @@ Iris is a monorepo for local-first agent control surfaces, including Iris Deskto
 ## Workspace Layout
 
 - `apps/desktop/`: Iris Desktop, a Tauri 2, React 18, TypeScript, and Tailwind desktop app.
+- `apps/mobile/`: Iris Mobile, an Expo development-build app that pairs to a desktop host and talks to Iris Core through SSH.
+- `packages/`: shared TypeScript packages for Iris Core API calls, query keys, chat reconciliation helpers, and theme tokens.
 - `iris-core/`: Iris Core, a FastAPI control plane used by Iris clients for agents, sessions, automations, runtime routing, and Hermes compatibility metadata.
 - `scripts/`: root developer helpers for setup and coordinated startup.
 
@@ -55,6 +57,19 @@ npm run core:dev
 
 The desktop Vite server runs on `http://localhost:1420/`. Iris Core defaults to `http://127.0.0.1:8765/v1`.
 
+Start the mobile Expo development server:
+
+```bash
+npm run mobile:dev
+```
+
+Create native development builds when testing device behavior:
+
+```bash
+npm run mobile:ios
+npm run mobile:android
+```
+
 ## Runtime Connections
 
 Iris Desktop always talks to Iris Core, and Core must run on the machine that owns Hermes. Use first-run setup or Settings to choose the current connection paths:
@@ -64,7 +79,13 @@ Iris Desktop always talks to Iris Core, and Core must run on the machine that ow
 
 For Hermes via SSH, start Iris Core on the remote host first, install or update the Hermes adapter there, restart the Hermes gateway, then add the SSH endpoint from Iris setup or Settings. Iris uses system OpenSSH with `BatchMode=yes`, so host keys, SSH config, and ssh-agent should be prepared outside the app.
 
-SSH is the supported remote path. Iris Desktop does not expose direct private-network Core URLs, Tailscale-specific Core mode, manual URL mode, or device pairing.
+SSH is the supported remote path. Iris Desktop does not expose direct private-network Core URLs, Tailscale-specific Core mode, or manual URL mode.
+
+## Iris Mobile Pairing
+
+Iris Mobile pairs from Settings -> Pair mobile device in Iris Desktop. The desktop QR code contains a short-lived SSH/Core routing payload only: host label, SSH host/port/user hint, remote Core loopback port, nonce, and expiration. It does not contain a password, private key, Core token, or long-lived credential.
+
+Mobile V1 is SSH-only. The phone must be able to SSH into the desktop Mac, verify the host key, then call Iris Core through the native SSH bridge. The current development build uses SSH request forwarding to the desktop's `127.0.0.1:<core-port>` and stores the accepted host-key fingerprint plus SSH password in mobile secure storage. If the QR hostname is not reachable from the phone, edit the SSH host on mobile before saving the profile.
 
 ## Iris Core API
 

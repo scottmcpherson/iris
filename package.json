@@ -4,7 +4,8 @@
   "version": "0.1.0",
   "type": "module",
   "workspaces": [
-    "apps/*"
+    "apps/*",
+    "packages/*"
   ],
   "scripts": {
     "bootstrap": "npm install && npm run core:setup",
@@ -19,6 +20,11 @@
     "dev:web": "node scripts/dev.mjs --web",
     "dev:desktop": "node scripts/dev.mjs",
     "dev:no-core": "node scripts/dev.mjs --no-core",
+    "mobile:dev": "npm --workspace apps/mobile run start",
+    "mobile:ios": "npm --workspace apps/mobile run ios",
+    "mobile:android": "npm --workspace apps/mobile run android",
+    "mobile:test": "npm --workspace apps/mobile run test",
+    "mobile:typecheck": "npm --workspace apps/mobile run typecheck",
     "check": "npm --workspace apps/desktop run check && npm run core:test",
     "build": "npm --workspace apps/desktop run build",
     "build:mac:app": "npm run core:build:binary && npm --workspace apps/desktop run build:mac:app",

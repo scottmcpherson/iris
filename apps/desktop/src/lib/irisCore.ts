@@ -1,4 +1,17 @@
 import { invoke } from "@tauri-apps/api/core";
+import {
+  createProject as createSharedProject,
+  createSession as createSharedSession,
+  eventStreamUrl as sharedEventStreamUrl,
+  getEvents as getSharedEvents,
+  getLatestEventCursor as getSharedLatestEventCursor,
+  getProjectSessions as getSharedProjectSessions,
+  getProjects as getSharedProjects,
+  getSession as getSharedSession,
+  getSessionMessages as getSharedSessionMessages,
+  getSessions as getSharedSessions,
+  sendMessage as sendSharedMessage,
+} from "@iris/core-client";
 import type {
   HermesSessionMessage,
   HermesModelProvider,
@@ -26,7 +39,7 @@ import type {
   HermesSkills,
   HermesStatus,
 } from "../types/hermes";
-import { coreAttachmentUrl, coreBaseUrl, coreRequest, type CoreResponse } from "./coreTransport";
+import { coreAttachmentUrl, coreBaseUrl, coreRequest, desktopIrisCoreClient, type CoreResponse } from "./coreTransport";
 import type { AttachmentKind } from "../app/types";
 import { attachmentKindFromMime } from "../shared/files";
 
@@ -722,7 +735,7 @@ export function irisCoreProfileExportUrl(agentId: string, runtime?: HermesRuntim
 }
 
 export async function getIrisProjects(runtime?: HermesRuntimeConfig) {
-  return coreRequest<{ projects: IrisProject[] }>(runtime, "GET", "/projects");
+  return getSharedProjects(desktopIrisCoreClient(runtime));
 }
 
 export async function createIrisProject(
@@ -734,7 +747,7 @@ export async function createIrisProject(
   },
   runtime?: HermesRuntimeConfig,
 ) {
-  return coreRequest<{ project: IrisProject }>(runtime, "POST", "/projects", payload);
+  return createSharedProject(desktopIrisCoreClient(runtime), payload);
 }
 
 export async function updateIrisProject(
@@ -768,12 +781,7 @@ export async function getIrisProjectSessions(
   limit = 80,
   runtime?: HermesRuntimeConfig,
 ) {
-  const query = new URLSearchParams({ limit: String(limit) });
-  return coreRequest<{ sessions: IrisCoreSession[] }>(
-    runtime,
-    "GET",
-    `/projects/${encodeURIComponent(projectId)}/sessions?${query}`,
-  );
+  return getSharedProjectSessions(desktopIrisCoreClient(runtime), { projectId, limit });
 }
 
 export async function linkIrisProjectSession(
@@ -790,8 +798,7 @@ export async function linkIrisProjectSession(
 }
 
 export async function getIrisCoreSessions(agentId: string, limit = 80, runtime?: HermesRuntimeConfig) {
-  const query = new URLSearchParams({ agentId, limit: String(limit) });
-  return coreRequest<{ sessions: IrisCoreSession[] }>(runtime, "GET", `/sessions?${query}`);
+  return getSharedSessions(desktopIrisCoreClient(runtime), { agentId, limit });
 }
 
 export async function createIrisCoreSession(
@@ -805,7 +812,7 @@ export async function createIrisCoreSession(
   },
   runtime?: HermesRuntimeConfig,
 ) {
-  return coreRequest<{ session: IrisCoreSession }>(runtime, "POST", "/sessions", payload);
+  return createSharedSession(desktopIrisCoreClient(runtime), payload);
 }
 
 export async function getIrisCoreSession(
@@ -813,12 +820,7 @@ export async function getIrisCoreSession(
   runtime?: HermesRuntimeConfig,
   reference: { externalSessionId?: string; externalChatId?: string } = {},
 ) {
-  const query = sessionReferenceQuery(reference);
-  return coreRequest<{ session: IrisCoreSession }>(
-    runtime,
-    "GET",
-    `/sessions/${encodeURIComponent(sessionId)}${query}`,
-  );
+  return getSharedSession(desktopIrisCoreClient(runtime), { sessionId, ...reference });
 }
 
 export async function updateIrisCoreSession(
@@ -864,20 +866,7 @@ export async function getIrisCoreSessionMessages(
   runtime?: HermesRuntimeConfig,
   reference: { externalSessionId?: string; externalChatId?: string } = {},
 ) {
-  const query = sessionReferenceQuery(reference);
-  return coreRequest<{ sessionId: string; messages: IrisCoreMessage[]; warning?: string }>(
-    runtime,
-    "GET",
-    `/sessions/${encodeURIComponent(sessionId)}/messages${query}`,
-  );
-}
-
-function sessionReferenceQuery(reference: { externalSessionId?: string; externalChatId?: string }) {
-  const query = new URLSearchParams();
-  if (reference.externalSessionId) query.set("externalSessionId", reference.externalSessionId);
-  if (reference.externalChatId) query.set("externalChatId", reference.externalChatId);
-  const value = query.toString();
-  return value ? `?${value}` : "";
+  return getSharedSessionMessages(desktopIrisCoreClient(runtime), { sessionId, ...reference });
 }
 
 export async function sendIrisCoreMessage(
@@ -891,13 +880,7 @@ export async function sendIrisCoreMessage(
   },
   runtime?: HermesRuntimeConfig,
 ) {
-  return coreRequest<IrisCoreSendMessageResult>(
-    runtime,
-    "POST",
-    `/sessions/${encodeURIComponent(sessionId)}/messages`,
-    payload,
-    { idempotencyKey: payload.clientMessageId, timeoutMs: 12_000 },
-  );
+  return sendSharedMessage(desktopIrisCoreClient(runtime), sessionId, payload);
 }
 
 export async function uploadIrisCoreAttachment(
@@ -1105,9 +1088,7 @@ export async function getIrisCoreEvents(
   runtime?: HermesRuntimeConfig,
   agentId = "",
 ) {
-  const query = new URLSearchParams({ after: String(after), limit: String(limit) });
-  if (agentId) query.set("agentId", agentId);
-  return coreRequest<{ events: IrisCoreEvent[]; cursor: number }>(runtime, "GET", `/events?${query}`);
+  return getSharedEvents(desktopIrisCoreClient(runtime), { after, limit, agentId });
 }
 
 export async function getIrisCoreAutomationEvents(
@@ -1129,7 +1110,7 @@ export async function getIrisCoreLatestEventCursor(
   runtime?: HermesRuntimeConfig,
   agentId = "",
 ) {
-  return getIrisCoreEvents(Number.MAX_SAFE_INTEGER, 1, runtime, agentId);
+  return getSharedLatestEventCursor(desktopIrisCoreClient(runtime), agentId);
 }
 
 export function irisCoreEventStreamUrl(
@@ -1138,9 +1119,7 @@ export function irisCoreEventStreamUrl(
   limit = 200,
   agentId = "",
 ) {
-  const query = new URLSearchParams({ after: String(after), limit: String(limit) });
-  if (agentId) query.set("agentId", agentId);
-  return `${coreBaseUrl(runtime)}/events/stream?${query}`;
+  return sharedEventStreamUrl(desktopIrisCoreClient(runtime), { after, limit, agentId });
 }
 
 export async function getIrisCoreModels(agentId: string, runtime?: HermesRuntimeConfig) {

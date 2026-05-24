@@ -11,6 +11,7 @@ This app lives in the `apps/desktop/` workspace of the Iris monorepo. For normal
 - Iris Core discovery for agents, memory files, skills, sessions, model catalogs, slash commands, automations, and runtime health.
 - Sessions, profile actions, memory writes, skill writes, model catalog, slash commands, and automations all route through Iris Core. Hermes remains a runtime adapter behind Core.
 - First-run setup for Local Hermes and Hermes via SSH.
+- Mobile pairing QR generation for SSH-only Iris Mobile development builds.
 
 ## Development
 
@@ -62,6 +63,12 @@ Useful environment variables:
 SSH mode uses system OpenSSH with `BatchMode=yes`; Iris does not store SSH passwords or private keys. Configure `~/.ssh/config`, `known_hosts`, and ssh-agent outside the app. If remote Core is not running, start Iris Core on the remote host and keep it bound to `127.0.0.1:8765`, then retry the tunnel.
 
 SSH is the supported remote path. The desktop setup UI does not expose manual Core URLs, direct Tailscale/private-network Core mode, or paired device tokens.
+
+## Mobile Pairing
+
+Open Settings -> Pair mobile device to generate a QR code for Iris Mobile. The QR code expires after about five minutes and contains only SSH connection coordinates, the remote Core loopback port, a nonce, and display labels. It intentionally excludes private keys, passwords, bearer tokens, and direct Core URLs.
+
+The mobile app still performs SSH host-key verification and stores the accepted connection profile, host-key fingerprint, and entered SSH password in secure mobile storage. If the advertised host is not reachable from the phone, edit the SSH host in the mobile pairing confirmation screen before saving.
 
 ## Production Checks
 
