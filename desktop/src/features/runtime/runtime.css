@@ -4,55 +4,27 @@
   flex-wrap: wrap;
   align-items: center;
   gap: 10px;
-  padding: 10px 12px;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: var(--muted);
+  min-height: 28px;
+  padding: 4px 2px;
+  color: var(--foreground);
 }
 
-.diagnostics-row.ready {
-  border-color: var(--status-ready-border);
-  background: var(--status-ready-fill);
-  color: var(--status-ready-text);
+.diagnostics-row.ready .diagnostics-row-icon {
+  color: var(--accent-success-soft);
 }
 
-.diagnostics-row.degraded {
-  border-color: var(--status-degraded-border);
-  background: var(--status-degraded-fill);
-  color: var(--status-degraded-text);
+.diagnostics-row.degraded .diagnostics-row-icon {
+  color: var(--accent-warm-amber);
 }
 
-.diagnostics-row.offline {
-  border-color: var(--status-offline-border);
-  background: var(--status-offline-fill);
-  color: var(--status-offline-text);
+.diagnostics-row.offline .diagnostics-row-icon {
+  color: var(--accent-rose);
 }
 
 .diagnostics-row-icon {
   flex: 0 0 auto;
   display: grid;
   place-items: center;
-  color: currentColor;
-}
-
-.diagnostics-row-text strong {
-  flex: 0 1 auto;
-  font-size: 13px;
-  font-weight: 700;
-  color: var(--foreground);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.diagnostics-row-text span {
-  flex: 0 1 auto;
-  min-width: 0;
-  font-size: 11px;
-  color: var(--muted-foreground);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .diagnostics-remote-hint {

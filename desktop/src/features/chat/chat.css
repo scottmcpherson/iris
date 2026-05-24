@@ -32,7 +32,7 @@
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  padding: 48px;
+  padding: 48px 20px;
 }
 
 .new-chat-center h1 {
@@ -985,9 +985,9 @@
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   gap: 4px;
-  width: min(calc(100% - 96px), var(--chat-content-max-width));
+  width: min(calc(100% - 40px), var(--chat-content-max-width));
   margin: 0 auto 48px;
-  padding: 10px;
+  padding: 10px 20px;
   border: 1px solid var(--input);
   border-radius: 20px;
   background: var(--surface-elevated);
@@ -997,6 +997,11 @@
 .chat-pane.new-chat .composer {
   width: min(100%, var(--chat-content-max-width));
   margin: 0;
+}
+
+.chat-pane:not(.new-chat) .composer {
+  padding-bottom: 20px;
+  margin-bottom: 20px;
 }
 
 .composer textarea,

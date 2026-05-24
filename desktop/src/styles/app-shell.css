@@ -11,7 +11,7 @@
 .sidebar {
   position: absolute;
   inset: 0 auto 0 0;
-  width: var(--sidebar-width, 252px);
+  width: var(--sidebar-width, 200px);
   display: flex;
   flex-direction: column;
   min-width: 0;
@@ -32,11 +32,11 @@
   position: absolute;
   z-index: 8;
   top: 12px;
-  left: 86px;
+  left: 96px;
   display: grid;
   place-items: center;
-  width: 22px;
-  height: 22px;
+  width: 20px;
+  height: 20px;
   padding: 0;
   border: 0;
   border-radius: 5px;
@@ -285,8 +285,13 @@
 }
 
 .sidebar-section {
-  padding: 12px 8px;
+  padding: 10px 8px;
   border-top: 0;
+}
+
+.sidebar-section.projects-tree,
+.sidebar-section.chats-tree {
+  padding-right: 0;
 }
 
 .sidebar-scroll-region > .sidebar-section:first-child {
@@ -322,9 +327,9 @@
 .workspace {
   display: grid;
   grid-template-rows: auto auto minmax(0, 1fr);
-  width: calc(100vw - var(--workspace-left, 252px));
+  width: calc(100vw - var(--workspace-left, 200px));
   height: 100vh;
-  margin-left: var(--workspace-left, 252px);
+  margin-left: var(--workspace-left, 200px);
   min-width: 0;
   min-height: 0;
   overflow: hidden;
@@ -339,27 +344,17 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  min-height: 58px;
+  min-height: 44px;
   min-width: 0;
-  padding: 0 18px 0 22px;
+  padding: 0 12px 0 18px;
   border-bottom: 1px solid var(--border);
   background: var(--surface-backdrop);
-  backdrop-filter: blur(30px);
+  backdrop-filter: blur(14px);
   transition: padding-left 190ms cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 
 .sidebar-collapsed .topbar {
-  padding-left: 174px;
-}
-
-.topbar[data-topbar-variant="compact"] {
-  min-height: 44px;
-  padding: 0 12px 0 18px;
-  backdrop-filter: blur(14px);
-}
-
-.sidebar-collapsed .topbar[data-topbar-variant="compact"] {
-  padding-left: 116px;
+  padding-left: 130px;
 }
 
 .topbar-drag-zone {
@@ -393,7 +388,6 @@
 }
 
 .topbar-title span {
-  display: block;
   max-width: 56vw;
   overflow: hidden;
   color: var(--muted-foreground);
@@ -475,6 +469,7 @@
   display: grid;
   grid-template-columns: auto auto minmax(0, 1fr);
   align-items: center;
+  justify-content: start;
   flex: 1 1 auto;
   min-width: 0;
   min-height: 28px;

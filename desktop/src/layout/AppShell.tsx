@@ -23,7 +23,7 @@ import {
   Trash2,
 } from "lucide-react";
 import irisSidebarIcon from "../assets/iris-sidebar-icon-borderless.png";
-import { navItems, viewTitle } from "../app/navigation";
+import { navItems } from "../app/navigation";
 import { loadJsonValue, saveJsonValue, storageKeys } from "../app/storage";
 import type { ProfileActionHandler, View } from "../app/types";
 import { offlineProfile } from "../app/offlineProfile";
@@ -66,9 +66,10 @@ import {
 import { Button } from "../shared/ui/button";
 
 export const SIDEBAR_AUTO_COLLAPSE_WIDTH = 820;
-const SIDEBAR_STANDARD_WIDTH = 252;
+const SIDEBAR_STANDARD_WIDTH = 200;
 const SIDEBAR_COLLAPSED_WIDTH = 0;
 const SIDEBAR_MAX_WIDTH = 440;
+const SIDEBAR_COLLAPSE_RESISTANCE = 80;
 
 export function sidebarConnectionStatusLabel(
   connected: boolean,
@@ -128,7 +129,6 @@ type AppShellProps = {
   selectedSessionId: string | null;
   selectedProjectId: string;
   activeSessionIds: string[];
-  coreApiUrl: string;
   onNewSession: (profileName?: string, projectId?: string) => void;
   onCreateProject: (payload: { name: string; defaultAgentId: string; systemPrompt: string }) => Promise<IrisProject>;
   onUpdateProject: (
@@ -136,7 +136,6 @@ type AppShellProps = {
     payload: { name: string; defaultAgentId: string; systemPrompt: string },
   ) => Promise<IrisProject>;
   onToggleProjectCollapsed: (projectId: string) => void;
-  onRefreshProjects: () => void;
   onRefreshProjectSessions: (projectId: string) => void;
   onEditProfile: (profile: string) => void;
   onProfileAction: ProfileActionHandler;
@@ -179,12 +178,10 @@ export function AppShell({
   selectedSessionId,
   selectedProjectId,
   activeSessionIds,
-  coreApiUrl,
   onNewSession,
   onCreateProject,
   onUpdateProject,
   onToggleProjectCollapsed,
-  onRefreshProjects,
   onRefreshProjectSessions,
   onEditProfile,
   onProfileAction,
@@ -200,6 +197,10 @@ export function AppShell({
 }: AppShellProps) {
   const profiles = status?.profiles ?? [offlineProfile];
   const showSelectedSession = activeView === "chat";
+  const activeChatSession = activeView === "chat" && selectedSessionId
+    ? sessions.find((session) => session.id === selectedSessionId)
+    : null;
+  const chatTopbarTitle = activeChatSession?.title || "New session";
   const [sessionContextMenuKey, setSessionContextMenuKey] = useState("");
   const [profileDialog, setProfileDialog] = useState<ProfileDialog | null>(null);
   const [projectDialog, setProjectDialog] = useState<ProjectDialog | null>(null);
@@ -453,7 +454,7 @@ export function AppShell({
           </div>
         </div>
 
-        <nav className="grid flex-none gap-[3px] m-0 mb-[22px]" aria-label="Primary">
+        <nav className="grid flex-none gap-[3px] m-0 mb-[10px]" aria-label="Primary">
           {navItems.map((item) => {
             const Icon = item.icon;
             const isNewChatAction = item.id === "chat";
@@ -528,18 +529,9 @@ export function AppShell({
           {sidebarOrganization === "projects" ? (
             <>
               <div className="sidebar-section profile-tree projects-tree flex flex-none flex-col min-h-0 px-0">
-                <div className="profile-tree-header flex items-stretch justify-between gap-2.5 pl-2 pr-0">
+                <div className="profile-tree-header flex items-stretch justify-between gap-2.5 pr-0">
                   {renderSidebarSectionToggle("projects", "Projects", projectsSectionCollapsed)}
                   <div className="profile-tree-actions sidebar-section-actions flex items-center gap-[5px]">
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      className="sidebar-icon-button"
-                      onClick={onRefreshProjects}
-                      title="Refresh projects"
-                    >
-                      <RefreshCcw size={13} />
-                    </Button>
                     {renderSidebarOrganizationButton()}
                     <Button
                       type="button"
@@ -567,7 +559,7 @@ export function AppShell({
               </div>
 
               <div className="sidebar-section profile-tree chats-tree flex flex-none flex-col min-h-0 px-0">
-                <div className="profile-tree-header flex items-stretch justify-between gap-2.5 pl-2 pr-0">
+                <div className="profile-tree-header flex items-stretch justify-between gap-2.5 pr-0">
                   {renderSidebarSectionToggle("chats", "Sessions", chatsSectionCollapsed)}
                 </div>
                 {!chatsSectionCollapsed ? (
@@ -789,17 +781,13 @@ export function AppShell({
       </aside>
 
       <main className="workspace">
-        <header
-          className={topbarPane ? "topbar custom-topbar" : "topbar"}
-          data-topbar-variant={activeView === "agents" ? "compact" : "default"}
-        >
+        <header className={topbarPane ? "topbar custom-topbar" : "topbar"}>
           <div className="topbar-drag-zone" data-tauri-drag-region />
           {topbarPane ?? (
             <>
               {activeView === "chat" ? (
-                <div className="min-w-0 pointer-events-none">
-                  <p>{viewTitle(activeView)}</p>
-                  <span>{coreApiUrl}</span>
+                <div className="min-w-0 pointer-events-none flex items-baseline gap-2 overflow-hidden">
+                  <p className="font-semibold text-[13px] truncate">{chatTopbarTitle}</p>
                 </div>
               ) : null}
             </>
@@ -1160,17 +1148,37 @@ export function AppShell({
     event.currentTarget.setPointerCapture(event.pointerId);
     setSidebarResizing(true);
     const startX = event.clientX;
-    const startWidth = sidebarCollapsedRef.current ? SIDEBAR_COLLAPSED_WIDTH : sidebarWidth;
+    const startCollapsed = sidebarCollapsedRef.current;
+    const startWidth = startCollapsed ? SIDEBAR_COLLAPSED_WIDTH : sidebarWidth;
+    let collapsedDuringDrag = startCollapsed;
 
     const onPointerMove = (moveEvent: PointerEvent) => {
-      const nextWidth = clamp(startWidth + moveEvent.clientX - startX, SIDEBAR_COLLAPSED_WIDTH, SIDEBAR_MAX_WIDTH);
-      if (nextWidth < SIDEBAR_STANDARD_WIDTH) {
+      const rawWidth = startWidth + moveEvent.clientX - startX;
+
+      if (collapsedDuringDrag) {
+        // Stay collapsed until the cursor drags back past the standard width.
+        if (rawWidth >= SIDEBAR_STANDARD_WIDTH) {
+          collapsedDuringDrag = false;
+          setSidebarWidth(Math.min(rawWidth, SIDEBAR_MAX_WIDTH));
+          setSidebarCollapsedWithTransition(false);
+        }
+        return;
+      }
+
+      // Dragged far enough past the minimum — snap to collapsed.
+      if (rawWidth < SIDEBAR_STANDARD_WIDTH - SIDEBAR_COLLAPSE_RESISTANCE) {
+        collapsedDuringDrag = true;
         setSidebarCollapsedWithTransition(true);
         return;
       }
 
-      setSidebarWidth(nextWidth);
-      setSidebarCollapsedWithTransition(false);
+      // Inside the resistance band — pin to the minimum width and stay expanded.
+      if (rawWidth < SIDEBAR_STANDARD_WIDTH) {
+        setSidebarWidth(SIDEBAR_STANDARD_WIDTH);
+        return;
+      }
+
+      setSidebarWidth(Math.min(rawWidth, SIDEBAR_MAX_WIDTH));
     };
     const endResize = () => {
       setSidebarResizing(false);
@@ -1548,10 +1556,6 @@ function nextProfileName(base: string, profiles: HermesProfile[]) {
     if (!names.has(candidate)) return candidate;
   }
   return `${base}-${Date.now()}`;
-}
-
-function clamp(value: number, minimum: number, maximum: number) {
-  return Math.max(minimum, Math.min(value, maximum));
 }
 
 function isProfileActionFailure(message: string) {

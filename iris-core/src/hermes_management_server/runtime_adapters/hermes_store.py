@@ -26,6 +26,7 @@ from .hermes_sessions import (
     assert_within_profile,
     choose_session_table,
     choose_message_table,
+    count_sessions,
     discover_session_detail,
     discover_session_summaries,
     discover_sessions,
@@ -343,6 +344,14 @@ def model_summary(config: dict[str, Any]) -> tuple[str, str]:
     return provider or "not configured", model or "not configured"
 
 
+def reasoning_effort_summary(config: dict[str, Any]) -> str:
+    agent_config = config.get("agent") if isinstance(config.get("agent"), dict) else {}
+    value = agent_config.get("reasoning_effort")
+    if value is None:
+        return ""
+    return str(value).strip()
+
+
 def memory_file_stats(directory: Path) -> tuple[int, int | None]:
     total = 0
     updated_at: int | None = None
@@ -577,6 +586,7 @@ def config_summary(path: Path, profile_root: Path) -> dict[str, Any]:
     raw = safe_read_text(path, profile_root)
     parsed, parse_error = parse_config_text(raw)
     provider, model = model_summary(parsed)
+    reasoning_effort = reasoning_effort_summary(parsed)
     payload = file_payload(path, profile_root)
     return {
         "path": str(path),
@@ -587,6 +597,7 @@ def config_summary(path: Path, profile_root: Path) -> dict[str, Any]:
         "raw": raw,
         "provider": provider,
         "model": model,
+        "reasoningEffort": reasoning_effort,
         **({"parseError": parse_error} if parse_error else {}),
     }
 
@@ -1017,6 +1028,7 @@ class HermesStore:
                 memoryBytes=0,
                 memoryUpdatedAt=None,
                 skillCount=0,
+                sessionCount=count_sessions(directory) if directory.is_dir() else 0,
                 gatewayRunning=gateway_running(directory) if directory.is_dir() else False,
                 managed=False,
                 error=error,
@@ -1036,6 +1048,7 @@ class HermesStore:
             memoryBytes=memory_bytes,
             memoryUpdatedAt=memory_updated_at,
             skillCount=count_skills(directory / "skills", directory),
+            sessionCount=count_sessions(directory),
             gatewayRunning=gateway_running(directory),
             managed=True,
             warnings=warnings,
@@ -1551,6 +1564,10 @@ class HermesStore:
     def sessions(self, profile: str, limit: int | None = 80) -> SessionDiscovery:
         directory = self.profile_directory(canonical_profile_name(profile))
         return discover_sessions(directory, limit)
+
+    def session_count(self, profile: str) -> int:
+        directory = self.profile_directory(canonical_profile_name(profile))
+        return count_sessions(directory)
 
     def session_detail(self, profile: str, session_id: str) -> SessionDetail:
         directory = self.profile_directory(canonical_profile_name(profile))

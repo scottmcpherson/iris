@@ -198,8 +198,9 @@ export function AutomationsView({
   return (
     <div className="jobs-view grid-rows-[auto_minmax(0,1fr)] h-full overflow-hidden">
       <header className="jobs-header relative flex items-end justify-between gap-4 w-[min(calc(100%-96px),var(--chat-content-max-width))] mx-auto pt-[30px] pb-[18px]">
-        <div>
+        <div className="grid gap-1.5 min-w-0">
           <h1>Automations</h1>
+          <p className="text-[13px] text-muted-foreground m-0">Run agents on a schedule or trigger.</p>
         </div>
         <div className="absolute right-0 bottom-[18px] flex items-center gap-2 ml-auto">
           <Button

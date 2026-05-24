@@ -131,6 +131,7 @@ export type IrisCoreAgent = {
   displayName: string;
   runtimeProfile: string;
   isDefault: boolean;
+  sessionCount?: number;
   metadata?: CoreMetadata;
 };
 
@@ -1040,7 +1041,7 @@ function coreAgentToHermesProfile(agent: IrisCoreAgent) {
     memoryBytes: numberMetadata(metadata.memoryBytes),
     memoryUpdatedAt: nullableNumberMetadata(metadata.memoryUpdatedAt),
     skillCount: numberMetadata(metadata.skillCount),
-    sessionCount: 0,
+    sessionCount: typeof agent.sessionCount === "number" ? agent.sessionCount : 0,
     estimatedCostUsd: null,
     gatewayRunning: Boolean(metadata.gatewayRunning),
   };

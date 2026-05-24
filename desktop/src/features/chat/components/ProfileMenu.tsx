@@ -47,10 +47,11 @@ export function ProfileMenu({
               : `Agent ${connected ? profile : "Offline"}`
           }
           disabled={disabled}
+          className="max-[629px]:w-8 max-[629px]:gap-0 max-[629px]:px-0"
         >
           <Bot data-icon="inline-start" />
-          <span>{connected ? profile : "Offline"}</span>
-          <ChevronDown data-icon="inline-end" />
+          <span className="max-[629px]:hidden">{connected ? profile : "Offline"}</span>
+          <ChevronDown data-icon="inline-end" className="max-[629px]:hidden" />
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent

@@ -30,8 +30,8 @@ export function DiagnosticRow({
         {ok ? <CheckCircle2 size={16} /> : <AlertCircle size={16} />}
       </span>
       <div className="flex-1 inline-flex items-baseline gap-2 min-w-0 overflow-hidden">
-        <strong>{label}</strong>
-        {sublabel ? <span>{sublabel}</span> : null}
+        <strong className="text-[13px] font-semibold text-foreground truncate">{label}</strong>
+        {sublabel ? <span className="text-[12px] text-muted-foreground truncate">{sublabel}</span> : null}
       </div>
       {action ? (
         <Button

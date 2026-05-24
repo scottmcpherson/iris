@@ -117,6 +117,78 @@ def discover_sessions(profile_root: Path, limit: int | None = 80) -> SessionDisc
     )
 
 
+def count_sessions(profile_root: Path) -> int:
+    if not profile_root.is_dir():
+        return 0
+
+    for db_path in sqlite_candidates(profile_root):
+        result = count_sqlite_sessions(db_path, profile_root)
+        if result is not None:
+            return result
+
+    return count_session_file_sessions(profile_root)
+
+
+def count_sqlite_sessions(db_path: Path, profile_root: Path) -> int | None:
+    try:
+        safe_path = assert_within_profile(db_path, profile_root)
+        connection = sqlite3.connect(f"file:{safe_path.as_posix()}?mode=ro", uri=True)
+    except Exception:
+        return None
+    try:
+        connection.row_factory = sqlite3.Row
+        schema = inspect_sqlite_schema(connection)
+        session_table = choose_session_table(schema.tables)
+        if session_table is None:
+            return None
+        columns = normalize_columns(schema.tables[session_table])
+        id_column = first_column(columns, ID_COLUMNS)
+        if id_column is None:
+            return None
+        source_column = first_column(columns, SOURCE_COLUMNS)
+        clauses = [
+            f"{quote_identifier(id_column)} is not null",
+            f"{quote_identifier(id_column)} != ''",
+            f"substr({quote_identifier(id_column)}, 1, 5) != 'cron_'",
+        ]
+        if source_column is not None:
+            clauses.append(
+                f"trim(lower(coalesce({quote_identifier(source_column)}, ''))) != 'cron'"
+            )
+        where = " and ".join(clauses)
+        query = f"select count(*) as total from {quote_identifier(session_table)} where {where}"
+        row = connection.execute(query).fetchone()
+        return int(row["total"]) if row and row["total"] is not None else 0
+    except sqlite3.Error:
+        return None
+    finally:
+        connection.close()
+
+
+def count_session_file_sessions(profile_root: Path) -> int:
+    sessions_dir = profile_root / "sessions"
+    try:
+        safe_sessions_dir = assert_within_profile(sessions_dir, profile_root)
+    except ManagementError:
+        return 0
+    if not safe_sessions_dir.is_dir():
+        return 0
+
+    count = 0
+    for path in safe_sessions_dir.glob("*.json"):
+        try:
+            safe_path = assert_within_profile(path, profile_root)
+            payload = json.loads(safe_path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError, ManagementError):
+            continue
+        if not isinstance(payload, dict):
+            continue
+        summary = normalize_session_file(payload)
+        if summary is not None and is_visible_chat_session(summary):
+            count += 1
+    return count
+
+
 def discover_session_detail(profile_root: Path, session_id: str) -> SessionDetail:
     normalized_id = session_id.strip()
     if not normalized_id:

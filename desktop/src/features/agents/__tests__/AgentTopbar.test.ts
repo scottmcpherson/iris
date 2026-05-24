@@ -13,9 +13,14 @@ describe("AgentTopbar", () => {
         profiles: [profileFixture()],
         status: null,
         section: "overview",
+        gatewayActionBusy: false,
+        adapterInstallBusyProfile: "",
         onSwitchAgent: noop,
         onManageAgents: noop,
         onSectionChange: noop,
+        onGatewayAction: noop,
+        onInstallAdapter: noop,
+        onProfileAction: noopProfileAction,
       }),
     );
 
@@ -31,9 +36,14 @@ describe("AgentTopbar", () => {
         profiles: [profileFixture()],
         status: null,
         section: "overview",
+        gatewayActionBusy: false,
+        adapterInstallBusyProfile: "",
         onSwitchAgent: noop,
         onManageAgents: noop,
         onSectionChange: noop,
+        onGatewayAction: noop,
+        onInstallAdapter: noop,
+        onProfileAction: noopProfileAction,
       }),
     );
 
@@ -43,9 +53,36 @@ describe("AgentTopbar", () => {
     expect(html).not.toContain("agent-topbar-runtime-pill");
     expect(html).not.toContain("All agents");
   });
+
+  it("renders the More actions trigger next to the agent switcher when a profile is open", () => {
+    const html = renderToStaticMarkup(
+      createElement(AgentTopbar, {
+        detailProfile: "default",
+        profile: profileFixture(),
+        profiles: [profileFixture()],
+        status: null,
+        section: "overview",
+        gatewayActionBusy: false,
+        adapterInstallBusyProfile: "",
+        onSwitchAgent: noop,
+        onManageAgents: noop,
+        onSectionChange: noop,
+        onGatewayAction: noop,
+        onInstallAdapter: noop,
+        onProfileAction: noopProfileAction,
+      }),
+    );
+
+    expect(html).toContain("agent-topbar-more-trigger");
+    expect(html).toContain("More actions for default");
+  });
 });
 
 function noop() {}
+
+async function noopProfileAction() {
+  return "";
+}
 
 function profileFixture(): HermesProfile {
   return {

@@ -44,6 +44,7 @@ class ProfileSummary(BaseModel):
     memoryBytes: int
     memoryUpdatedAt: int | None
     skillCount: int
+    sessionCount: int = 0
     gatewayRunning: bool
     managed: bool = True
     error: str | None = None

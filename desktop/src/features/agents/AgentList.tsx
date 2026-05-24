@@ -1,6 +1,6 @@
-import { useState } from "react";
+import { forwardRef, useImperativeHandle, useState } from "react";
 import type { FormEvent } from "react";
-import { Bot, Copy, Database, Ellipsis, FolderOpen, Play, Plug, Plus, RotateCw, Sparkles, Trash2, Unplug, Wrench } from "lucide-react";
+import { Bot, Copy, Ellipsis, Play, Plug, Plus, RotateCw, Trash2, Unplug, Wrench } from "lucide-react";
 import type { ProfileActionHandler } from "../../app/types";
 import { agentRuntimeReadinessForStatus } from "../../app/runtimeReadiness";
 import type { IrisCoreGatewayAction } from "../../lib/irisCore";
@@ -34,6 +34,10 @@ type AgentListDialog =
 
 export type AgentListVariant = "page" | "dialog";
 
+export type AgentListHandle = {
+  openCreateDialog: () => void;
+};
+
 type AgentListProps = {
   profiles: HermesProfile[];
   status: HermesStatus | null;
@@ -52,7 +56,7 @@ const dialogContentClassName = "border-menu-border bg-menu text-menu-foreground 
 const labelClassName = "grid gap-[7px] text-xs font-[750] text-menu-muted-foreground";
 const inputClassName = "h-[38px] border-menu-border bg-secondary text-menu-hover-foreground placeholder:text-menu-muted-foreground";
 
-export function AgentList({
+export const AgentList = forwardRef<AgentListHandle, AgentListProps>(function AgentList({
   profiles,
   status,
   gatewayActionBusy,
@@ -64,27 +68,17 @@ export function AgentList({
   onProfileAction,
   onGatewayAction,
   onInstallAdapter,
-}: AgentListProps) {
+}, ref) {
   const [dialog, setDialog] = useState<AgentListDialog | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const isDialog = variant === "dialog";
 
+  useImperativeHandle(ref, () => ({ openCreateDialog }), []);
+
   const content = (
     <>
-      {isDialog ? (
-        <div className="flex justify-end gap-2">
-          <Button
-            type="button"
-            size="appSmall"
-            aria-label="Create agent"
-            onClick={openCreateDialog}
-          >
-            <Plus data-icon="inline-start" />
-            New agent
-          </Button>
-        </div>
-      ) : (
+      {isDialog ? null : (
         <div className="flex items-end justify-between gap-4">
           <div>
             <h1>Agent Profiles</h1>
@@ -172,19 +166,16 @@ export function AgentList({
                   <strong>{gateway.label}</strong>
                 </span>
               )}
-              <span className="agent-list-row-stats flex items-center gap-4 min-w-0 justify-end">
-                <span className="agent-list-stat grid grid-cols-[auto_minmax(0,1fr)] gap-x-1.5 gap-y-0.5 items-center min-w-0 opacity-[0.86]">
-                  <FolderOpen size={15} />
+              <span className="agent-list-row-stats flex items-center gap-5 min-w-0 justify-end">
+                <span className="agent-list-stat flex flex-col items-center gap-y-0.5 min-w-0 opacity-[0.86]">
                   <strong>{profile.sessionCount}</strong>
                   <small>Sessions</small>
                 </span>
-                <span className="agent-list-stat grid grid-cols-[auto_minmax(0,1fr)] gap-x-1.5 gap-y-0.5 items-center min-w-0 opacity-[0.86]">
-                  <Database size={15} />
+                <span className="agent-list-stat flex flex-col items-center gap-y-0.5 min-w-0 opacity-[0.86]">
                   <strong>{formatBytes(profile.memoryBytes)}</strong>
                   <small>Memory</small>
                 </span>
-                <span className="agent-list-stat grid grid-cols-[auto_minmax(0,1fr)] gap-x-1.5 gap-y-0.5 items-center min-w-0 opacity-[0.86]">
-                  <Sparkles size={15} />
+                <span className="agent-list-stat flex flex-col items-center gap-y-0.5 min-w-0 opacity-[0.86]">
                   <strong>{profile.skillCount}</strong>
                   <small>Skills</small>
                 </span>
@@ -375,7 +366,7 @@ export function AgentList({
     }
     setDialog(null);
   }
-}
+});
 
 function nextProfileName(base: string, profiles: HermesProfile[]) {
   const names = new Set(profiles.map((profile) => profile.name));

@@ -55,10 +55,11 @@ export function ProjectMenu({
               : `Project ${connected ? label : "Offline"}`
           }
           disabled={disabled}
+          className="max-[629px]:w-8 max-[629px]:gap-0 max-[629px]:px-0"
         >
           <Folder data-icon="inline-start" />
-          <span className="flex-1 text-left">{connected ? label : "Offline"}</span>
-          <ChevronDown data-icon="inline-end" className="ml-auto" />
+          <span className="flex-1 text-left max-[629px]:hidden">{connected ? label : "Offline"}</span>
+          <ChevronDown data-icon="inline-end" className="ml-auto max-[629px]:hidden" />
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent

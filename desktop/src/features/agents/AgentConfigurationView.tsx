@@ -109,6 +109,8 @@ export function AgentConfigurationView({
   const envKeys = identity?.env.keys || [];
   const provider = identity?.config.provider || "—";
   const model = identity?.config.model || "—";
+  const reasoningEffortRaw = identity?.config.reasoningEffort?.trim() || "";
+  const reasoningEffort = reasoningEffortRaw || (identity ? "medium (default)" : "—");
 
   useEffect(() => {
     if (!identity) return;
@@ -201,7 +203,7 @@ export function AgentConfigurationView({
             </div>
           </CardHeader>
           <CardContent className="grid content-start gap-2.5 p-0">
-            <dl className="grid gap-2 m-0">
+            <dl className="profile-config-summary grid gap-2 m-0">
               <div>
                 <dt>Provider</dt>
                 <dd>{provider}</dd>
@@ -209,6 +211,10 @@ export function AgentConfigurationView({
               <div>
                 <dt>Model</dt>
                 <dd>{model}</dd>
+              </div>
+              <div>
+                <dt>Reasoning effort</dt>
+                <dd>{reasoningEffort}</dd>
               </div>
             </dl>
             {identity?.config.parseError ? (
@@ -246,7 +252,7 @@ export function AgentConfigurationView({
             <div className="profile-config-pill-summary">
               {envKeys.length} {envKeys.length === 1 ? "variable" : "variables"}
             </div>
-            <div className="flex flex-wrap gap-1.5 min-h-7">
+            <div className="profile-env-key-list flex flex-wrap gap-1.5 min-h-7">
               {envKeys.length ? envKeys.map((key) => <span key={key}>{key}</span>) : <em>No keys set</em>}
             </div>
           </CardContent>

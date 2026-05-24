@@ -79,6 +79,7 @@ export type HermesProfileConfig = {
   raw: string;
   provider: string;
   model: string;
+  reasoningEffort?: string;
   parseError?: string;
 };
 

@@ -35,7 +35,6 @@ import {
   saveStringValue,
   storageKeys,
 } from "./app/storage";
-import { resolveCoreApiUrl } from "./app/runtimeConfig";
 import {
   runtimeReadinessForStatus,
 } from "./app/runtimeReadiness";
@@ -449,6 +448,8 @@ function App() {
               profiles={agentProfiles}
               status={iris.status}
               section={agentSection}
+              gatewayActionBusy={gatewayActionBusy}
+              adapterInstallBusyProfile={adapterInstallBusyProfile}
               onSwitchAgent={(profileName) =>
                 irisNavigate.openAgent({ profile: profileName, section: "overview" })
               }
@@ -463,12 +464,14 @@ function App() {
                   section,
                 })
               }
+              onGatewayAction={(action, profileName) => void runGatewayAction(action, profileName)}
+              onInstallAdapter={(profileName) => void installAdapterForProfile(profileName)}
+              onProfileAction={iris.runProfileAction}
             />
           ) : undefined
         }
         selectedProfile={iris.selectedProfile}
         status={iris.status}
-        coreApiUrl={resolveCoreApiUrl(iris.runtimeConfig)}
         sessions={sidebarSessions}
         sessionsByProfile={chat.sessionsByProfile}
         sessionReadStates={sidebarSessionReadStates}
@@ -500,7 +503,6 @@ function App() {
           return project;
         }}
         onToggleProjectCollapsed={projects.toggleProjectCollapsed}
-        onRefreshProjects={() => void projects.refreshProjects()}
         onRefreshProjectSessions={(projectId) => void projects.refreshProjectSessions(projectId)}
         sessionsLoadedByProfile={chat.sessionsLoadedByProfile}
         sessionsLoading={sidebarSessionsLoading}

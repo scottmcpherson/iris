@@ -649,7 +649,7 @@ export function ChatView({
             resize={transcriptResizeBehavior}
             role="log"
           >
-            <StickToBottom.Content className="session-column flex flex-col justify-start w-[min(calc(100%-96px),var(--chat-content-max-width))] min-h-full mx-auto" scrollClassName="message-list h-full min-h-0 overflow-auto pt-[52px] pb-7 px-7">
+            <StickToBottom.Content className="session-column flex flex-col justify-start w-[min(calc(100%-40px),var(--chat-content-max-width))] min-h-full mx-auto" scrollClassName="message-list h-full min-h-0 overflow-auto pt-[52px] pb-7">
               {renderedMessages.length ? (
                 renderedMessages.map((message) => (
                   <MessageRow

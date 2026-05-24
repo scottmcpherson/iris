@@ -1901,6 +1901,7 @@ def agent_from_profile_summary(runtime: dict[str, Any], profile: ProfileSummary,
         "isDefault": profile.name == active_profile,
         "createdAt": timestamp,
         "updatedAt": timestamp,
+        "sessionCount": profile.sessionCount,
         "metadata": metadata,
     }
 
