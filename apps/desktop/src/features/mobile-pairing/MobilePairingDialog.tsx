@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
+import { invoke, isTauri } from "@tauri-apps/api/core";
 import QRCode from "qrcode";
 import { Copy, RefreshCw, Smartphone } from "lucide-react";
 import { toast } from "sonner";
+import { activeCoreConnection, defaultCorePort } from "../../app/runtimeConfig";
 import { Button } from "../../shared/ui/button";
 import {
   Dialog,
@@ -36,6 +38,14 @@ type MobilePairingDialogProps = {
   open: boolean;
   runtimeConfig: HermesRuntimeConfig;
   onOpenChange: (open: boolean) => void;
+};
+
+type CoreSidecarStatus = {
+  ready: boolean;
+  startedByApp: boolean;
+  bindHost: string;
+  port: number;
+  error: string;
 };
 
 export function MobilePairingDialog({ open, runtimeConfig, onOpenChange }: MobilePairingDialogProps) {
@@ -96,6 +106,13 @@ export function MobilePairingDialog({ open, runtimeConfig, onOpenChange }: Mobil
     if (!coreUrl) {
       setPairingBusy(false);
       setPairingError("Enter a Tailscale-reachable Core host before scanning.");
+      return;
+    }
+    const mobileCore = await ensureManagedCoreForMobilePairing(runtimeConfig, nextDraft);
+    if (!mobileCore.ok) {
+      setPairingBusy(false);
+      setPairingError(mobileCore.error);
+      toast.error(mobileCore.error);
       return;
     }
     const result = await coreRequest<{ code: string; expiresAt: number }>(
@@ -198,6 +215,53 @@ function payloadStatusText(
   if (!payloadIsValid) return "Review required Core fields before scanning.";
   if (payloadHasSecrets) return "Payload needs review before scanning.";
   return "Ready to scan. The phone will generate and store its own device token.";
+}
+
+async function ensureManagedCoreForMobilePairing(
+  runtimeConfig: HermesRuntimeConfig,
+  draft: MobilePairingDraft,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  if (!isTauri()) return { ok: true };
+  const connection = activeCoreConnection(runtimeConfig);
+  if (connection.mode !== "managed-local") return { ok: true };
+
+  const port = parsePort(draft.corePort, connection.local?.port || defaultCorePort);
+  const config = {
+    host: "0.0.0.0",
+    port,
+    hermesHome: connection.local?.hermesHome || undefined,
+    autoStart: true,
+  };
+
+  try {
+    const status = await invoke<CoreSidecarStatus>("core_sidecar_status");
+    if (status.ready && status.port === port && !isLoopbackBind(status.bindHost)) {
+      return { ok: true };
+    }
+    const result = await invoke<CoreSidecarStatus>(
+      status.startedByApp || status.ready ? "core_sidecar_restart" : "core_sidecar_start",
+      { config },
+    );
+    if (result.ready) return { ok: true };
+    return {
+      ok: false,
+      error: result.error || "Iris Core could not be prepared for mobile pairing.",
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : "Iris Core could not be prepared for mobile pairing.",
+    };
+  }
+}
+
+function isLoopbackBind(host: string) {
+  return ["", "localhost", "127.0.0.1", "::1", "[::1]"].includes(host.trim().toLowerCase());
+}
+
+function parsePort(value: string, fallback: number) {
+  const parsed = Number.parseInt(value, 10);
+  return Number.isInteger(parsed) && parsed > 0 && parsed <= 65535 ? parsed : fallback;
 }
 
 function PairingTextField({

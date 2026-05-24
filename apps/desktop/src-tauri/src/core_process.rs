@@ -160,7 +160,7 @@ fn status_blocking(state: &CoreProcessState) -> Result<CoreSidecarStatus, String
     refresh_child_status(&mut guard);
     let host = guard.status.bind_host.clone();
     let port = guard.status.port;
-    if let Ok(health) = probe_core_health(&host, port, Duration::from_millis(900)) {
+    if let Ok(health) = probe_core_health(&probe_host_for_bind(&host), port, Duration::from_millis(900)) {
         guard.status = status_from_health(health, guard.child.is_some(), "");
     }
     Ok(guard.status.clone())
@@ -173,6 +173,7 @@ fn start_core_blocking(
 ) -> Result<CoreSidecarStatus, String> {
     let host = clean_host(config.host.as_deref());
     let port = config.port.unwrap_or(DEFAULT_CORE_PORT);
+    let probe_host = probe_host_for_bind(&host);
     let log_path = core_log_path();
     {
         let mut guard = state
@@ -182,7 +183,7 @@ fn start_core_blocking(
         refresh_child_status(&mut guard);
     }
 
-    match probe_core_health(&host, port, Duration::from_millis(900)) {
+    match probe_core_health(&probe_host, port, Duration::from_millis(900)) {
         Ok(health) => {
             let mut status = status_from_health(health, false, "");
             if status.version != status.client_version {
@@ -295,7 +296,7 @@ fn start_core_blocking(
 
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
-        match probe_core_health(&host, port, Duration::from_millis(900)) {
+        match probe_core_health(&probe_host, port, Duration::from_millis(900)) {
             Ok(health) => {
                 let mut status = status_from_health(health, true, "");
                 status.log_path = log_path.display().to_string();
@@ -495,6 +496,13 @@ fn clean_host(value: Option<&str>) -> String {
         DEFAULT_CORE_HOST.to_string()
     } else {
         host.to_string()
+    }
+}
+
+fn probe_host_for_bind(host: &str) -> String {
+    match host.trim() {
+        "0.0.0.0" | "::" | "[::]" => DEFAULT_CORE_HOST.to_string(),
+        value => value.to_string(),
     }
 }
 
