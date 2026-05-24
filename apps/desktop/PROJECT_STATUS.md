@@ -23,7 +23,7 @@ Hermes remains the first runtime backend through the Iris Hermes Adapter. Hermes
 
 ## Verification
 
-- `npm --workspace desktop run check`
+- `npm --workspace apps/desktop run check`
 - `npm run core:test`
 - Fresh app-bundle verification should use root `npm run build:mac:app`, then launch the built bundle and test with Computer Use against `com.nousresearch.hermes-agent.desktop`.
 

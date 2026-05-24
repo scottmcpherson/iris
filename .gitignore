@@ -20,7 +20,7 @@ docs/internal/
 .venv/
 iris-core/build/
 iris-core/dist/
-desktop/src-tauri/binaries/
+apps/desktop/src-tauri/binaries/
 __pycache__/
 *.py[cod]
 .pytest_cache/

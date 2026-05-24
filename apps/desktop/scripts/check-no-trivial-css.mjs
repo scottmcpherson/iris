@@ -6,7 +6,7 @@
  * layout shorthand" rules from creeping back into the codebase — write them as
  * Tailwind utilities at the call site instead.
  *
- * Scans .css under desktop/src/. Compares findings against the grandfathered
+ * Scans .css under apps/desktop/src/. Compares findings against the grandfathered
  * baseline at scripts/trivial-css-baseline.json. Exits non-zero if a violation
  * is found that isn't in the baseline.
  *

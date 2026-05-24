@@ -21,12 +21,6 @@
   color: var(--accent-rose);
 }
 
-.diagnostics-row-icon {
-  flex: 0 0 auto;
-  display: grid;
-  place-items: center;
-}
-
 .diagnostics-remote-hint {
   display: grid;
   gap: 6px;

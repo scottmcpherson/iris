@@ -9,7 +9,7 @@ End state:
 1. The Memory tab loads `MEMORY.md`, `USER.md`, and recent revisions for the selected agent/profile.
 2. Saving either memory file creates a snapshot of the previous on-disk file before Iris overwrites it.
 3. Resetting one file or all memory creates snapshots of any files that exist before Iris deletes them.
-4. The revision history UI in `desktop/src/features/memory/MemoryView.tsx` receives real `HermesMemory.history` entries and can render the existing revision list and diff.
+4. The revision history UI in `apps/desktop/src/features/memory/MemoryView.tsx` receives real `HermesMemory.history` entries and can render the existing revision list and diff.
 5. Iris does not claim to have a complete audit log of all Hermes-authored memory updates. The first implementation is an Iris-managed safety history.
 6. Profile-scoped memory data cannot be overwritten by the globally selected profile state while viewing a different agent detail route.
 
@@ -42,25 +42,25 @@ Avoid:
 
 Primary Desktop files:
 
-- `desktop/src/features/memory/MemoryView.tsx`
+- `apps/desktop/src/features/memory/MemoryView.tsx`
   - Already renders the redesigned memory surface.
   - Expects `memory.history` to contain entries.
   - Filters entries by `entry.file === "MEMORY.md"` or `entry.file === "USER.md"`.
   - Renders `entry.action`, `entry.summary`, `entry.updatedAt`, `entry.bytes`, and `entry.content`.
   - Diffs `selectedHistory.content` against the current active file content.
   - Reset dialog currently promises "after saving a revision snapshot", so Core must make that true.
-- `desktop/src/types/hermes.ts`
+- `apps/desktop/src/types/hermes.ts`
   - Defines:
     - `HermesMemoryFile`
     - `HermesMemoryHistoryEntry`
     - `HermesMemory`
   - Current `HermesMemoryHistoryEntry.action` is `"save" | "reset"`.
-- `desktop/src/lib/query/memory.ts`
+- `apps/desktop/src/lib/query/memory.ts`
   - Uses `memoryKeys.agent(runtimeKey, profile)`.
   - Mutations already update and invalidate the profile-specific memory query.
-- `desktop/src/lib/irisRuntime.ts`
+- `apps/desktop/src/lib/irisRuntime.ts`
   - Resolves profile -> Core agent -> Core memory endpoints.
-- `desktop/src/App.tsx` and `desktop/src/features/iris/useIrisRuntime.ts`
+- `apps/desktop/src/App.tsx` and `apps/desktop/src/features/iris/useIrisRuntime.ts`
   - Still keep one `iris.memory` value tied mostly to `selectedProfile`.
   - Agent detail routes can view `agentDetailProfile`, which may differ from `iris.selectedProfile`.
   - This is a correctness risk for the redesigned profile-specific memory tab.
@@ -297,7 +297,7 @@ def content_hash(text: str) -> str:
 If adding `contentHash`:
 
 - Add `contentHash` to `FileContent` in `iris-core/src/hermes_management_server/models.py`.
-- Add `contentHash` to `HermesMemoryFile` in `desktop/src/types/hermes.ts`.
+- Add `contentHash` to `HermesMemoryFile` in `apps/desktop/src/types/hermes.ts`.
 - Return it from `file_payload()`.
 - Keep `updatedAt` for display.
 
@@ -506,7 +506,7 @@ Mutation callbacks:
 
 ### Type updates
 
-File: `desktop/src/types/hermes.ts`
+File: `apps/desktop/src/types/hermes.ts`
 
 If Core adds `contentHash`:
 
@@ -687,7 +687,7 @@ Assertions:
 Existing targeted test command:
 
 ```bash
-npm --workspace desktop run test -- AgentDetailView.test.tsx irisCore.test.ts
+npm --workspace apps/desktop run test -- AgentDetailView.test.tsx irisCore.test.ts
 ```
 
 Note: in this environment, `npm` may not be on PATH. The bundled Node runtime can run Vitest from the `desktop` directory:
@@ -705,7 +705,7 @@ Add or update tests:
 
 Existing stale tests:
 
-- `desktop/src/features/agents/__tests__/AgentDetailView.test.tsx` currently has expectations for old readiness banner copy such as `"default gateway is stopped"` and `"Iris adapter is unreachable"`.
+- `apps/desktop/src/features/agents/__tests__/AgentDetailView.test.tsx` currently has expectations for old readiness banner copy such as `"default gateway is stopped"` and `"Iris adapter is unreachable"`.
 - The redesigned overview now renders diagnostic rows, so update those assertions when touching the tests.
 
 ### Manual checks

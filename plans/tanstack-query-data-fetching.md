@@ -10,31 +10,31 @@ This plan assumes the local/SSH transport cleanup and `IRIS_TOKEN` loopback clea
 
 ## Current State
 
-TanStack Router is already installed, but TanStack Query is not currently in `desktop/package.json`.
+TanStack Router is already installed, but TanStack Query is not currently in `apps/desktop/package.json`.
 
 Relevant data-fetching areas:
 
-- `desktop/src/lib/coreTransport.ts`
+- `apps/desktop/src/lib/coreTransport.ts`
   - Owns the explicit browser/native Core transport boundary.
-- `desktop/src/lib/irisCore.ts`
+- `apps/desktop/src/lib/irisCore.ts`
   - Typed Iris Core endpoint wrappers.
-- `desktop/src/lib/irisRuntime.ts`
+- `apps/desktop/src/lib/irisRuntime.ts`
   - Compatibility facade returning Hermes-shaped data from Core.
-- `desktop/src/features/iris/useIrisRuntime.ts`
+- `apps/desktop/src/features/iris/useIrisRuntime.ts`
   - Owns runtime status, selected profile, memory, skills, refresh loops, and profile actions.
-- `desktop/src/features/projects/useIrisProjects.ts`
+- `apps/desktop/src/features/projects/useIrisProjects.ts`
   - Owns project list, selected project, project sessions, loading flags, and refresh behavior.
-- `desktop/src/features/automations/useIrisAutomations.ts`
+- `apps/desktop/src/features/automations/useIrisAutomations.ts`
   - Owns automation list, automation delivery polling, mutations, and local loading/error state.
-- `desktop/src/features/chat/useIrisChat.ts`
+- `apps/desktop/src/features/chat/useIrisChat.ts`
   - Owns session list, selected session details, optimistic message state, SSE/EventSource, polling fallback, and active stream reconciliation.
-- `desktop/src/features/chat/useIrisModelCatalog.ts`
+- `apps/desktop/src/features/chat/useIrisModelCatalog.ts`
   - Hand-rolls model catalog loading/error state.
-- `desktop/src/features/chat/useIrisSlashCommands.ts`
+- `apps/desktop/src/features/chat/useIrisSlashCommands.ts`
   - Hand-rolls slash command catalog loading/error state.
-- `desktop/src/features/skills/SkillsView.tsx`
+- `apps/desktop/src/features/skills/SkillsView.tsx`
   - Fetches skill detail on selection via `useEffect`.
-- `desktop/src/features/chat/components/MessageContent.tsx`
+- `apps/desktop/src/features/chat/components/MessageContent.tsx`
   - Fetches attachment data URLs and performs native media conversion as needed.
 
 ## Target Shape
@@ -82,7 +82,7 @@ Add dependencies:
 
 Create a Query client module:
 
-- `desktop/src/app/queryClient.ts`
+- `apps/desktop/src/app/queryClient.ts`
 
 Suggested defaults:
 
@@ -101,7 +101,7 @@ export const queryClient = new QueryClient({
 
 Wire provider near the app root:
 
-- `desktop/src/main.tsx`
+- `apps/desktop/src/main.tsx`
 
 Wrap the app in `QueryClientProvider`.
 
@@ -111,11 +111,11 @@ Keep retries disabled initially. Many Core errors represent runtime setup issues
 
 Create:
 
-- `desktop/src/lib/query/ensureOk.ts`
-- `desktop/src/lib/query/runtimeKey.ts`
-- `desktop/src/lib/query/index.ts`
+- `apps/desktop/src/lib/query/ensureOk.ts`
+- `apps/desktop/src/lib/query/runtimeKey.ts`
+- `apps/desktop/src/lib/query/index.ts`
 
-Create entity modules under `desktop/src/lib/query/`:
+Create entity modules under `apps/desktop/src/lib/query/`:
 
 - `agents.ts`
 - `automations.ts`
@@ -210,7 +210,7 @@ Start with `useIrisRuntime.ts`, because it is the app's central refresh loop.
 
 Create:
 
-- `desktop/src/features/iris/useIrisRuntimeQueries.ts`
+- `apps/desktop/src/features/iris/useIrisRuntimeQueries.ts`
 
 Initial queries:
 
@@ -251,8 +251,8 @@ These are small, low-risk hooks.
 
 Files:
 
-- `desktop/src/features/chat/useIrisModelCatalog.ts`
-- `desktop/src/features/chat/useIrisSlashCommands.ts`
+- `apps/desktop/src/features/chat/useIrisModelCatalog.ts`
+- `apps/desktop/src/features/chat/useIrisSlashCommands.ts`
 
 Replace hand-rolled `useEffect` loading with `useQuery`.
 
@@ -281,7 +281,7 @@ Acceptance:
 
 File:
 
-- `desktop/src/features/projects/useIrisProjects.ts`
+- `apps/desktop/src/features/projects/useIrisProjects.ts`
 
 Queries:
 
@@ -315,7 +315,7 @@ Acceptance:
 
 File:
 
-- `desktop/src/features/automations/useIrisAutomations.ts`
+- `apps/desktop/src/features/automations/useIrisAutomations.ts`
 
 Queries:
 
@@ -350,7 +350,7 @@ Acceptance:
 
 File:
 
-- `desktop/src/features/chat/useIrisChat.ts`
+- `apps/desktop/src/features/chat/useIrisChat.ts`
 
 This should be done after smaller feature slices, because chat owns streaming and optimistic UI.
 
@@ -438,14 +438,14 @@ Chat:
 
 Test utilities:
 
-- Add `renderWithQueryClient()` under the existing test helpers if one exists, or create `desktop/src/test/query.tsx`.
+- Add `renderWithQueryClient()` under the existing test helpers if one exists, or create `apps/desktop/src/test/query.tsx`.
 - Use a fresh `QueryClient` per test with retries disabled.
 
 ### 10. Verification
 
 Lightweight checks during implementation:
 
-- `npm --workspace desktop run test`
+- `npm --workspace apps/desktop run test`
 - Targeted Vitest files for each migrated feature.
 - Browser/Vite check at `http://localhost:1420/` for visible data loading behavior.
 

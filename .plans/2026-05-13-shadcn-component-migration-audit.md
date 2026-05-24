@@ -10,14 +10,14 @@ This plan captures the current audit findings and enough implementation detail t
 The shadcn workspace target is `desktop`, not the repo root.
 
 Project config:
-- `desktop/components.json`
+- `apps/desktop/components.json`
 - Vite app, React, TypeScript, Tailwind v4.
 - shadcn style: `new-york`
 - shadcn base: `radix`
 - icon library: `lucide`
 - UI alias: `@/shared/ui`
-- UI directory: `desktop/src/shared/ui`
-- Theme file: `desktop/src/App.css`
+- UI directory: `apps/desktop/src/shared/ui`
+- Theme file: `apps/desktop/src/App.css`
 
 Installed shadcn primitives today:
 - `button`
@@ -32,7 +32,7 @@ Installed shadcn primitives today:
 - `tabs`
 - `textarea`
 
-The existing migration has already covered a lot of basic controls: most buttons, selects, text inputs, textareas, dialogs, dropdown menus, context menus, popovers, command menus, checkboxes, and tabs now import from `desktop/src/shared/ui`.
+The existing migration has already covered a lot of basic controls: most buttons, selects, text inputs, textareas, dialogs, dropdown menus, context menus, popovers, command menus, checkboxes, and tabs now import from `apps/desktop/src/shared/ui`.
 
 The remaining obvious gaps are larger composed primitives: cards, alerts, empty states, badges/status pills, field/form wrappers, scroll areas, separators, collapsibles/accordions, tooltips, skeleton/loading states, switch/toggle controls, and toast/notification plumbing.
 
@@ -49,7 +49,7 @@ npx shadcn@latest info --json -c desktop
 The audit dry run confirmed these missing primitives are available:
 
 ```bash
-cd desktop
+cd apps/desktop
 npx shadcn@latest add card badge alert empty field sidebar sonner scroll-area separator accordion collapsible tooltip skeleton table switch toggle-group alert-dialog sheet --dry-run
 ```
 
@@ -78,28 +78,28 @@ Dry-run result at audit time:
 - `~ src/shared/ui/button.tsx`
 - `~ src/shared/ui/input.tsx`
 
-Important: installing all of the above at once wants to overwrite `desktop/src/shared/ui/button.tsx` and `desktop/src/shared/ui/input.tsx`. Those files already contain local app variants and should not be overwritten blindly. Prefer adding smaller batches and use `--dry-run` / `--diff` before accepting any overwrite.
+Important: installing all of the above at once wants to overwrite `apps/desktop/src/shared/ui/button.tsx` and `apps/desktop/src/shared/ui/input.tsx`. Those files already contain local app variants and should not be overwritten blindly. Prefer adding smaller batches and use `--dry-run` / `--diff` before accepting any overwrite.
 
 Recommended install order:
 
 1. Low-risk display primitives:
    ```bash
-   cd desktop
+   cd apps/desktop
    npx shadcn@latest add card badge alert empty separator scroll-area tooltip skeleton --dry-run
    ```
 2. Form primitives:
    ```bash
-   cd desktop
+   cd apps/desktop
    npx shadcn@latest add field label switch toggle-group --dry-run
    ```
 3. Overlay/feedback primitives:
    ```bash
-   cd desktop
+   cd apps/desktop
    npx shadcn@latest add alert-dialog sheet sonner --dry-run
    ```
 4. Navigation/layout primitives only when ready for the sidebar phase:
    ```bash
-   cd desktop
+   cd apps/desktop
    npx shadcn@latest add sidebar collapsible accordion --dry-run
    ```
 
@@ -114,7 +114,7 @@ For each batch:
 ### 1. Automations modal, forms, cards, alerts, and empty states
 
 Primary file:
-- `desktop/src/features/automations/AutomationsView.tsx`
+- `apps/desktop/src/features/automations/AutomationsView.tsx`
 
 Evidence:
 - Hand-rolled alert: `AutomationsView.tsx:179` (`jobs-alert`)
@@ -155,8 +155,8 @@ Suggested implementation steps:
 7. Convert empty state paragraphs to `Empty` after the layout is stable.
 
 Verification:
-- Targeted tests: `npm --workspace desktop run test -- src/features/automations/__tests__/useIrisAutomations.test.ts`
-- Broader desktop tests: `npm --workspace desktop run test`
+- Targeted tests: `npm --workspace apps/desktop run test -- src/features/automations/__tests__/useIrisAutomations.test.ts`
+- Broader desktop tests: `npm --workspace apps/desktop run test`
 - Browser/Vite check at `http://localhost:1420/`:
   - Open Automations.
   - Create automation modal opens and closes.
@@ -168,7 +168,7 @@ Verification:
 ### 2. Onboarding overlay
 
 Primary file:
-- `desktop/src/features/polish/OnboardingOverlay.tsx`
+- `apps/desktop/src/features/polish/OnboardingOverlay.tsx`
 
 Evidence:
 - Custom scrim and dialog shell: `OnboardingOverlay.tsx:18-67`
@@ -193,7 +193,7 @@ Verification:
 ### 3. Settings cards, fields, notices, and details disclosure
 
 Primary file:
-- `desktop/src/features/settings/SettingsView.tsx`
+- `apps/desktop/src/features/settings/SettingsView.tsx`
 
 Evidence:
 - Custom service card: `SettingsView.tsx:184-208`, `379-395`
@@ -220,8 +220,8 @@ Implementation notes:
 
 Verification:
 - Targeted tests that touch runtime config if present:
-  - `npm --workspace desktop run test -- src/app/__tests__/runtimeConfig.test.ts`
-  - `npm --workspace desktop run test -- src/lib/__tests__/agentuiCore.test.ts`
+  - `npm --workspace apps/desktop run test -- src/app/__tests__/runtimeConfig.test.ts`
+  - `npm --workspace apps/desktop run test -- src/lib/__tests__/agentuiCore.test.ts`
 - Browser/Vite:
   - Settings view renders.
   - Provider/model overrides can be edited.
@@ -233,9 +233,9 @@ Verification:
 ### 4. Notification center / toast stack
 
 Primary files:
-- `desktop/src/features/polish/NotificationCenter.tsx`
-- `desktop/src/App.tsx`
-- `desktop/src/App.css`
+- `apps/desktop/src/features/polish/NotificationCenter.tsx`
+- `apps/desktop/src/App.tsx`
+- `apps/desktop/src/App.css`
 
 Evidence:
 - Custom toast stack: `NotificationCenter.tsx:13-35`
@@ -260,12 +260,12 @@ Verification:
   - Trigger an error notification from a known failure path or mocked offline path.
   - Confirm dismiss works.
   - Confirm multiple notifications stack without overlapping app chrome.
-- Tests: run `npm --workspace desktop run test` after updating `App.tsx`.
+- Tests: run `npm --workspace apps/desktop run test` after updating `App.tsx`.
 
 ### 5. Memory dashboard, panels, toggles, editor state, and empty states
 
 Primary file:
-- `desktop/src/features/memory/MemoryView.tsx`
+- `apps/desktop/src/features/memory/MemoryView.tsx`
 
 Evidence:
 - Metric tiles: `MemoryView.tsx:125-130`, `371-379`
@@ -304,7 +304,7 @@ Verification:
 ### Sidebar and session/project trees
 
 Primary file:
-- `desktop/src/layout/AppShell.tsx`
+- `apps/desktop/src/layout/AppShell.tsx`
 
 Evidence:
 - Custom sidebar root and nav: `AppShell.tsx:404-745`
@@ -330,7 +330,7 @@ Implementation notes:
 - Do not migrate this in the same PR as Automations or Settings. The blast radius is too large.
 
 Verification:
-- Targeted tests: `npm --workspace desktop run test -- src/layout/__tests__/AppShell.test.ts`
+- Targeted tests: `npm --workspace apps/desktop run test -- src/layout/__tests__/AppShell.test.ts`
 - Browser/Vite:
   - Collapse/expand sidebar.
   - Resize sidebar.
@@ -343,7 +343,7 @@ Verification:
 ### Slash command menu
 
 Primary file:
-- `desktop/src/features/chat/components/SlashCommandMenu.tsx`
+- `apps/desktop/src/features/chat/components/SlashCommandMenu.tsx`
 
 Evidence:
 - Custom absolute-positioned listbox: `SlashCommandMenu.tsx:36-96`
@@ -363,7 +363,7 @@ Implementation notes:
 - Current listbox active index is driven by composer key handling. Either keep that model and style `CommandItem` with `data-selected`, or let cmdk own navigation only if it does not break slash insertion semantics.
 
 Verification:
-- Targeted tests: `npm --workspace desktop run test -- src/features/chat/__tests__/slashCommands.test.ts src/features/chat/__tests__/ChatView.test.ts`
+- Targeted tests: `npm --workspace apps/desktop run test -- src/features/chat/__tests__/slashCommands.test.ts src/features/chat/__tests__/ChatView.test.ts`
 - Browser/Vite:
   - Type `/`.
   - Loading, error, empty, and populated states render.
@@ -375,19 +375,19 @@ Verification:
 
 These areas are custom enough that they should not be converted just for purity:
 
-- `desktop/src/shared/CodeEditor.tsx`
+- `apps/desktop/src/shared/CodeEditor.tsx`
   - Evidence: custom line-number pre + textarea at `CodeEditor.tsx:30-37`.
   - Keep custom unless a shadcn `Textarea` wrapper can preserve line numbers and editor ergonomics.
 
-- `desktop/src/features/chat/components/MessageContent.tsx`
+- `apps/desktop/src/features/chat/components/MessageContent.tsx`
   - Evidence: attachment cards at `MessageContent.tsx:45-84`, audio player at `MessageContent.tsx:311-360`, markdown table wrapper at `MessageContent.tsx:470-475`.
   - The audio player and markdown renderer are domain-specific. Use shadcn tokens/wrappers opportunistically, but do not force generic primitives.
 
-- `desktop/src/features/chat/components/AttachmentTray.tsx`
+- `apps/desktop/src/features/chat/components/AttachmentTray.tsx`
   - Evidence: attachment pills at `AttachmentTray.tsx:21-56`.
   - Could use `Badge` or `Card` styling eventually, but current compact pill behavior is specific to the composer.
 
-- `desktop/src/features/chat/components/ToolEvents.tsx`
+- `apps/desktop/src/features/chat/components/ToolEvents.tsx`
   - Evidence: custom live tool progress list and `details` disclosure at `ToolEvents.tsx:10-47`.
   - Could use `Collapsible` and `Badge` later. Not urgent.
 
@@ -396,11 +396,11 @@ These areas are custom enough that they should not be converted just for purity:
 ### Form fields
 
 Files with obvious form wrapper opportunities:
-- `desktop/src/features/automations/AutomationsView.tsx`
-- `desktop/src/features/settings/SettingsView.tsx`
-- `desktop/src/features/skills/SkillsView.tsx`
-- `desktop/src/layout/AppShellDialogs.tsx`
-- `desktop/src/features/agents/AgentList.tsx`
+- `apps/desktop/src/features/automations/AutomationsView.tsx`
+- `apps/desktop/src/features/settings/SettingsView.tsx`
+- `apps/desktop/src/features/skills/SkillsView.tsx`
+- `apps/desktop/src/layout/AppShellDialogs.tsx`
+- `apps/desktop/src/features/agents/AgentList.tsx`
 
 Current pattern:
 - Many forms use `<label className=...><span>Label</span><Input /></label>` or `div` wrappers.
@@ -480,8 +480,8 @@ Components:
 - optionally `alert-dialog`
 
 Files:
-- `desktop/src/features/automations/AutomationsView.tsx`
-- `desktop/src/App.css`
+- `apps/desktop/src/features/automations/AutomationsView.tsx`
+- `apps/desktop/src/App.css`
 
 Acceptance:
 - Automation create/edit modal uses shadcn `Dialog`.
@@ -499,8 +499,8 @@ Components:
 - `accordion` or `collapsible`
 
 Files:
-- `desktop/src/features/settings/SettingsView.tsx`
-- `desktop/src/App.css`
+- `apps/desktop/src/features/settings/SettingsView.tsx`
+- `apps/desktop/src/App.css`
 
 Acceptance:
 - Settings sections/cards use shadcn composition.
@@ -515,9 +515,9 @@ Components:
 - `sonner`
 
 Files:
-- `desktop/src/features/polish/NotificationCenter.tsx`
-- `desktop/src/App.tsx`
-- `desktop/src/App.css`
+- `apps/desktop/src/features/polish/NotificationCenter.tsx`
+- `apps/desktop/src/App.tsx`
+- `apps/desktop/src/App.css`
 
 Acceptance:
 - App notifications use `sonner`.
@@ -531,8 +531,8 @@ Components:
 - optionally `card`, `badge`
 
 Files:
-- `desktop/src/features/polish/OnboardingOverlay.tsx`
-- `desktop/src/App.css`
+- `apps/desktop/src/features/polish/OnboardingOverlay.tsx`
+- `apps/desktop/src/App.css`
 
 Acceptance:
 - Onboarding uses shadcn `Dialog`.
@@ -548,8 +548,8 @@ Components:
 - possibly `switch`
 
 Files:
-- `desktop/src/features/memory/MemoryView.tsx`
-- `desktop/src/App.css`
+- `apps/desktop/src/features/memory/MemoryView.tsx`
+- `apps/desktop/src/App.css`
 
 Acceptance:
 - Metric/provider/panel shells use shadcn composition.
@@ -563,8 +563,8 @@ Components:
 - existing `popover`
 
 Files:
-- `desktop/src/features/chat/components/SlashCommandMenu.tsx`
-- `desktop/src/features/chat/ChatView.tsx` only if anchoring/control state needs adjustment
+- `apps/desktop/src/features/chat/components/SlashCommandMenu.tsx`
+- `apps/desktop/src/features/chat/ChatView.tsx` only if anchoring/control state needs adjustment
 
 Acceptance:
 - Slash menu remains anchored above composer.
@@ -582,9 +582,9 @@ Components:
 - `badge`
 
 Files:
-- `desktop/src/layout/AppShell.tsx`
-- `desktop/src/App.css`
-- `desktop/src/layout/__tests__/AppShell.test.ts` only if test selectors need updating without behavior change
+- `apps/desktop/src/layout/AppShell.tsx`
+- `apps/desktop/src/App.css`
+- `apps/desktop/src/layout/__tests__/AppShell.test.ts` only if test selectors need updating without behavior change
 
 Acceptance:
 - Sidebar behavior is identical: resize, collapse, pinned sessions, project/agent organization, project/session trees, context menus, and keyboard shortcuts.
@@ -596,7 +596,7 @@ Acceptance:
 For normal UI-only shadcn migration slices:
 
 ```bash
-npm --workspace desktop run test
+npm --workspace apps/desktop run test
 npm run dev
 ```
 
@@ -611,10 +611,10 @@ Use `http://localhost:1420/`, not `http://127.0.0.1:1420/`, because the in-app b
 For focused areas:
 
 ```bash
-npm --workspace desktop run test -- src/features/automations/__tests__/useIrisAutomations.test.ts
-npm --workspace desktop run test -- src/features/chat/__tests__/slashCommands.test.ts src/features/chat/__tests__/ChatView.test.ts
-npm --workspace desktop run test -- src/layout/__tests__/AppShell.test.ts
-npm --workspace desktop run test -- src/app/__tests__/runtimeConfig.test.ts
+npm --workspace apps/desktop run test -- src/features/automations/__tests__/useIrisAutomations.test.ts
+npm --workspace apps/desktop run test -- src/features/chat/__tests__/slashCommands.test.ts src/features/chat/__tests__/ChatView.test.ts
+npm --workspace apps/desktop run test -- src/layout/__tests__/AppShell.test.ts
+npm --workspace apps/desktop run test -- src/app/__tests__/runtimeConfig.test.ts
 ```
 
 Run the broader gate before considering a multi-file migration done:

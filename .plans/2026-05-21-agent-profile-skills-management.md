@@ -52,30 +52,30 @@ Avoid:
 
 Desktop:
 
-- `desktop/src/features/skills/SkillsView.tsx`
+- `apps/desktop/src/features/skills/SkillsView.tsx`
   - Receives `skills` as a prop.
   - Mixes that prop with hardcoded `fallbackSkills` and `communitySkills`.
   - Loads skill detail with `useSkillDetailQuery(runtimeConfig, profile, selectedSkillId)`.
   - Saves with `useSaveSkillMutation(runtimeConfig)`.
   - Has no delete/remove action.
   - Has no real install-from-catalog flow.
-- `desktop/src/features/agents/AgentDetailView.tsx`
+- `apps/desktop/src/features/agents/AgentDetailView.tsx`
   - Passes `selectedProfile` and `skills` into `SkillsView`.
-- `desktop/src/features/agents/AgentsView.tsx`
+- `apps/desktop/src/features/agents/AgentsView.tsx`
   - Receives one `skills` array and passes it through to the selected agent detail.
-- `desktop/src/App.tsx`
+- `apps/desktop/src/App.tsx`
   - Passes `iris.skills` to `AgentsView`.
   - Wires Skills refresh as `onRefresh={() => void iris.refreshIris()}`, which can refresh the wrong profile when `agentDetailProfile !== iris.selectedProfile`.
-- `desktop/src/features/iris/useIrisRuntime.ts`
+- `apps/desktop/src/features/iris/useIrisRuntime.ts`
   - Stores one global `skills` array.
   - `skillsQuery` is keyed by `selectedProfile`.
   - `refreshIris(profile, { selectProfile: false })` can set global `skills` for a non-selected profile, but the selected-profile query effect can overwrite it later.
-- `desktop/src/lib/query/skills.ts`
+- `apps/desktop/src/lib/query/skills.ts`
   - Has list/detail/save queries and mutation invalidation.
   - No catalog/install/delete query APIs.
-- `desktop/src/lib/irisRuntime.ts`
+- `apps/desktop/src/lib/irisRuntime.ts`
   - Resolves profile -> Core agent -> Core skill endpoints.
-- `desktop/src/lib/irisCore.ts`
+- `apps/desktop/src/lib/irisCore.ts`
   - Exposes `GET /agents/:id/skills`, `GET /agents/:id/skills/:skill_id`, `POST /agents/:id/skills`, and `PUT /agents/:id/skills/:skill_id`.
 
 Core:
@@ -378,7 +378,7 @@ Update the Skills section to document:
 
 ### 1. Types
 
-File: `desktop/src/types/hermes.ts`
+File: `apps/desktop/src/types/hermes.ts`
 
 Add types:
 
@@ -416,7 +416,7 @@ Keep `HermesSkill["source"]` unchanged unless there is a real new source categor
 
 ### 2. Core Client
 
-File: `desktop/src/lib/irisCore.ts`
+File: `apps/desktop/src/lib/irisCore.ts`
 
 Add:
 
@@ -443,11 +443,11 @@ export async function deleteIrisCoreAgentSkill(agentId: string, skillId: string,
 }
 ```
 
-Update `desktop/src/lib/__tests__/irisCore.test.ts` route coverage to include the new paths.
+Update `apps/desktop/src/lib/__tests__/irisCore.test.ts` route coverage to include the new paths.
 
 ### 3. Runtime Facade
 
-File: `desktop/src/lib/irisRuntime.ts`
+File: `apps/desktop/src/lib/irisRuntime.ts`
 
 Add profile-resolving functions:
 
@@ -472,7 +472,7 @@ function emptySkillCatalog(profile: string, error = ""): HermesSkillCatalog { ..
 
 ### 4. React Query
 
-File: `desktop/src/lib/query/skills.ts`
+File: `apps/desktop/src/lib/query/skills.ts`
 
 Add query keys:
 
@@ -503,10 +503,10 @@ Import `statusKeys` from `./status`.
 
 Files:
 
-- `desktop/src/App.tsx`
-- `desktop/src/features/agents/AgentsView.tsx`
-- `desktop/src/features/agents/AgentDetailView.tsx`
-- `desktop/src/features/agents/__tests__/AgentDetailView.test.tsx`
+- `apps/desktop/src/App.tsx`
+- `apps/desktop/src/features/agents/AgentsView.tsx`
+- `apps/desktop/src/features/agents/AgentDetailView.tsx`
+- `apps/desktop/src/features/agents/__tests__/AgentDetailView.test.tsx`
 
 Change:
 
@@ -538,7 +538,7 @@ If `refreshIris` options are not public enough for this call, add a small wrappe
 
 ### 6. SkillsView Data Flow
 
-File: `desktop/src/features/skills/SkillsView.tsx`
+File: `apps/desktop/src/features/skills/SkillsView.tsx`
 
 Replace prop data with query data:
 
@@ -658,7 +658,7 @@ Add lower-level `HermesStore` tests if the API tests become too broad:
 
 ### Desktop Tests
 
-File: `desktop/src/lib/__tests__/irisCore.test.ts`
+File: `apps/desktop/src/lib/__tests__/irisCore.test.ts`
 
 - Add calls for catalog, install, and delete.
 - Assert paths:
@@ -666,12 +666,12 @@ File: `desktop/src/lib/__tests__/irisCore.test.ts`
   - `POST /v1/agents/agent_default/skills/install`
   - `DELETE /v1/agents/agent_default/skills/skill_1`
 
-File: `desktop/src/lib/query/__tests__/queryKeys.test.ts`
+File: `apps/desktop/src/lib/query/__tests__/queryKeys.test.ts`
 
 - Add catalog key coverage.
 - Add mutation invalidation coverage if existing test helpers make this practical.
 
-File: new `desktop/src/features/skills/__tests__/SkillsView.test.tsx` if feasible.
+File: new `apps/desktop/src/features/skills/__tests__/SkillsView.test.tsx` if feasible.
 
 Suggested tests:
 
@@ -685,7 +685,7 @@ If hook mocking is awkward, prefer a focused integration test with `QueryClientP
 
 ### Existing Tests To Update
 
-- `desktop/src/features/agents/__tests__/AgentDetailView.test.tsx`
+- `apps/desktop/src/features/agents/__tests__/AgentDetailView.test.tsx`
   - Remove `skills` fixture prop if the prop is removed.
   - Keep assertions that overview does not render skills previews.
 - Any TypeScript compile errors from removed `skills` prop plumbing.
@@ -714,15 +714,15 @@ Lightweight dev checks while iterating:
 Targeted commands:
 
 ```bash
-npm --workspace desktop run test -- desktop/src/lib/__tests__/irisCore.test.ts
-npm --workspace desktop run test -- desktop/src/lib/query/__tests__/queryKeys.test.ts
+npm --workspace apps/desktop run test -- apps/desktop/src/lib/__tests__/irisCore.test.ts
+npm --workspace apps/desktop run test -- apps/desktop/src/lib/query/__tests__/queryKeys.test.ts
 iris-core/.venv/bin/pytest iris-core/tests/test_api.py -k "skill"
 ```
 
 Broader checks before handoff:
 
 ```bash
-npm --workspace desktop run build
+npm --workspace apps/desktop run build
 npm run core:test
 ```
 

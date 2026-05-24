@@ -22,24 +22,24 @@ End state:
 
 Primary files:
 
-- `desktop/src/features/agents/AgentsView.tsx`
+- `apps/desktop/src/features/agents/AgentsView.tsx`
   - Chooses list vs detail based on `detailProfile`.
   - Wraps both states in `tool-view agents-workspace`.
-- `desktop/src/features/agents/AgentList.tsx`
+- `apps/desktop/src/features/agents/AgentList.tsx`
   - Renders the agent index with `agent-list-workspace` and `agent-list-row`.
-- `desktop/src/features/agents/AgentDetailView.tsx`
+- `apps/desktop/src/features/agents/AgentDetailView.tsx`
   - Switches between overview, memory, and skills.
   - Overview embeds `SettingsView` with `mode="profile"`.
   - Memory and skills are wrapped in `agent-subview`.
-- `desktop/src/features/agents/AgentTopbar.tsx`
+- `apps/desktop/src/features/agents/AgentTopbar.tsx`
   - Provides back button, selected agent title, and Overview/Memory/Skills tabs.
-- `desktop/src/features/memory/MemoryView.tsx`
+- `apps/desktop/src/features/memory/MemoryView.tsx`
   - Renders a full `tool-view memory-workspace`.
-- `desktop/src/features/skills/SkillsView.tsx`
+- `apps/desktop/src/features/skills/SkillsView.tsx`
   - Renders a full `tool-view skills-workspace`.
-- `desktop/src/features/settings/SettingsView.tsx`
+- `apps/desktop/src/features/settings/SettingsView.tsx`
   - Owns both global settings and the profile overview mode.
-- `desktop/src/App.css`
+- `apps/desktop/src/App.css`
   - Contains the current layout width rules and view CSS.
 
 Current width rules:
@@ -78,11 +78,11 @@ This plan intentionally separates two levels of work:
 - Do not rename routes or change route semantics.
 - Do not change chat layout widths as part of this work.
 - Do not run packaged desktop verification until there is an actual visible UI implementation to verify.
-- Do not overwrite unrelated existing edits in `desktop/src/App.css` or chat files.
+- Do not overwrite unrelated existing edits in `apps/desktop/src/App.css` or chat files.
 
 ## Phase 1: Add Agents Layout Tokens
 
-Add Agents-scoped layout tokens in `desktop/src/App.css` near `.agents-workspace`:
+Add Agents-scoped layout tokens in `apps/desktop/src/App.css` near `.agents-workspace`:
 
 ```css
 .agents-workspace {
@@ -137,7 +137,7 @@ Remove or replace these older width rules after the frame is in place:
 
 Create:
 
-- `desktop/src/features/agents/AgentContentFrame.tsx`
+- `apps/desktop/src/features/agents/AgentContentFrame.tsx`
 
 Suggested API:
 
@@ -201,7 +201,7 @@ Overview currently comes from `SettingsView mode="profile"`. It works technicall
 
 Create:
 
-- `desktop/src/features/agents/AgentOverviewView.tsx`
+- `apps/desktop/src/features/agents/AgentOverviewView.tsx`
 
 Move or extract the profile-only overview markup from `SettingsView.tsx`:
 
@@ -214,7 +214,7 @@ Move or extract the profile-only overview markup from `SettingsView.tsx`:
 Implementation options:
 
 1. Move profile-only helper components from `SettingsView.tsx` into `AgentOverviewView.tsx`.
-2. Extract shared pieces into `desktop/src/features/settings/settingsProfileComponents.tsx` if the global settings page still needs them.
+2. Extract shared pieces into `apps/desktop/src/features/settings/settingsProfileComponents.tsx` if the global settings page still needs them.
 3. Keep global settings behavior in `SettingsView mode="settings"` unchanged.
 
 Preferred result:
@@ -290,13 +290,13 @@ During development:
 Targeted tests:
 
 ```bash
-npm --workspace desktop run test -- AgentList AgentDetailView
+npm --workspace apps/desktop run test -- AgentList AgentDetailView
 ```
 
 If overview extraction changes settings/profile helpers, also run:
 
 ```bash
-npm --workspace desktop run test -- SettingsView runtimeReadiness
+npm --workspace apps/desktop run test -- SettingsView runtimeReadiness
 ```
 
 Before finishing a visible UI implementation, follow the repository instruction for packaged verification:
@@ -340,7 +340,7 @@ Do not use raw `npm run tauri dev` for final Computer Use verification.
 - Risk: Skills needs width for split-pane editing while overview does not.
   - Mitigation: Use explicit `record` and `workbench` frame modes instead of forcing one max width everywhere.
 - Risk: Existing dirty worktree edits in `App.css` may overlap.
-  - Mitigation: Review `git diff -- desktop/src/App.css` before editing and only touch the Agents layout regions.
+  - Mitigation: Review `git diff -- apps/desktop/src/App.css` before editing and only touch the Agents layout regions.
 
 ## Suggested Commit Breakdown
 
@@ -356,4 +356,3 @@ Do not use raw `npm run tauri dev` for final Computer Use verification.
    - Tune list row width, grid columns, metadata priority, and responsive behavior.
 4. Optional later commit: `agents: add desktop master-detail layout`
    - Introduce persistent list pane for desktop detail routes.
-

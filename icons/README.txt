@@ -16,7 +16,7 @@ Recommended files:
 
 - icons/tauri-icons/
   Tauri desktop icon set. This is the typical copy source for
-  desktop/src-tauri/icons/.
+  apps/desktop/src-tauri/icons/.
 
 - icons/web/
   Website assets, including logo PNGs, favicon sizes, and apple-touch-icon

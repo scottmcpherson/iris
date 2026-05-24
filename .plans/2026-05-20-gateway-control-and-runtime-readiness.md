@@ -32,25 +32,25 @@ That state should be treated as read-only for new runtime work, not as fully onl
 
 Relevant Desktop files:
 
-- `desktop/src/layout/AppShell.tsx`
+- `apps/desktop/src/layout/AppShell.tsx`
   - `sidebarConnectionStatusLabel()` currently uses only `connected`.
   - This produces labels such as "Local connected" even when the selected gateway is stopped.
-- `desktop/src/features/iris/useIrisRuntime.ts`
+- `apps/desktop/src/features/iris/useIrisRuntime.ts`
   - Owns status refresh and selected profile state.
   - Calls `getIrisStatus()` and stores `HermesStatus`.
-- `desktop/src/lib/irisCore.ts`
+- `apps/desktop/src/lib/irisCore.ts`
   - `getIrisCoreStatus()` already maps Core runtime probe data into `gatewayStatus`, `activeApiStatus`, and `runtimeStatus`.
   - `coreAgentToHermesProfile()` already maps `metadata.gatewayRunning`.
-- `desktop/src/features/chat/ChatView.tsx`
+- `apps/desktop/src/features/chat/ChatView.tsx`
   - Composer behavior currently keys mostly off `connected`.
   - Slash command menu receives `slashCommandsError`, but the error row is generic.
-- `desktop/src/features/chat/useIrisSlashCommands.ts`
+- `apps/desktop/src/features/chat/useIrisSlashCommands.ts`
   - Loads slash commands only when Core is connected.
   - Does not distinguish gateway stopped from generic load failure.
-- `desktop/src/features/settings/SettingsView.tsx`
+- `apps/desktop/src/features/settings/SettingsView.tsx`
   - Existing service management controls operate on Iris Core and plugin install.
   - This is a natural place to add Hermes gateway start/stop/restart actions.
-- `desktop/src-tauri/src/ssh_tunnel.rs`
+- `apps/desktop/src-tauri/src/ssh_tunnel.rs`
   - Owns SSH transport to remote Core.
   - Should not become the gateway-control protocol.
 
@@ -210,7 +210,7 @@ For failures, return `ok: false` with `error`, `command`, and best-effort `probe
 
 ## Desktop API Additions
 
-File: `desktop/src/lib/irisCore.ts`
+File: `apps/desktop/src/lib/irisCore.ts`
 
 Add types:
 
@@ -277,7 +277,7 @@ Use the selected profile, not only `status.activeProfile`, because the user can 
 
 1. Sidebar connection label.
 
-   File: `desktop/src/layout/AppShell.tsx`
+   File: `apps/desktop/src/layout/AppShell.tsx`
 
    Replace the single green "connected" idea with a status that can show:
 
@@ -291,7 +291,7 @@ Use the selected profile, not only `status.activeProfile`, because the user can 
 
 2. Profile menu rows.
 
-   File: `desktop/src/features/chat/components/ProfileMenu.tsx`
+   File: `apps/desktop/src/features/chat/components/ProfileMenu.tsx`
 
    Add per-profile runtime hints:
 
@@ -302,7 +302,7 @@ Use the selected profile, not only `status.activeProfile`, because the user can 
 
 3. Chat composer degraded state.
 
-   File: `desktop/src/features/chat/ChatView.tsx`
+   File: `apps/desktop/src/features/chat/ChatView.tsx`
 
    When runtime readiness is not `ready`, preserve history loading but make sending explicit:
 
@@ -314,7 +314,7 @@ Use the selected profile, not only `status.activeProfile`, because the user can 
 
 4. Slash command unavailable row.
 
-   File: `desktop/src/features/chat/components/SlashCommandMenu.tsx`
+   File: `apps/desktop/src/features/chat/components/SlashCommandMenu.tsx`
 
    Replace generic copy when the runtime state is known:
 
@@ -324,7 +324,7 @@ Use the selected profile, not only `status.activeProfile`, because the user can 
 
 5. Settings service management.
 
-   File: `desktop/src/features/settings/SettingsView.tsx`
+   File: `apps/desktop/src/features/settings/SettingsView.tsx`
 
    Add menu items:
 
@@ -394,9 +394,9 @@ pytest iris-core/tests
 Targeted Desktop tests:
 
 ```bash
-npm test -- --run desktop/src/layout/__tests__/AppShell.test.ts
-npm test -- --run desktop/src/features/chat/__tests__/ChatView.test.ts
-npm test -- --run desktop/src/lib/__tests__/irisCore.test.ts
+npm test -- --run apps/desktop/src/layout/__tests__/AppShell.test.ts
+npm test -- --run apps/desktop/src/features/chat/__tests__/ChatView.test.ts
+npm test -- --run apps/desktop/src/lib/__tests__/irisCore.test.ts
 ```
 
 Manual local checks:

@@ -96,17 +96,17 @@ Primary Core files:
 
 Primary Desktop files:
 
-- `desktop/src/features/agents/AgentOverviewView.tsx`
+- `apps/desktop/src/features/agents/AgentOverviewView.tsx`
   - Shows profile metadata, runtime health, runtime configuration, and simple create/clone/rename/switch/delete controls.
-- `desktop/src/features/agents/AgentDetailView.tsx`
+- `apps/desktop/src/features/agents/AgentDetailView.tsx`
   - Hosts Overview, Memory, and Skills tabs.
-- `desktop/src/features/memory/MemoryView.tsx`
+- `apps/desktop/src/features/memory/MemoryView.tsx`
   - Profile-local built-in memory surface.
-- `desktop/src/features/skills/SkillsView.tsx`
+- `apps/desktop/src/features/skills/SkillsView.tsx`
   - Profile-local skill surface.
-- `desktop/src/features/iris/useIrisRuntime.ts`
+- `apps/desktop/src/features/iris/useIrisRuntime.ts`
   - Owns profile actions, selected profile, refreshes, notices, memory/skill callbacks.
-- `desktop/src/lib/irisCore.ts` and `desktop/src/lib/irisRuntime.ts`
+- `apps/desktop/src/lib/irisCore.ts` and `apps/desktop/src/lib/irisRuntime.ts`
   - HTTP/Core wrappers and profile-to-agent resolution.
 
 ## Missing Work
@@ -543,7 +543,7 @@ iris-core/.venv/bin/python -m pytest iris-core/tests/test_profiles.py iris-core/
 Desktop targeted tests:
 
 ```bash
-npm --workspace desktop run test -- AgentDetailView MemoryView SkillsView
+npm --workspace apps/desktop run test -- AgentDetailView MemoryView SkillsView
 ```
 
 Full repo check before handoff:

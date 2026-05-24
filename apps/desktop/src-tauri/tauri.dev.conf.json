@@ -1,0 +1,13 @@
+{
+  "productName": "Iris Dev",
+  "identifier": "com.nousresearch.hermes-agent.desktop.dev",
+  "bundle": {
+    "icon": [
+      "../../../icons/tauri-icons/32x32.png",
+      "../../../icons/tauri-icons/128x128.png",
+      "../../../icons/tauri-icons/128x128@2x.png",
+      "../../../icons/tauri-icons/icon.icns",
+      "../../../icons/tauri-icons/icon.ico"
+    ]
+  }
+}

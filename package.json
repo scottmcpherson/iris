@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "type": "module",
   "workspaces": [
-    "desktop"
+    "apps/*"
   ],
   "scripts": {
     "bootstrap": "npm install && npm run core:setup",
@@ -19,10 +19,10 @@
     "dev:web": "node scripts/dev.mjs --web",
     "dev:desktop": "node scripts/dev.mjs",
     "dev:no-core": "node scripts/dev.mjs --no-core",
-    "check": "npm --workspace desktop run check && npm run core:test",
-    "build": "npm --workspace desktop run build",
-    "build:mac:app": "npm run core:build:binary && npm --workspace desktop run build:mac:app",
-    "package:check": "npm --workspace desktop run package:check"
+    "check": "npm --workspace apps/desktop run check && npm run core:test",
+    "build": "npm --workspace apps/desktop run build",
+    "build:mac:app": "npm run core:build:binary && npm --workspace apps/desktop run build:mac:app",
+    "package:check": "npm --workspace apps/desktop run package:check"
   },
   "engines": {
     "node": ">=22",

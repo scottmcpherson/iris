@@ -37,13 +37,13 @@ This is not a complete user auth flow. It is a token gate plus a device-token su
 
 Relevant files:
 
-- `desktop/src/lib/coreTransport.ts`
-- `desktop/src/lib/irisCore.ts`
-- `desktop/src/lib/irisRuntime.ts`
-- `desktop/src-tauri/python/core_bridge.py`
-- `desktop/src-tauri/src/lib.rs`
-- `desktop/src/lib/__tests__/irisCore.test.ts`
-- `desktop/src-tauri/python/tests/test_core_bridge.py`
+- `apps/desktop/src/lib/coreTransport.ts`
+- `apps/desktop/src/lib/irisCore.ts`
+- `apps/desktop/src/lib/irisRuntime.ts`
+- `apps/desktop/src-tauri/python/core_bridge.py`
+- `apps/desktop/src-tauri/src/lib.rs`
+- `apps/desktop/src/lib/__tests__/irisCore.test.ts`
+- `apps/desktop/src-tauri/python/tests/test_core_bridge.py`
 
 Current behavior:
 
@@ -58,12 +58,12 @@ This fallback hides transport differences and makes auth behavior implicit.
 
 Relevant files:
 
-- `desktop/src/app/runtimeConfig.ts`
-- `desktop/src/types/hermes.ts`
-- `desktop/src/app/__tests__/runtimeConfig.test.ts`
-- `desktop/src/features/settings/SettingsView.tsx`
-- `desktop/src/layout/AppShell.tsx`
-- `desktop/src/lib/irisCore.ts`
+- `apps/desktop/src/app/runtimeConfig.ts`
+- `apps/desktop/src/types/hermes.ts`
+- `apps/desktop/src/app/__tests__/runtimeConfig.test.ts`
+- `apps/desktop/src/features/settings/SettingsView.tsx`
+- `apps/desktop/src/layout/AppShell.tsx`
+- `apps/desktop/src/lib/irisCore.ts`
 
 Current behavior:
 
@@ -96,11 +96,11 @@ For local and SSH, the adapter should be configured against loopback from the He
 Relevant files:
 
 - `README.md`
-- `desktop/README.md`
+- `apps/desktop/README.md`
 - `iris-core/README.md`
 - `iris-platform/README.md`
 - `docs/communication-map.html`
-- `desktop/docs/production-readiness.md`
+- `apps/desktop/docs/production-readiness.md`
 
 Current docs still describe direct private-network Core URLs, paired device tokens, and token-bearing non-loopback Core traffic.
 
@@ -170,7 +170,7 @@ Migration behavior:
 
 Tests:
 
-- Update `desktop/src/app/__tests__/runtimeConfig.test.ts`.
+- Update `apps/desktop/src/app/__tests__/runtimeConfig.test.ts`.
 - Remove tests that assert `manual-url` or `tailscale` persistence.
 - Add tests that legacy unsupported modes are sanitized to a valid local/SSH config.
 
@@ -210,7 +210,7 @@ Tests:
 
 ### 3. Remove Remote Credential Storage From the Bridge
 
-Remove from `desktop/src-tauri/python/core_bridge.py`:
+Remove from `apps/desktop/src-tauri/python/core_bridge.py`:
 
 - `remote_credential_status`.
 - `remote_credential_save`.
@@ -218,7 +218,7 @@ Remove from `desktop/src-tauri/python/core_bridge.py`:
 - Keychain account helpers used only for Core bearer tokens.
 - `read_remote_token()` and token injection for generic Core JSON requests, unless still needed for a transitional management-token path.
 
-Remove from `desktop/src/lib/irisRuntime.ts`:
+Remove from `apps/desktop/src/lib/irisRuntime.ts`:
 
 - `getRemoteCredentialStatus()`.
 - `saveRemoteCredential()`.
@@ -232,7 +232,7 @@ Tests:
 
 ### 4. Split Core Transport Instead of Falling Back
 
-Refactor `desktop/src/lib/coreTransport.ts` into explicit transports.
+Refactor `apps/desktop/src/lib/coreTransport.ts` into explicit transports.
 
 Suggested shape:
 
@@ -297,16 +297,16 @@ Update desktop UI:
 
 Files to check:
 
-- `desktop/src/features/settings/SettingsView.tsx`
-- `desktop/src/layout/AppShell.tsx`
-- `desktop/src/features/chat/ChatView.tsx`
-- `desktop/src/features/runtime/RuntimeDiagnosticsDialog.tsx`
-- `desktop/src/features/polish/OnboardingOverlay.tsx`
-- `desktop/src/lib/irisCore.ts`
+- `apps/desktop/src/features/settings/SettingsView.tsx`
+- `apps/desktop/src/layout/AppShell.tsx`
+- `apps/desktop/src/features/chat/ChatView.tsx`
+- `apps/desktop/src/features/runtime/RuntimeDiagnosticsDialog.tsx`
+- `apps/desktop/src/features/polish/OnboardingOverlay.tsx`
+- `apps/desktop/src/lib/irisCore.ts`
 
 Tests:
 
-- Update shell/status label tests under `desktop/src/layout/__tests__`.
+- Update shell/status label tests under `apps/desktop/src/layout/__tests__`.
 - Update onboarding/settings tests if present.
 
 ### 7. Update Hermes Adapter Assumptions
@@ -336,11 +336,11 @@ Tests:
 Update docs to match the product model:
 
 - `README.md`
-- `desktop/README.md`
+- `apps/desktop/README.md`
 - `iris-core/README.md`
 - `iris-platform/README.md`
 - `iris-core/src/hermes_management_server/payload/iris-platform/README.md`
-- `desktop/docs/production-readiness.md`
+- `apps/desktop/docs/production-readiness.md`
 
 Remove or rewrite:
 
@@ -356,9 +356,9 @@ Remove or rewrite:
 
 Lightweight checks while implementing:
 
-- `npm test --workspace desktop -- runtimeConfig`
-- `npm test --workspace desktop -- irisCore`
-- `npm test --workspace desktop -- ssh`
+- `npm test --workspace apps/desktop -- runtimeConfig`
+- `npm test --workspace apps/desktop -- irisCore`
+- `npm test --workspace apps/desktop -- ssh`
 - `cd iris-core && uv run pytest tests/test_security.py tests/test_api.py`
 - `pytest iris-platform/tests/test_adapter.py`, or the repo's equivalent Python command if adapter tests run through Core's environment.
 

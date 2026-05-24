@@ -14,15 +14,15 @@ End state, macOS-only:
 ## Current Behavior
 
 - `npm run bootstrap` (`package.json:10`) is the only Core install path. It runs `scripts/setup-iris-core.mjs`, which creates `iris-core/.venv` and `pip install -e ".[dev]"`. Requires the monorepo to be checked out.
-- The packaged `.app` does **not** include Core. `desktop/src-tauri/src/lib.rs` only spawns `core_bridge.py` for Tauri commands; it does not spawn `iris-core`. `tauri.conf.json` has no `externalBin`.
+- The packaged `.app` does **not** include Core. `apps/desktop/src-tauri/src/lib.rs` only spawns `core_bridge.py` for Tauri commands; it does not spawn `iris-core`. `tauri.conf.json` has no `externalBin`.
 - Core is launched in dev by `scripts/dev.mjs`, which runs `iris-core/.venv/bin/iris-core`. Outside dev, the user must start Core themselves.
 - iris-platform is installed by `scripts/install-iris-platform.mjs`: copies `iris-platform/` to `$HERMES_HOME/plugins/iris-platform/` and runs `hermes plugins enable iris-platform`. Monorepo-only.
 - `/health` (`HealthResponse` in `iris-core/src/hermes_management_server/models.py:15-19`) returns `{ ok, checkedAt, hermesHome, profilesRootExists }`. `/v1/health` (`main.py:819-828`) returns the same plus `core` storage health. Neither includes a version field.
-- Desktop's status handler explicitly hardcodes `version: null` (`desktop/src/lib/agentuiCore.ts:226`). `HermesStatus.version` exists in the type (`desktop/src/types/hermes.ts:112`) but is never populated.
-- Both packages are pinned at `0.1.0`: `iris-core/pyproject.toml:7`, `iris-core/src/hermes_management_server/__init__.py:7`, `desktop/package.json:4`, `desktop/src-tauri/Cargo.toml:4`, `desktop/src-tauri/tauri.conf.json:4`. No shared/derived version source.
+- Desktop's status handler explicitly hardcodes `version: null` (`apps/desktop/src/lib/agentuiCore.ts:226`). `HermesStatus.version` exists in the type (`apps/desktop/src/types/hermes.ts:112`) but is never populated.
+- Both packages are pinned at `0.1.0`: `iris-core/pyproject.toml:7`, `iris-core/src/hermes_management_server/__init__.py:7`, `apps/desktop/package.json:4`, `apps/desktop/src-tauri/Cargo.toml:4`, `apps/desktop/src-tauri/tauri.conf.json:4`. No shared/derived version source.
 - `.github/workflows/ci.yml` is the only workflow. It runs `npm run check`, `cargo check`, `tauri info` on macOS/Linux/Windows for PRs and main pushes. It does **not** build packaged artifacts, run on tags, or produce releases.
-- `desktop/scripts/check-release-env.mjs` requires `APPLE_ID`, `APPLE_PASSWORD`, `APPLE_TEAM_ID`, `APPLE_SIGNING_IDENTITY` (for the `.app`). No equivalent for the `.pkg` installer cert.
-- `desktop/docs/production-readiness.md` documents the Tauri updater plugin as a future addition ("Add the Tauri updater plugin once the public update manifest URL and signing key are finalized"). Not present in `desktop/src-tauri/Cargo.toml`.
+- `apps/desktop/scripts/check-release-env.mjs` requires `APPLE_ID`, `APPLE_PASSWORD`, `APPLE_TEAM_ID`, `APPLE_SIGNING_IDENTITY` (for the `.app`). No equivalent for the `.pkg` installer cert.
+- `apps/desktop/docs/production-readiness.md` documents the Tauri updater plugin as a future addition ("Add the Tauri updater plugin once the public update manifest URL and signing key are finalized"). Not present in `apps/desktop/src-tauri/Cargo.toml`.
 
 ## Desired Behavior
 
@@ -35,7 +35,7 @@ End state, macOS-only:
 ## Findings
 
 - **Tauri sidecar is the natural lifecycle owner for bundled Core.**
-  - **Evidence**: `desktop/src-tauri/Cargo.toml` and `desktop/src-tauri/tauri.conf.json` already support adding `externalBin`; `desktop/src-tauri/src/lib.rs:77-129` is where `tauri::Builder::default()` is configured and is the right place to wire `Command::new_sidecar` on setup + child cleanup on `RunEvent::Exit`.
+  - **Evidence**: `apps/desktop/src-tauri/Cargo.toml` and `apps/desktop/src-tauri/tauri.conf.json` already support adding `externalBin`; `apps/desktop/src-tauri/src/lib.rs:77-129` is where `tauri::Builder::default()` is configured and is the right place to wire `Command::new_sidecar` on setup + child cleanup on `RunEvent::Exit`.
   - **Why it matters**: Eliminates the "user has to install Core separately" friction for the most common (same-machine) case without changing the network shape of the system.
   - **Confidence**: high.
 
@@ -55,7 +55,7 @@ End state, macOS-only:
   - **Confidence**: high.
 
 - **AppShell already has a banner area; reuse it.**
-  - **Evidence**: `desktop/src/layout/AppShell.tsx:834-842` renders `<div className="connection-banner">` when `error` is set. A compatibility banner is a sibling — not a hard error, but a blocking warning.
+  - **Evidence**: `apps/desktop/src/layout/AppShell.tsx:834-842` renders `<div className="connection-banner">` when `error` is set. A compatibility banner is a sibling — not a hard error, but a blocking warning.
   - **Why it matters**: One integration point, no new layout primitive.
   - **Confidence**: medium (Codex should verify this is the best place vs. injecting nearer the top-level `<App>`).
 
@@ -65,31 +65,31 @@ End state, macOS-only:
   - **Confidence**: high.
 
 - **Existing release script does most of the Desktop signing already.**
-  - **Evidence**: `desktop/package.json:13` (`release:mac` → `check-release-env.mjs` + `tauri build --bundles app`). `check-release-env.mjs` validates `APPLE_ID`, `APPLE_PASSWORD`, `APPLE_TEAM_ID`, `APPLE_SIGNING_IDENTITY`. Tauri's `tauri build` reads those for signing + notarization.
+  - **Evidence**: `apps/desktop/package.json:13` (`release:mac` → `check-release-env.mjs` + `tauri build --bundles app`). `check-release-env.mjs` validates `APPLE_ID`, `APPLE_PASSWORD`, `APPLE_TEAM_ID`, `APPLE_SIGNING_IDENTITY`. Tauri's `tauri build` reads those for signing + notarization.
   - **Why it matters**: CI can call `release:mac` directly; doesn't need a separate Desktop signing pipeline. The new piece is the `.pkg` (Developer ID Installer cert, `pkgbuild`+`productbuild`+`notarytool`).
   - **Confidence**: high.
 
 - **Tauri updater plugin requires a public-key/private-key pair and a manifest URL, neither of which exists yet.**
-  - **Evidence**: `desktop/docs/production-readiness.md` calls this out as deferred. No `pubkey` in `tauri.conf.json`. No `update.json` produced anywhere.
+  - **Evidence**: `apps/desktop/docs/production-readiness.md` calls this out as deferred. No `pubkey` in `tauri.conf.json`. No `update.json` produced anywhere.
   - **Why it matters**: Wiring the plugin is small, but provisioning the signing key + choosing a manifest host are decisions the user needs to make. Both can be staged: ship the plugin with a TBD manifest URL, populate after the first release lands.
   - **Confidence**: high.
 
 ## Claims To Verify
 
 - [ ] `iris-core/src/hermes_management_server/__init__.py:7` sets `__version__ = "0.1.0"` and is the canonical version constant. No other file in `iris-core/` defines a separate `__version__`.
-- [ ] `iris-core/src/hermes_management_server/main.py:819-828` defines `core_health` returning a plain `dict`, not a `HealthResponse` model. Desktop calls `/v1/health` (not `/health`) because `coreBaseUrl` (`desktop/src/lib/coreTransport.ts:11-14`) always appends `/v1`.
-- [ ] `desktop/src/lib/agentuiCore.ts:226` hardcodes `version: null` and is the only place `version` is set on the returned `HermesStatus`.
-- [ ] `desktop/src/types/hermes.ts:105-125` is the canonical `HermesStatus` type. There are no overlapping/duplicate declarations to keep in sync.
-- [ ] `desktop/src-tauri/src/lib.rs:77-129` is the Tauri `Builder::default()` setup, and the `setup()` closure is the right place to spawn a sidecar. There is no existing sidecar/child process being spawned that this would conflict with.
-- [ ] `desktop/src-tauri/Cargo.toml:21-25` already pulls in `tauri = "2"` and `tauri-plugin-opener = "2"`. Adding `tauri-plugin-updater = "2"` and `tauri-plugin-shell = "2"` is the standard Tauri v2 pattern.
-- [ ] `desktop/src-tauri/tauri.conf.json` has no `externalBin` declared today.
+- [ ] `iris-core/src/hermes_management_server/main.py:819-828` defines `core_health` returning a plain `dict`, not a `HealthResponse` model. Desktop calls `/v1/health` (not `/health`) because `coreBaseUrl` (`apps/desktop/src/lib/coreTransport.ts:11-14`) always appends `/v1`.
+- [ ] `apps/desktop/src/lib/agentuiCore.ts:226` hardcodes `version: null` and is the only place `version` is set on the returned `HermesStatus`.
+- [ ] `apps/desktop/src/types/hermes.ts:105-125` is the canonical `HermesStatus` type. There are no overlapping/duplicate declarations to keep in sync.
+- [ ] `apps/desktop/src-tauri/src/lib.rs:77-129` is the Tauri `Builder::default()` setup, and the `setup()` closure is the right place to spawn a sidecar. There is no existing sidecar/child process being spawned that this would conflict with.
+- [ ] `apps/desktop/src-tauri/Cargo.toml:21-25` already pulls in `tauri = "2"` and `tauri-plugin-opener = "2"`. Adding `tauri-plugin-updater = "2"` and `tauri-plugin-shell = "2"` is the standard Tauri v2 pattern.
+- [ ] `apps/desktop/src-tauri/tauri.conf.json` has no `externalBin` declared today.
 - [ ] `scripts/install-iris-platform.mjs:47-58` (file copy logic) and `:21-44` (plugin enable logic) are the entire install path for iris-platform; there is no other place that wires the plugin.
 - [ ] `iris-platform/plugin.yaml` declares `name: iris-platform`, `version: 0.1.0`, and `requires_env: [IRIS_BASE_URL, IRIS_TOKEN]`. There are no other build steps before copying.
 - [ ] `iris-core/pyproject.toml` has `[project.scripts] iris-core = "hermes_management_server.main:cli"` and `[tool.setuptools.packages.find] where = ["src"]`. No existing `package_data` or `MANIFEST.in` ships non-Python files.
 - [ ] `iris-core/src/hermes_management_server/main.py:3064-3077` (`build_parser`) defines `command` as a positional with `choices=("serve", "migrate-source-of-truth")`. Adding a new choice requires extending both `choices` and the `if args.command == ...` branch at `:3103-3107`.
 - [ ] `.github/workflows/ci.yml:3-7` is the only workflow file, and triggers on `pull_request` + `push.branches: [main]`. No tag-triggered workflow exists.
-- [ ] `desktop/scripts/check-release-env.mjs` validates four Apple env vars and does not validate `APPLE_INSTALLER_SIGNING_IDENTITY` (the cert needed for `.pkg`).
-- [ ] No file in `desktop/src-tauri/` declares an `updater` plugin or a public key. `desktop/docs/production-readiness.md` "Updates" section is still accurate.
+- [ ] `apps/desktop/scripts/check-release-env.mjs` validates four Apple env vars and does not validate `APPLE_INSTALLER_SIGNING_IDENTITY` (the cert needed for `.pkg`).
+- [ ] No file in `apps/desktop/src-tauri/` declares an `updater` plugin or a public key. `apps/desktop/docs/production-readiness.md` "Updates" section is still accurate.
 
 ## Implementation Plan
 
@@ -101,12 +101,12 @@ Steps are ordered for incremental landing. Each phase can ship independently.
 2. **`iris-core/src/hermes_management_server/models.py`** — Add fields to `HealthResponse`: `version: str`, `minClientVersion: str`, `service: str = "iris-core"`. Keep existing fields for backward compatibility.
 3. **`iris-core/src/hermes_management_server/main.py`** — Update `/health` and `/v1/health` to include `version=__version__, minClientVersion=MIN_CLIENT_VERSION, service="iris-core"`. Use the existing `HealthResponse` model for `/health`; extend the `/v1/health` dict at `:820-828`.
 4. **`iris-core/tests/test_api.py`** — Add test `test_health_includes_version_and_min_client` asserting both fields present and equal to the package constants.
-5. **`desktop/src/lib/compat.ts`** (new) — Tiny semver-compare utility: `compareVersions(a: string, b: string): -1 | 0 | 1` handling `X.Y.Z` plus optional `-pre.N` suffix. No external dep.
-6. **`desktop/src/lib/__tests__/compat.test.ts`** (new) — Vitest covering equal, less, greater, pre-release ordering.
-7. **`desktop/src/types/hermes.ts`** — Extend `HermesStatus` with `coreCompatibility?: { coreVersion: string; minClientVersion: string; clientVersion: string; ok: boolean }`. Keep `version: string | null` for backward compat (now actually populated).
-8. **`desktop/src/lib/agentuiCore.ts`** — In `getAgentUICoreStatus` (`:205-240`), read `health.version` / `health.minClientVersion`. Compute compatibility against the Desktop's own version (import from `package.json` via Vite's `import.meta.env` or a constants file — Codex picks the cleanest source). Populate `version` and `coreCompatibility`.
-9. **`desktop/src/layout/AppShell.tsx`** — Add a sibling banner next to the existing `connection-banner` at `:834-842`. New className `compat-banner`. Renders when `status?.coreCompatibility && !status.coreCompatibility.ok`. Copy: `"This Iris ({client}) is too old for Core at {host} (requires ≥ {min}). Update Iris Desktop."` Button "Update now" appears only when `runtimeConfig.connectionMode === "local"` (wired to Tauri updater in Phase 6; placeholder no-op until then).
-10. **`desktop/src/App.css`** — Add styles for `.compat-banner` mirroring `.connection-banner`'s visual structure but with a warning tone (yellow/amber accent rather than red).
+5. **`apps/desktop/src/lib/compat.ts`** (new) — Tiny semver-compare utility: `compareVersions(a: string, b: string): -1 | 0 | 1` handling `X.Y.Z` plus optional `-pre.N` suffix. No external dep.
+6. **`apps/desktop/src/lib/__tests__/compat.test.ts`** (new) — Vitest covering equal, less, greater, pre-release ordering.
+7. **`apps/desktop/src/types/hermes.ts`** — Extend `HermesStatus` with `coreCompatibility?: { coreVersion: string; minClientVersion: string; clientVersion: string; ok: boolean }`. Keep `version: string | null` for backward compat (now actually populated).
+8. **`apps/desktop/src/lib/agentuiCore.ts`** — In `getAgentUICoreStatus` (`:205-240`), read `health.version` / `health.minClientVersion`. Compute compatibility against the Desktop's own version (import from `package.json` via Vite's `import.meta.env` or a constants file — Codex picks the cleanest source). Populate `version` and `coreCompatibility`.
+9. **`apps/desktop/src/layout/AppShell.tsx`** — Add a sibling banner next to the existing `connection-banner` at `:834-842`. New className `compat-banner`. Renders when `status?.coreCompatibility && !status.coreCompatibility.ok`. Copy: `"This Iris ({client}) is too old for Core at {host} (requires ≥ {min}). Update Iris Desktop."` Button "Update now" appears only when `runtimeConfig.connectionMode === "local"` (wired to Tauri updater in Phase 6; placeholder no-op until then).
+10. **`apps/desktop/src/App.css`** — Add styles for `.compat-banner` mirroring `.connection-banner`'s visual structure but with a warning tone (yellow/amber accent rather than red).
 
 ### Phase 2 — `install-hermes-plugin` CLI subcommand
 
@@ -128,18 +128,18 @@ Steps are ordered for incremental landing. Each phase can ship independently.
 
 ### Phase 4 — Tauri sidecar wiring
 
-20. **`desktop/src-tauri/Cargo.toml`** — Add `tauri-plugin-shell = "2"` to dependencies.
-21. **`desktop/src-tauri/binaries/.gitkeep`** (new) — placeholder so the directory exists; binaries themselves are not checked in.
-22. **`desktop/scripts/stage-core-sidecar.mjs`** (new) — Pre-build script: copies `iris-core/dist/iris-core` to `desktop/src-tauri/binaries/iris-core-aarch64-apple-darwin` (Tauri requires the target triple suffix). Fails clearly if the source binary doesn't exist.
-23. **`desktop/package.json`** — Update `build:mac:app` and `release:mac` to run `stage-core-sidecar.mjs` first. Add `"build:sidecar": "node scripts/stage-core-sidecar.mjs"`.
-24. **`desktop/src-tauri/tauri.conf.json`** — Add `bundle.externalBin: ["binaries/iris-core"]`. Add permission entries for `shell:allow-execute` scoped to the bundled sidecar in `desktop/src-tauri/capabilities/default.json` (Codex consults Tauri v2 sidecar docs; pattern is well-established).
-25. **`desktop/src-tauri/src/lib.rs`** — In the `setup` closure (around `:80`):
+20. **`apps/desktop/src-tauri/Cargo.toml`** — Add `tauri-plugin-shell = "2"` to dependencies.
+21. **`apps/desktop/src-tauri/binaries/.gitkeep`** (new) — placeholder so the directory exists; binaries themselves are not checked in.
+22. **`apps/desktop/scripts/stage-core-sidecar.mjs`** (new) — Pre-build script: copies `iris-core/dist/iris-core` to `apps/desktop/src-tauri/binaries/iris-core-aarch64-apple-darwin` (Tauri requires the target triple suffix). Fails clearly if the source binary doesn't exist.
+23. **`apps/desktop/package.json`** — Update `build:mac:app` and `release:mac` to run `stage-core-sidecar.mjs` first. Add `"build:sidecar": "node scripts/stage-core-sidecar.mjs"`.
+24. **`apps/desktop/src-tauri/tauri.conf.json`** — Add `bundle.externalBin: ["binaries/iris-core"]`. Add permission entries for `shell:allow-execute` scoped to the bundled sidecar in `apps/desktop/src-tauri/capabilities/default.json` (Codex consults Tauri v2 sidecar docs; pattern is well-established).
+25. **`apps/desktop/src-tauri/src/lib.rs`** — In the `setup` closure (around `:80`):
     - Define an async helper `ensure_core_running(app: AppHandle) -> Result<()>`:
       - HTTP GET `http://127.0.0.1:8765/v1/health` with 500ms timeout. If response is JSON with `service == "iris-core"` and `ok == true`, return early (existing healthy Core, e.g. user's standalone install or remote dev).
       - Otherwise: spawn the sidecar via `tauri_plugin_shell::ShellExt::shell().sidecar("iris-core")`, env vars from existing dev defaults (`HERMES_HOME` from `~/.hermes`), poll `/v1/health` until ready (max 10s).
     - Store the `CommandChild` handle in app state so it can be killed on exit.
     - Register a `RunEvent::Exit` handler (after `.run(...)` is replaced with `.build(...).run(|app, event| { ... })`) that kills the child.
-26. **`desktop/src/layout/AppShell.tsx`** — During the initial connection retry loop, show a "Starting Iris Core…" placeholder instead of the existing "Core unreachable" error for the first few seconds after launch (Codex picks the threshold; 3-5s feels right).
+26. **`apps/desktop/src/layout/AppShell.tsx`** — During the initial connection retry loop, show a "Starting Iris Core…" placeholder instead of the existing "Core unreachable" error for the first few seconds after launch (Codex picks the threshold; 3-5s feels right).
 
 ### Phase 5 — Standalone `.pkg` installer
 
@@ -152,7 +152,7 @@ Steps are ordered for incremental landing. Each phase can ship independently.
     - Runs `xcrun stapler staple iris-core-signed.pkg`.
     - Output: `iris-core/dist/Iris-Core-<X.Y.Z>.pkg`.
 28. **`iris-core/launchd/com.nousresearch.iris-core.plist`** (new) — LaunchAgent that runs `/usr/local/bin/iris-core serve --host 127.0.0.1 --port 8765`. `KeepAlive: true`, `RunAtLoad: false` (user opts in via `launchctl load`).
-29. **`iris-core/scripts/check-release-env.mjs`** (new) — Validates `APPLE_INSTALLER_SIGNING_IDENTITY`, `APPLE_ID`, `APPLE_PASSWORD`, `APPLE_TEAM_ID`. Modeled after `desktop/scripts/check-release-env.mjs`.
+29. **`iris-core/scripts/check-release-env.mjs`** (new) — Validates `APPLE_INSTALLER_SIGNING_IDENTITY`, `APPLE_ID`, `APPLE_PASSWORD`, `APPLE_TEAM_ID`. Modeled after `apps/desktop/scripts/check-release-env.mjs`.
 30. **`package.json`** — Add `"core:build:pkg": "node iris-core/scripts/build-pkg.mjs"` and `"core:release:mac": "node iris-core/scripts/check-release-env.mjs && npm run core:build:binary && npm run core:build:pkg"`.
 
 ### Phase 6 — GitHub Actions release workflow + Tauri updater
@@ -165,13 +165,13 @@ Steps are ordered for incremental landing. Each phase can ship independently.
     - `npm run core:build:binary` (PyInstaller).
     - `npm run core:build:pkg` (signed `.pkg`).
     - `npm run build:sidecar` (stage binary into Desktop).
-    - `npm --workspace desktop run release:mac` (signed `.app`).
+    - `npm --workspace apps/desktop run release:mac` (signed `.app`).
     - Generate `update.json` (see step 36) and sign with `tauri signer sign` using `TAURI_SIGNING_PRIVATE_KEY`.
     - Use `softprops/action-gh-release` to create a release tagged `release-X.Y.Z`, attaching `Iris-<X.Y.Z>.app.tar.gz`, `Iris-Core-<X.Y.Z>.pkg`, and `update.json`.
-    - Required secrets (document in `desktop/docs/production-readiness.md`): `APPLE_ID`, `APPLE_PASSWORD`, `APPLE_TEAM_ID`, `APPLE_SIGNING_IDENTITY`, `APPLE_INSTALLER_SIGNING_IDENTITY`, `APPLE_CERT_P12_BASE64`, `APPLE_CERT_PASSWORD`, `APPLE_INSTALLER_CERT_P12_BASE64`, `APPLE_INSTALLER_CERT_PASSWORD`, `TAURI_SIGNING_PRIVATE_KEY`, `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`.
-32. **`desktop/src-tauri/Cargo.toml`** — Add `tauri-plugin-updater = "2"`.
-33. **`desktop/src-tauri/src/lib.rs`** — Register `tauri-plugin-updater` plugin (`.plugin(tauri_plugin_updater::Builder::new().build())`).
-34. **`desktop/src-tauri/tauri.conf.json`** — Add `plugins.updater`:
+    - Required secrets (document in `apps/desktop/docs/production-readiness.md`): `APPLE_ID`, `APPLE_PASSWORD`, `APPLE_TEAM_ID`, `APPLE_SIGNING_IDENTITY`, `APPLE_INSTALLER_SIGNING_IDENTITY`, `APPLE_CERT_P12_BASE64`, `APPLE_CERT_PASSWORD`, `APPLE_INSTALLER_CERT_P12_BASE64`, `APPLE_INSTALLER_CERT_PASSWORD`, `TAURI_SIGNING_PRIVATE_KEY`, `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`.
+32. **`apps/desktop/src-tauri/Cargo.toml`** — Add `tauri-plugin-updater = "2"`.
+33. **`apps/desktop/src-tauri/src/lib.rs`** — Register `tauri-plugin-updater` plugin (`.plugin(tauri_plugin_updater::Builder::new().build())`).
+34. **`apps/desktop/src-tauri/tauri.conf.json`** — Add `plugins.updater`:
     ```json
     "updater": {
       "active": true,
@@ -180,15 +180,15 @@ Steps are ordered for incremental landing. Each phase can ship independently.
     }
     ```
     Exact endpoint URL is an open question (see below).
-35. **`desktop/src/lib/updater.ts`** (new) — Thin wrapper around `@tauri-apps/plugin-updater`. Exposes `checkForUpdates()` returning `{ available: boolean; version?: string; install: () => Promise<void> }`. Called from `AppShell` on mount and from the compat banner's "Update now" button.
-36. **`desktop/scripts/generate-update-manifest.mjs`** (new) — Reads the just-built `.app.tar.gz`, computes the signature with the Tauri signing key, emits `update.json` matching Tauri v2's expected schema (`version`, `notes`, `pub_date`, `platforms.darwin-aarch64.url`, `signature`).
+35. **`apps/desktop/src/lib/updater.ts`** (new) — Thin wrapper around `@tauri-apps/plugin-updater`. Exposes `checkForUpdates()` returning `{ available: boolean; version?: string; install: () => Promise<void> }`. Called from `AppShell` on mount and from the compat banner's "Update now" button.
+36. **`apps/desktop/scripts/generate-update-manifest.mjs`** (new) — Reads the just-built `.app.tar.gz`, computes the signature with the Tauri signing key, emits `update.json` matching Tauri v2's expected schema (`version`, `notes`, `pub_date`, `platforms.darwin-aarch64.url`, `signature`).
 
 ## Non-Goals / Must Not Change
 
 - **Windows and Linux builds.** Existing `ci.yml` keeps testing all three OSes, but the release workflow is macOS-only. Do not add Windows code signing, MSI, or `.deb`/`.AppImage` packaging.
 - **Auto-updating remote Core.** The Tauri updater only updates Desktop. Core update is brew or `.pkg` re-install, user-driven. Do not add Desktop-initiated Core upgrades.
 - **Bundling Hermes.** Hermes remains a user-installed prerequisite. Desktop / Core do not try to install or update Hermes.
-- **Refactoring `desktop/src-tauri/python/core_bridge.py` or `desktop/src/lib/coreLegacyCompat.ts`.** Leave them as-is.
+- **Refactoring `apps/desktop/src-tauri/python/core_bridge.py` or `apps/desktop/src/lib/coreLegacyCompat.ts`.** Leave them as-is.
 - **Changing the SQLite schema, storage paths (`~/.iris/core.sqlite3`), or the runtime adapter contract.**
 - **Changing the `iris-platform/` plugin source itself.** It is copied verbatim into the Core payload.
 - **Touching `.github/workflows/ci.yml`.** New workflow only.
@@ -201,13 +201,13 @@ Add or update:
 
 - `iris-core/tests/test_api.py` — `test_health_includes_version_and_min_client` covers `/health` and `/v1/health`.
 - `iris-core/tests/test_install_hermes_plugin.py` (new) — `tmp_path`-based test of the copy + enable flow with mocked subprocess.
-- `desktop/src/lib/__tests__/compat.test.ts` (new) — semver compare cases.
-- `desktop/src/lib/__tests__/agentuiCore.test.ts` — extend with a case where `/health` returns `{version, minClientVersion}` and Desktop populates `coreCompatibility`.
+- `apps/desktop/src/lib/__tests__/compat.test.ts` (new) — semver compare cases.
+- `apps/desktop/src/lib/__tests__/agentuiCore.test.ts` — extend with a case where `/health` returns `{version, minClientVersion}` and Desktop populates `coreCompatibility`.
 
 Commands to run from repo root:
 
-- `npm --workspace desktop run test -- compat`
-- `npm --workspace desktop run test -- agentuiCore`
+- `npm --workspace apps/desktop run test -- compat`
+- `npm --workspace apps/desktop run test -- agentuiCore`
 - `iris-core/.venv/bin/python -m pytest iris-core/tests/test_api.py -k health`
 - `iris-core/.venv/bin/python -m pytest iris-core/tests/test_install_hermes_plugin.py`
 - Full gate: `npm run check`
@@ -251,7 +251,7 @@ Manual checks (each phase has its own; do them in order):
 ## Open Questions
 
 - **Update manifest hosting URL.** GitHub release URL (`https://github.com/<org>/<repo>/releases/latest/download/update.json`) is the simplest default but bakes the org/repo into the binary. A separate static host (`updates.iris.<domain>`) decouples but adds infra. Default to GitHub for the first release; revisit when the public domain is ready.
-- **Tauri updater key pair.** Needs to be generated once with `npm --workspace desktop run tauri signer generate`. The private key goes into `TAURI_SIGNING_PRIVATE_KEY` secret; the public key goes into `tauri.conf.json`. Who generates and where it's escrowed is a user/ops decision, not a code one.
+- **Tauri updater key pair.** Needs to be generated once with `npm --workspace apps/desktop run tauri signer generate`. The private key goes into `TAURI_SIGNING_PRIVATE_KEY` secret; the public key goes into `tauri.conf.json`. Who generates and where it's escrowed is a user/ops decision, not a code one.
 - **macOS arch coverage.** Apple Silicon only, or universal `.app` + universal Core binary? PyInstaller can build a universal binary on a `macos-latest` runner but it's slower and bigger. Assume arm64-only for the first release unless user says otherwise.
 - **Port collision policy beyond probe-and-skip.** If `127.0.0.1:8765` is bound by something that isn't Core (e.g. another service), the bundled sidecar can't bind. Current plan: log + surface a clear error. Alternative: fall back to `127.0.0.1:8766` and inject the chosen URL into runtime config. Defaulting to "error clearly" is safer; revisit if it bites.
 - **Homebrew tap.** Out of scope for this monorepo (tap lives in a separate repo). The release workflow can be extended later to bump the formula via `brew bump-formula-pr`; not part of this plan.

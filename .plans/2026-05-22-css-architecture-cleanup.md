@@ -2,7 +2,7 @@
 
 ## Goal
 
-Bring the Iris desktop styling architecture in line with how the rest of the codebase is organized. Today, almost all styling lives in a single 6,724-line `desktop/src/App.css`. Many of those rules exist for no good reason — they're named classes that wrap two or three Tailwind utilities — and the file's size makes refactors slow, merge-conflict-prone, and intimidating to new contributors.
+Bring the Iris desktop styling architecture in line with how the rest of the codebase is organized. Today, almost all styling lives in a single 6,724-line `apps/desktop/src/App.css`. Many of those rules exist for no good reason — they're named classes that wrap two or three Tailwind utilities — and the file's size makes refactors slow, merge-conflict-prone, and intimidating to new contributors.
 
 End state:
 
@@ -18,8 +18,8 @@ This is a refactor, not a redesign. The visible UI must be pixel-identical befor
 
 ### App.css size and shape
 
-- File: `desktop/src/App.css`, **6,724 lines**.
-- Only stylesheet in `desktop/src/` — no other `.css` files exist.
+- File: `apps/desktop/src/App.css`, **6,724 lines**.
+- Only stylesheet in `apps/desktop/src/` — no other `.css` files exist.
 - Imports at top: `tailwindcss`, `tw-animate-css`, `streamdown/styles.css`.
 - Lines 1-122: `@theme inline` block (Tailwind v4 token mappings — ~110 `--color-*` entries).
 - Lines 123-304: `:root` block (~150 design tokens — the canonical color/shadow/gradient palette).
@@ -68,7 +68,7 @@ A scan classifying rules by whether their declarations are entirely "easy Tailwi
 
 ### Feature directory structure
 
-`desktop/src/features/` already organizes code by feature:
+`apps/desktop/src/features/` already organizes code by feature:
 
 ```
 agents/
@@ -88,7 +88,7 @@ These map cleanly onto the class-prefix clusters above, which gives an obvious d
 
 ### Imports of `App.css`
 
-`App.css` is imported once in `desktop/src/main.tsx`. Nothing else in the codebase imports it. There is no per-component CSS today.
+`App.css` is imported once in `apps/desktop/src/main.tsx`. Nothing else in the codebase imports it. There is no per-component CSS today.
 
 ### Token system (already done — do not redo)
 
@@ -99,14 +99,14 @@ The 2026-05-22 tokenization pass converted every literal color in the app to a C
 ### Where things live after the refactor
 
 ```
-desktop/src/styles/
+apps/desktop/src/styles/
   tokens.css           — :root variables + @theme inline mappings + @custom-variant dark
   base.css             — global resets, html/body, *, font setup, scrollbar baseline,
                           keyframes used cross-feature (shimmer-sweep, tool-pulse, etc.)
   app-shell.css        — .app-shell, .sidebar, .workspace, .topbar, .content-grid,
                           .window-drag-zone, .nav-list/.nav-item (cross-cutting layout chrome)
 
-desktop/src/features/
+apps/desktop/src/features/
   agents/agents.css         — .agent-*, .agent-list-*, .agent-detail-*, .agent-gateway-*,
                                 .agent-topbar-*, .agent-switcher-*, .agent-overview-*
   automations/automations.css — anything matching automation surfaces
@@ -121,7 +121,7 @@ desktop/src/features/
   skills/skills.css         — .skill-*, .skills-*, .skill-group-*, .skill-row-*, .skill-detail-*
   iris/iris.css             — anything iris-specific not covered elsewhere
 
-desktop/src/App.css         — thin entry file:
+apps/desktop/src/App.css         — thin entry file:
                                 @import "./styles/tokens.css";
                                 @import "./styles/base.css";
                                 @import "./styles/app-shell.css";
@@ -131,9 +131,9 @@ desktop/src/App.css         — thin entry file:
 
 ### Per-feature CSS lives next to the feature, not in a central styles dir
 
-The per-feature `.css` files live in their feature directory (e.g. `desktop/src/features/chat/chat.css`), not in a central `desktop/src/styles/features/`. They're imported by the feature's root component (e.g. `ChatView.tsx`). Co-location > centralization for feature CSS.
+The per-feature `.css` files live in their feature directory (e.g. `apps/desktop/src/features/chat/chat.css`), not in a central `apps/desktop/src/styles/features/`. They're imported by the feature's root component (e.g. `ChatView.tsx`). Co-location > centralization for feature CSS.
 
-The `desktop/src/styles/` directory holds only:
+The `apps/desktop/src/styles/` directory holds only:
 - Tokens
 - Global base styles
 - App shell chrome that isn't owned by any one feature
@@ -198,10 +198,10 @@ The phase order in this plan keeps risky changes after low-risk ones, so a regre
 - Do not introduce a new theming mechanism. `next-themes` wiring and a light-theme variant are separate work (the "step 2" the user mentioned).
 - Do not add CSS-in-JS, styled-components, or any equivalent.
 - Do not touch the `tw-animate-css` import or any other third-party styles.
-- Do not change anything in shared shadcn primitives (`desktop/src/shared/ui/*`). Those already use utility-first patterns correctly.
+- Do not change anything in shared shadcn primitives (`apps/desktop/src/shared/ui/*`). Those already use utility-first patterns correctly.
 - Do not refactor TypeScript or component logic to better-fit the new CSS structure. If a component is awkward but currently works, leave it.
 - Do not introduce a CSS-modules naming convention. Class names stay global to match the current codebase.
-- Do not rename, restructure, or split `desktop/src/features/`.
+- Do not rename, restructure, or split `apps/desktop/src/features/`.
 - Do not change the `:root` location during phase 1 — it stays at the top of `tokens.css`, mirroring how it lives at the top of `App.css` now.
 
 ## Implementation Phases
@@ -210,11 +210,11 @@ The plan runs in five phases. Phase 1 is the lowest-risk and should be done firs
 
 ### Phase 1 — Extract tokens to `tokens.css` (low risk)
 
-**Scope:** Cut lines 1-304 of `App.css` (imports + `@theme inline` + `:root`) into `desktop/src/styles/tokens.css`. Update `App.css` to import it as the first line.
+**Scope:** Cut lines 1-304 of `App.css` (imports + `@theme inline` + `:root`) into `apps/desktop/src/styles/tokens.css`. Update `App.css` to import it as the first line.
 
 **Specifics:**
 
-- Create `desktop/src/styles/tokens.css`. Move:
+- Create `apps/desktop/src/styles/tokens.css`. Move:
   - `@import "tailwindcss";`
   - `@import "tw-animate-css";`
   - `@import "streamdown/styles.css";`
@@ -242,7 +242,7 @@ The plan runs in five phases. Phase 1 is the lowest-risk and should be done firs
 
 ### Phase 2 — Extract global base styles and app-shell chrome (low risk)
 
-**Scope:** Move the rules that aren't feature-owned out of `App.css` into `desktop/src/styles/base.css` and `desktop/src/styles/app-shell.css`.
+**Scope:** Move the rules that aren't feature-owned out of `App.css` into `apps/desktop/src/styles/base.css` and `apps/desktop/src/styles/app-shell.css`.
 
 **`base.css` contents:**
 
@@ -283,7 +283,7 @@ Same four reference views as phase 1. Also test:
 
 ### Phase 3 — Split feature CSS into per-feature files (low-medium risk)
 
-**Scope:** For each feature in `desktop/src/features/`, create `<feature>.css`, move its class rules out of `App.css`, and import that file from the feature's root component. Do not change any rules during the move.
+**Scope:** For each feature in `apps/desktop/src/features/`, create `<feature>.css`, move its class rules out of `App.css`, and import that file from the feature's root component. Do not change any rules during the move.
 
 **Order (recommended, by independence):**
 
@@ -303,16 +303,16 @@ The order is deliberately last-the-largest. By the time we touch `chat.css` we'v
 
 For each feature `<f>`:
 
-1. Create `desktop/src/features/<f>/<f>.css`.
+1. Create `apps/desktop/src/features/<f>/<f>.css`.
 2. Use `grep`/`awk` to find every class rule in `App.css` whose selector prefix maps to this feature (use the prefix clusters from "Current Repo State" as a starting point — the actual mapping needs a manual pass).
 3. Cut those rules to `<f>.css`, preserving their order relative to each other. Order across features doesn't need to be preserved.
-4. In the feature's root component file (e.g. `desktop/src/features/<f>/<F>View.tsx`), add `import "./<f>.css";` after the existing imports.
+4. In the feature's root component file (e.g. `apps/desktop/src/features/<f>/<F>View.tsx`), add `import "./<f>.css";` after the existing imports.
 5. Reload the dev surface and visit every screen the feature owns. Compare against pre-change screenshots.
 6. If something looks off, the most likely culprit is a cross-feature rule that needed to stay in `app-shell.css` or another feature's file. Find it and put it back. Do not work around the issue with `!important` or specificity hacks.
 
 **Cross-feature shared rules:**
 
-Some rules are used across features (e.g. `.tool-progress-*` might appear in chat and elsewhere). If a class is genuinely shared, leave it in `app-shell.css` or hoist a small `desktop/src/styles/shared.css`. Do not duplicate the rule in two feature files.
+Some rules are used across features (e.g. `.tool-progress-*` might appear in chat and elsewhere). If a class is genuinely shared, leave it in `app-shell.css` or hoist a small `apps/desktop/src/styles/shared.css`. Do not duplicate the rule in two feature files.
 
 **Visual verification per feature:**
 
@@ -345,7 +345,7 @@ Phase 3 is the longest phase by wall-clock time. Budget multiple sessions.
 
 **Tooling considerations:**
 
-- A class might appear many times across TSX files — use `grep -rn "className.*<class-name>" desktop/src/` to find call sites. Some classes are also composed via `cn(...)` helpers — search for the bare string token too.
+- A class might appear many times across TSX files — use `grep -rn "className.*<class-name>" apps/desktop/src/` to find call sites. Some classes are also composed via `cn(...)` helpers — search for the bare string token too.
 - Some classes are dynamically composed (template literals, conditional arrays). Inlining Tailwind utilities in those branches is fine but requires care to preserve semantics.
 - If a class is used only once, inlining is trivial. If it's used dozens of times with the same surrounding utilities, consider whether the abstraction is genuinely worth keeping (rare — usually still better to inline).
 - A class used in 3+ places with no other utilities around it may be worth keeping as a CSS rule **if** removing it would make the markup illegible. Default to inlining; revisit only if a specific call site becomes harder to read.
@@ -364,7 +364,7 @@ Phase 3 is the longest phase by wall-clock time. Budget multiple sessions.
    }
    ```
 2. Tailwind equivalent: `flex items-center gap-2 flex-wrap`.
-3. Find call sites: `grep -rn '"diagnostics-remote-command"\|className.*diagnostics-remote-command' desktop/src/`.
+3. Find call sites: `grep -rn '"diagnostics-remote-command"\|className.*diagnostics-remote-command' apps/desktop/src/`.
 4. At each call site, replace `className="diagnostics-remote-command"` (or its presence inside a `cn(...)`) with `className="flex items-center gap-2 flex-wrap"` (preserving any other classes already present).
 5. Delete the rule from `runtime.css`.
 6. Visually verify the page renders identically.
@@ -403,17 +403,17 @@ Some rules might legitimately stay as named CSS classes even though they're triv
 ## Files Touched
 
 - **Created:**
-  - `desktop/src/styles/tokens.css`
-  - `desktop/src/styles/base.css`
-  - `desktop/src/styles/app-shell.css`
-  - `desktop/src/features/<each-feature>/<feature>.css`
+  - `apps/desktop/src/styles/tokens.css`
+  - `apps/desktop/src/styles/base.css`
+  - `apps/desktop/src/styles/app-shell.css`
+  - `apps/desktop/src/features/<each-feature>/<feature>.css`
   - A stylelint config or CI script for the regression guard
-  - Possibly `desktop/src/styles/shared.css` if a small set of cross-feature rules emerges
+  - Possibly `apps/desktop/src/styles/shared.css` if a small set of cross-feature rules emerges
 - **Heavily modified:**
-  - `desktop/src/App.css` — shrinks to under 400 lines
-  - Many TSX files in `desktop/src/features/*/` and `desktop/src/layout/*` — className changes
+  - `apps/desktop/src/App.css` — shrinks to under 400 lines
+  - Many TSX files in `apps/desktop/src/features/*/` and `apps/desktop/src/layout/*` — className changes
 - **Untouched:**
-  - `desktop/src/shared/ui/*` — shadcn primitives already use the right pattern
+  - `apps/desktop/src/shared/ui/*` — shadcn primitives already use the right pattern
   - Any Iris Core, Hermes, bridge, transport, or runtime code
 
 ## Verification Strategy
@@ -422,7 +422,7 @@ This is a refactor with no intended visible change. The verification bar is corr
 
 ### Per-phase
 
-1. **TypeScript** must continue to pass: `cd desktop && npx tsc --noEmit`.
+1. **TypeScript** must continue to pass: `cd apps/desktop && npx tsc --noEmit`.
 2. **Vite dev server** at `http://localhost:1420/` must continue to serve without errors. Watch the browser console for any "failed to load resource" or unresolved-import errors after each import-path change.
 3. **Visual diff** on a fixed set of reference views:
    - Home (`/`)
@@ -492,9 +492,9 @@ The following are explicitly not part of this plan but might come up as work hap
 
 The cleanup is complete when:
 
-1. `desktop/src/App.css` is under 400 lines and consists primarily of `@import` statements plus any unmovable orphans.
-2. `desktop/src/styles/tokens.css` contains the entire token system, with no other CSS adjacent to it.
-3. Each feature directory in `desktop/src/features/` contains at most one `.css` file owned by that feature, imported by its root component.
+1. `apps/desktop/src/App.css` is under 400 lines and consists primarily of `@import` statements plus any unmovable orphans.
+2. `apps/desktop/src/styles/tokens.css` contains the entire token system, with no other CSS adjacent to it.
+3. Each feature directory in `apps/desktop/src/features/` contains at most one `.css` file owned by that feature, imported by its root component.
 4. The trivial-rule audit reports zero rules consisting only of utility-equivalent properties (or only rules on the allowlist with documented justifications).
 5. Visual diff against pre-refactor screenshots shows no perceptible changes across the verification screen set.
 6. The phase-5 lint/CI check is wired up and runs on every PR.

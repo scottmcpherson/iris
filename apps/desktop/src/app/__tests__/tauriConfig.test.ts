@@ -13,7 +13,7 @@ describe("Tauri desktop configuration", () => {
 
   it("uses the root generated Tauri icon set for dev desktop runs", () => {
     expect(devConfig.productName).toBe("Iris Dev");
-    expect(devConfig.bundle.icon).toContain("../../icons/tauri-icons/icon.icns");
+    expect(devConfig.bundle.icon).toContain("../../../icons/tauri-icons/icon.icns");
     expect(config.bundle.icon).toContain("icons/icon.icns");
   });
 

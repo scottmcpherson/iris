@@ -3,7 +3,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const desktopDir = dirname(dirname(fileURLToPath(import.meta.url)));
-const root = dirname(desktopDir);
+const root = dirname(dirname(desktopDir));
 const source = join(root, "iris-core", "dist", process.platform === "win32" ? "iris-core.exe" : "iris-core");
 const targetTriple = process.env.TAURI_ENV_TARGET_TRIPLE || defaultTargetTriple();
 

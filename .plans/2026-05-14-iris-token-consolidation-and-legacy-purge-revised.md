@@ -56,16 +56,16 @@ Naming surfaces:
 - Runtime adapter Python names include `DEFAULT_AGENTUI_GATEWAY_URL`, `AGENTUI_GATEWAY_PORT_OFFSET`, `agentui_multipart_attachments`, `agentui_payload_attachment`, `agentui_gateway_url`, and `derive_agentui_gateway_url` in `runtime_adapters/hermes.py`.
 - `request.state.agentui_device` is written in `security.py` and read in `main.py` and `attachment_routes.py`.
 - Wire metadata currently includes `agentuiSessionId`, `agentuiAdapter`, and `agentuiGatewayUrls`.
-- Desktop reads `agentuiSessionId` in `desktop/src/App.tsx` and `desktop/src/features/automations/AutomationsView.tsx`.
-- Desktop status mapping uses `agentuiAdapter` in `desktop/src/lib/agentuiCore.ts`.
+- Desktop reads `agentuiSessionId` in `apps/desktop/src/App.tsx` and `apps/desktop/src/features/automations/AutomationsView.tsx`.
+- Desktop status mapping uses `agentuiAdapter` in `apps/desktop/src/lib/agentuiCore.ts`.
 - Desktop helper `coreLegacyCompat.ts` is still used by `irisRuntime.ts`, `useIrisChat.ts`, and `useIrisProjects.ts`.
-- `desktop/src/features/chat/chatSessionState.ts` still checks `agentuiMessageId`.
+- `apps/desktop/src/features/chat/chatSessionState.ts` still checks `agentuiMessageId`.
 - `iris-platform/adapter_config.py` contains `API_TO_AGENTUI_PORT_OFFSET`.
 - `scripts/install-iris-platform.mjs` still contains a legacy installed-plugin cleanup reference for `agentui-platform`.
 
 Settings UI:
 
-- `desktop/src/features/settings/SettingsView.tsx:172-175` labels the Core token field as `Token`; desired copy is `Iris token`.
+- `apps/desktop/src/features/settings/SettingsView.tsx:172-175` labels the Core token field as `Token`; desired copy is `Iris token`.
 
 ## Implementation Plan
 
@@ -213,7 +213,7 @@ Settings UI:
    - `attachment_routes.py` uses it for `owner_device_id`.
    - Any new `rg "agentui_device"` hits must be renamed.
 
-3. In `desktop/src-tauri/python/core_bridge.py`:
+3. In `apps/desktop/src-tauri/python/core_bridge.py`:
    - `read_env_token()` should read only `IRIS_TOKEN`.
    - Remove `IRIS_CORE_TOKEN` and `AGENTUI_TOKEN` env fallbacks.
    - Remove fallback keychain read from `LEGACY_CORE_TOKEN_ACCOUNT`.
@@ -221,12 +221,12 @@ Settings UI:
    - Keep `IRIS_CORE_TOKEN_ACCOUNT = "iris-core-token"` and the `Iris Desktop` service.
    - Simplify `credential_kind()` or remove it if all callers pass `"core"`.
 
-4. Update `desktop/src-tauri/python/tests/test_core_bridge.py`:
+4. Update `apps/desktop/src-tauri/python/tests/test_core_bridge.py`:
    - Remove the sidecar-kind compatibility assertion.
    - Add an env-token test proving `IRIS_TOKEN` is read.
    - Add a negative test proving `IRIS_CORE_TOKEN`/`AGENTUI_TOKEN` are ignored, if practical without making tests brittle.
 
-5. In `desktop/src/features/settings/SettingsView.tsx`:
+5. In `apps/desktop/src/features/settings/SettingsView.tsx`:
    - Change token field label from `Token` to `Iris token`.
    - Preserve the current keychain read/write behavior and account.
 
@@ -239,14 +239,14 @@ Settings UI:
    - `platform: "agentui"` -> `platform: "iris"` for any surviving non-inbox data shape.
 
 2. Update desktop consumers in lock-step:
-   - `desktop/src/App.tsx` should read `irisSessionId`.
-   - `desktop/src/features/automations/AutomationsView.tsx` should match `irisSessionId`.
-   - `desktop/src/features/chat/chatSessionState.ts` should replace or remove `agentuiMessageId`. Preferred key is `irisMessageId` only if Core still emits such a field; otherwise remove the legacy fallback.
+   - `apps/desktop/src/App.tsx` should read `irisSessionId`.
+   - `apps/desktop/src/features/automations/AutomationsView.tsx` should match `irisSessionId`.
+   - `apps/desktop/src/features/chat/chatSessionState.ts` should replace or remove `agentuiMessageId`. Preferred key is `irisMessageId` only if Core still emits such a field; otherwise remove the legacy fallback.
    - Desktop test fixtures should use `iris-core`, `iris-core-send`, `iris-core-events`, and `irisSessionId`.
 
 3. Runtime probe shape:
    - In `hermes.py`, `agentuiAdapter` -> `irisAdapter`.
-   - In `desktop/src/lib/agentuiCore.ts` or the renamed file, `CoreRuntimeProbe` should use `irisAdapter`.
+   - In `apps/desktop/src/lib/agentuiCore.ts` or the renamed file, `CoreRuntimeProbe` should use `irisAdapter`.
    - Update `activeApiStatus` mapping and fallback probe object.
 
 4. Runtime connection config:
@@ -264,15 +264,15 @@ Settings UI:
    - Verify `iris-platform/adapter.py` does not compare against the old value before changing.
 
 6. Automations delivery target:
-   - Remove `agentui:` normalization in `desktop/src/features/automations/useIrisAutomations.ts`.
+   - Remove `agentui:` normalization in `apps/desktop/src/features/automations/useIrisAutomations.ts`.
    - Keep `iris:` as the only delivery prefix.
    - Update tests that expected `agentui:` to normalize.
 
 ### Phase 5 - TypeScript module and symbol rename
 
 1. Rename:
-   - `desktop/src/lib/agentuiCore.ts` -> `desktop/src/lib/irisCore.ts`
-   - `desktop/src/lib/__tests__/agentuiCore.test.ts` -> `desktop/src/lib/__tests__/irisCore.test.ts`
+   - `apps/desktop/src/lib/agentuiCore.ts` -> `apps/desktop/src/lib/irisCore.ts`
+   - `apps/desktop/src/lib/__tests__/agentuiCore.test.ts` -> `apps/desktop/src/lib/__tests__/irisCore.test.ts`
 
 2. Rename exported TS types/functions:
    - `AgentUICore*` -> `IrisCore*`
@@ -285,26 +285,26 @@ Settings UI:
    - `agentUICoreEventStreamUrl` -> `irisCoreEventStreamUrl`
 
 3. Update all desktop imports with `rg "agentuiCore|AgentUICore|agentUICore"`:
-   - `desktop/src/lib/irisRuntime.ts`
-   - `desktop/src/features/chat/*`
-   - `desktop/src/features/automations/*`
-   - `desktop/src/features/projects/useIrisProjects.ts`
-   - `desktop/src/layout/*`
-   - `desktop/src/app/__tests__/projectSessions.test.ts`
-   - `desktop/src/lib/__tests__/*`
+   - `apps/desktop/src/lib/irisRuntime.ts`
+   - `apps/desktop/src/features/chat/*`
+   - `apps/desktop/src/features/automations/*`
+   - `apps/desktop/src/features/projects/useIrisProjects.ts`
+   - `apps/desktop/src/layout/*`
+   - `apps/desktop/src/app/__tests__/projectSessions.test.ts`
+   - `apps/desktop/src/lib/__tests__/*`
    - Any new hits.
 
-4. Delete `desktop/src/lib/coreLegacyCompat.ts`.
+4. Delete `apps/desktop/src/lib/coreLegacyCompat.ts`.
 
 5. Replace `coreLegacyCompat.ts` exports:
    - `coreSessionToLegacy`
    - `coreMessageToLegacy`
    - `coreEventToInboxMessage`
-   - Preferred destination: a non-legacy module such as `desktop/src/lib/irisCoreMappings.ts` if more than one consumer remains.
+   - Preferred destination: a non-legacy module such as `apps/desktop/src/lib/irisCoreMappings.ts` if more than one consumer remains.
    - If a helper has only one consumer after cleanup, inline it.
    - Use current Iris source/platform strings in returned objects.
 
-6. Update `desktop/src/lib/irisRuntime.ts` export that currently re-exports `coreEventToInboxMessage`.
+6. Update `apps/desktop/src/lib/irisRuntime.ts` export that currently re-exports `coreEventToInboxMessage`.
 
 ### Phase 6 - Plugin install cleanup and source grep gate
 
@@ -373,8 +373,8 @@ Expected result: no hits. If a hit appears in generated or historical material t
    - `README.md`
    - `iris-core/README.md`
    - `iris-platform/README.md`
-   - `desktop/README.md`
-   - `desktop/docs/production-readiness.md`
+   - `apps/desktop/README.md`
+   - `apps/desktop/docs/production-readiness.md`
    - `CLAUDE.md`
    - `docs/communication-map.html`
 
@@ -392,8 +392,8 @@ During implementation:
 
 ```bash
 iris-core/.venv/bin/python -m pytest iris-core/tests/test_api.py -k "not inbox" -x
-npm --workspace desktop run test -- src/lib/__tests__/irisCore.test.ts
-npm --workspace desktop run test:bridge
+npm --workspace apps/desktop run test -- src/lib/__tests__/irisCore.test.ts
+npm --workspace apps/desktop run test:bridge
 ```
 
 After major renames:

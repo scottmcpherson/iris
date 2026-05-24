@@ -43,39 +43,39 @@ The route should answer "where is the user in the app?" Existing hooks should co
 
 Relevant files:
 
-- `desktop/src/main.tsx`
+- `apps/desktop/src/main.tsx`
   - Renders `<App />` directly with no router.
-- `desktop/src/App.tsx`
+- `apps/desktop/src/App.tsx`
   - Owns `activeView`, `chatProfile`, `agentDetailProfile`, `agentSection`, and wires app-level transitions.
   - `selectView()` calls `setActiveView()`.
   - Session selection handlers call `setActiveView("chat")`, `projects.selectProject(...)`, `setChatProfile(...)`, and `chat.loadSession(...)`.
   - Agent/settings handlers call `setActiveView(...)` directly.
   - Native app commands arrive over the Tauri event `iris://app-command`.
-- `desktop/src/app/types.ts`
+- `apps/desktop/src/app/types.ts`
   - Defines `View = "chat" | "agents" | "jobs" | "settings"`.
-- `desktop/src/app/navigation.ts`
+- `apps/desktop/src/app/navigation.ts`
   - Defines sidebar nav items for chat, agents, and jobs.
   - Uses `"jobs"` for automations.
-- `desktop/src/layout/AppShell.tsx`
+- `apps/desktop/src/layout/AppShell.tsx`
   - Receives `activeView`, selected session/project state, and event handlers.
   - Sidebar and session search are currently callback-driven.
-- `desktop/src/features/chat/useIrisChat.ts`
+- `apps/desktop/src/features/chat/useIrisChat.ts`
   - Owns `selectedSessionId`, session lists, message detail loading, optimistic session replacement, and refresh/reconcile behavior.
   - Exposes `loadSession()` and `startNewSession()`.
   - Resets route-scoped chat state when the Core route key changes.
-- `desktop/src/features/projects/useIrisProjects.ts`
+- `apps/desktop/src/features/projects/useIrisProjects.ts`
   - Owns `selectedProjectId`.
   - Persists `selectedProjectId` to localStorage under `iris.desktop.selectedProjectId`.
-- `desktop/src/features/automations/AutomationsView.tsx`
+- `apps/desktop/src/features/automations/AutomationsView.tsx`
   - Uses the selected project as delivery/schedule context.
-- `desktop/src-tauri/src/lib.rs`
+- `apps/desktop/src-tauri/src/lib.rs`
   - Emits native app commands like `new-chat`, `command-menu`, `search`, and `refresh`.
   - No deep-link plugin or single-instance plugin is configured today.
-- `desktop/src-tauri/tauri.conf.json`
+- `apps/desktop/src-tauri/tauri.conf.json`
   - No `plugins.deep-link` configuration exists.
-- `desktop/package.json`
+- `apps/desktop/package.json`
   - Does not include a router package or Tauri deep-link JS bindings.
-- `desktop/src-tauri/Cargo.toml`
+- `apps/desktop/src-tauri/Cargo.toml`
   - Does not include `tauri-plugin-deep-link` or `tauri-plugin-single-instance`.
 
 ## Architecture Decision
@@ -222,7 +222,7 @@ Deep-link handling rules:
 Add a platform-neutral parser:
 
 ```text
-desktop/src/app/routing/routeIntent.ts
+apps/desktop/src/app/routing/routeIntent.ts
 ```
 
 Responsibilities:
@@ -252,7 +252,7 @@ Do not perform data loading in this module. It should be pure and easy to test.
 Keep routes close to app architecture but separate from feature internals:
 
 ```text
-desktop/src/app/routing/
+apps/desktop/src/app/routing/
   router.tsx
   history.ts
   routeIntent.ts
@@ -323,7 +323,7 @@ Guard against loops:
 Add one app navigation hook:
 
 ```text
-desktop/src/app/routing/useIrisNavigate.ts
+apps/desktop/src/app/routing/useIrisNavigate.ts
 ```
 
 Suggested API:
@@ -364,13 +364,13 @@ High-priority replacements:
 
 Files:
 
-- `desktop/package.json`
-- `desktop/package-lock.json`
-- `desktop/src/main.tsx`
-- `desktop/src/app/routing/router.tsx`
-- `desktop/src/app/routing/history.ts`
-- `desktop/src/app/routing/routeIntent.ts`
-- `desktop/src/app/routing/useIrisNavigate.ts`
+- `apps/desktop/package.json`
+- `apps/desktop/package-lock.json`
+- `apps/desktop/src/main.tsx`
+- `apps/desktop/src/app/routing/router.tsx`
+- `apps/desktop/src/app/routing/history.ts`
+- `apps/desktop/src/app/routing/routeIntent.ts`
+- `apps/desktop/src/app/routing/useIrisNavigate.ts`
 
 Steps:
 
@@ -384,7 +384,7 @@ Steps:
 Verification:
 
 ```bash
-cd desktop
+cd apps/desktop
 npm run test -- routeIntent
 npm run build
 ```
@@ -400,9 +400,9 @@ Browser/Vite check:
 
 Files:
 
-- `desktop/src/App.tsx`
-- `desktop/src/app/navigation.ts`
-- `desktop/src/layout/AppShell.tsx`
+- `apps/desktop/src/App.tsx`
+- `apps/desktop/src/app/navigation.ts`
+- `apps/desktop/src/layout/AppShell.tsx`
 - Router files from phase 1.
 
 Steps:
@@ -420,7 +420,7 @@ Steps:
 Verification:
 
 ```bash
-cd desktop
+cd apps/desktop
 npm run test -- AppShell
 npm run build
 ```
@@ -436,11 +436,11 @@ Browser/Vite check:
 
 Files:
 
-- `desktop/src/App.tsx`
-- `desktop/src/features/chat/useIrisChat.ts`
-- `desktop/src/features/projects/useIrisProjects.ts`
-- `desktop/src/features/chat/ChatView.tsx`
-- `desktop/src/features/chat/components/ProjectMenu.tsx`
+- `apps/desktop/src/App.tsx`
+- `apps/desktop/src/features/chat/useIrisChat.ts`
+- `apps/desktop/src/features/projects/useIrisProjects.ts`
+- `apps/desktop/src/features/chat/ChatView.tsx`
+- `apps/desktop/src/features/chat/components/ProjectMenu.tsx`
 - Routing files.
 
 Steps:
@@ -469,7 +469,7 @@ Important behavior:
 Verification:
 
 ```bash
-cd desktop
+cd apps/desktop
 npm run test -- useIrisChat
 npm run test -- AppShell
 npm run build
@@ -489,9 +489,9 @@ Browser/Vite check:
 
 Files:
 
-- `desktop/src/App.tsx`
-- `desktop/src/features/agents/AgentsView.tsx`
-- `desktop/src/features/agents/AgentTopbar.tsx`
+- `apps/desktop/src/App.tsx`
+- `apps/desktop/src/features/agents/AgentsView.tsx`
+- `apps/desktop/src/features/agents/AgentTopbar.tsx`
 - Routing files.
 
 Steps:
@@ -507,7 +507,7 @@ Steps:
 Verification:
 
 ```bash
-cd desktop
+cd apps/desktop
 npm run test -- Agent
 npm run build
 ```
@@ -524,10 +524,10 @@ Browser/Vite check:
 
 Files:
 
-- `desktop/src/App.tsx`
-- `desktop/src/features/automations/AutomationsView.tsx`
-- `desktop/src/features/runtime/RuntimeDiagnosticsDialog.tsx`
-- `desktop/src/features/polish/OnboardingOverlay.tsx`
+- `apps/desktop/src/App.tsx`
+- `apps/desktop/src/features/automations/AutomationsView.tsx`
+- `apps/desktop/src/features/runtime/RuntimeDiagnosticsDialog.tsx`
+- `apps/desktop/src/features/polish/OnboardingOverlay.tsx`
 - Routing files.
 
 Steps:
@@ -543,7 +543,7 @@ Steps:
 Verification:
 
 ```bash
-cd desktop
+cd apps/desktop
 npm run test -- Automations
 npm run build
 ```
@@ -559,14 +559,14 @@ Browser/Vite check:
 
 Files:
 
-- `desktop/package.json`
-- `desktop/package-lock.json`
-- `desktop/src-tauri/Cargo.toml`
-- `desktop/src-tauri/Cargo.lock`
-- `desktop/src-tauri/tauri.conf.json`
-- `desktop/src-tauri/src/lib.rs`
-- `desktop/src/app/routing/deepLinks.ts`
-- `desktop/src/App.tsx`
+- `apps/desktop/package.json`
+- `apps/desktop/package-lock.json`
+- `apps/desktop/src-tauri/Cargo.toml`
+- `apps/desktop/src-tauri/Cargo.lock`
+- `apps/desktop/src-tauri/tauri.conf.json`
+- `apps/desktop/src-tauri/src/lib.rs`
+- `apps/desktop/src/app/routing/deepLinks.ts`
+- `apps/desktop/src/App.tsx`
 
 Steps:
 
@@ -609,7 +609,7 @@ Security/robustness:
 Verification:
 
 ```bash
-cd desktop
+cd apps/desktop
 npm run test -- deepLinks
 npm run build:mac:app
 ```
@@ -627,7 +627,7 @@ Packaged desktop check:
 
 Files depend on deployment target. At minimum:
 
-- `desktop/vite.config.ts`
+- `apps/desktop/vite.config.ts`
 - Future web hosting config if/when Iris web is deployed.
 
 Steps:
@@ -642,7 +642,7 @@ Steps:
 Verification:
 
 ```bash
-cd desktop
+cd apps/desktop
 npm run build
 npm run preview
 ```
@@ -659,7 +659,7 @@ This phase can be mostly design/docs until the mobile shell exists.
 
 Files:
 
-- `desktop/src/app/routing/routeIntent.ts`
+- `apps/desktop/src/app/routing/routeIntent.ts`
 - `docs` or `.plans` follow-up for mobile link registration.
 - Future mobile Tauri config.
 

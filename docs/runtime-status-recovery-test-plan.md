@@ -39,7 +39,7 @@ Assumptions:
 Useful commands:
 
 ```bash
-npm --workspace desktop run test -- runtimeReadiness AgentList AgentDetailView AppShell
+npm --workspace apps/desktop run test -- runtimeReadiness AgentList AgentDetailView AppShell
 npm run core:test
 npm run check
 npm run build:mac:app

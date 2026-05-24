@@ -10,7 +10,7 @@ Local verification covered the `default` and `health` Hermes profiles. SSH verif
 
 - `npm run check` passed after the final per-profile adapter-port fix.
 - `npm run build:mac:app` passed after the final local packaged-app verification fix.
-- Focused desktop tests passed after the final local packaged-app verification fix: `npm --workspace desktop run test -- runtimeReadiness AgentList AgentDetailView AppShell irisCore`.
+- Focused desktop tests passed after the final local packaged-app verification fix: `npm --workspace apps/desktop run test -- runtimeReadiness AgentList AgentDetailView AppShell irisCore`.
 - Iris Core gateway-control tests passed after the final fix: `iris-core/.venv/bin/python -m pytest iris-core/tests/test_gateway_control.py`.
 - `npm run iris:platform:install` writes per-profile adapter ports:
   - root/default: `IRIS_INBOUND_PORT=8766`
@@ -49,7 +49,7 @@ Local verification covered the `default` and `health` Hermes profiles. SSH verif
 - Mac mini checks passed:
   - `npm run check`
   - `npm run build:mac:app`
-- Remote packaged Iris was launched from `/Users/agent/Developer/iris/desktop/src-tauri/target/release/bundle/macos/Iris.app`.
+- Remote packaged Iris was launched from `/Users/agent/Developer/iris/apps/desktop/src-tauri/target/release/bundle/macos/Iris.app`.
 - Remote Core health passed on the Mac mini at `127.0.0.1:8765`.
 - Local packaged Iris connected to the saved SSH profile `Iris Mac mini` / `agent@agents-mac-mini`.
 - The local app-created SSH tunnel exposed remote Core at `127.0.0.1:52199`.

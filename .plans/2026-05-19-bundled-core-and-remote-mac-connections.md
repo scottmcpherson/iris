@@ -59,25 +59,25 @@ MacBook Iris Desktop
 
 Relevant files:
 
-- `desktop/src/lib/coreTransport.ts`
+- `apps/desktop/src/lib/coreTransport.ts`
   - Desktop talks to Core over HTTP.
   - `coreBaseUrl()` normalizes to `/v1`.
   - `coreRequest()` uses browser `fetch()` first and falls back to the Tauri Python bridge for auth errors/timeouts.
-- `desktop/src/lib/irisCore.ts`
+- `apps/desktop/src/lib/irisCore.ts`
   - `getIrisCoreStatus()` calls `/health`, `/status`, `/agents`, and `/runtimes`.
   - `version` is currently returned as `null`.
   - `connectionMode` is currently only `"local" | "remote"`.
-- `desktop/src/app/runtimeConfig.ts`
+- `apps/desktop/src/app/runtimeConfig.ts`
   - Persists `connectionMode`, `remoteUrl`, and `coreApiUrl` in localStorage.
   - This will be replaced by a clean connection-profile config.
-- `desktop/src/features/settings/SettingsView.tsx`
+- `apps/desktop/src/features/settings/SettingsView.tsx`
   - Current Settings UI is a single "Iris Core connection" card with a URL field and a token field.
-- `desktop/src-tauri/src/lib.rs`
+- `apps/desktop/src-tauri/src/lib.rs`
   - Current Tauri app starts menus/tray and exposes the `core_bridge` command.
   - It does not spawn or supervise Iris Core.
-- `desktop/src-tauri/python/core_bridge.py`
+- `apps/desktop/src-tauri/python/core_bridge.py`
   - Provides HTTP fallback, attachment upload/download, and Core token storage via macOS Keychain.
-- `desktop/src-tauri/tauri.conf.json`
+- `apps/desktop/src-tauri/tauri.conf.json`
   - No `bundle.externalBin` sidecar is configured.
 - `iris-core/README.md`
   - Documents manual Core install/run and remote Tailscale setup.
@@ -305,17 +305,17 @@ Files to add/update:
   - Includes hidden imports needed by FastAPI/uvicorn/httpx.
 - `package.json`
   - Add `core:build:binary`.
-- `desktop/scripts/stage-core-sidecar.mjs`
-  - Copies the built binary into `desktop/src-tauri/binaries/iris-core-<target-triple>`.
-- `desktop/package.json`
+- `apps/desktop/scripts/stage-core-sidecar.mjs`
+  - Copies the built binary into `apps/desktop/src-tauri/binaries/iris-core-<target-triple>`.
+- `apps/desktop/package.json`
   - Run sidecar staging before `build:mac:app` and `release:mac`.
-- `desktop/src-tauri/tauri.conf.json`
+- `apps/desktop/src-tauri/tauri.conf.json`
   - Add `bundle.externalBin`.
 
 Apple Silicon MVP target:
 
 ```text
-desktop/src-tauri/binaries/iris-core-aarch64-apple-darwin
+apps/desktop/src-tauri/binaries/iris-core-aarch64-apple-darwin
 ```
 
 Universal or Intel support can follow with the corresponding Tauri target triples.
@@ -354,9 +354,9 @@ Add a Rust-managed Core process layer instead of starting Core from React.
 
 Suggested files:
 
-- `desktop/src-tauri/src/core_process.rs`
-- `desktop/src-tauri/src/connection_profiles.rs`
-- `desktop/src-tauri/src/lib.rs`
+- `apps/desktop/src-tauri/src/core_process.rs`
+- `apps/desktop/src-tauri/src/connection_profiles.rs`
+- `apps/desktop/src-tauri/src/lib.rs`
 
 Commands/events:
 
@@ -477,7 +477,7 @@ On the Mac mini:
 
 Add:
 
-- `desktop/src-tauri/src/ssh_tunnel.rs`
+- `apps/desktop/src-tauri/src/ssh_tunnel.rs`
 
 Use system `ssh`:
 
@@ -674,7 +674,7 @@ For SSH profiles:
 
 ### Current UI
 
-`desktop/src/features/settings/SettingsView.tsx` currently has:
+`apps/desktop/src/features/settings/SettingsView.tsx` currently has:
 
 - One URL field
 - One token field
@@ -781,22 +781,22 @@ Avoid saying "remote Hermes URL" because Desktop never talks directly to Hermes.
 
 ### Files to Update
 
-- `desktop/src/features/settings/SettingsView.tsx`
+- `apps/desktop/src/features/settings/SettingsView.tsx`
   - Split current connection card into mode-specific panels.
   - Add profile management.
   - Add actions that call new Tauri commands.
-- `desktop/src/app/runtimeConfig.ts`
+- `apps/desktop/src/app/runtimeConfig.ts`
   - Replace the old config shape with v2 connection profiles.
-- `desktop/src/types/hermes.ts`
+- `apps/desktop/src/types/hermes.ts`
   - Update runtime config and status types.
-- `desktop/src/lib/coreTransport.ts`
+- `apps/desktop/src/lib/coreTransport.ts`
   - Resolve effective URL from active connection profile.
   - Include `connectionId` in bridge payloads.
-- `desktop/src/lib/irisRuntime.ts`
+- `apps/desktop/src/lib/irisRuntime.ts`
   - Update the Iris Core facade to use the new config shape.
-- `desktop/src/lib/irisCore.ts`
+- `apps/desktop/src/lib/irisCore.ts`
   - Populate Core version identity and transport status.
-- `desktop/src/App.css`
+- `apps/desktop/src/App.css`
   - Add layout/states for new Settings panels.
   - Keep style consistent with existing dense desktop UI.
 
@@ -841,7 +841,7 @@ SSH credentials:
 
 ## Runtime Config Reset
 
-Add tests in `desktop/src/app/__tests__/runtimeConfig.test.ts`:
+Add tests in `apps/desktop/src/app/__tests__/runtimeConfig.test.ts`:
 
 - Empty storage creates a `managed-local` profile.
 - Old `hermes.desktop.runtime` values are ignored.
@@ -896,8 +896,8 @@ Only allow from loopback and only when a management token is available locally. 
 
 Verification:
 
-- `npm --workspace desktop run test -- runtimeConfig`
-- `npm --workspace desktop run test`
+- `npm --workspace apps/desktop run test -- runtimeConfig`
+- `npm --workspace apps/desktop run test`
 - `npm run core:test`
 
 ### Phase 2 - Bundle and Start Managed Local Core
@@ -1098,7 +1098,7 @@ Update:
 - `iris-platform/README.md`
   - Explain that Iris can configure/install the plugin.
   - Keep manual env examples.
-- `desktop/README.md`
+- `apps/desktop/README.md`
   - Settings connection modes.
   - Troubleshooting SSH/Tailscale.
 

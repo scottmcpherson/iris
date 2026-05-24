@@ -4,7 +4,7 @@ Iris is a monorepo for local-first agent control surfaces, including Iris Deskto
 
 ## Workspace Layout
 
-- `desktop/`: Iris Desktop, a Tauri 2, React 18, TypeScript, and Tailwind desktop app.
+- `apps/desktop/`: Iris Desktop, a Tauri 2, React 18, TypeScript, and Tailwind desktop app.
 - `iris-core/`: Iris Core, a FastAPI control plane used by Iris clients for agents, sessions, automations, runtime routing, and Hermes compatibility metadata.
 - `scripts/`: root developer helpers for setup and coordinated startup.
 
@@ -149,6 +149,6 @@ npm run build:mac:app
 
 ## More Detail
 
-- Desktop app docs: [`desktop/README.md`](desktop/README.md)
+- Desktop app docs: [`apps/desktop/README.md`](apps/desktop/README.md)
 - Iris Core docs: [`iris-core/README.md`](iris-core/README.md)
-- Production packaging notes: [`desktop/docs/production-readiness.md`](desktop/docs/production-readiness.md)
+- Production packaging notes: [`apps/desktop/docs/production-readiness.md`](apps/desktop/docs/production-readiness.md)

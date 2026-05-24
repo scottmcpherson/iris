@@ -2,7 +2,7 @@
 
 Iris Desktop is the native Tauri 2, React 18, TypeScript, and Tailwind client for Iris.
 
-This app lives in the `desktop/` workspace of the Iris monorepo. For normal setup and startup, run commands from the repository root.
+This app lives in the `apps/desktop/` workspace of the Iris monorepo. For normal setup and startup, run commands from the repository root.
 
 ## Current Capabilities
 
@@ -27,7 +27,7 @@ For web-only iteration from the root:
 npm run dev:web
 ```
 
-From this `desktop/` directory:
+From this `apps/desktop/` directory:
 
 ```bash
 npm install
@@ -43,7 +43,7 @@ The packaged desktop app includes a version-matched Iris Core sidecar. On startu
 
 The desktop app expects one HTTP route:
 
-- Iris Core API: agents, sessions, automations, runtime routing, memory, skills, status, runtime health, model catalogs, slash commands, and session reads come from the monorepo service in `../iris-core`, defaulting to `http://127.0.0.1:8765/v1`.
+- Iris Core API: agents, sessions, automations, runtime routing, memory, skills, status, runtime health, model catalogs, slash commands, and session reads come from the monorepo service in `../../iris-core`, defaulting to `http://127.0.0.1:8765/v1`.
 
 First-run setup and Settings use connection profiles instead of a single URL/token form:
 

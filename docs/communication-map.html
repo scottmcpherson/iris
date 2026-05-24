@@ -507,7 +507,7 @@
 <!-- ========================================================== -->
 <h2 id="desktop-core">3. Desktop ↔ Core (HTTP REST + SSE)</h2>
 
-<p>The desktop client wraps every endpoint in <code>desktop/src/lib/irisCore.ts</code>. All requests go through <code>coreRequest()</code> in <code>coreTransport.ts</code>, which selects one transport per runtime: browser <code>fetch()</code> for Vite development, or native Tauri IPC for the packaged app. A failed browser request is not retried through native IPC. Most calls run from React hooks under <code>desktop/src/features/</code>.</p>
+<p>The desktop client wraps every endpoint in <code>apps/desktop/src/lib/irisCore.ts</code>. All requests go through <code>coreRequest()</code> in <code>coreTransport.ts</code>, which selects one transport per runtime: browser <code>fetch()</code> for Vite development, or native Tauri IPC for the packaged app. A failed browser request is not retried through native IPC. Most calls run from React hooks under <code>apps/desktop/src/features/</code>.</p>
 
 <div class="tabs" data-tabs="dc">
   <button class="tab active" data-target="dc-status">Health · Runtimes</button>
@@ -699,7 +699,7 @@
 <!-- ========================================================== -->
 <h2 id="tauri-bridge">4. Desktop Tauri bridge (React → Rust → Python)</h2>
 
-<p>In the packaged app, React invokes a Rust Tauri command (<code>core_bridge</code>) that spawns a Python subprocess (<code>desktop/src-tauri/python/core_bridge.py</code>) for Core JSON requests. In Vite/browser development, React uses direct <code>fetch()</code>. The same bridge keeps native-only attachment capabilities: path-based file uploads and attachment byte conversion for WebView playback.</p>
+<p>In the packaged app, React invokes a Rust Tauri command (<code>core_bridge</code>) that spawns a Python subprocess (<code>apps/desktop/src-tauri/python/core_bridge.py</code>) for Core JSON requests. In Vite/browser development, React uses direct <code>fetch()</code>. The same bridge keeps native-only attachment capabilities: path-based file uploads and attachment byte conversion for WebView playback.</p>
 
 <div class="grid-2">
   <div class="panel">
@@ -712,7 +712,7 @@
         <tr><td><span class="verb IPC">IPC</span></td><td class="path">core_upload_path</td><td class="purpose">Upload by absolute filesystem path (for drag-drop + paste)</td></tr>
       </tbody>
     </table>
-    <p class="muted" style="font-size:12px;margin-top:10px">Sources: <code>desktop/src-tauri/src/lib.rs</code>, <code>desktop/src-tauri/python/core_bridge.py</code>, dispatched from <code>coreTransport.ts:77</code>.</p>
+    <p class="muted" style="font-size:12px;margin-top:10px">Sources: <code>apps/desktop/src-tauri/src/lib.rs</code>, <code>apps/desktop/src-tauri/python/core_bridge.py</code>, dispatched from <code>coreTransport.ts:77</code>.</p>
   </div>
 
   <div class="panel">
@@ -727,7 +727,7 @@
         <tr><td class="path">iris://app-command (search)</td><td class="purpose">Cmd+G menu</td><td class="purpose">Open session finder</td></tr>
       </tbody>
     </table>
-    <p class="muted" style="font-size:12px;margin-top:10px">Listener at <code>desktop/src/App.tsx:92-105</code>; consumed by <code>AppShell.tsx</code>.</p>
+    <p class="muted" style="font-size:12px;margin-top:10px">Listener at <code>apps/desktop/src/App.tsx:92-105</code>; consumed by <code>AppShell.tsx</code>.</p>
   </div>
 </div>
 
@@ -993,7 +993,7 @@
 </table>
 
 <p class="muted" style="font-size:12px;margin-top:24px;padding-top:14px;border-top:1px dashed var(--border)">
-File citations are clickable hints — open them in your editor at the indicated <code>file:line</code>. Adapter HTTP/FS split derived from <code>iris-core/src/hermes_management_server/runtime_adapters/{base,hermes,hermes_store,hermes_sessions}.py</code>. Plugin entry point: <code>iris-platform/__init__.py</code> → <code>iris-platform/adapter.py</code>. Desktop transport: <code>desktop/src/lib/{coreTransport,irisCore,irisCoreMappings,irisRuntime}.ts</code>.
+File citations are clickable hints — open them in your editor at the indicated <code>file:line</code>. Adapter HTTP/FS split derived from <code>iris-core/src/hermes_management_server/runtime_adapters/{base,hermes,hermes_store,hermes_sessions}.py</code>. Plugin entry point: <code>iris-platform/__init__.py</code> → <code>iris-platform/adapter.py</code>. Desktop transport: <code>apps/desktop/src/lib/{coreTransport,irisCore,irisCoreMappings,irisRuntime}.ts</code>.
 </p>
 
 </div>

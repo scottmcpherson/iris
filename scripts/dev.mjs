@@ -157,11 +157,11 @@ if (withCore) {
 }
 
 if (webOnly) {
-  run("desktop", npm, ["--workspace", "desktop", "run", "dev"], { env: devEnv });
+  run("desktop", npm, ["--workspace", "apps/desktop", "run", "dev"], { env: devEnv });
 } else {
   run("desktop", npm, [
     "--workspace",
-    "desktop",
+    "apps/desktop",
     "run",
     "tauri",
     "dev",

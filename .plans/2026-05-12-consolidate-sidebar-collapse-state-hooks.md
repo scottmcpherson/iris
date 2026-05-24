@@ -14,28 +14,28 @@ The sidebar has four collapse/expand "trees":
 Trees 1–3 each have an effectively identical implementation: a `useState(() => loader())` over `Record<string, boolean>`, a `toggle(key)` that flips one entry and calls `saveJsonValue(storageKey, next)`, and a loader that JSON-parses + coerces values to booleans. The only differences are the storage key, the key space (`SidebarSectionId` vs project id vs profile name), and a couple of bespoke helpers (`expandSessions`, `setCollapsedProjectsValue`).
 
 Concretely today:
-- `desktop/src/layout/AppShell.tsx:218` — `collapsedSessionProfiles` state.
-- `desktop/src/layout/AppShell.tsx:221` — `collapsedSidebarSections` state.
-- `desktop/src/layout/AppShell.tsx:1232` — `toggleSessionsCollapsed(profileName)`.
-- `desktop/src/layout/AppShell.tsx:1240` — `toggleSidebarSection(section)`.
-- `desktop/src/layout/AppShell.tsx:1285` — `expandSessions(profileName)` (force-expand for the "new chat in profile" path).
-- `desktop/src/layout/AppShell.tsx:1788` — `loadCollapsedSessionProfiles()`.
-- `desktop/src/layout/AppShell.tsx:1797` — `loadCollapsedSidebarSections()` (typed `Record<SidebarSectionId, boolean>` with an explicit `{ pinned, projects, chats, agents }` fallback).
-- `desktop/src/layout/AppShell.tsx:1961` — `saveCollapsedSessionProfiles()`.
-- `desktop/src/layout/AppShell.tsx:1965` — `saveCollapsedSidebarSections()`.
-- `desktop/src/features/projects/useIrisProjects.ts:36` — `collapsedProjects` state.
-- `desktop/src/features/projects/useIrisProjects.ts:158` — `toggleProjectCollapsed(projectId)`.
-- `desktop/src/features/projects/useIrisProjects.ts:166` — `setCollapsedProjectsValue(projectId, collapsed)` (forced state, used by `createProject`).
-- `desktop/src/features/projects/useIrisProjects.ts:195` — `loadCollapsedProjects()`.
-- `desktop/src/features/projects/useIrisProjects.ts:202` — `saveCollapsedProjects()`.
+- `apps/desktop/src/layout/AppShell.tsx:218` — `collapsedSessionProfiles` state.
+- `apps/desktop/src/layout/AppShell.tsx:221` — `collapsedSidebarSections` state.
+- `apps/desktop/src/layout/AppShell.tsx:1232` — `toggleSessionsCollapsed(profileName)`.
+- `apps/desktop/src/layout/AppShell.tsx:1240` — `toggleSidebarSection(section)`.
+- `apps/desktop/src/layout/AppShell.tsx:1285` — `expandSessions(profileName)` (force-expand for the "new chat in profile" path).
+- `apps/desktop/src/layout/AppShell.tsx:1788` — `loadCollapsedSessionProfiles()`.
+- `apps/desktop/src/layout/AppShell.tsx:1797` — `loadCollapsedSidebarSections()` (typed `Record<SidebarSectionId, boolean>` with an explicit `{ pinned, projects, chats, agents }` fallback).
+- `apps/desktop/src/layout/AppShell.tsx:1961` — `saveCollapsedSessionProfiles()`.
+- `apps/desktop/src/layout/AppShell.tsx:1965` — `saveCollapsedSidebarSections()`.
+- `apps/desktop/src/features/projects/useIrisProjects.ts:36` — `collapsedProjects` state.
+- `apps/desktop/src/features/projects/useIrisProjects.ts:158` — `toggleProjectCollapsed(projectId)`.
+- `apps/desktop/src/features/projects/useIrisProjects.ts:166` — `setCollapsedProjectsValue(projectId, collapsed)` (forced state, used by `createProject`).
+- `apps/desktop/src/features/projects/useIrisProjects.ts:195` — `loadCollapsedProjects()`.
+- `apps/desktop/src/features/projects/useIrisProjects.ts:202` — `saveCollapsedProjects()`.
 
-Storage keys (`desktop/src/app/storage.ts:7-10`):
+Storage keys (`apps/desktop/src/app/storage.ts:7-10`):
 - `iris.desktop.sidebar.collapsedSections`
 - `hermes.desktop.sidebar.collapsedSessions` (note: legacy `hermes.` prefix — DO NOT migrate as part of this change)
 - `iris.desktop.sidebar.collapsedProjects`
 
 ## Desired Behavior
-A single shared hook `usePersistedBooleanMap(storageKey, options?)` lives in `desktop/src/app/` (e.g. `desktop/src/app/usePersistedBooleanMap.ts`) and is used by all three call sites. Its API:
+A single shared hook `usePersistedBooleanMap(storageKey, options?)` lives in `apps/desktop/src/app/` (e.g. `apps/desktop/src/app/usePersistedBooleanMap.ts`) and is used by all three call sites. Its API:
 
 ```ts
 function usePersistedBooleanMap<K extends string = string>(
@@ -51,7 +51,7 @@ function usePersistedBooleanMap<K extends string = string>(
 - `map` is the current `Record<K, boolean>`.
 - `toggle(key)` flips `map[key]` and persists the result.
 - `set(key, value)` writes a specific value and persists the result.
-- The hook reads from `localStorage` via the existing `loadJsonValue` / `saveJsonValue` helpers in `desktop/src/app/storage.ts`. Non-object payloads fall back to `options.fallback ?? {}`. All values from storage are coerced via `Boolean(value)` (matches the current loaders).
+- The hook reads from `localStorage` via the existing `loadJsonValue` / `saveJsonValue` helpers in `apps/desktop/src/app/storage.ts`. Non-object payloads fall back to `options.fallback ?? {}`. All values from storage are coerced via `Boolean(value)` (matches the current loaders).
 - Persistence happens on every state change, same as today.
 
 After the refactor:
@@ -64,53 +64,53 @@ Reload behavior, key spaces, and which JSON shapes are accepted from storage mus
 ## Findings
 
 - **Finding**: Three near-identical `Record<string, boolean>` + toggle + persist implementations exist.
-  - **Evidence**: `desktop/src/layout/AppShell.tsx:218,221,1232,1240,1788,1797,1961,1965`; `desktop/src/features/projects/useIrisProjects.ts:36,158,166,195,202`.
+  - **Evidence**: `apps/desktop/src/layout/AppShell.tsx:218,221,1232,1240,1788,1797,1961,1965`; `apps/desktop/src/features/projects/useIrisProjects.ts:36,158,166,195,202`.
   - **Why it matters**: Each implementation must be kept in sync when the persistence model changes. Currently they already drift in minor ways (e.g. `useIrisProjects` exposes a `set`-by-value helper; `AppShell` exposes a force-expand-only helper).
   - **Confidence**: high.
 
 - **Finding**: `loadCollapsedSidebarSections` has a typed fallback `{ pinned: false, projects: false, chats: false, agents: false }` while the other two loaders fall back to `{}`.
-  - **Evidence**: `desktop/src/layout/AppShell.tsx:1797-1808`.
+  - **Evidence**: `apps/desktop/src/layout/AppShell.tsx:1797-1808`.
   - **Why it matters**: The hook must accept an optional `fallback` so this call site keeps the same shape (especially for TypeScript — the consumer expects `Record<SidebarSectionId, boolean>`, not `Record<string, boolean>`).
   - **Confidence**: high.
 
 - **Finding**: All three loaders coerce stored values with `Boolean(value)` and reject non-object / array payloads.
-  - **Evidence**: `desktop/src/layout/AppShell.tsx:1788-1795,1797-1808`; `desktop/src/features/projects/useIrisProjects.ts:195-200`.
+  - **Evidence**: `apps/desktop/src/layout/AppShell.tsx:1788-1795,1797-1808`; `apps/desktop/src/features/projects/useIrisProjects.ts:195-200`.
   - **Why it matters**: The shared hook must apply the same validation so legacy/corrupt entries don't cause a runtime crash.
   - **Confidence**: high.
 
 - **Finding**: `collapsedSessionProfiles` uses the legacy `hermes.` storage key prefix; the other two use `iris.`.
-  - **Evidence**: `desktop/src/app/storage.ts:9` (`hermes.desktop.sidebar.collapsedSessions`).
+  - **Evidence**: `apps/desktop/src/app/storage.ts:9` (`hermes.desktop.sidebar.collapsedSessions`).
   - **Why it matters**: This is intentional legacy compat. Migrating the key would orphan existing users' state. Leave the key as-is.
   - **Confidence**: high.
 
 - **Finding**: `AppShell.test.ts` exercises the sidebar via props and via `localStorage` reads, including the `collapsedSidebarSections` key directly.
-  - **Evidence**: `desktop/src/layout/__tests__/AppShell.test.ts:64,124,179,227,255,327` (`collapsedProjects` is passed as a prop; the test stubs `localStorage.getItem` and matches on `storageKeys.collapsedSidebarSections`).
+  - **Evidence**: `apps/desktop/src/layout/__tests__/AppShell.test.ts:64,124,179,227,255,327` (`collapsedProjects` is passed as a prop; the test stubs `localStorage.getItem` and matches on `storageKeys.collapsedSidebarSections`).
   - **Why it matters**: The refactor must not change which `localStorage` keys are read/written, and the props surface of `AppShell` should not change.
   - **Confidence**: high.
 
 - **Finding**: The project-node and agent-node renders in `AppShell.tsx` (`renderProjectNode` at line 891, agent inline block starting at line 718) share visual shape but diverge in actions, menus, lazy-load semantics, and pin-key schemes.
-  - **Evidence**: `desktop/src/layout/AppShell.tsx:718-794,891-996`.
+  - **Evidence**: `apps/desktop/src/layout/AppShell.tsx:718-794,891-996`.
   - **Why it matters**: This is intentionally **out of scope** here. Do not attempt to unify these two node renderers — they have different reasons to change.
   - **Confidence**: high.
 
 ## Claims To Verify
-- [ ] `desktop/src/layout/AppShell.tsx:218` — `collapsedSessionProfiles` is created via `useState(() => loadCollapsedSessionProfiles())` and mutated only through `toggleSessionsCollapsed` (line 1232), `expandSessions` (line 1285), and the dependency of the auto-refresh `useEffect` at line 317.
-- [ ] `desktop/src/layout/AppShell.tsx:221` — `collapsedSidebarSections` is created via `useState(() => loadCollapsedSidebarSections())` and mutated only through `toggleSidebarSection` (line 1240). The derived booleans at lines 224–227 are read-only.
-- [ ] `desktop/src/features/projects/useIrisProjects.ts:36` — `collapsedProjects` is created via `useState(() => loadCollapsedProjects())` and mutated only through `toggleProjectCollapsed` (line 158) and `setCollapsedProjectsValue` (line 166); the latter is called from `createProject` at line 137 to force-expand a newly created project.
-- [ ] `desktop/src/app/storage.ts:7-10` — exactly three collapse-state storage keys exist: `collapsedSidebarSections`, `collapsedSessionProfiles`, `collapsedProjects`. The `hermes.` prefix on `collapsedSessionProfiles` is intentional legacy compat (see CLAUDE.md "Legacy compat" note in the project root).
+- [ ] `apps/desktop/src/layout/AppShell.tsx:218` — `collapsedSessionProfiles` is created via `useState(() => loadCollapsedSessionProfiles())` and mutated only through `toggleSessionsCollapsed` (line 1232), `expandSessions` (line 1285), and the dependency of the auto-refresh `useEffect` at line 317.
+- [ ] `apps/desktop/src/layout/AppShell.tsx:221` — `collapsedSidebarSections` is created via `useState(() => loadCollapsedSidebarSections())` and mutated only through `toggleSidebarSection` (line 1240). The derived booleans at lines 224–227 are read-only.
+- [ ] `apps/desktop/src/features/projects/useIrisProjects.ts:36` — `collapsedProjects` is created via `useState(() => loadCollapsedProjects())` and mutated only through `toggleProjectCollapsed` (line 158) and `setCollapsedProjectsValue` (line 166); the latter is called from `createProject` at line 137 to force-expand a newly created project.
+- [ ] `apps/desktop/src/app/storage.ts:7-10` — exactly three collapse-state storage keys exist: `collapsedSidebarSections`, `collapsedSessionProfiles`, `collapsedProjects`. The `hermes.` prefix on `collapsedSessionProfiles` is intentional legacy compat (see CLAUDE.md "Legacy compat" note in the project root).
 - [ ] All three current loaders reject non-object / array payloads and coerce values with `Boolean(value)`. `loadCollapsedSidebarSections` additionally returns a typed `{ pinned: false, projects: false, chats: false, agents: false }` fallback.
-- [ ] `desktop/src/layout/__tests__/AppShell.test.ts` references `storageKeys.collapsedSidebarSections` (line 227) and passes `collapsedProjects` as an `AppShell` prop (lines 64, 124, 179, 255, 327). The `AppShell` prop surface for collapse state therefore should not change.
-- [ ] No code outside `AppShell.tsx` and `useIrisProjects.ts` imports the existing `load*` / `save*` collapse helpers — verify with `rg "loadCollapsedSessionProfiles|saveCollapsedSessionProfiles|loadCollapsedSidebarSections|saveCollapsedSidebarSections|loadCollapsedProjects|saveCollapsedProjects" desktop/src`.
+- [ ] `apps/desktop/src/layout/__tests__/AppShell.test.ts` references `storageKeys.collapsedSidebarSections` (line 227) and passes `collapsedProjects` as an `AppShell` prop (lines 64, 124, 179, 255, 327). The `AppShell` prop surface for collapse state therefore should not change.
+- [ ] No code outside `AppShell.tsx` and `useIrisProjects.ts` imports the existing `load*` / `save*` collapse helpers — verify with `rg "loadCollapsedSessionProfiles|saveCollapsedSessionProfiles|loadCollapsedSidebarSections|saveCollapsedSidebarSections|loadCollapsedProjects|saveCollapsedProjects" apps/desktop/src`.
 
 ## Implementation Plan
 
-1. **`desktop/src/app/usePersistedBooleanMap.ts`** (new file) — Implement and export:
+1. **`apps/desktop/src/app/usePersistedBooleanMap.ts`** (new file) — Implement and export:
    - `usePersistedBooleanMap<K extends string = string>(storageKey: string, options?: { fallback?: Record<K, boolean> }): { map: Record<K, boolean>; toggle: (key: K) => void; set: (key: K, value: boolean) => void; }`
-   - Internally: `useState` with a lazy initializer that calls a private `loadBooleanMap(storageKey, fallback)` helper. That helper uses `loadJsonValue` from `desktop/src/app/storage.ts`, returns `options.fallback ?? {}` if the parsed value is not a plain object, and otherwise coerces every value with `Boolean(value)`.
+   - Internally: `useState` with a lazy initializer that calls a private `loadBooleanMap(storageKey, fallback)` helper. That helper uses `loadJsonValue` from `apps/desktop/src/app/storage.ts`, returns `options.fallback ?? {}` if the parsed value is not a plain object, and otherwise coerces every value with `Boolean(value)`.
    - `toggle` and `set` both use the functional `setState` form, build the next object, call `saveJsonValue(storageKey, next)`, and return it.
    - No `useEffect` — persistence is synchronous inside the setter, matching today.
 
-2. **`desktop/src/layout/AppShell.tsx:218-227`** — Replace the two `useState` declarations and the four derived booleans with two calls to the new hook:
+2. **`apps/desktop/src/layout/AppShell.tsx:218-227`** — Replace the two `useState` declarations and the four derived booleans with two calls to the new hook:
    ```ts
    const collapsedSessionProfiles = usePersistedBooleanMap(storageKeys.collapsedSessionProfiles);
    const collapsedSidebarSections = usePersistedBooleanMap<SidebarSectionId>(
@@ -120,19 +120,19 @@ Reload behavior, key spaces, and which JSON shapes are accepted from storage mus
    ```
    Update the derived `projectsSectionCollapsed` / `chatsSectionCollapsed` / `agentsSectionCollapsed` / `pinnedSectionCollapsed` consts to read `collapsedSidebarSections.map.<key>`. Update the `useEffect` dependency at line 317 from `collapsedSessionProfiles` to `collapsedSessionProfiles.map` (and the lookup inside from `collapsedSessionProfiles[profile.name]` to `collapsedSessionProfiles.map[profile.name]`).
 
-3. **`desktop/src/layout/AppShell.tsx:694,772-793`** — Update agent-node render to read `collapsedSessionProfiles.map[profile.name]` instead of `collapsedSessionProfiles[profile.name]`.
+3. **`apps/desktop/src/layout/AppShell.tsx:694,772-793`** — Update agent-node render to read `collapsedSessionProfiles.map[profile.name]` instead of `collapsedSessionProfiles[profile.name]`.
 
-4. **`desktop/src/layout/AppShell.tsx:1232-1246`** — Delete `toggleSessionsCollapsed` and `toggleSidebarSection`. Replace their call sites:
+4. **`apps/desktop/src/layout/AppShell.tsx:1232-1246`** — Delete `toggleSessionsCollapsed` and `toggleSidebarSection`. Replace their call sites:
    - Line 726 (agent profile-node click): `collapsedSessionProfiles.toggle(profile.name)`.
    - Line 1258 (`renderSidebarSectionToggle` onClick): `collapsedSidebarSections.toggle(section)`.
 
-5. **`desktop/src/layout/AppShell.tsx:1285-1292`** — Delete `expandSessions`. Replace call sites at lines 764 and 1138 with `collapsedSessionProfiles.set(profileName, false)`.
+5. **`apps/desktop/src/layout/AppShell.tsx:1285-1292`** — Delete `expandSessions`. Replace call sites at lines 764 and 1138 with `collapsedSessionProfiles.set(profileName, false)`.
 
-6. **`desktop/src/layout/AppShell.tsx:1788-1808,1961-1967`** — Delete `loadCollapsedSessionProfiles`, `loadCollapsedSidebarSections`, `saveCollapsedSessionProfiles`, and `saveCollapsedSidebarSections`. The hook owns this now.
+6. **`apps/desktop/src/layout/AppShell.tsx:1788-1808,1961-1967`** — Delete `loadCollapsedSessionProfiles`, `loadCollapsedSidebarSections`, `saveCollapsedSessionProfiles`, and `saveCollapsedSidebarSections`. The hook owns this now.
 
-7. **`desktop/src/features/projects/useIrisProjects.ts:36-38`** — Replace the `useState(() => loadCollapsedProjects())` with `const collapsedProjects = usePersistedBooleanMap(storageKeys.collapsedProjects);`. Update internal reads (lines 112, 117, 122) from `collapsedProjects[project.id]` to `collapsedProjects.map[project.id]`.
+7. **`apps/desktop/src/features/projects/useIrisProjects.ts:36-38`** — Replace the `useState(() => loadCollapsedProjects())` with `const collapsedProjects = usePersistedBooleanMap(storageKeys.collapsedProjects);`. Update internal reads (lines 112, 117, 122) from `collapsedProjects[project.id]` to `collapsedProjects.map[project.id]`.
 
-8. **`desktop/src/features/projects/useIrisProjects.ts:137,158-172`** — Replace `toggleProjectCollapsed` and `setCollapsedProjectsValue` with thin wrappers (or inline at call sites):
+8. **`apps/desktop/src/features/projects/useIrisProjects.ts:137,158-172`** — Replace `toggleProjectCollapsed` and `setCollapsedProjectsValue` with thin wrappers (or inline at call sites):
    ```ts
    const toggleProjectCollapsed = (projectId: string) => collapsedProjects.toggle(projectId);
    const setCollapsedProjectsValue = (projectId: string, collapsed: boolean) =>
@@ -140,9 +140,9 @@ Reload behavior, key spaces, and which JSON shapes are accepted from storage mus
    ```
    The single internal call site at line 137 (`setCollapsedProjectsValue(result.project.id, false)`) stays the same.
 
-9. **`desktop/src/features/projects/useIrisProjects.ts:174-192`** — Keep the hook's return shape unchanged: still expose `collapsedProjects` as `Record<string, boolean>`. That means returning `collapsedProjects.map` (renamed locally if needed to avoid shadowing) rather than the hook object. Verify `App.tsx:256` (which passes `projects.collapsedProjects` to `AppShell`) still receives the same shape.
+9. **`apps/desktop/src/features/projects/useIrisProjects.ts:174-192`** — Keep the hook's return shape unchanged: still expose `collapsedProjects` as `Record<string, boolean>`. That means returning `collapsedProjects.map` (renamed locally if needed to avoid shadowing) rather than the hook object. Verify `App.tsx:256` (which passes `projects.collapsedProjects` to `AppShell`) still receives the same shape.
 
-10. **`desktop/src/features/projects/useIrisProjects.ts:195-203`** — Delete `loadCollapsedProjects` and `saveCollapsedProjects`.
+10. **`apps/desktop/src/features/projects/useIrisProjects.ts:195-203`** — Delete `loadCollapsedProjects` and `saveCollapsedProjects`.
 
 ## Non-Goals / Must Not Change
 - The `AppShell` prop surface — `collapsedProjects: Record<string, boolean>` (AppShell.tsx:108) and `onToggleProjectCollapsed: (projectId: string) => void` (line 125) must stay exactly as today. The refactor is internal.
@@ -154,10 +154,10 @@ Reload behavior, key spaces, and which JSON shapes are accepted from storage mus
 - Do not add or remove fields on any existing test fixtures other than where necessary to keep them compiling.
 
 ## Tests
-- Run the desktop unit suite: `npm --workspace desktop run test`.
-- Run the AppShell tests specifically: `npm --workspace desktop run test -- src/layout/__tests__/AppShell.test.ts`.
+- Run the desktop unit suite: `npm --workspace apps/desktop run test`.
+- Run the AppShell tests specifically: `npm --workspace apps/desktop run test -- src/layout/__tests__/AppShell.test.ts`.
 - Run the full pre-commit gate before declaring done: `npm run check`.
-- No new automated tests are required; the existing `AppShell.test.ts` already exercises the section and project collapse paths via `localStorage` and prop assertions. If the implementer adds a unit test for the new hook, it should live at `desktop/src/app/__tests__/usePersistedBooleanMap.test.ts` and cover: lazy initial load, toggle persists to `localStorage`, `set` persists, non-object payload falls back to `fallback`, value coercion.
+- No new automated tests are required; the existing `AppShell.test.ts` already exercises the section and project collapse paths via `localStorage` and prop assertions. If the implementer adds a unit test for the new hook, it should live at `apps/desktop/src/app/__tests__/usePersistedBooleanMap.test.ts` and cover: lazy initial load, toggle persists to `localStorage`, `set` persists, non-object payload falls back to `fallback`, value coercion.
 
 ## Verification
 - `npm run dev:web` and load `http://localhost:1420/`. With the sidebar visible:

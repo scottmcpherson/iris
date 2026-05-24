@@ -13,21 +13,21 @@ The SSH path must not assume the remote host is macOS. Product copy should say "
 
 Relevant existing code:
 
-- `desktop/src/features/polish/OnboardingOverlay.tsx`
+- `apps/desktop/src/features/polish/OnboardingOverlay.tsx`
   - Current first-run overlay is generic and sends users to Settings.
-- `desktop/src/features/settings/SettingsView.tsx`
+- `apps/desktop/src/features/settings/SettingsView.tsx`
   - Owns Local and SSH setup UI.
   - Contains `SshConnectionDialog`, `connectSsh`, `disconnectSsh`, and local Hermes plugin install actions.
-- `desktop/src/features/iris/sshRuntime.ts`
+- `apps/desktop/src/features/iris/sshRuntime.ts`
   - Contains reconnect/runtime refresh logic through `ensureActiveSshTunnel`.
-- `desktop/src-tauri/src/ssh_tunnel.rs`
+- `apps/desktop/src-tauri/src/ssh_tunnel.rs`
   - Owns SSH probe/tunnel commands.
   - Currently has macOS-specific remote-start behavior through `open_remote_iris`.
-- `desktop/src-tauri/src/connection_profiles.rs`
+- `apps/desktop/src-tauri/src/connection_profiles.rs`
   - Wraps Iris Core CLI commands such as `core_install_hermes_plugin`.
 - `iris-core/src/hermes_management_server/main.py`
   - Implements `install-hermes-plugin`, writes env hints, enables the plugin, and marks Hermes gateway restart as required.
-- `desktop/src/lib/irisCore.ts`
+- `apps/desktop/src/lib/irisCore.ts`
   - Builds status from Core health, runtime probes, and agent/runtime rows.
 
 ## Product Shape
@@ -54,13 +54,13 @@ Do not duplicate SSH setup behavior between onboarding and Settings. Onboarding 
 
 ### 1. Extract Shared SSH UI and Logic
 
-Create shared SSH setup primitives, likely under `desktop/src/features/iris/` or `desktop/src/features/settings/connection/`.
+Create shared SSH setup primitives, likely under `apps/desktop/src/features/iris/` or `apps/desktop/src/features/settings/connection/`.
 
 Suggested files:
 
-- `desktop/src/features/iris/useSshConnectionManager.ts`
-- `desktop/src/features/iris/SshConnectionDialog.tsx`
-- Optional: `desktop/src/features/iris/sshConnectionDraft.ts`
+- `apps/desktop/src/features/iris/useSshConnectionManager.ts`
+- `apps/desktop/src/features/iris/SshConnectionDialog.tsx`
+- Optional: `apps/desktop/src/features/iris/sshConnectionDraft.ts`
 
 Move or share the following from `SettingsView.tsx`:
 
@@ -118,7 +118,7 @@ README can still include Mac-specific examples where the context is explicitly m
 
 ### 4. Revisit Remote Core Auto-Start
 
-`desktop/src-tauri/src/ssh_tunnel.rs` currently calls:
+`apps/desktop/src-tauri/src/ssh_tunnel.rs` currently calls:
 
 ```sh
 open -gj -a Iris >/dev/null 2>&1 || true

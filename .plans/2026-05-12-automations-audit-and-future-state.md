@@ -12,10 +12,10 @@ Iris exposes a thin five-field cron CRUD ("name / prompt / schedule / repeat / d
 
 ### End-to-end flow of a single "Schedule" click
 
-1. **UI form submit** — `desktop/src/features/jobs/JobsView.tsx:75` (`submitSchedule`).
-2. **Hook** — `desktop/src/features/jobs/useIrisAutomations.ts:134` (`createScheduledMessage`) builds the request via `automationRequestPayload` (`useIrisAutomations.ts:313`).
+1. **UI form submit** — `apps/desktop/src/features/jobs/JobsView.tsx:75` (`submitSchedule`).
+2. **Hook** — `apps/desktop/src/features/jobs/useIrisAutomations.ts:134` (`createScheduledMessage`) builds the request via `automationRequestPayload` (`useIrisAutomations.ts:313`).
 3. **Agent discovery** — `getAgentUICoreAgentForProfile(profile)` — 1 HTTP round-trip to find the Iris agent id.
-4. **Client** — `createAgentUICoreAutomation` POSTs `/v1/automations` (`desktop/src/lib/agentuiCore.ts:798`).
+4. **Client** — `createAgentUICoreAutomation` POSTs `/v1/automations` (`apps/desktop/src/lib/agentuiCore.ts:798`).
 5. **Core API** — `iris-core/src/hermes_management_server/main.py:1805` (`core_create_automation`).
 6. **Payload normalization** — `automation_create_payload` (`main.py:2511`): strips `metadata`, optionally maps `deliverToSessionId` → `deliver="iris:<chatId>"`.
 7. **Adapter** — `runtime_adapters/hermes.py:537` (`create_automation`) POSTs Hermes `/api/jobs`.
@@ -36,7 +36,7 @@ Total: ~4 HTTP calls per single create.
 
 ### Presentation
 
-Single 795-line file `desktop/src/features/jobs/JobsView.tsx` containing:
+Single 795-line file `apps/desktop/src/features/jobs/JobsView.tsx` containing:
 - List + tabs (`active` / `paused` / `completed`).
 - Modal create/edit form (name, prompt, schedule, repeat, "Advanced > Delivery target").
 - Job detail pane (schedule, deliver, runs, next, prompt, error).
@@ -50,8 +50,8 @@ Schedule UI is a 4-mode select:
 
 ### Types
 
-- `desktop/src/types/hermes.ts:307` — `HermesJob`: flattened view (`schedule: string`, `deliver: string`, `repeat: number | null`). Drops Hermes' richer fields.
-- `desktop/src/lib/agentuiCore.ts:172` — `AgentUICoreAutomation`: Core's record shape. Used only inside the transport layer; the UI never renders it directly.
+- `apps/desktop/src/types/hermes.ts:307` — `HermesJob`: flattened view (`schedule: string`, `deliver: string`, `repeat: number | null`). Drops Hermes' richer fields.
+- `apps/desktop/src/lib/agentuiCore.ts:172` — `AgentUICoreAutomation`: Core's record shape. Used only inside the transport layer; the UI never renders it directly.
 - `iris-core/.../models.py:206-225` — `CoreAutomationCreateRequest` / `CoreAutomationUpdateRequest`: 6 fields (`agentId`, `name`, `schedule`, `prompt`, `repeat`, `deliver`, `deliverToSessionId`, `metadata`).
 
 ### Hermes' actual capabilities (the gap)
@@ -194,16 +194,16 @@ Ordered by user value / Hermes-parity priority:
 
 - [ ] `iris-core/src/hermes_management_server/main.py:2464` — every mutating endpoint re-lists all jobs via `resolve_runtime_automation` before mutating.
 - [ ] `iris-core/src/hermes_management_server/main.py:2488` — `id` is computed as `f"auto_{stable_hash(agent['runtimeId'], external_job_id, length=22)}"`.
-- [ ] `desktop/src/features/jobs/useIrisAutomations.ts:339` — every create/update sets `metadata.kind="scheduled-message"`, and `useIrisAutomations.ts:156-157` then discards the metadata before sending to Core.
+- [ ] `apps/desktop/src/features/jobs/useIrisAutomations.ts:339` — every create/update sets `metadata.kind="scheduled-message"`, and `useIrisAutomations.ts:156-157` then discards the metadata before sending to Core.
 - [ ] `iris-core/src/hermes_management_server/main.py:2511` — `automation_create_payload` does not forward `metadata` to Hermes.
 - [ ] `/Users/scott/Development/hermes-agent/gateway/platforms/api_server.py:2353` — `_UPDATE_ALLOWED_FIELDS` is `{"name", "schedule", "prompt", "deliver", "skills", "skill", "repeat", "enabled"}` (no `metadata`).
-- [ ] `desktop/src/features/jobs/JobsView.tsx:689` — "daily" mode emits `daily at ${dailyTime}`.
+- [ ] `apps/desktop/src/features/jobs/JobsView.tsx:689` — "daily" mode emits `daily at ${dailyTime}`.
 - [ ] `/Users/scott/Development/hermes-agent/cron/jobs.py:184` — `parse_schedule` rejects `daily at 09:00` (run it: `python -c "from cron.jobs import parse_schedule; parse_schedule('daily at 09:00')"`).
-- [ ] `desktop/src/features/jobs/useIrisAutomations.ts:231-258` — `normalizeJob` does not preserve `script`, `skills`, `no_agent`, `context_from`, `workdir`, `enabled_toolsets`, `model`, `provider`.
+- [ ] `apps/desktop/src/features/jobs/useIrisAutomations.ts:231-258` — `normalizeJob` does not preserve `script`, `skills`, `no_agent`, `context_from`, `workdir`, `enabled_toolsets`, `model`, `provider`.
 - [ ] `iris-platform/adapter.py` — no path stamps `automationId` on outbound cron deliveries (grep for `automationId`).
 - [ ] `/Users/scott/Development/hermes-agent/cron/jobs.py:768` — `mark_job_run` does NOT set `state="completed"`; `state` only flips between `scheduled` and `paused`.
 - [ ] `iris-core/src/hermes_management_server/runtime_adapters/base.py:64-68` — only cron methods (`list_automations`, `create_automation`, `update_automation`, `delete_automation`, `control_automation`); no webhook surface.
-- [ ] `desktop/src/lib/agentuiCore.ts:172` — `AgentUICoreAutomation` type is exported but no UI file imports it (`grep -r AgentUICoreAutomation desktop/src/features` returns nothing).
+- [ ] `apps/desktop/src/lib/agentuiCore.ts:172` — `AgentUICoreAutomation` type is exported but no UI file imports it (`grep -r AgentUICoreAutomation apps/desktop/src/features` returns nothing).
 
 ## Implementation Plan
 

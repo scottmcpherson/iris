@@ -26,7 +26,7 @@ export function DiagnosticRow({
   const ActionIcon = action?.icon;
   return (
     <div className={`diagnostics-row ${tone}`}>
-      <span className="diagnostics-row-icon" aria-hidden>
+      <span className="diagnostics-row-icon grid flex-none place-items-center" aria-hidden>
         {ok ? <CheckCircle2 size={16} /> : <AlertCircle size={16} />}
       </span>
       <div className="flex-1 inline-flex items-baseline gap-2 min-w-0 overflow-hidden">
