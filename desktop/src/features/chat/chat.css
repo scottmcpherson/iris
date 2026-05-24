@@ -4,14 +4,6 @@
   gap: 0;
 }
 
-.chat-pane,
-.tool-view,
-.jobs-view {
-  --chat-content-max-width: 800px;
-  display: grid;
-  min-height: 0;
-}
-
 .chat-pane {
   position: relative;
   height: 100%;
@@ -328,7 +320,7 @@
 .message.assistant,
 .message.system,
 .message.tool {
-  max-width: var(--chat-content-max-width);
+  max-width: var(--surface-reading-max);
 }
 
 .message.user {
@@ -985,7 +977,7 @@
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   gap: 4px;
-  width: min(calc(100% - 40px), var(--chat-content-max-width));
+  width: min(calc(100% - 40px), var(--surface-reading-max));
   margin: 0 auto 48px;
   padding: 10px 20px;
   border: 1px solid var(--input);
@@ -995,7 +987,7 @@
 }
 
 .chat-pane.new-chat .composer {
-  width: min(100%, var(--chat-content-max-width));
+  width: min(100%, var(--surface-reading-max));
   margin: 0;
 }
 

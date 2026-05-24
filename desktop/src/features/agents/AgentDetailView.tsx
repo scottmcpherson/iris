@@ -25,7 +25,7 @@ type AgentDetailViewProps = {
   gatewayActionBusy: boolean;
   gatewayActionBusyAction: IrisCoreGatewayAction | null;
   adapterInstallBusy: boolean;
-  onRefresh: () => void;
+  onRefresh: () => void | Promise<void>;
   onOpenAgentProfile: (profileName: string) => void;
   onProfileSkillsChanged: (profileName: string) => void;
   onProfileAction: ProfileActionHandler;
@@ -75,7 +75,7 @@ export function AgentDetailView({
 
   if (section === "memory") {
     return (
-      <AgentContentFrame layout="workbench">
+      <AgentContentFrame layout="record">
         <MemoryView
           memory={detailMemory}
           profile={selectedProfile}
@@ -102,7 +102,7 @@ export function AgentDetailView({
 
   if (section === "configuration") {
     return (
-      <AgentContentFrame layout="workbench">
+      <AgentContentFrame layout="record">
         <AgentConfigurationView
           profile={selectedProfile}
           runtimeConfig={runtimeConfig}

@@ -129,6 +129,8 @@
   --top-glow-noise: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140' viewBox='0 0 140 140'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.78' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23noise)' opacity='0.024'/%3E%3C/svg%3E");
   --top-glow-gradient: radial-gradient(ellipse 80% 58% at 50% 0%, rgba(255, 255, 255, 0.04), transparent 62%);
   --radius: 8px;
+  --surface-reading-max: 800px;
+  --surface-data-max: 1040px;
   --background: #07080b;
   --foreground: #f5f2ea;
   --card: #0d0f14;

@@ -71,7 +71,7 @@ export function AgentsView({
     profiles.find((profile) => profile.name === detailProfile) ?? activeProfile;
 
   return (
-    <div className="tool-view agents-workspace gap-[18px] overflow-auto">
+    <div className="tool-view agents-workspace grid min-h-0 gap-[18px] overflow-auto">
       <AgentDetailView
         section={section}
         status={status}

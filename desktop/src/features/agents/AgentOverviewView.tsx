@@ -56,7 +56,7 @@ type AgentOverviewViewProps = {
   gatewayActionBusy: boolean;
   gatewayActionBusyAction: IrisCoreGatewayAction | null;
   adapterInstallBusy: boolean;
-  onRefresh: () => void;
+  onRefresh: () => void | Promise<void>;
   onProfileAction: ProfileActionHandler;
   onGatewayAction: (action: IrisCoreGatewayAction) => void;
   onInstallAdapter: () => void;
@@ -77,6 +77,16 @@ export function AgentOverviewView({
   onInstallAdapter,
   onOpenSettings,
 }: AgentOverviewViewProps) {
+  const [refreshing, setRefreshing] = useState(false);
+  const handleRefresh = async () => {
+    if (refreshing) return;
+    setRefreshing(true);
+    try {
+      await onRefresh();
+    } finally {
+      setRefreshing(false);
+    }
+  };
   const activeConnection = activeCoreConnection(runtimeConfig);
   const checkedAt = status?.checkedAt ? formatTimestamp(status.checkedAt) : "";
   const modelDisplay = modelSummary(profile.provider, profile.model);
@@ -132,11 +142,12 @@ export function AgentOverviewView({
               <Button
                 variant="appIcon"
                 size="icon-sm"
-                onClick={onRefresh}
+                onClick={() => void handleRefresh()}
+                disabled={refreshing}
                 title="Refresh"
                 aria-label="Refresh runtime health"
               >
-                <RefreshCw />
+                <RefreshCw className={refreshing ? "animate-spin" : undefined} />
               </Button>
               <Button
                 variant="appIcon"

@@ -814,7 +814,9 @@ function App() {
             })
           }
           onOpenAgent={() => {}}
-          onRefresh={() => void iris.refreshIris()}
+          onRefresh={async () => {
+            await iris.refreshIris();
+          }}
           onProfileSkillsChanged={(profileName) =>
             void iris.refreshIris(profileName, iris.runtimeConfig, {
               loadProfileData: false,

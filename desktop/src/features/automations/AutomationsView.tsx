@@ -196,8 +196,8 @@ export function AutomationsView({
   }
 
   return (
-    <div className="jobs-view grid-rows-[auto_minmax(0,1fr)] h-full overflow-hidden">
-      <header className="jobs-header relative flex items-end justify-between gap-4 w-[min(calc(100%-96px),var(--chat-content-max-width))] mx-auto pt-[30px] pb-[18px]">
+    <div className="jobs-view grid min-h-0 grid-rows-[auto_minmax(0,1fr)] h-full overflow-hidden">
+      <header className="jobs-header relative flex items-end justify-between gap-4 w-[min(calc(100%-96px),var(--surface-reading-max))] mx-auto pt-[30px] pb-[18px]">
         <div className="grid gap-1.5 min-w-0">
           <h1>Automations</h1>
           <p className="text-[13px] text-muted-foreground m-0">Run agents on a schedule or trigger.</p>
@@ -217,7 +217,7 @@ export function AutomationsView({
       </header>
 
       <div className="jobs-body-scroll min-h-0 overflow-auto">
-      <div className="jobs-body grid content-start gap-[18px] w-[min(calc(100%-96px),var(--chat-content-max-width))] mx-auto pt-[22px] pb-[30px]">
+      <div className="jobs-body grid content-start gap-[18px] w-[min(calc(100%-96px),var(--surface-reading-max))] mx-auto pt-[22px] pb-[30px]">
         {error ? (
           <Alert variant="destructive" className="jobs-alert">
             <AlertCircle />

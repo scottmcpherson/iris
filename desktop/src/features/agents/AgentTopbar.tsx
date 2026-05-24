@@ -35,7 +35,7 @@ import type { HermesProfile, HermesStatus } from "../../types/hermes";
 import { normalizeProfileName, profileNameError } from "./profileNames";
 import type { AgentDetailSection } from "./types";
 
-const SECTION_ORDER: AgentDetailSection[] = ["overview", "memory", "skills", "configuration"];
+const SECTION_ORDER: AgentDetailSection[] = ["overview", "configuration", "memory", "skills"];
 
 function sectionLabel(section: AgentDetailSection): string {
   return section === "configuration" ? "Config" : section.charAt(0).toUpperCase() + section.slice(1);

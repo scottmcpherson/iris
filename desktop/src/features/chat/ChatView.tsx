@@ -619,7 +619,7 @@ export function ChatView({
   return (
     <div
       ref={chatPaneRef}
-      className={["chat-pane", newChat ? "new-chat" : "", dragActive ? "drag-active" : ""]
+      className={["chat-pane grid min-h-0", newChat ? "new-chat" : "", dragActive ? "drag-active" : ""]
         .filter(Boolean)
         .join(" ")}
       onDragEnter={handleDragEnter}
@@ -634,7 +634,7 @@ export function ChatView({
         </div>
       ) : null}
       {newChat ? (
-        <div className="new-chat-center w-[min(100%,var(--chat-content-max-width))] mt-0 mb-6 mx-0 text-center">
+        <div className="new-chat-center w-[min(100%,var(--surface-reading-max))] mt-0 mb-6 mx-0 text-center">
           <h1>What should we work on in {profile}?</h1>
         </div>
       ) : (
@@ -649,7 +649,7 @@ export function ChatView({
             resize={transcriptResizeBehavior}
             role="log"
           >
-            <StickToBottom.Content className="session-column flex flex-col justify-start w-[min(calc(100%-40px),var(--chat-content-max-width))] min-h-full mx-auto" scrollClassName="message-list h-full min-h-0 overflow-auto pt-[52px] pb-7">
+            <StickToBottom.Content className="session-column flex flex-col justify-start w-[min(calc(100%-40px),var(--surface-reading-max))] min-h-full mx-auto" scrollClassName="message-list h-full min-h-0 overflow-auto pt-[52px] pb-7">
               {renderedMessages.length ? (
                 renderedMessages.map((message) => (
                   <MessageRow

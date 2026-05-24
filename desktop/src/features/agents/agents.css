@@ -260,8 +260,8 @@
 
 .agents-workspace {
   --agent-page-gutter: clamp(16px, 4vw, 48px);
-  --agent-index-max-width: 1040px;
-  --agent-record-max-width: 1040px;
+  --agent-index-max-width: var(--surface-data-max);
+  --agent-record-max-width: var(--surface-data-max);
   --agent-workbench-max-width: 1280px;
   align-content: stretch;
   padding: 0;

@@ -2,6 +2,8 @@ import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, FormEvent, PointerEvent as ReactPointerEvent, ReactNode } from "react";
 import {
   AlertCircle,
+  ArrowLeft,
+  ArrowRight,
   Check,
   ChevronDown,
   ChevronRight,
@@ -24,6 +26,7 @@ import {
 } from "lucide-react";
 import irisSidebarIcon from "../assets/iris-sidebar-icon-borderless.png";
 import { navItems } from "../app/navigation";
+import { useHistoryNav } from "../app/routing/useHistoryNav";
 import { loadJsonValue, saveJsonValue, storageKeys } from "../app/storage";
 import type { ProfileActionHandler, View } from "../app/types";
 import { offlineProfile } from "../app/offlineProfile";
@@ -200,7 +203,6 @@ export function AppShell({
   const activeChatSession = activeView === "chat" && selectedSessionId
     ? sessions.find((session) => session.id === selectedSessionId)
     : null;
-  const chatTopbarTitle = activeChatSession?.title || "New session";
   const [sessionContextMenuKey, setSessionContextMenuKey] = useState("");
   const [profileDialog, setProfileDialog] = useState<ProfileDialog | null>(null);
   const [projectDialog, setProjectDialog] = useState<ProjectDialog | null>(null);
@@ -221,6 +223,7 @@ export function AppShell({
     () => loadSidebarOrganization(),
   );
   const sessionSearchInputRef = useRef<HTMLInputElement | null>(null);
+  const sidebarScrollRef = useRef<HTMLDivElement | null>(null);
   const sidebarWidthBandRef = useRef(widthBandForWindow());
   const sidebarCollapsedRef = useRef(sidebarWidthBandRef.current === "compact");
   const expandedBeforeResponsiveCollapseRef = useRef(!sidebarCollapsedRef.current);
@@ -233,6 +236,7 @@ export function AppShell({
   const [collapsedSidebarSections, setCollapsedSidebarSections] = useState<Record<SidebarSectionId, boolean>>(
     () => loadCollapsedSidebarSections(),
   );
+  const historyNav = useHistoryNav();
   const projectsSectionCollapsed = Boolean(collapsedSidebarSections.projects);
   const chatsSectionCollapsed = Boolean(collapsedSidebarSections.chats);
   const agentsSectionCollapsed = Boolean(collapsedSidebarSections.agents);
@@ -247,6 +251,17 @@ export function AppShell({
   }, [sidebarCollapsed]);
 
   useEffect(() => {
+    const el = sidebarScrollRef.current;
+    if (!el) return;
+    const update = () => {
+      el.toggleAttribute("data-scrolled", el.scrollTop > 0);
+    };
+    update();
+    el.addEventListener("scroll", update, { passive: true });
+    return () => el.removeEventListener("scroll", update);
+  }, []);
+
+  useEffect(() => {
     const handleSidebarShortcut = (event: KeyboardEvent) => {
       const commandKey = event.metaKey || event.ctrlKey;
       if (!commandKey || event.altKey || event.shiftKey || event.key.toLowerCase() !== "b") return;
@@ -257,6 +272,23 @@ export function AppShell({
     window.addEventListener("keydown", handleSidebarShortcut, { capture: true });
     return () => window.removeEventListener("keydown", handleSidebarShortcut, { capture: true });
   }, []);
+
+  useEffect(() => {
+    const handleHistoryShortcut = (event: KeyboardEvent) => {
+      const commandKey = event.metaKey || event.ctrlKey;
+      if (!commandKey || event.altKey || event.shiftKey) return;
+      if (event.key === "[" && historyNav.canGoBack) {
+        event.preventDefault();
+        historyNav.goBack();
+      } else if (event.key === "]" && historyNav.canGoForward) {
+        event.preventDefault();
+        historyNav.goForward();
+      }
+    };
+
+    window.addEventListener("keydown", handleHistoryShortcut, { capture: true });
+    return () => window.removeEventListener("keydown", handleHistoryShortcut, { capture: true });
+  }, [historyNav.canGoBack, historyNav.canGoForward, historyNav.goBack, historyNav.goForward]);
 
   useEffect(() => {
     const handleResize = () => {
@@ -414,18 +446,44 @@ export function AppShell({
 
   return (
     <div className={shellClassName} style={shellStyle}>
-      <Button
-        type="button"
-        variant="ghost"
-        className="sidebar-toggle"
-        aria-label={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
-        aria-expanded={!sidebarCollapsed}
-        aria-keyshortcuts="Meta+B"
-        title="Toggle sidebar (⌘B)"
-        onClick={() => setSidebarCollapsedWithTransition((current) => !current)}
-      >
-        {sidebarCollapsed ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}
-      </Button>
+      <div className="window-chrome-actions">
+        <Button
+          type="button"
+          variant="ghost"
+          className="chrome-action"
+          aria-label={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+          aria-expanded={!sidebarCollapsed}
+          aria-keyshortcuts="Meta+B"
+          title="Toggle sidebar (⌘B)"
+          onClick={() => setSidebarCollapsedWithTransition((current) => !current)}
+        >
+          {sidebarCollapsed ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}
+        </Button>
+        <Button
+          type="button"
+          variant="ghost"
+          className="chrome-action"
+          aria-label="Go back"
+          aria-keyshortcuts="Meta+["
+          title="Back (⌘[)"
+          disabled={!historyNav.canGoBack}
+          onClick={historyNav.goBack}
+        >
+          <ArrowLeft size={16} />
+        </Button>
+        <Button
+          type="button"
+          variant="ghost"
+          className="chrome-action"
+          aria-label="Go forward"
+          aria-keyshortcuts="Meta+]"
+          title="Forward (⌘])"
+          disabled={!historyNav.canGoForward}
+          onClick={historyNav.goForward}
+        >
+          <ArrowRight size={16} />
+        </Button>
+      </div>
       <aside className="sidebar">
         <div className="window-drag-zone" data-tauri-drag-region />
         <div className="flex items-center flex-none gap-3 min-h-11 pt-0 px-2 pb-[18px]">
@@ -505,7 +563,7 @@ export function AppShell({
           })}
         </nav>
 
-        <div className="sidebar-scroll-region">
+        <div className="sidebar-scroll-region" ref={sidebarScrollRef}>
           {pinnedSessionItems.length ? (
             <div className="sidebar-section pinned-tree">
               <div className="profile-tree-header flex items-stretch justify-between gap-2.5 pl-2 pr-0">
@@ -785,9 +843,9 @@ export function AppShell({
           <div className="topbar-drag-zone" data-tauri-drag-region />
           {topbarPane ?? (
             <>
-              {activeView === "chat" ? (
+              {activeView === "chat" && activeChatSession ? (
                 <div className="min-w-0 pointer-events-none flex items-baseline gap-2 overflow-hidden">
-                  <p className="font-semibold text-[13px] truncate">{chatTopbarTitle}</p>
+                  <p className="font-semibold text-[13px] truncate">{activeChatSession.title}</p>
                 </div>
               ) : null}
             </>

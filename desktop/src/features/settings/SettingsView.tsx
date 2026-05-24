@@ -226,8 +226,8 @@ export function SettingsView({
   }
 
   return (
-    <div className="tool-view overflow-auto">
-      <div className="settings-view-general grid gap-4 content-start w-[min(calc(100%-96px),var(--chat-content-max-width))] mx-auto py-[30px]">
+    <div className="tool-view grid min-h-0 overflow-auto">
+      <div className="settings-view-general grid gap-4 content-start w-[min(calc(100%-96px),var(--surface-reading-max))] mx-auto py-[30px]">
       <header className="grid gap-1.5 min-w-0">
         <h1 className="text-[28px] font-bold tracking-[-0.01em] leading-tight">Settings</h1>
         <p className="text-[13px] text-muted-foreground m-0">Configure connections, runtime, and service preferences.</p>
