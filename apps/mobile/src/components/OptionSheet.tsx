@@ -1,6 +1,7 @@
 import { Modal, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { Check } from "lucide-react-native";
 import { useTheme } from "../theme/useTheme";
+import { GlassSurface } from "./GlassSurface";
 
 export type OptionSheetItem = {
   id: string;
@@ -32,7 +33,7 @@ export function OptionSheet({
   return (
     <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
       <Pressable accessibilityRole="button" accessibilityLabel="Close options" style={styles.backdrop} onPress={onClose} />
-      <View style={styles.sheet}>
+      <GlassSurface style={styles.sheet} fallbackStyle={styles.sheetFill}>
         <View style={styles.handle} />
         <Text style={styles.title}>{title}</Text>
         <ScrollView style={styles.list} contentContainerStyle={styles.listInner}>
@@ -56,7 +57,7 @@ export function OptionSheet({
             </Pressable>
           ))}
         </ScrollView>
-      </View>
+      </GlassSurface>
     </Modal>
   );
 }
@@ -71,13 +72,16 @@ function createStyles(theme: ReturnType<typeof useTheme>) {
       maxHeight: "72%",
       borderTopLeftRadius: theme.radius.xl,
       borderTopRightRadius: theme.radius.xl,
-      borderWidth: 1,
-      borderColor: theme.colors.border,
-      backgroundColor: theme.colors.surface,
+      overflow: "hidden",
       paddingTop: theme.spacing[2],
       paddingHorizontal: theme.spacing[4],
       paddingBottom: theme.spacing[6],
       gap: theme.spacing[3],
+    },
+    sheetFill: {
+      borderWidth: 1,
+      borderColor: theme.colors.border,
+      backgroundColor: theme.colors.surface,
     },
     handle: {
       alignSelf: "center",

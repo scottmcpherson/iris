@@ -1,17 +1,27 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useLocalSearchParams } from "expo-router";
+import { router, useLocalSearchParams } from "expo-router";
 import {
   ActivityIndicator,
   FlatList,
-  Pressable,
+  Keyboard,
+  Platform,
   StyleSheet,
   Text,
+  useWindowDimensions,
   View,
+  type KeyboardEvent,
   type NativeScrollEvent,
   type NativeSyntheticEvent,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { ArrowDown, Bot, Folder, Zap } from "lucide-react-native";
+import { isLiquidGlassAvailable } from "expo-glass-effect";
+import Animated, {
+  Easing,
+  useAnimatedStyle,
+  useSharedValue,
+  withTiming,
+} from "react-native-reanimated";
+import { ArrowDown, Bot, Folder, SquarePen, Zap } from "lucide-react-native";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   useAgentsQuery,
@@ -43,6 +53,7 @@ import {
 } from "@iris/core-client";
 import { ChatComposer } from "../components/ChatComposer";
 import { ComposerOptionMenu, type ComposerOptionGroup } from "../components/ComposerOptionMenu";
+import { GlassButton } from "../components/GlassButton";
 import { MessageBubble } from "../components/MessageBubble";
 import { SidebarButton } from "../components/MobileSidebar";
 import { useMobileSidebar } from "../components/MobileSidebarContext";
@@ -64,13 +75,24 @@ const NO_PROJECT_ID = "__no-project__";
 export function ChatScreen() {
   const theme = useTheme();
   const styles = createStyles(theme);
+  const glass = isLiquidGlassAvailable();
   const insets = useSafeAreaInsets();
-  const { sessionId: routeSessionId, projectId: routeProjectId } = useLocalSearchParams<{
+  const { height: windowHeight } = useWindowDimensions();
+  const {
+    draftId: routeDraftId,
+    sessionId: routeSessionId,
+    projectId: routeProjectId,
+    agentId: routeAgentId,
+  } = useLocalSearchParams<{
+    draftId?: string;
     sessionId?: string;
     projectId?: string;
+    agentId?: string;
   }>();
   const isExistingSession = typeof routeSessionId === "string" && routeSessionId.length > 0;
-  const initialProjectId = typeof routeProjectId === "string" ? routeProjectId : "";
+  const routeNewChatDraftId = typeof routeDraftId === "string" ? routeDraftId : "";
+  const routeProjectIdValue = typeof routeProjectId === "string" ? routeProjectId : "";
+  const routeAgentIdValue = typeof routeAgentId === "string" ? routeAgentId : "";
   const { client, clientKey } = useIrisConnection();
   const queryClient = useQueryClient();
 
@@ -80,8 +102,8 @@ export function ChatScreen() {
   const createSession = useCreateSessionMutation(client, clientKey);
   const agents = useMemo(() => agentsQuery.data?.agents || [], [agentsQuery.data?.agents]);
   const projects = useMemo(() => projectsQuery.data?.projects || [], [projectsQuery.data?.projects]);
-  const [selectedProjectId, setSelectedProjectId] = useState<string | null>(initialProjectId || null);
-  const [selectedAgentId, setSelectedAgentId] = useState("");
+  const [selectedProjectId, setSelectedProjectId] = useState<string | null>(routeProjectIdValue || null);
+  const [selectedAgentId, setSelectedAgentId] = useState(routeAgentIdValue);
   const [createdSessionId, setCreatedSessionId] = useState("");
 
   const sessionId = isExistingSession ? routeSessionId : createdSessionId;
@@ -108,6 +130,9 @@ export function ChatScreen() {
   const cursorRef = useRef(0);
   const isAtBottomRef = useRef(true);
   const scrollSettleTimersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
+  const keyboardOffsetCommitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const keyboardOffsetTargetRef = useRef(0);
+  const keyboardOffset = useSharedValue(0);
   const activeRequestIdRef = useRef("");
   const pollInFlightRef = useRef(false);
   const processedDeliveryIdsRef = useRef<Set<string>>(new Set());
@@ -142,6 +167,20 @@ export function ChatScreen() {
   );
   const sending = createSession.isPending || sendMutation.isPending;
   const showEmptyPanel = !isExistingSession && messages.length === 0;
+  const emptyPlaceholderStyle = useAnimatedStyle(() => ({
+    bottom: composerHeight + theme.spacing[3] + keyboardOffset.value,
+  }), [composerHeight, theme.spacing]);
+
+  useEffect(() => {
+    if (isExistingSession) return;
+    setSelectedProjectId(routeProjectIdValue || null);
+    setSelectedAgentId(routeAgentIdValue);
+    setCreatedSessionId("");
+    setModelSelection(null);
+    setMessages([]);
+    setRequestActive(false);
+    activeRequestIdRef.current = "";
+  }, [isExistingSession, routeNewChatDraftId, routeProjectIdValue, routeAgentIdValue]);
 
   // Existing sessions seed their transcript from history. While a request is active,
   // keep the live stream until history has the completed assistant turn.
@@ -182,6 +221,51 @@ export function ChatScreen() {
       scrollSettleTimersRef.current = [];
     };
   }, []);
+
+  useEffect(() => {
+    if (Platform.OS === "web") return undefined;
+
+    function commitKeyboardOffset(target: number, duration: number) {
+      if (keyboardOffsetCommitTimerRef.current) {
+        clearTimeout(keyboardOffsetCommitTimerRef.current);
+        keyboardOffsetCommitTimerRef.current = null;
+      }
+      const previousTarget = keyboardOffsetTargetRef.current;
+      keyboardOffsetTargetRef.current = target;
+      const animate = () => {
+        keyboardOffset.value = withTiming(target, { duration, easing: Easing.out(Easing.cubic) });
+      };
+      if (target >= previousTarget) {
+        animate();
+      } else {
+        keyboardOffsetCommitTimerRef.current = setTimeout(animate, 120);
+      }
+    }
+
+    function syncToKeyboard(event: KeyboardEvent) {
+      const keyboardHeight = Math.max(0, windowHeight - event.endCoordinates.screenY);
+      commitKeyboardOffset(Math.max(0, keyboardHeight - insets.bottom), event.duration || 250);
+    }
+
+    function resetKeyboardOffset(event?: KeyboardEvent) {
+      commitKeyboardOffset(0, event?.duration || 220);
+    }
+
+    const showSubscription = Keyboard.addListener(
+      Platform.OS === "ios" ? "keyboardWillChangeFrame" : "keyboardDidShow",
+      syncToKeyboard,
+    );
+    const hideSubscription = Keyboard.addListener(
+      Platform.OS === "ios" ? "keyboardWillHide" : "keyboardDidHide",
+      resetKeyboardOffset,
+    );
+
+    return () => {
+      showSubscription.remove();
+      hideSubscription.remove();
+      if (keyboardOffsetCommitTimerRef.current) clearTimeout(keyboardOffsetCommitTimerRef.current);
+    };
+  }, [insets.bottom, keyboardOffset, windowHeight]);
 
   useEffect(() => {
     if (isExistingSession || !agents.length || selectedAgentId) return;
@@ -406,6 +490,19 @@ export function ChatScreen() {
     activeRequestIdRef.current = "";
   }
 
+  // Carry the current session's agent and project into a fresh chat as defaults.
+  function startNewChatFromSession() {
+    const sessionProjectId = projectIdFromSession(detailQuery.data?.session.metadata);
+    router.push({
+      pathname: "/sessions/new",
+      params: {
+        draftId: String(Date.now()),
+        ...(agentId ? { agentId } : {}),
+        ...(sessionProjectId ? { projectId: sessionProjectId } : {}),
+      },
+    });
+  }
+
   function selectAgent(id: string) {
     if (!requestActive) setSelectedAgentId(id);
   }
@@ -461,47 +558,43 @@ export function ChatScreen() {
     ? projectLabelFromSession(detailQuery.data?.session.metadata)
     : selectedProject?.name || "No project";
 
-  const composerControls = (
+  const composerContextBar = (
     <>
       <ComposerOptionMenu
-        systemImage="sparkles"
-        fallbackIcon={<Bot color={theme.colors.textMuted} size={20} />}
-        title="Agent"
-        value={agentValue}
-        items={agentItems}
-        showValue={false}
-        showChevron={false}
-        disabled={isExistingSession || !client || agents.length < 2 || requestActive || pickersLocked}
-        onSelect={selectAgent}
-      />
-      <ComposerOptionMenu
+        variant="chip"
         systemImage="folder"
-        fallbackIcon={<Folder color={theme.colors.textMuted} size={20} />}
+        fallbackIcon={<Folder color={theme.colors.textMuted} size={16} />}
         title="Project"
         value={projectValue}
         items={projectItems}
-        showValue={false}
-        showChevron={false}
-        disabled={isExistingSession || !client || requestActive || pickersLocked}
+        readOnly={pickersLocked}
+        disabled={!client || requestActive}
         onSelect={selectProject}
       />
+      <ComposerOptionMenu
+        variant="chip"
+        systemImage="sparkles"
+        fallbackIcon={<Bot color={theme.colors.textMuted} size={16} />}
+        title="Agent"
+        value={agentValue}
+        items={agentItems}
+        readOnly={pickersLocked}
+        disabled={!client || agents.length < 2 || requestActive}
+        onSelect={selectAgent}
+      />
+      <ComposerOptionMenu
+        variant="chip"
+        systemImage="bolt"
+        fallbackIcon={<Zap color={theme.colors.textMuted} size={16} />}
+        title="Model"
+        value={displayedModelSelection?.model || "Default"}
+        items={modelItems}
+        groups={modelGroups}
+        emptyLabel="No model catalog available."
+        disabled={!client || modelItems.length === 0 || requestActive}
+        onSelect={selectModel}
+      />
     </>
-  );
-
-  const composerTrailingControls = (
-    <ComposerOptionMenu
-      systemImage="bolt"
-      fallbackIcon={<Zap color={theme.colors.textMuted} size={20} />}
-      title="Model"
-      value={displayedModelSelection?.model || "Default"}
-      items={modelItems}
-      groups={modelGroups}
-      emptyLabel="No model catalog available."
-      showIcon={false}
-      showChevron={false}
-      disabled={!client || modelItems.length === 0 || requestActive}
-      onSelect={selectModel}
-    />
   );
 
   const listHeader = (
@@ -516,11 +609,6 @@ export function ChatScreen() {
       ) : null}
       {!isExistingSession && agentsQuery.error ? <Text style={styles.error}>{agentsQuery.error.message}</Text> : null}
       {!isExistingSession && projectsQuery.error ? <Text style={styles.error}>{projectsQuery.error.message}</Text> : null}
-      {showEmptyPanel ? (
-        <View style={styles.emptyPanel}>
-          <Text style={styles.emptyTitle}>What should we work on?</Text>
-        </View>
-      ) : null}
     </View>
   );
 
@@ -542,44 +630,70 @@ export function ChatScreen() {
         }}
         contentContainerStyle={[
           styles.messages,
-          showEmptyPanel ? styles.emptyMessages : null,
           { paddingTop: insets.top + HEADER_BAR_HEIGHT + theme.spacing[3] },
         ]}
         ListHeaderComponent={listHeader}
-        // Bottom breathing room lives in a footer, not contentContainerStyle.paddingBottom,
-        // because FlatList.scrollToEnd counts the footer length but ignores container padding —
-        // padding here leaves an unreachable gap below the last message after a jump-to-bottom.
-        ListFooterComponent={<View style={styles.messagesFooter} />}
+        // The composer floats over the list (so messages scroll behind its glass), so the
+        // footer must clear its height. Breathing room lives in a footer, not
+        // contentContainerStyle.paddingBottom, because FlatList.scrollToEnd counts the footer
+        // length but ignores container padding — padding here leaves an unreachable gap below
+        // the last message after a jump-to-bottom.
+        ListFooterComponent={<View style={{ height: composerHeight + theme.spacing[3] }} />}
       />
+      {showEmptyPanel ? (
+        <Animated.View
+          pointerEvents="none"
+          style={[
+            styles.emptyPlaceholder,
+            { top: insets.top + HEADER_BAR_HEIGHT, paddingBottom: theme.spacing[3] },
+            emptyPlaceholderStyle,
+          ]}
+        >
+          <Text style={styles.emptyTitle}>What should we work on?</Text>
+        </Animated.View>
+      ) : null}
       <View pointerEvents="box-none" style={[styles.header, { height: insets.top + HEADER_BAR_HEIGHT }]}>
         <View pointerEvents="box-none" style={[styles.headerRow, { paddingTop: insets.top }]}>
           <SidebarButton open={sidebarOpen} onPress={toggleSidebar} />
+          {isExistingSession ? (
+            <GlassButton
+              accessibilityLabel="Start new chat"
+              onPress={startNewChatFromSession}
+              style={styles.headerButton}
+              fallbackStyle={styles.headerButtonFill}
+            >
+              <SquarePen color={glass ? theme.colors.text : theme.colors.textMuted} size={20} />
+            </GlassButton>
+          ) : null}
         </View>
       </View>
       {!isAtBottom ? (
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Jump to latest message"
-          onPress={() => {
-            isAtBottomRef.current = true;
-            setIsAtBottom(true);
-            scrollToLatest(true, "button");
-          }}
-          style={({ pressed }) => [
-            styles.scrollBottomButton,
-            { bottom: Math.max(theme.spacing[4], composerHeight + theme.spacing[2]) },
-            pressed ? styles.pressed : null,
-          ]}
+        <View
+          pointerEvents="box-none"
+          style={[styles.scrollBottomDock, { bottom: Math.max(theme.spacing[4], composerHeight + theme.spacing[2]) }]}
         >
-          <ArrowDown color={theme.colors.textSecondary} size={18} />
-        </Pressable>
+          <GlassButton
+            accessibilityLabel="Jump to latest message"
+            onPress={() => {
+              isAtBottomRef.current = true;
+              setIsAtBottom(true);
+              scrollToLatest(true, "button");
+            }}
+            style={styles.scrollBottomButton}
+            fallbackStyle={styles.scrollBottomFill}
+          >
+            <ArrowDown color={theme.colors.textSecondary} size={18} />
+          </GlassButton>
+        </View>
       ) : null}
-      <View onLayout={(event) => setComposerHeight(event.nativeEvent.layout.height)}>
+      <View
+        style={styles.composerDock}
+        onLayout={(event) => setComposerHeight(event.nativeEvent.layout.height)}
+      >
         <ChatComposer
           disabled={!client || sending || (!isExistingSession && !selectedAgent)}
           requestActive={requestActive}
-          controls={composerControls}
-          trailingControls={composerTrailingControls}
+          contextBar={composerContextBar}
           slashCommands={slashCommandsQuery.data?.commands || []}
           slashCommandsLoading={slashCommandsQuery.isFetching}
           slashCommandsError={slashCommandsQuery.error instanceof Error ? slashCommandsQuery.error.message : null}
@@ -643,8 +757,12 @@ function modelSelectionFromSession(metadata: Record<string, unknown> | undefined
   return model ? { provider: "", model } : null;
 }
 
+function projectIdFromSession(metadata: Record<string, unknown> | undefined) {
+  return typeof metadata?.projectId === "string" ? metadata.projectId : "";
+}
+
 function projectLabelFromSession(metadata: Record<string, unknown> | undefined) {
-  return typeof metadata?.projectId === "string" && metadata.projectId ? "Project" : "No project";
+  return projectIdFromSession(metadata) ? "Project" : "No project";
 }
 
 function modelOptions(
@@ -693,12 +811,12 @@ function createStyles(theme: ReturnType<typeof useTheme>) {
       paddingHorizontal: theme.spacing[4],
       gap: theme.spacing[3],
     },
-    messagesFooter: {
-      height: theme.spacing[8],
-    },
-    emptyMessages: {
-      flexGrow: 1,
-      justifyContent: "center",
+    composerDock: {
+      position: "absolute",
+      left: 0,
+      right: 0,
+      bottom: 0,
+      zIndex: 2,
     },
     header: {
       position: "absolute",
@@ -711,15 +829,31 @@ function createStyles(theme: ReturnType<typeof useTheme>) {
       flex: 1,
       flexDirection: "row",
       alignItems: "center",
+      justifyContent: "space-between",
       paddingHorizontal: theme.spacing[4],
       paddingBottom: theme.spacing[2],
+    },
+    headerButton: {
+      width: 52,
+      height: 52,
+      borderRadius: 26,
+      overflow: "hidden",
+    },
+    headerButtonFill: {
+      borderWidth: 1,
+      borderColor: theme.colors.border,
+      backgroundColor: theme.colors.secondary,
     },
     listStatus: {
       gap: theme.spacing[2],
       paddingBottom: theme.spacing[3],
     },
-    emptyPanel: {
+    emptyPlaceholder: {
+      position: "absolute",
+      left: theme.spacing[4],
+      right: theme.spacing[4],
       alignItems: "center",
+      justifyContent: "center",
     },
     emptyTitle: {
       color: theme.colors.text,
@@ -737,22 +871,23 @@ function createStyles(theme: ReturnType<typeof useTheme>) {
       fontSize: 14,
       lineHeight: 20,
     },
-    scrollBottomButton: {
+    scrollBottomDock: {
       position: "absolute",
-      left: "50%",
+      left: 0,
+      right: 0,
       zIndex: 3,
+      alignItems: "center",
+    },
+    scrollBottomButton: {
       width: 38,
       height: 38,
-      marginLeft: -19,
       borderRadius: 19,
+      overflow: "hidden",
+    },
+    scrollBottomFill: {
       borderWidth: 1,
       borderColor: theme.colors.borderStrong,
       backgroundColor: theme.colors.surfaceElevated,
-      alignItems: "center",
-      justifyContent: "center",
-    },
-    pressed: {
-      opacity: 0.72,
     },
   });
 }

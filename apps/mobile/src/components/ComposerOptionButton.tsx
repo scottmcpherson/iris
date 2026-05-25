@@ -8,7 +8,7 @@ type ComposerOptionButtonProps = {
   label: string;
   value: string;
   disabled?: boolean;
-  variant?: "card" | "toolbar";
+  variant?: "card" | "toolbar" | "chip";
   showValue?: boolean;
   showChevron?: boolean;
   onPress: () => void;
@@ -26,7 +26,9 @@ export function ComposerOptionButton({
 }: ComposerOptionButtonProps) {
   const theme = useTheme();
   const styles = createStyles(theme);
-  const toolbar = variant === "toolbar";
+  const containerStyle = variant === "chip" ? styles.chipButton : variant === "toolbar" ? styles.toolbarButton : styles.button;
+  const valueStyle = variant === "chip" ? styles.chipValue : variant === "toolbar" ? styles.toolbarValue : styles.value;
+  const chevronSize = variant === "chip" ? 14 : variant === "toolbar" ? 18 : 15;
   return (
     <Pressable
       accessibilityRole="button"
@@ -34,7 +36,7 @@ export function ComposerOptionButton({
       disabled={disabled}
       onPress={onPress}
       style={({ pressed }) => [
-        toolbar ? styles.toolbarButton : styles.button,
+        containerStyle,
         disabled ? styles.disabled : null,
         pressed && !disabled ? styles.pressed : null,
       ]}
@@ -42,11 +44,11 @@ export function ComposerOptionButton({
       {icon}
       {showValue ? (
         <View style={styles.textBlock}>
-          {!toolbar ? <Text style={styles.label} numberOfLines={1}>{label}</Text> : null}
-          <Text style={toolbar ? styles.toolbarValue : styles.value} numberOfLines={1}>{value}</Text>
+          {variant === "card" ? <Text style={styles.label} numberOfLines={1}>{label}</Text> : null}
+          <Text style={valueStyle} numberOfLines={1}>{value}</Text>
         </View>
       ) : null}
-      {showChevron ? <ChevronDown color={theme.colors.textMuted} size={toolbar ? 18 : 15} /> : null}
+      {showChevron ? <ChevronDown color={theme.colors.textMuted} size={chevronSize} /> : null}
     </Pressable>
   );
 }
@@ -75,6 +77,18 @@ function createStyles(theme: ReturnType<typeof useTheme>) {
       gap: theme.spacing[2],
       paddingHorizontal: theme.spacing[1],
     },
+    chipButton: {
+      height: 38,
+      maxWidth: 200,
+      borderRadius: 999,
+      borderWidth: 1,
+      borderColor: theme.colors.borderSubtle,
+      backgroundColor: theme.colors.surfaceRaised,
+      paddingHorizontal: theme.spacing[3],
+      flexDirection: "row",
+      alignItems: "center",
+      gap: theme.spacing[2],
+    },
     disabled: {
       opacity: 0.46,
     },
@@ -100,6 +114,11 @@ function createStyles(theme: ReturnType<typeof useTheme>) {
       color: theme.colors.textMuted,
       fontSize: 18,
       fontWeight: "500",
+    },
+    chipValue: {
+      color: theme.colors.textSecondary,
+      fontSize: 14,
+      fontWeight: "600",
     },
   });
 }

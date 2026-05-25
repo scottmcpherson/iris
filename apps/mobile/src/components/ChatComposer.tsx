@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   Keyboard,
   Platform,
@@ -25,7 +25,7 @@ import {
   useAudioRecorder,
   useAudioRecorderState,
 } from "expo-audio";
-import { Check, Mic, Plus, Send, Square, X } from "lucide-react-native";
+import { Check, Command as CommandIcon, Mic, Plus, Send, Sparkles, Square, X } from "lucide-react-native";
 import { Button as MenuButton, Host, Menu } from "@expo/ui/swift-ui";
 import { disabled as disabledModifier, tint } from "@expo/ui/swift-ui/modifiers";
 import { isLiquidGlassAvailable } from "expo-glass-effect";
@@ -40,13 +40,13 @@ import {
 import type { IrisCoreSlashCommand } from "@iris/core-client";
 import type { MobileAttachmentDraft } from "../chat/mobileAttachments";
 import { useTheme } from "../theme/useTheme";
+import { GlassSurface } from "./GlassSurface";
 import { OptionSheet, type OptionSheetItem } from "./OptionSheet";
 
 export function ChatComposer({
   disabled,
   requestActive = false,
-  controls,
-  trailingControls,
+  contextBar,
   slashCommands = [],
   slashCommandsLoading = false,
   slashCommandsError = null,
@@ -62,8 +62,7 @@ export function ChatComposer({
 }: {
   disabled?: boolean;
   requestActive?: boolean;
-  controls?: ReactNode;
-  trailingControls?: ReactNode;
+  contextBar?: ReactNode;
   slashCommands?: IrisCoreSlashCommand[];
   slashCommandsLoading?: boolean;
   slashCommandsError?: string | null;
@@ -80,10 +79,11 @@ export function ChatComposer({
   const theme = useTheme();
   const insets = useSafeAreaInsets();
   const { height: windowHeight } = useWindowDimensions();
-  const styles = createStyles(theme);
+  const styles = createStyles(theme, windowHeight);
   const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
   const recorderState = useAudioRecorderState(recorder, 250);
   const keyboardOffset = useSharedValue(0);
+  const offsetCommitTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [text, setText] = useState("");
   const [selection, setSelection] = useState({ start: 0, end: 0 });
   const [sendPending, setSendPending] = useState(false);
@@ -99,14 +99,13 @@ export function ChatComposer({
     ? slashTokenAtCursor(text, selection.start) || slashTokenAtCursor(text, text.length)
     : null;
   const suggestedCommands = useMemo(
-    () => (slashToken ? filterSlashCommands(slashCommands, slashToken.query).slice(0, 6) : []),
+    () => (slashToken ? filterSlashCommands(slashCommands, slashToken.query) : []),
     [slashCommands, slashToken],
   );
   const showSlashTray = Boolean(
     slashToken &&
       !requestActive &&
-      !disabled &&
-      (suggestedCommands.length || slashCommandsLoading || slashCommandsError),
+      !disabled,
   );
   const voiceToolbarOpen = Boolean(recorderState.isRecording || voiceBusy || voiceError);
   const attachmentSourceItems = useMemo(
@@ -117,19 +116,32 @@ export function ChatComposer({
   useEffect(() => {
     if (Platform.OS === "web") return undefined;
 
+    // Tapping a native pill menu briefly resigns/re-acquires the text field's first
+    // responder, which fires a hide-then-show pair. Growth applies immediately (so the
+    // composer never lags the keyboard rising), but shrink is debounced — a quick
+    // hide→show cancels the pending drop, so the composer doesn't bounce.
+    function commitKeyboardOffset(target: number, duration: number) {
+      if (offsetCommitTimer.current) {
+        clearTimeout(offsetCommitTimer.current);
+        offsetCommitTimer.current = null;
+      }
+      const animate = () => {
+        keyboardOffset.value = withTiming(target, { duration, easing: Easing.out(Easing.cubic) });
+      };
+      if (target >= keyboardOffset.value) {
+        animate();
+      } else {
+        offsetCommitTimer.current = setTimeout(animate, 120);
+      }
+    }
+
     function syncToKeyboard(event: KeyboardEvent) {
       const keyboardHeight = Math.max(0, windowHeight - event.endCoordinates.screenY);
-      keyboardOffset.value = withTiming(Math.max(0, keyboardHeight - insets.bottom), {
-        duration: event.duration || 250,
-        easing: Easing.out(Easing.cubic),
-      });
+      commitKeyboardOffset(Math.max(0, keyboardHeight - insets.bottom), event.duration || 250);
     }
 
     function resetKeyboardOffset(event?: KeyboardEvent) {
-      keyboardOffset.value = withTiming(0, {
-        duration: event?.duration || 220,
-        easing: Easing.out(Easing.cubic),
-      });
+      commitKeyboardOffset(0, event?.duration || 220);
     }
 
     const showSubscription = Keyboard.addListener(
@@ -144,11 +156,12 @@ export function ChatComposer({
     return () => {
       showSubscription.remove();
       hideSubscription.remove();
+      if (offsetCommitTimer.current) clearTimeout(offsetCommitTimer.current);
     };
   }, [insets.bottom, keyboardOffset, windowHeight]);
 
   const keyboardStyle = useAnimatedStyle(() => ({
-    transform: [{ translateY: -keyboardOffset.value }],
+    bottom: keyboardOffset.value,
   }));
 
   async function send() {
@@ -253,28 +266,63 @@ export function ChatComposer({
     <>
       <Animated.View style={[styles.keyboardFrame, keyboardStyle]}>
       <View style={[styles.wrap, { paddingBottom: theme.spacing[3] + insets.bottom }]}>
-        <View style={styles.surface}>
-          {showSlashTray ? (
-            <View style={styles.slashTray}>
-              {slashCommandsLoading ? <Text style={styles.slashStatus}>Loading commands...</Text> : null}
-              {slashCommandsError ? <Text style={styles.slashStatus}>{slashCommandsError}</Text> : null}
-              {suggestedCommands.length ? (
-                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.slashList}>
-                  {suggestedCommands.map((command) => (
+        {showSlashTray ? (
+          <GlassSurface style={styles.slashMenuSurface} fallbackStyle={styles.slashMenuFill}>
+            {slashCommandsLoading && !suggestedCommands.length ? (
+              <Text style={styles.slashStatus}>Loading commands...</Text>
+            ) : null}
+            {slashCommandsError && !suggestedCommands.length ? (
+              <View style={styles.slashCommandRow}>
+                <View style={styles.slashIcon}>
+                  <CommandIcon color={theme.colors.textSubtle} size={16} />
+                </View>
+                <View style={styles.slashCommandText}>
+                  <Text style={styles.slashTitle} numberOfLines={1}>Commands unavailable</Text>
+                  <Text style={styles.slashDescription} numberOfLines={1}>{slashCommandsError}</Text>
+                </View>
+              </View>
+            ) : null}
+            {!slashCommandsLoading && !slashCommandsError && !suggestedCommands.length ? (
+              <Text style={styles.slashStatus}>No matching commands</Text>
+            ) : null}
+            {suggestedCommands.length ? (
+              <ScrollView showsVerticalScrollIndicator={false} style={styles.slashScroll} contentContainerStyle={styles.slashList}>
+                {suggestedCommands.map((command) => {
+                  const meta = command.description || command.category || command.source;
+                  const Icon = command.source === "skill" ? Sparkles : CommandIcon;
+                  return (
                     <Pressable
                       key={command.id || command.text}
                       accessibilityRole="button"
                       accessibilityLabel={`Insert ${command.text}`}
                       onPress={() => insertCommand(command)}
-                      style={({ pressed }) => [styles.slashItem, pressed ? styles.pressed : null]}
+                      style={({ pressed }) => [styles.slashCommandRow, pressed ? styles.pressed : null]}
                     >
-                      <Text style={styles.slashText}>{command.text}</Text>
-                      {command.label ? <Text style={styles.slashLabel} numberOfLines={1}>{command.label}</Text> : null}
+                      <View style={styles.slashIcon}>
+                        <Icon color={theme.colors.textSubtle} size={16} />
+                      </View>
+                      <View style={styles.slashCommandText}>
+                        <Text style={styles.slashTitle} numberOfLines={1}>{command.label || command.text}</Text>
+                        {meta ? <Text style={styles.slashDescription} numberOfLines={1}>{meta}</Text> : null}
+                      </View>
+                      {command.category ? <Text style={styles.slashCategory} numberOfLines={1}>{command.category}</Text> : null}
                     </Pressable>
-                  ))}
-                </ScrollView>
-              ) : null}
-            </View>
+                  );
+                })}
+              </ScrollView>
+            ) : null}
+          </GlassSurface>
+        ) : null}
+        <GlassSurface style={styles.surface} fallbackStyle={styles.surfaceFill}>
+          {contextBar ? (
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              keyboardShouldPersistTaps="always"
+              contentContainerStyle={styles.contextBar}
+            >
+              {contextBar}
+            </ScrollView>
           ) : null}
           <TextInput
             value={text}
@@ -372,10 +420,8 @@ export function ChatComposer({
                   </Pressable>
                 )
               ) : null}
-              {controls}
             </View>
             <View style={styles.trailingTools}>
-              {trailingControls}
               {onVoiceRecording ? (
                 voiceToolbarOpen ? (
                   <View style={styles.voicePanel}>
@@ -449,7 +495,7 @@ export function ChatComposer({
               )}
             </View>
           </View>
-        </View>
+        </GlassSurface>
       </View>
       </Animated.View>
       <OptionSheet
@@ -518,62 +564,97 @@ function formatDuration(durationMillis: number) {
   return `${minutes}:${seconds.toString().padStart(2, "0")}`;
 }
 
-function createStyles(theme: ReturnType<typeof useTheme>) {
+function createStyles(theme: ReturnType<typeof useTheme>, windowHeight: number) {
   return StyleSheet.create({
     keyboardFrame: {
+      position: "relative",
       zIndex: 2,
     },
     wrap: {
       backgroundColor: "transparent",
       paddingHorizontal: theme.spacing[3],
       paddingBottom: theme.spacing[3],
+      gap: theme.spacing[2],
     },
     surface: {
       borderRadius: 28,
-      borderWidth: 1,
-      borderColor: theme.colors.borderStrong,
-      backgroundColor: theme.colors.surfaceElevated,
+      overflow: "hidden",
       paddingHorizontal: theme.spacing[4],
       paddingTop: theme.spacing[4],
       paddingBottom: theme.spacing[3],
       gap: theme.spacing[2],
     },
-    slashTray: {
-      borderRadius: theme.radius.md,
+    surfaceFill: {
       borderWidth: 1,
-      borderColor: theme.colors.border,
-      backgroundColor: theme.colors.surface,
-      padding: theme.spacing[2],
-      gap: theme.spacing[2],
+      borderColor: theme.colors.borderStrong,
+      backgroundColor: theme.colors.surfaceElevated,
+    },
+    slashMenuSurface: {
+      maxHeight: Math.min(320, Math.max(188, windowHeight * 0.34)),
+      borderRadius: 28,
+      overflow: "hidden",
+      paddingHorizontal: theme.spacing[2],
+      paddingVertical: theme.spacing[2],
+    },
+    slashMenuFill: {
+      borderWidth: 1,
+      borderColor: theme.colors.borderStrong,
+      backgroundColor: theme.colors.surfaceRaised,
+    },
+    slashScroll: {
+      maxHeight: Math.min(304, Math.max(172, windowHeight * 0.34 - theme.spacing[4])),
     },
     slashList: {
+      gap: theme.spacing[1],
+    },
+    slashCommandRow: {
+      minHeight: 58,
+      borderRadius: theme.radius.lg,
+      flexDirection: "row",
+      alignItems: "center",
+      paddingHorizontal: theme.spacing[2],
+      paddingVertical: theme.spacing[1],
       gap: theme.spacing[2],
     },
-    slashItem: {
-      minHeight: 44,
-      maxWidth: 210,
+    slashIcon: {
+      width: 28,
+      height: 28,
       borderRadius: theme.radius.md,
-      borderWidth: 1,
-      borderColor: theme.colors.borderSubtle,
-      backgroundColor: theme.colors.surfaceRaised,
-      paddingHorizontal: theme.spacing[3],
-      paddingVertical: theme.spacing[2],
+      alignItems: "center",
       justifyContent: "center",
+      backgroundColor: theme.colors.secondary,
+    },
+    slashCommandText: {
+      flex: 1,
+      minWidth: 0,
       gap: 3,
     },
-    slashText: {
+    slashTitle: {
       color: theme.colors.text,
-      fontSize: 14,
+      fontSize: 17,
+      lineHeight: 21,
       fontWeight: "700",
     },
-    slashLabel: {
+    slashDescription: {
       color: theme.colors.textMuted,
-      fontSize: 12,
+      fontSize: 13,
+      lineHeight: 17,
+      fontWeight: "600",
+    },
+    slashCategory: {
+      maxWidth: 96,
+      color: theme.colors.textMuted,
+      fontSize: 13,
+      lineHeight: 17,
+      fontWeight: "700",
     },
     slashStatus: {
       color: theme.colors.textMuted,
       fontSize: 13,
       lineHeight: 18,
+      fontWeight: "600",
+      paddingHorizontal: theme.spacing[2],
+      paddingVertical: theme.spacing[2],
     },
     attachmentTray: {
       gap: theme.spacing[2],
@@ -616,6 +697,12 @@ function createStyles(theme: ReturnType<typeof useTheme>) {
       color: theme.colors.danger,
       fontSize: 13,
       lineHeight: 18,
+    },
+    contextBar: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: theme.spacing[2],
+      paddingRight: theme.spacing[2],
     },
     toolRow: {
       flexDirection: "row",

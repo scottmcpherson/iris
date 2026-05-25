@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Modal, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { Modal, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 import { CameraView, useCameraPermissions } from "expo-camera";
 import * as Device from "expo-device";
@@ -14,6 +14,7 @@ import {
 import { useIrisConnection, type MobileConnectionState } from "../connection/useIrisConnection";
 import { useTheme } from "../theme/useTheme";
 import { Button } from "./Button";
+import { GlassButton } from "./GlassButton";
 import { TextField } from "./TextField";
 
 type MobileSettingsModalProps = {
@@ -90,14 +91,14 @@ export function MobileSettingsModal({ visible, onClose }: MobileSettingsModalPro
             <Text style={styles.title}>Settings</Text>
             <Text style={styles.subtitle}>Connection and device pairing</Text>
           </View>
-          <Pressable
-            accessibilityRole="button"
+          <GlassButton
             accessibilityLabel="Close settings"
             onPress={onClose}
-            style={({ pressed }) => [styles.iconButton, pressed ? styles.pressed : null]}
+            style={styles.iconButton}
+            fallbackStyle={styles.iconButtonFill}
           >
-            <X color={theme.colors.textMuted} size={22} />
-          </Pressable>
+            <X color={theme.colors.text} size={22} />
+          </GlassButton>
         </View>
 
         <ScrollView style={styles.content} contentContainerStyle={styles.contentInner}>
@@ -282,11 +283,12 @@ function createStyles(theme: ReturnType<typeof useTheme>) {
       width: 48,
       height: 48,
       borderRadius: 24,
+      overflow: "hidden",
+    },
+    iconButtonFill: {
       borderWidth: 1,
       borderColor: theme.colors.border,
       backgroundColor: theme.colors.secondary,
-      alignItems: "center",
-      justifyContent: "center",
     },
     content: {
       flex: 1,
@@ -435,9 +437,6 @@ function createStyles(theme: ReturnType<typeof useTheme>) {
     payloadInput: {
       minHeight: 112,
       textAlignVertical: "top",
-    },
-    pressed: {
-      opacity: 0.76,
     },
   });
 }

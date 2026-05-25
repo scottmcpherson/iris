@@ -1,10 +1,12 @@
 import { router, useLocalSearchParams, type Href } from "expo-router";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { BackHandler, Image, Platform, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from "react-native";
+import { Alert, BackHandler, Image, Keyboard, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, useWindowDimensions, View, type KeyboardEvent } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
-import { GlassView, isLiquidGlassAvailable } from "expo-glass-effect";
-import { ChevronDown, ChevronRight, Folder, FolderOpen, Menu, Plus } from "lucide-react-native";
+import { isLiquidGlassAvailable } from "expo-glass-effect";
+import { ChevronDown, ChevronRight, Folder, FolderOpen, Menu, Search, Settings, SquarePen, X } from "lucide-react-native";
+import { GlassButton } from "./GlassButton";
+import { GlassSurface } from "./GlassSurface";
 import Animated, {
   Easing,
   interpolate,
@@ -44,9 +46,19 @@ import {
   type MobileSidebarSectionId,
 } from "./mobileSidebarModel";
 import { MobileSettingsModal } from "./MobileSettingsModal";
+import { NativeSessionRow } from "./NativeSessionRow";
 import { SessionActionMenu, SessionRenameDialog, type SessionMenuAnchor } from "./SessionActionMenu";
 
 const SESSION_ROW_HEIGHT = 38;
+const PROJECT_ACTION_SIZE = 38;
+const PROJECT_ACTION_ICON_SIZE = 17;
+const SIDEBAR_RIGHT_RAIL_INSET = (PROJECT_ACTION_SIZE - PROJECT_ACTION_ICON_SIZE) / 2;
+// Height (below the safe-area top) of the page header row kept clear of the close
+// overlay so the nav toggle stays directly pressable while the sidebar is open.
+const PAGE_HEADER_TAP_INSET = 60;
+// iOS gets the real SwiftUI `.contextMenu` (the liquid-glass lift on long-press);
+// other platforms fall back to the JS SessionActionMenu modal.
+const useNativeContextMenu = Platform.OS === "ios";
 const irisSidebarIcon = require("../../../desktop/src/assets/iris-sidebar-icon-borderless.png");
 
 type MobileSidebarProps = {
@@ -73,39 +85,25 @@ export function SidebarButton({ open = false, onPress }: { open?: boolean; onPre
   const theme = useTheme();
   const styles = createStyles(theme);
   const accessibilityLabel = open ? "Close sidebar" : "Open sidebar";
-
-  if (isLiquidGlassAvailable()) {
-    return (
-      <GlassView isInteractive glassEffectStyle="regular" colorScheme="dark" style={styles.glassButton}>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel={accessibilityLabel}
-          accessibilityState={{ expanded: open }}
-          onPress={onPress}
-          style={styles.glassButtonPressable}
-        >
-          <Menu color={theme.colors.text} size={24} />
-        </Pressable>
-      </GlassView>
-    );
-  }
+  const glass = isLiquidGlassAvailable();
 
   return (
-    <Pressable
-      accessibilityRole="button"
+    <GlassButton
       accessibilityLabel={accessibilityLabel}
       accessibilityState={{ expanded: open }}
       onPress={onPress}
-      style={({ pressed }) => [styles.roundButton, pressed ? styles.pressed : null]}
+      style={styles.glassButton}
+      fallbackStyle={styles.roundButtonFill}
     >
-      <Menu color={theme.colors.textMuted} size={24} />
-    </Pressable>
+      <Menu color={glass ? theme.colors.text : theme.colors.textMuted} size={24} />
+    </GlassButton>
   );
 }
 
 export function MobileSidebarDrawer({ open, onClose, onOpen, selectedSessionId, children }: MobileSidebarDrawerProps) {
   const theme = useTheme();
   const styles = createStyles(theme);
+  const insets = useSafeAreaInsets();
   const { width } = useWindowDimensions();
   const panelWidth = Math.min(360, Math.max(292, width * 0.78));
   const drawerOffset = Math.min(width - 64, panelWidth + theme.spacing[3]);
@@ -187,10 +185,13 @@ export function MobileSidebarDrawer({ open, onClose, onOpen, selectedSessionId, 
         {children}
         {open ? (
           <GestureDetector gesture={closeGesture}>
+            {/* Leave the page's header row uncovered so the nav toggle receives its own
+                press (and plays its press-expand) when tapped to close, rather than the
+                tap being swallowed by this full-page close overlay. */}
             <Animated.View
               accessibilityRole="button"
               accessibilityLabel="Close sidebar"
-              style={styles.pageCloseLayer}
+              style={[styles.pageCloseLayer, { top: insets.top + PAGE_HEADER_TAP_INSET }]}
             />
           </GestureDetector>
         ) : onOpen ? (
@@ -215,9 +216,16 @@ function MobileSidebar({
   const theme = useTheme();
   const styles = createStyles(theme);
   const insets = useSafeAreaInsets();
+  const { height: windowHeight } = useWindowDimensions();
+  const keyboardOffset = useSharedValue(0);
+  const keyboardStyle = useAnimatedStyle(() => ({ transform: [{ translateY: -keyboardOffset.value }] }));
   const { client, clientKey, state } = useIrisConnection();
   const queryClient = useQueryClient();
   const [settingsVisible, setSettingsVisible] = useState(false);
+  const searchInputRef = useRef<TextInput>(null);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchFocused, setSearchFocused] = useState(false);
+  const [bottomBarHeight, setBottomBarHeight] = useState(0);
   const [collapsedSections, setCollapsedSections] = useState(
     () => loadMobileSidebarCollapsedSections(),
   );
@@ -247,12 +255,31 @@ function MobileSidebar({
     items[project.id] = projectSessionQueries[index]?.data?.sessions || [];
     return items;
   }, {});
+  const normalizedQuery = searchQuery.trim().toLowerCase();
+  const searching = normalizedQuery.length > 0;
+  const sessionMatchesQuery = (session: IrisCoreSession) =>
+    (session.title || "").toLowerCase().includes(normalizedQuery);
+  const visibleSessions = searching ? sessions.filter(sessionMatchesQuery) : sessions;
+  const visibleSessionsByProject = searching
+    ? Object.fromEntries(
+        Object.entries(sessionsByProject).map(([id, list]) => [id, list.filter(sessionMatchesQuery)]),
+      )
+    : sessionsByProject;
+  const visibleProjects = searching
+    ? projects.filter((project) => (visibleSessionsByProject[project.id]?.length ?? 0) > 0)
+    : projects;
   const sidebarModel = buildMobileSidebarModel({
     pinnedSessions,
-    projects,
-    sessions,
-    sessionsByProject,
+    projects: visibleProjects,
+    sessions: visibleSessions,
+    sessionsByProject: visibleSessionsByProject,
   });
+  const searchActive = searchFocused || searching;
+  const noSearchResults =
+    searching &&
+    !sidebarModel.pinnedSessions.length &&
+    !sidebarModel.projectNodes.length &&
+    !sidebarModel.unprojectedSessions.length;
   const projectSessionsLoading = projectSessionQueries.some((query) => query.isLoading || query.isFetching);
   const projectSessionError = projectSessionQueries.find((query) => query.error)?.error;
   const statusDotStyle = state.status === "connected"
@@ -263,9 +290,65 @@ function MobileSidebar({
         ? styles.statusDotIdle
         : styles.statusDotOffline;
 
+  useEffect(() => {
+    if (Platform.OS === "web") return undefined;
+
+    function syncToKeyboard(event: KeyboardEvent) {
+      const keyboardHeight = Math.max(0, windowHeight - event.endCoordinates.screenY);
+      keyboardOffset.value = withTiming(Math.max(0, keyboardHeight - insets.bottom), {
+        duration: event.duration || 250,
+        easing: Easing.out(Easing.cubic),
+      });
+    }
+
+    function resetKeyboardOffset(event?: KeyboardEvent) {
+      keyboardOffset.value = withTiming(0, {
+        duration: event?.duration || 220,
+        easing: Easing.out(Easing.cubic),
+      });
+    }
+
+    const showSubscription = Keyboard.addListener(
+      Platform.OS === "ios" ? "keyboardWillChangeFrame" : "keyboardDidShow",
+      syncToKeyboard,
+    );
+    const hideSubscription = Keyboard.addListener(
+      Platform.OS === "ios" ? "keyboardWillHide" : "keyboardDidHide",
+      resetKeyboardOffset,
+    );
+
+    return () => {
+      showSubscription.remove();
+      hideSubscription.remove();
+    };
+  }, [insets.bottom, keyboardOffset, windowHeight]);
+
   function navigate(path: Href) {
     onClose();
     router.push(path);
+  }
+
+  function newChatHref(projectId?: string): Href {
+    const params = {
+      draftId: String(Date.now()),
+      ...(projectId ? { projectId } : {}),
+    };
+    return { pathname: "/sessions/new", params };
+  }
+
+  function startProjectChat(projectId: string) {
+    setCollapsedProjects((current) => {
+      if (!current[projectId]) return current;
+      const next = { ...current, [projectId]: false };
+      saveMobileSidebarCollapsedProjects(next);
+      return next;
+    });
+    navigate(newChatHref(projectId));
+  }
+
+  function clearSearch() {
+    setSearchQuery("");
+    searchInputRef.current?.blur();
   }
 
   function openSession(session: IrisCoreSession) {
@@ -364,8 +447,57 @@ function MobileSidebar({
     }
   }
 
+  // Direct actions for the native context menu (iOS). The JS modal path uses
+  // onLongPress + the menu's own two-step delete instead.
+  function startSessionRename(session: IrisCoreSession) {
+    setRenameTarget(session);
+    setRenameError("");
+  }
+
+  function confirmDeleteSession(session: IrisCoreSession, pinKey: string, pinned: boolean) {
+    Alert.alert(
+      "Delete session?",
+      `“${session.title || "Untitled session"}” will be permanently deleted.`,
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Delete",
+          style: "destructive",
+          onPress: () => {
+            void runSessionDelete(session, pinKey, pinned);
+          },
+        },
+      ],
+    );
+  }
+
+  async function runSessionDelete(session: IrisCoreSession, pinKey: string, pinned: boolean) {
+    try {
+      await deleteMutation.mutateAsync(session.id);
+      if (pinned) {
+        setPinnedSessions((current) => {
+          if (!current[pinKey]) return current;
+          const next = { ...current };
+          delete next[pinKey];
+          saveMobileSidebarPinnedSessions(next);
+          return next;
+        });
+      }
+      if (selectedSessionId === session.id) {
+        onClose();
+        router.replace("/sessions/new");
+      }
+    } catch (error) {
+      Alert.alert("Delete failed", error instanceof Error ? error.message : "Could not delete this session.");
+    }
+  }
+
   function sessionRowActions(session: IrisCoreSession, pinned: boolean, pinKey: string) {
     return {
+      pinned,
+      onPin: () => toggleSessionPinned(pinKey),
+      onRename: () => startSessionRename(session),
+      onDelete: () => confirmDeleteSession(session, pinKey, pinned),
       onLongPress: (anchor: SessionMenuAnchor) => openSessionMenu({ session, pinned, pinKey, anchor }),
     };
   }
@@ -415,7 +547,7 @@ function MobileSidebar({
 
       <ScrollView
         style={styles.sidebarScroll}
-        contentContainerStyle={styles.sidebarScrollInner}
+        contentContainerStyle={[styles.sidebarScrollInner, { paddingBottom: bottomBarHeight }]}
         showsVerticalScrollIndicator={false}
       >
         {!client ? <Text style={styles.empty}>Reconnect to load the sidebar.</Text> : null}
@@ -426,7 +558,7 @@ function MobileSidebar({
 
         {sidebarModel.pinnedSessions.length ? (
           <SidebarSection
-            collapsed={collapsedSections.pinned}
+            collapsed={searching ? false : collapsedSections.pinned}
             sectionId="pinned"
             title="Pinned"
             onToggle={() => toggleSectionCollapsed("pinned")}
@@ -443,19 +575,22 @@ function MobileSidebar({
           </SidebarSection>
         ) : null}
 
+        {!searching || sidebarModel.projectNodes.length ? (
         <SidebarSection
-          collapsed={collapsedSections.projects}
+          collapsed={searching ? false : collapsedSections.projects}
           sectionId="projects"
           title="Projects"
           onToggle={() => toggleSectionCollapsed("projects")}
         >
-          {projects.length ? (
+          {sidebarModel.projectNodes.length ? (
             sidebarModel.projectNodes.map((node, index) => (
               <View key={node.project.id} style={styles.projectNode}>
                 <SidebarProjectRow
                   collapsed={Boolean(collapsedProjects[node.project.id])}
+                  disabled={!client}
                   project={node.project}
-                  onPress={() => toggleProjectCollapsed(node.project.id)}
+                  onNewChat={() => startProjectChat(node.project.id)}
+                  onToggle={() => toggleProjectCollapsed(node.project.id)}
                 />
                 {!collapsedProjects[node.project.id] && node.sessions.length ? (
                   <View style={styles.projectSessions}>
@@ -475,14 +610,16 @@ function MobileSidebar({
                 ) : null}
               </View>
             ))
-          ) : (
+          ) : !searching ? (
             <Text style={styles.empty}>No projects yet.</Text>
-          )}
+          ) : null}
           {projects.length > 0 && projectSessionsLoading ? <Text style={styles.empty}>Loading project sessions...</Text> : null}
         </SidebarSection>
+        ) : null}
 
+        {!searching || sidebarModel.unprojectedSessions.length ? (
         <SidebarSection
-          collapsed={collapsedSections.chats}
+          collapsed={searching ? false : collapsedSections.chats}
           sectionId="chats"
           title="Sessions"
           onToggle={() => toggleSectionCollapsed("chats")}
@@ -497,26 +634,66 @@ function MobileSidebar({
                 {...sessionRowActions(session, false, unprojectedSessionPinKey(runtimeProfileForSession(session), session.id))}
               />
             ))
-          ) : (
+          ) : !searching ? (
             <Text style={styles.empty}>No unprojected sessions yet.</Text>
-          )}
+          ) : null}
         </SidebarSection>
+        ) : null}
+
+        {noSearchResults ? <Text style={styles.empty}>No sessions match “{searchQuery.trim()}”.</Text> : null}
       </ScrollView>
 
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel="Start new chat"
-        disabled={!client}
-        onPress={() => navigate("/sessions/new")}
-        style={({ pressed }) => [
-          styles.newChatButton,
-          { bottom: Math.max(theme.spacing[4], insets.bottom + theme.spacing[2]) },
-          !client ? styles.disabled : null,
-          pressed && client ? styles.pressed : null,
-        ]}
+      <Animated.View
+        onLayout={(event) => setBottomBarHeight(event.nativeEvent.layout.height)}
+        style={[styles.bottomBar, keyboardStyle, { paddingBottom: Math.max(theme.spacing[4], insets.bottom + theme.spacing[2]) }]}
       >
-        <Plus color={theme.colors.buttonPrimaryText} size={24} />
-      </Pressable>
+        <GlassSurface style={styles.searchPill} fallbackStyle={styles.searchPillFill}>
+          <Search color={theme.colors.textMuted} size={18} />
+          <TextInput
+            ref={searchInputRef}
+            value={searchQuery}
+            onChangeText={setSearchQuery}
+            onFocus={() => setSearchFocused(true)}
+            onBlur={() => setSearchFocused(false)}
+            placeholder="Search"
+            placeholderTextColor={theme.colors.textMuted}
+            autoCorrect={false}
+            autoCapitalize="none"
+            returnKeyType="search"
+            style={styles.searchInput}
+          />
+        </GlassSurface>
+        {searchActive ? (
+          <GlassButton
+            accessibilityLabel="Clear search"
+            onPress={clearSearch}
+            style={styles.bottomCircle}
+            fallbackStyle={styles.bottomCircleFill}
+          >
+            <X color={theme.colors.text} size={22} />
+          </GlassButton>
+        ) : (
+          <>
+            <GlassButton
+              accessibilityLabel="Open settings"
+              onPress={() => setSettingsVisible(true)}
+              style={styles.bottomCircle}
+              fallbackStyle={styles.bottomCircleFill}
+            >
+              <Settings color={theme.colors.text} size={21} />
+            </GlassButton>
+            <GlassButton
+              accessibilityLabel="Start new chat"
+              disabled={!client}
+              onPress={() => navigate(newChatHref())}
+              style={[styles.bottomCircle, !client ? styles.disabled : null]}
+              fallbackStyle={styles.bottomCircleFill}
+            >
+              <SquarePen color={theme.colors.text} size={20} />
+            </GlassButton>
+          </>
+        )}
+      </Animated.View>
       <MobileSettingsModal visible={settingsVisible} onClose={() => setSettingsVisible(false)} />
       <SessionActionMenu
         visible={Boolean(menuTarget)}
@@ -580,11 +757,15 @@ function SidebarSection({
 
 function SidebarProjectRow({
   collapsed,
-  onPress,
+  disabled,
+  onNewChat,
+  onToggle,
   project,
 }: {
   collapsed: boolean;
-  onPress: () => void;
+  disabled?: boolean;
+  onNewChat: () => void;
+  onToggle: () => void;
   project: IrisProject;
 }) {
   const theme = useTheme();
@@ -592,17 +773,32 @@ function SidebarProjectRow({
   const ProjectIcon = collapsed ? Folder : FolderOpen;
   const ChevronIcon = collapsed ? ChevronRight : ChevronDown;
   return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityLabel={`${collapsed ? "Expand" : "Collapse"} ${project.name}`}
-      accessibilityState={{ expanded: !collapsed }}
-      onPress={onPress}
-      style={({ pressed }) => [styles.projectRow, pressed ? styles.pressed : null]}
-    >
-      <ProjectIcon color={theme.colors.textMuted} size={18} />
-      <Text style={styles.projectTitle} numberOfLines={1}>{project.name}</Text>
-      <ChevronIcon color={theme.colors.textMuted} size={16} />
-    </Pressable>
+    <View style={styles.projectRow}>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={`${collapsed ? "Expand" : "Collapse"} ${project.name}`}
+        accessibilityState={{ expanded: !collapsed }}
+        onPress={onToggle}
+        style={({ pressed }) => [styles.projectToggle, pressed ? styles.pressed : null]}
+      >
+        <ProjectIcon color={theme.colors.textMuted} size={18} />
+        <Text style={styles.projectTitle} numberOfLines={1}>{project.name}</Text>
+        <ChevronIcon color={theme.colors.textMuted} size={16} />
+      </Pressable>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={`Start new chat in ${project.name}`}
+        disabled={disabled}
+        onPress={onNewChat}
+        style={({ pressed }) => [
+          styles.projectAction,
+          disabled ? styles.disabled : null,
+          pressed ? styles.pressed : null,
+        ]}
+      >
+        <SquarePen color={theme.colors.textMuted} size={17} />
+      </Pressable>
+    </View>
   );
 }
 
@@ -610,12 +806,20 @@ function SidebarSessionRow({
   nested = false,
   onPress,
   onLongPress,
+  onPin,
+  onRename,
+  onDelete,
+  pinned = false,
   selected,
   session,
 }: {
   nested?: boolean;
   onPress: () => void;
   onLongPress?: (anchor: SessionMenuAnchor) => void;
+  onPin: () => void;
+  onRename: () => void;
+  onDelete: () => void;
+  pinned?: boolean;
   selected?: boolean;
   session: IrisCoreSession;
 }) {
@@ -623,6 +827,22 @@ function SidebarSessionRow({
   const styles = createStyles(theme);
   const rowRef = useRef<View>(null);
   const unread = mobileSessionShowsUnread(session, Boolean(selected));
+
+  // Module-level constant, so this branch is stable across renders (hooks above run unconditionally).
+  if (useNativeContextMenu) {
+    return (
+      <NativeSessionRow
+        session={session}
+        selected={selected}
+        nested={nested}
+        pinned={pinned}
+        onPress={onPress}
+        onPin={onPin}
+        onRename={onRename}
+        onDelete={onDelete}
+      />
+    );
+  }
 
   function handleLongPress() {
     if (!onLongPress) return;
@@ -702,7 +922,8 @@ function createStyles(theme: ReturnType<typeof useTheme>) {
       left: 0,
       zIndex: 0,
       backgroundColor: theme.colors.background,
-      paddingHorizontal: theme.spacing[5],
+      paddingLeft: theme.spacing[5],
+      paddingRight: theme.spacing[2],
       paddingTop: theme.spacing[2],
       paddingBottom: 0,
       gap: theme.spacing[5],
@@ -716,12 +937,7 @@ function createStyles(theme: ReturnType<typeof useTheme>) {
       alignItems: "center",
       gap: theme.spacing[3],
     },
-    roundButton: {
-      width: 52,
-      height: 52,
-      borderRadius: 26,
-      alignItems: "center",
-      justifyContent: "center",
+    roundButtonFill: {
       borderWidth: 1,
       borderColor: theme.colors.border,
       backgroundColor: theme.colors.secondary,
@@ -731,11 +947,6 @@ function createStyles(theme: ReturnType<typeof useTheme>) {
       height: 52,
       borderRadius: 26,
       overflow: "hidden",
-    },
-    glassButtonPressable: {
-      flex: 1,
-      alignItems: "center",
-      justifyContent: "center",
     },
     brandButton: {
       flex: 1,
@@ -769,9 +980,9 @@ function createStyles(theme: ReturnType<typeof useTheme>) {
       gap: 8,
     },
     statusDot: {
-      width: 13,
-      height: 13,
-      borderRadius: 7,
+      width: 11,
+      height: 11,
+      borderRadius: 6,
     },
     statusDotReady: {
       backgroundColor: theme.colors.success,
@@ -789,8 +1000,8 @@ function createStyles(theme: ReturnType<typeof useTheme>) {
       flex: 1,
       minWidth: 0,
       color: theme.colors.textMuted,
-      fontSize: 18,
-      lineHeight: 23,
+      fontSize: 16,
+      lineHeight: 21,
     },
     sidebarScroll: {
       flex: 1,
@@ -805,6 +1016,7 @@ function createStyles(theme: ReturnType<typeof useTheme>) {
     },
     sectionToggle: {
       minHeight: 28,
+      paddingRight: SIDEBAR_RIGHT_RAIL_INSET,
       flexDirection: "row",
       alignItems: "center",
       justifyContent: "space-between",
@@ -831,24 +1043,41 @@ function createStyles(theme: ReturnType<typeof useTheme>) {
     projectRow: {
       minHeight: 38,
       borderRadius: theme.radius.md,
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "space-between",
+      gap: theme.spacing[1],
+    },
+    projectToggle: {
+      flex: 1,
+      minWidth: 0,
+      minHeight: 38,
+      borderRadius: theme.radius.md,
       paddingLeft: theme.spacing[2],
-      paddingRight: 0,
+      paddingRight: theme.spacing[1],
       flexDirection: "row",
       alignItems: "center",
       gap: theme.spacing[2],
     },
     projectTitle: {
-      flex: 1,
+      flexShrink: 1,
       minWidth: 0,
       color: theme.colors.text,
       fontSize: 16,
       fontWeight: "600",
     },
+    projectAction: {
+      width: PROJECT_ACTION_SIZE,
+      height: PROJECT_ACTION_SIZE,
+      borderRadius: theme.radius.md,
+      alignItems: "center",
+      justifyContent: "center",
+    },
     sessionRow: {
       height: SESSION_ROW_HEIGHT,
       borderRadius: theme.radius.md,
       paddingLeft: theme.spacing[2],
-      paddingRight: 0,
+      paddingRight: SIDEBAR_RIGHT_RAIL_INSET,
       flexDirection: "row",
       alignItems: "center",
       gap: theme.spacing[2],
@@ -895,18 +1124,47 @@ function createStyles(theme: ReturnType<typeof useTheme>) {
       fontSize: 14,
       lineHeight: 20,
     },
-    newChatButton: {
+    bottomBar: {
       position: "absolute",
-      right: theme.spacing[5],
-      bottom: theme.spacing[4],
+      left: 0,
+      right: 0,
+      bottom: 0,
+      flexDirection: "row",
+      alignItems: "center",
+      gap: theme.spacing[2],
+      paddingTop: theme.spacing[3],
+    },
+    searchPill: {
+      flex: 1,
+      height: 52,
+      borderRadius: 26,
+      overflow: "hidden",
+      flexDirection: "row",
+      alignItems: "center",
+      gap: theme.spacing[2],
+      paddingHorizontal: theme.spacing[4],
+    },
+    searchPillFill: {
+      borderWidth: 1,
+      borderColor: theme.colors.border,
+      backgroundColor: theme.colors.secondary,
+    },
+    searchInput: {
+      flex: 1,
+      color: theme.colors.text,
+      fontSize: 16,
+      paddingVertical: 0,
+    },
+    bottomCircle: {
       width: 52,
       height: 52,
       borderRadius: 26,
-      alignItems: "center",
-      justifyContent: "center",
-      backgroundColor: theme.colors.buttonPrimary,
+      overflow: "hidden",
+    },
+    bottomCircleFill: {
       borderWidth: 1,
-      borderColor: theme.colors.borderStrong,
+      borderColor: theme.colors.border,
+      backgroundColor: theme.colors.secondary,
     },
     pressed: {
       opacity: 0.76,

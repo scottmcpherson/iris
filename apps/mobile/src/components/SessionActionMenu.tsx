@@ -11,11 +11,10 @@ import {
   useWindowDimensions,
 } from "react-native";
 import Animated, { ZoomIn } from "react-native-reanimated";
-import { BlurView } from "expo-blur";
-import { GlassView, isLiquidGlassAvailable } from "expo-glass-effect";
 import { Check, Pencil, Pin, PinOff, Trash2, type LucideProps } from "lucide-react-native";
 import { type IrisCoreSession } from "@iris/core-client";
 import { useTheme } from "../theme/useTheme";
+import { GlassSurface } from "./GlassSurface";
 
 export type SessionMenuAnchor = { x: number; y: number; width: number; height: number };
 
@@ -54,7 +53,7 @@ export function SessionActionMenu({
   return (
     <Modal visible={visible} transparent animationType="none" onRequestClose={onClose}>
       <View style={StyleSheet.absoluteFill}>
-        {/* Transparent tap-catcher only — no full-screen blur. The GlassView card
+        {/* Transparent tap-catcher only — no full-screen blur. The glass card
             frosts just the content directly behind it, like the native composer menus. */}
         <Pressable
           accessibilityRole="button"
@@ -142,14 +141,11 @@ function SessionMenuContent({
 }
 
 function MenuCard({ children, styles }: { children: ReactNode; styles: ReturnType<typeof createStyles> }) {
-  if (isLiquidGlassAvailable()) {
-    return (
-      <GlassView glassEffectStyle="regular" style={styles.cardGlass}>
-        {children}
-      </GlassView>
-    );
-  }
-  return <View style={styles.cardSolid}>{children}</View>;
+  return (
+    <GlassSurface style={styles.cardGlass} fallbackStyle={styles.cardFallbackFill}>
+      {children}
+    </GlassSurface>
+  );
 }
 
 function MenuRow({
@@ -207,10 +203,8 @@ export function SessionRenameDialog({ session, busy = false, error, onSubmit, on
           accessibilityRole="button"
           accessibilityLabel="Dismiss rename"
           onPress={onClose}
-          style={StyleSheet.absoluteFill}
-        >
-          <BlurView intensity={22} tint="dark" style={StyleSheet.absoluteFill} />
-        </Pressable>
+          style={[StyleSheet.absoluteFill, styles.dialogScrim]}
+        />
         {session ? (
           // Keyed by session id so the input seeds from the session title on mount,
           // and reseeds when a different session is renamed — no effect required.
@@ -304,14 +298,11 @@ function RenameDialogContent({
 }
 
 function DialogCard({ children, styles }: { children: ReactNode; styles: ReturnType<typeof createStyles> }) {
-  if (isLiquidGlassAvailable()) {
-    return (
-      <GlassView glassEffectStyle="regular" style={styles.dialogCard}>
-        {children}
-      </GlassView>
-    );
-  }
-  return <View style={[styles.dialogCard, styles.dialogCardSolid]}>{children}</View>;
+  return (
+    <GlassSurface style={styles.dialogCard} fallbackStyle={styles.dialogCardSolid}>
+      {children}
+    </GlassSurface>
+  );
 }
 
 function createStyles(theme: ReturnType<typeof useTheme>) {
@@ -342,9 +333,11 @@ function createStyles(theme: ReturnType<typeof useTheme>) {
     cardGlass: {
       ...cardBase,
     },
-    cardSolid: {
-      ...cardBase,
+    cardFallbackFill: {
       backgroundColor: theme.colors.surfaceElevated,
+    },
+    dialogScrim: {
+      backgroundColor: theme.colors.muted,
     },
     menuHeader: {
       paddingHorizontal: theme.spacing[3],
