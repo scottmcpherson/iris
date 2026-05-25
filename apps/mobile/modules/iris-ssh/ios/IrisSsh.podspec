@@ -12,12 +12,16 @@ Pod::Spec.new do |s|
   s.static_framework = true
 
   s.dependency 'ExpoModulesCore'
-  s.dependency 'NMSSH', '~> 2.3'
 
   # Swift/Objective-C compatibility
   s.pod_target_xcconfig = {
     'DEFINES_MODULE' => 'YES',
   }
 
-  s.source_files = "**/*.{h,m,mm,swift,hpp,cpp}"
+  if ENV['IRIS_MOBILE_DISABLE_IOS_SSH'] == '1'
+    s.source_files = "IrisSshModuleSimulatorStub.swift"
+  else
+    s.dependency 'NMSSH', '~> 2.3'
+    s.source_files = "IrisSshModule.swift"
+  end
 end

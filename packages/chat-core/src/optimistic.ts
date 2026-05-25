@@ -1,15 +1,20 @@
-import type { ChatMessage, SendAcceptedResult } from "./types";
+import type { ChatMessage, MessageAttachment, SendAcceptedResult } from "./types";
 
 export function createClientRequestId(prefix = "mobile") {
   const random = globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
   return `${prefix}-${random}`;
 }
 
-export function createOptimisticUserMessage(text: string, clientRequestId = createClientRequestId()): ChatMessage {
+export function createOptimisticUserMessage(
+  text: string,
+  clientRequestId = createClientRequestId(),
+  attachments: MessageAttachment[] = [],
+): ChatMessage {
   return {
     id: clientRequestId,
     role: "user",
     content: text,
+    ...(attachments.length ? { attachments } : {}),
     clientRequestId,
   };
 }
@@ -24,12 +29,17 @@ export function createOptimisticAssistantMessage(clientRequestId: string): ChatM
   };
 }
 
-export function appendOptimisticSend(messages: ChatMessage[], text: string, clientRequestId = createClientRequestId()) {
+export function appendOptimisticSend(
+  messages: ChatMessage[],
+  text: string,
+  clientRequestId = createClientRequestId(),
+  attachments: MessageAttachment[] = [],
+) {
   return {
     clientRequestId,
     messages: [
       ...messages,
-      createOptimisticUserMessage(text, clientRequestId),
+      createOptimisticUserMessage(text, clientRequestId, attachments),
       createOptimisticAssistantMessage(clientRequestId),
     ],
   };

@@ -1,6 +1,7 @@
 import { getAgentForProfile } from "./agents";
 import { coreRequest } from "./transport";
 import type {
+  CoreMetadata,
   CreateSessionPayload,
   CreateSessionResponse,
   GetSessionDetailOptions,
@@ -8,6 +9,7 @@ import type {
   IrisCoreClient,
   IrisCoreMessage,
   IrisCoreSession,
+  IrisCoreSessionReadState,
   IrisSessionDetailResponse,
   IrisSessionListResponse,
 } from "./types";
@@ -33,6 +35,27 @@ export async function getSessions(client: IrisCoreClient, options: GetSessionsOp
 
 export function createSession(client: IrisCoreClient, payload: CreateSessionPayload) {
   return coreRequest<CreateSessionResponse>(client, "POST", "/sessions", payload);
+}
+
+export function updateSession(
+  client: IrisCoreClient,
+  sessionId: string,
+  payload: { title?: string; metadata?: CoreMetadata },
+) {
+  return coreRequest<{ session: IrisCoreSession }>(
+    client,
+    "PATCH",
+    `/sessions/${encodeURIComponent(sessionId)}`,
+    payload,
+  );
+}
+
+export function deleteSession(client: IrisCoreClient, sessionId: string) {
+  return coreRequest<{ sessionId: string }>(
+    client,
+    "DELETE",
+    `/sessions/${encodeURIComponent(sessionId)}`,
+  );
 }
 
 export async function getSessionDetail(client: IrisCoreClient, options: GetSessionDetailOptions) {
@@ -70,6 +93,20 @@ export function getSessionMessages(client: IrisCoreClient, options: GetSessionDe
     client,
     "GET",
     `/sessions/${encodeURIComponent(options.sessionId)}/messages${sessionReferenceQuery(options)}`,
+  );
+}
+
+export function updateSessionReadState(
+  client: IrisCoreClient,
+  sessionId: string,
+  state: "read" | "unread",
+  metadata: CoreMetadata = {},
+) {
+  return coreRequest<{ readState: IrisCoreSessionReadState }>(
+    client,
+    "PATCH",
+    `/sessions/${encodeURIComponent(sessionId)}/read-state`,
+    { state, metadata },
   );
 }
 

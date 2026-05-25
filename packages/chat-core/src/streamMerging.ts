@@ -1,4 +1,8 @@
 import type { AttachmentKind, ChatMessage, DeliveryMessage, MessageAttachment } from "./types";
+import {
+  mergeStreamToolEvent,
+  streamToolEventsFromMetadata,
+} from "./toolEvents";
 
 const attachmentKinds = new Set(["image", "document", "audio", "video", "archive", "code", "file"]);
 
@@ -16,21 +20,31 @@ export function mergeStreamDelivery(
     deliveryAttachments,
     delivery.metadata,
   );
+  const liveToolEvents = streamToolEventsFromMetadata(delivery.metadata, delivery.id);
+  const messageContent = liveToolEvents.length && !deliveryContent.trim() ? "" : deliveryContent;
   const operation = chunkOperation(delivery.metadata);
   const streaming = !finalized;
-  const updateMessage = (message: ChatMessage): ChatMessage => ({
-    ...message,
-    id: streamMessageId,
-    streamMessageId,
-    clientRequestId,
-    content: operation === "replace"
-      ? deliveryContent
+  const updateMessage = (message: ChatMessage): ChatMessage => {
+    const streamEvents = streamEventsForUpdate(message, liveToolEvents, finalized);
+    const replacingPlaceholder = !message.streamMessageId;
+    const nextContent = replacingPlaceholder || operation === "replace"
+      ? messageContent
       : finalized
-        ? completedContentForStream(message.content, deliveryContent)
-        : appendDeltaContent(message.content, deliveryContent),
-    attachments: mergeMessageAttachments(message.attachments, deliveryAttachments),
-    streaming,
-  });
+        ? completedContentForStream(message.content, messageContent, operation)
+        : appendDeltaContent(message.content, messageContent);
+    return {
+      ...message,
+      id: streamMessageId,
+      streamMessageId,
+      clientRequestId,
+      content: nextContent,
+      attachments: replacingPlaceholder
+        ? (deliveryAttachments.length ? deliveryAttachments : undefined)
+        : mergeMessageAttachments(message.attachments, deliveryAttachments),
+      streaming,
+      ...(streamEvents?.length ? { streamEvents } : {}),
+    };
+  };
 
   const clientRequestMatchIndex = existing.findIndex(
     (message) => message.role === "assistant" && message.clientRequestId === clientRequestId,
@@ -39,19 +53,26 @@ export function mergeStreamDelivery(
     return existing.map((message, index) => (index === clientRequestMatchIndex ? updateMessage(message) : message));
   }
 
+  const streamIndex = existing.findIndex((message) =>
+    message.role === "assistant" &&
+    !message.clientRequestId &&
+    (message.streamMessageId === streamMessageId || message.id === streamMessageId)
+  );
+  if (streamIndex !== -1) {
+    return existing.map((message, index) => (index === streamIndex ? updateMessage(message) : message));
+  }
+
   const assistantMessage: ChatMessage = {
     id: streamMessageId,
     role: "assistant",
-    content: deliveryContent,
+    content: messageContent,
     streaming,
     streamMessageId,
     clientRequestId,
     attachments: deliveryAttachments.length ? deliveryAttachments : undefined,
+    ...(liveToolEvents.length ? { streamEvents: liveToolEvents } : {}),
   };
-  return [
-    ...existing,
-    assistantMessage,
-  ];
+  return coalescePostStreamAttachments([...existing, assistantMessage]);
 }
 
 export function mergeCompletedDelivery(
@@ -66,20 +87,17 @@ export function mergeCompletedDelivery(
     deliveryAttachments,
     delivery.metadata,
   );
+  if (existing.some((message) => message.id === delivery.id)) return existing;
   const matchIndex = clientRequestId
     ? existing.findIndex((message) => message.role === "assistant" && message.clientRequestId === clientRequestId)
     : -1;
   if (matchIndex !== -1) {
-    return existing.map((message, index) =>
-      index === matchIndex
-        ? {
-            ...message,
-            id: message.streamMessageId || delivery.id,
-            content: completedContentForStream(message.content, deliveryContent),
-            attachments: mergeMessageAttachments(message.attachments, deliveryAttachments),
-            streaming: false,
-          }
-        : message,
+    return coalescePostStreamAttachments(
+      existing.map((message, index) =>
+        index === matchIndex
+          ? completedDeliveryMessage(message, delivery, deliveryContent, deliveryAttachments)
+          : message,
+      ),
     );
   }
   const assistantMessage: ChatMessage = {
@@ -91,10 +109,34 @@ export function mergeCompletedDelivery(
     source: delivery.source === "hermes-cron" ? delivery.source : undefined,
     attachments: deliveryAttachments.length ? deliveryAttachments : undefined,
   };
-  return [
-    ...existing,
-    assistantMessage,
-  ];
+  return coalescePostStreamAttachments([...existing, assistantMessage]);
+}
+
+function completedDeliveryMessage(
+  message: ChatMessage,
+  delivery: DeliveryMessage,
+  deliveryContent: string,
+  deliveryAttachments: MessageAttachment[],
+): ChatMessage {
+  const streamEvents = completedStreamEvents(message);
+  if (!message.streamMessageId) {
+    return {
+      ...message,
+      id: delivery.id,
+      content: deliveryContent,
+      attachments: mergeMessageAttachments(message.attachments, deliveryAttachments),
+      streaming: false,
+      ...(streamEvents?.length ? { streamEvents } : {}),
+    };
+  }
+  const operation = chunkOperation(delivery.metadata);
+  return {
+    ...message,
+    content: completedContentForStream(message.content, deliveryContent, operation),
+    attachments: mergeMessageAttachments(message.attachments, deliveryAttachments),
+    streaming: false,
+    ...(streamEvents?.length ? { streamEvents } : {}),
+  };
 }
 
 export function mergeErrorDelivery(
@@ -125,6 +167,7 @@ export function mergeErrorDelivery(
     index === matchIndex
       ? {
           ...message,
+          id: message.streamMessageId || message.id,
           content: message.content.trim() ? `${message.content}\n\n${errorMessage}` : errorMessage,
           streaming: false,
           source: delivery.source,
@@ -201,7 +244,8 @@ export function contentWithoutRenderedAttachmentMarkers(
   return lines.join("\n").trim();
 }
 
-function completedContentForStream(currentContent: string, deliveryContent: string) {
+function completedContentForStream(currentContent: string, deliveryContent: string, operation: "append" | "replace") {
+  if (operation === "replace") return deliveryContent;
   const current = currentContent.trim();
   if (current && deliveryContent.trimStart().startsWith(current)) {
     return deliveryContent;
@@ -209,10 +253,35 @@ function completedContentForStream(currentContent: string, deliveryContent: stri
   return appendDeltaContent(currentContent, deliveryContent);
 }
 
+function streamEventsForUpdate(message: ChatMessage, liveToolEvents: ReturnType<typeof streamToolEventsFromMetadata>, finalized: boolean) {
+  if (liveToolEvents.length) {
+    return liveToolEvents.reduce(
+      (current, event) => mergeStreamToolEvent(current, event),
+      message.streamEvents || [],
+    );
+  }
+  return finalized ? completedStreamEvents(message) : message.streamEvents;
+}
+
+function completedStreamEvents(message: ChatMessage) {
+  if (!message.streamEvents?.length) return message.streamEvents;
+  return message.streamEvents.map((event) =>
+    event.status === "running" ? { ...event, status: "completed" as const } : event
+  );
+}
+
 function appendDeltaContent(content: string, addition: string) {
   if (!content) return addition;
   if (!addition) return content;
   return `${content}${addition}`;
+}
+
+function appendBlockContent(content: string, addition: string) {
+  const left = content.trimEnd();
+  const right = addition.trim();
+  if (!left) return right;
+  if (!right) return left;
+  return `${left}\n\n${right}`;
 }
 
 function chunkOperation(metadata: DeliveryMessage["metadata"]) {
@@ -230,6 +299,80 @@ function streamErrorMessage(delivery: DeliveryMessage) {
     ? metadataError.trim()
     : delivery.content.trim();
   return detail ? `Assistant stream failed: ${detail}` : "Assistant stream failed.";
+}
+
+export function coalescePostStreamAttachments(messages: ChatMessage[]) {
+  const coalesced: ChatMessage[] = [];
+  for (let index = 0; index < messages.length; index += 1) {
+    const message = messages[index];
+    const next = messages[index + 1];
+
+    if (isPostStreamAttachmentMessage(message) && next && next.role === "assistant" && next.streamMessageId) {
+      coalesced.push({
+        ...next,
+        content: appendBlockContent(next.content, contentWithoutRenderedAttachmentMarkers(message.content, message.attachments)),
+        attachments: mergeMessageAttachments(next.attachments, message.attachments),
+      });
+      index += 1;
+      continue;
+    }
+
+    if (message.role === "assistant" && message.streamMessageId && next && isPostStreamAttachmentMessage(next)) {
+      coalesced.push({
+        ...message,
+        content: appendBlockContent(message.content, contentWithoutRenderedAttachmentMarkers(next.content, next.attachments)),
+        attachments: mergeMessageAttachments(message.attachments, next.attachments),
+      });
+      index += 1;
+      continue;
+    }
+
+    coalesced.push(message);
+  }
+  return coalesced;
+}
+
+function isPostStreamAttachmentMessage(message: ChatMessage) {
+  return message.role === "assistant" && (isPostStreamAttachmentContent(message.content) || Boolean(message.attachments?.length));
+}
+
+function isPostStreamAttachmentContent(content: string) {
+  const trimmed = content.trim();
+  return (
+    /^(?:\u{1F5BC}\uFE0F?\s*)?Image:\s+/iu.test(trimmed) ||
+    /^(?:\u{1F4CE}\s*)?File:\s+/iu.test(trimmed) ||
+    /^Media:\s+/i.test(trimmed)
+  );
+}
+
+export function deliveryCompletesActiveStream(messages: ChatMessage[], delivery: DeliveryMessage) {
+  const clientRequestId = stringMetadata(delivery.metadata, "clientRequestId") ||
+    stringMetadata(delivery.metadata, "client_request_id");
+  if (!clientRequestId) return false;
+  return messages.some((message) => message.role === "assistant" && message.clientRequestId === clientRequestId);
+}
+
+export function mergeMessageLists(primary: ChatMessage[], secondary: ChatMessage[]) {
+  const byId = new Set(primary.map((message) => message.id));
+  const merged = [...primary];
+  for (const message of secondary) {
+    if (byId.has(message.id)) continue;
+    const clientRequestMatchIndex = message.clientRequestId
+      ? merged.findIndex(
+          (existing) =>
+            existing.clientRequestId === message.clientRequestId && existing.role === message.role,
+        )
+      : -1;
+    if (clientRequestMatchIndex !== -1) {
+      byId.delete(merged[clientRequestMatchIndex].id);
+      merged[clientRequestMatchIndex] = message;
+      byId.add(message.id);
+      continue;
+    }
+    byId.add(message.id);
+    merged.push(message);
+  }
+  return merged;
 }
 
 function stringMetadata(metadata: Record<string, unknown>, key: string) {

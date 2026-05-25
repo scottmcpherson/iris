@@ -10,7 +10,14 @@
     "ios": {
       "bundleIdentifier": "com.nousresearch.iris.mobile",
       "icon": "./assets/expo.icon",
-      "appleTeamId": "5E845CEVPW"
+      "appleTeamId": "5E845CEVPW",
+      "infoPlist": {
+        "NSLocalNetworkUsageDescription": "Iris Mobile connects to Iris Core on your desktop during device pairing and local development.",
+        "NSAppTransportSecurity": {
+          "NSAllowsArbitraryLoads": true,
+          "NSAllowsLocalNetworking": true
+        }
+      }
     },
     "android": {
       "package": "com.nousresearch.iris.mobile",
@@ -36,6 +43,19 @@
             "image": "./assets/images/splash-icon.png",
             "imageWidth": 76
           }
+        }
+      ],
+      [
+        "expo-audio",
+        {
+          "microphonePermission": "Allow Iris Mobile to access your microphone."
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Allow Iris Mobile to access your photos.",
+          "cameraPermission": "Allow Iris Mobile to use your camera to take photos."
         }
       ],
       "expo-secure-store"

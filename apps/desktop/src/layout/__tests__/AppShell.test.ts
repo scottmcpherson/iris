@@ -266,6 +266,59 @@ describe("AppShell pinned sessions", () => {
     expect(html).not.toContain("http://127.0.0.1:8765");
   });
 
+  it("aligns loose session rows with the project folder icon gutter", () => {
+    const looseChat = sessionFixture({ id: "session_loose", title: "Loose chat" });
+
+    const html = renderToStaticMarkup(
+      createElement(AppShell, {
+        activeView: "chat",
+        connected: true,
+        isRefreshing: false,
+        primaryPane: null,
+        selectedProfile: "default",
+        status: statusFixture(),
+        sessions: [looseChat],
+        sessionsByProfile: {},
+        sessionReadStates: {},
+        projects: [],
+        projectAgents: [],
+        sessionsByProject: {},
+        projectSessionsLoading: {},
+        projectSessionsLoaded: {},
+        projectErrors: {},
+        collapsedProjects: {},
+        unprojectedSessions: [looseChat],
+        sessionsLoadedByProfile: {},
+        sessionsLoading: false,
+        sessionsLoadingByProfile: {},
+        historyError: null,
+        historyErrorsByProfile: {},
+        selectedSessionId: looseChat.id,
+        selectedProjectId: "",
+        activeSessionIds: [],
+        onNewSession: noop,
+        onCreateProject: async () => projectFixture(),
+        onUpdateProject: async () => projectFixture(),
+        onToggleProjectCollapsed: noop,
+        onRefreshProjectSessions: noop,
+        onEditProfile: noop,
+        onProfileAction: async () => "",
+        onRefresh: noop,
+        onRefreshSessions: noop,
+        onDeleteSession: async () => "",
+        onRenameSession: async () => "",
+        onSelectSession: noop,
+        onSelectProjectSession: noop,
+        onSelectProfile: noop,
+        onSelectView: noop,
+      }),
+    );
+
+    expect(html).toContain("sidebar-session-row relative rounded-[8px] active ml-[9px]");
+    expect(html).toContain("sidebar-session rounded-[8px] text-left !pl-0");
+    expect(html).toContain("sidebar-session-pin !-left-[24px]");
+  });
+
   it("honors persisted top-level sidebar section collapse state", () => {
     const project = projectFixture();
     const projectChat = sessionFixture({

@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { router } from "expo-router";
 import { StyleSheet, Text, View } from "react-native";
 import { CameraView, useCameraPermissions } from "expo-camera";
 import * as Device from "expo-device";
@@ -20,6 +21,12 @@ export function PairScreen() {
   const [error, setError] = useState("");
   const [scanned, setScanned] = useState(false);
   const [pairing, setPairing] = useState(false);
+
+  useEffect(() => {
+    if (state.status === "connected") {
+      router.replace("/sessions/new");
+    }
+  }, [state.status]);
 
   function acceptRawPayload(value: string) {
     const result = parsePairingPayload(value);

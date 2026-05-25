@@ -49,6 +49,12 @@ Start the Iris Core and the Vite web surface only:
 npm run dev:web
 ```
 
+Start a desktop dev session with Core reachable from Iris Mobile:
+
+```bash
+npm run dev:mobile-pairing
+```
+
 Start only Iris Core:
 
 ```bash

@@ -7,12 +7,8 @@ export default function IndexRoute() {
   const { state } = useIrisConnection();
 
   useEffect(() => {
-    if (state.status === "unpaired") {
-      router.replace("/pair");
-      return;
-    }
     if (state.status !== "connecting") {
-      router.replace("/projects");
+      router.replace("/sessions/new");
     }
   }, [state.status]);
 

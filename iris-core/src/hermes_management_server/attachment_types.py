@@ -109,6 +109,8 @@ def normalize_attachment_mime_type(value: str) -> str:
     mime_type = str(value or "").split(";", 1)[0].strip().lower()
     if mime_type == "image/jpg":
         return "image/jpeg"
+    if mime_type in {"application/x-m4a", "audio/x-m4a", "audio/m4a"}:
+        return "video/mp4"
     return mime_type or "application/octet-stream"
 
 

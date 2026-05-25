@@ -22,6 +22,17 @@ export type ChatMessage = {
   streaming?: boolean;
   streamMessageId?: string;
   clientRequestId?: string;
+  streamEvents?: ChatStreamToolEvent[];
+};
+
+export type ChatStreamToolEvent = {
+  id: string;
+  callId?: string;
+  toolName: string;
+  label: string;
+  status: "running" | "completed" | "error";
+  arguments?: string;
+  output?: string;
 };
 
 export type CoreChatMessage = {
@@ -30,9 +41,24 @@ export type CoreChatMessage = {
   role: ChatMessage["role"];
   content: string;
   status?: "pending" | "streaming" | "completed" | "error";
+  toolName?: string;
+  toolCallId?: string;
+  toolCalls?: CoreHistoryToolCall[];
   createdAt?: number;
   timestamp?: number | null;
   metadata?: Record<string, unknown>;
+};
+
+export type CoreHistoryToolCall = {
+  id?: string;
+  call_id?: string;
+  type?: string;
+  name?: string;
+  arguments?: string;
+  function?: {
+    name?: string;
+    arguments?: string;
+  };
 };
 
 export type DeliveryMessage = {

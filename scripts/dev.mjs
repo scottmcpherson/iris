@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const args = new Set(process.argv.slice(2));
 const webOnly = args.has("--web");
+const mobilePairing = args.has("--mobile");
 const withCore = !args.has("--no-core");
 const children = [];
 
@@ -15,7 +16,7 @@ const exe = process.platform === "win32" ? ".exe" : "";
 const coreBin = join(root, "iris-core", ".venv", binDir, `iris-core${exe}`);
 const npm = process.platform === "win32" ? "npm.cmd" : "npm";
 const hermesHome = expandHome(process.env.HERMES_HOME ?? join(homedir(), ".hermes"));
-const coreHost = process.env.IRIS_CORE_HOST ?? "127.0.0.1";
+const coreHost = process.env.IRIS_CORE_HOST ?? (mobilePairing ? "0.0.0.0" : "127.0.0.1");
 const corePort = process.env.IRIS_CORE_PORT ?? "8765";
 const hermesEnvPath = join(hermesHome, ".env");
 const discoveredHermesApiToken = readEnvFileValue(hermesEnvPath, "API_SERVER_KEY");

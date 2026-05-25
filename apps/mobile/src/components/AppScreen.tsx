@@ -9,11 +9,20 @@ type AppScreenProps = {
   subtitle?: string;
   children: React.ReactNode;
   scroll?: boolean;
+  leadingAction?: React.ReactNode;
   action?: React.ReactNode;
   contentStyle?: ViewStyle;
 };
 
-export function AppScreen({ title, subtitle, children, scroll = true, action, contentStyle }: AppScreenProps) {
+export function AppScreen({
+  title,
+  subtitle,
+  children,
+  scroll = true,
+  leadingAction,
+  action,
+  contentStyle,
+}: AppScreenProps) {
   const theme = useTheme();
   const { state } = useIrisConnection();
   const styles = createStyles(theme);
@@ -22,6 +31,7 @@ export function AppScreen({ title, subtitle, children, scroll = true, action, co
   return (
     <SafeAreaView style={styles.screen}>
       <View style={styles.header}>
+        {leadingAction}
         <View style={styles.headerText}>
           <Text style={styles.title}>{title}</Text>
           {subtitle ? <Text style={styles.subtitle}>{subtitle}</Text> : null}

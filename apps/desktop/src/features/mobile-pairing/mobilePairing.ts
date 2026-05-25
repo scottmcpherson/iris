@@ -41,6 +41,20 @@ export function defaultMobilePairingDraft(runtimeConfig: HermesRuntimeConfig): M
   };
 }
 
+export function draftWithPreferredMobileHost(
+  draft: MobilePairingDraft,
+  candidates: string[],
+): MobilePairingDraft {
+  if (draft.coreHost.trim()) return draft;
+  const coreHost = preferredMobileHost(candidates);
+  return coreHost ? { ...draft, coreHost } : draft;
+}
+
+export function preferredMobileHost(candidates: string[]) {
+  const normalized = candidates.map((candidate) => candidate.trim()).filter(Boolean);
+  return normalized.find(isTailscaleIpv4) || normalized.find(isPrivateIpv4) || normalized[0] || "";
+}
+
 export function createMobilePairingPayload(
   draft: MobilePairingDraft,
   pairingCode: MobilePairingCode | null,
@@ -125,4 +139,29 @@ function parsePort(value: string, fallback: number) {
 
 function validPort(value: unknown) {
   return typeof value === "number" && Number.isInteger(value) && value > 0 && value <= 65535;
+}
+
+function isTailscaleIpv4(value: string) {
+  const octets = ipv4Octets(value);
+  return Boolean(octets && octets[0] === 100 && octets[1] >= 64 && octets[1] <= 127);
+}
+
+function isPrivateIpv4(value: string) {
+  const octets = ipv4Octets(value);
+  return Boolean(
+    octets &&
+      (octets[0] === 10 ||
+        (octets[0] === 172 && octets[1] >= 16 && octets[1] <= 31) ||
+        (octets[0] === 192 && octets[1] === 168)),
+  );
+}
+
+function ipv4Octets(value: string) {
+  const parts = value.split(".");
+  if (parts.length !== 4) return null;
+  const octets = parts.map((part) => Number.parseInt(part, 10));
+  if (octets.some((octet, index) => !Number.isInteger(octet) || octet < 0 || octet > 255 || String(octet) !== parts[index])) {
+    return null;
+  }
+  return octets;
 }

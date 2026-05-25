@@ -642,6 +642,7 @@ export function AppShell({
                             !selectedProjectId &&
                             profileName === selectedProfile &&
                             session.id === selectedSessionId,
+                          alignWithFolderIcon: true,
                           keySuffix: "unprojected",
                         });
                       })
@@ -1045,6 +1046,7 @@ export function AppShell({
       selected?: boolean;
       onSelect?: () => void;
       keySuffix?: string;
+      alignWithFolderIcon?: boolean;
     } = {},
   ) {
     const running = activeSessionIds.includes(session.id);
@@ -1065,6 +1067,15 @@ export function AppShell({
       running ? "running" : "",
       pinned ? "pinned" : "",
       options.pinnedSection ? "pinned-section-row" : "",
+      options.alignWithFolderIcon ? "ml-[9px]" : "",
+    ].filter(Boolean).join(" ");
+    const pinClassName = [
+      "sidebar-session-pin",
+      options.alignWithFolderIcon ? "!-left-[24px]" : "",
+    ].filter(Boolean).join(" ");
+    const sessionButtonClassName = [
+      "sidebar-session rounded-[8px] text-left",
+      options.alignWithFolderIcon ? "!pl-0" : "",
     ].filter(Boolean).join(" ");
 
     return (
@@ -1085,7 +1096,7 @@ export function AppShell({
             <Button
               type="button"
               variant="ghost"
-              className="sidebar-session-pin"
+              className={pinClassName}
               aria-label={pinned ? `Unpin ${session.title}` : `Pin ${session.title}`}
               title={pinned ? "Unpin session" : "Pin session"}
               onClick={(event) => {
@@ -1098,7 +1109,7 @@ export function AppShell({
             <Button
               type="button"
               variant="ghost"
-              className="sidebar-session rounded-[8px] text-left"
+              className={sessionButtonClassName}
               onClick={options.onSelect || (() => onSelectSession(profileName, session.id))}
             >
               <span>{session.title}</span>

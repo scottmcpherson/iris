@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { coreUrlFromDraft, createMobilePairingPayload, pairingPayloadHasSecrets, validateMobilePairingPayload } from "../mobilePairing";
+import {
+  coreUrlFromDraft,
+  createMobilePairingPayload,
+  draftWithPreferredMobileHost,
+  pairingPayloadHasSecrets,
+  preferredMobileHost,
+  validateMobilePairingPayload,
+} from "../mobilePairing";
 
 describe("mobile pairing payload", () => {
   it("generates a direct Core payload with a one-time pairing code", () => {
@@ -49,5 +56,31 @@ describe("mobile pairing payload", () => {
       coreHost: "https://agents-mac-mini.tailebda16.ts.net:8765",
       corePort: "8765",
     })).toBe("https://agents-mac-mini.tailebda16.ts.net:8765/v1");
+  });
+
+  it("prefers Tailscale host candidates for local pairing", () => {
+    expect(preferredMobileHost(["192.168.5.10", "100.112.237.48"])).toBe("100.112.237.48");
+  });
+
+  it("fills an empty local host from discovered candidates", () => {
+    expect(draftWithPreferredMobileHost({
+      hostId: "local",
+      hostLabel: "Local",
+      coreHost: "",
+      corePort: "8765",
+    }, ["192.168.5.10"])).toMatchObject({
+      coreHost: "192.168.5.10",
+    });
+  });
+
+  it("does not replace an explicit host", () => {
+    expect(draftWithPreferredMobileHost({
+      hostId: "local",
+      hostLabel: "Local",
+      coreHost: "agents-mac-mini.tailnet.ts.net",
+      corePort: "8765",
+    }, ["100.112.237.48"])).toMatchObject({
+      coreHost: "agents-mac-mini.tailnet.ts.net",
+    });
   });
 });

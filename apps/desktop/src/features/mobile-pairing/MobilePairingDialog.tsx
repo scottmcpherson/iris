@@ -28,6 +28,7 @@ import {
   coreUrlFromDraft,
   createMobilePairingPayload,
   defaultMobilePairingDraft,
+  draftWithPreferredMobileHost,
   pairingPayloadHasSecrets,
   validateMobilePairingPayload,
   type MobilePairingCode,
@@ -60,17 +61,32 @@ export function MobilePairingDialog({ open, runtimeConfig, onOpenChange }: Mobil
   const payloadIsValid = validateMobilePairingPayload(payload);
   const payloadHasSecrets = pairingPayloadHasSecrets(payload);
   const canScanPayload = payloadIsValid && !payloadHasSecrets && !pairingBusy;
-  const payloadStatus = payloadStatusText(draft, payloadIsValid, payloadHasSecrets, pairingBusy, pairingError);
+  const payloadStatus = payloadStatusText(draft, pairingCode, payloadIsValid, payloadHasSecrets, pairingBusy, pairingError);
 
   useEffect(() => {
+    let cancelled = false;
+
     if (open) {
-      const nextDraft = defaultMobilePairingDraft(runtimeConfig);
-      setDraft(nextDraft);
-      void regeneratePairingCode(nextDraft);
+      void preparePairingDraft().then((nextDraft) => {
+        if (cancelled) return;
+        setDraft(nextDraft);
+        void regeneratePairingCode(nextDraft);
+      });
     } else {
       setPairingCode(null);
       setPairingError("");
     }
+
+    async function preparePairingDraft() {
+      const nextDraft = defaultMobilePairingDraft(runtimeConfig);
+      if (nextDraft.coreHost.trim()) return nextDraft;
+      const candidates = await mobilePairingHostCandidates();
+      return draftWithPreferredMobileHost(nextDraft, candidates);
+    }
+
+    return () => {
+      cancelled = true;
+    };
   }, [open, runtimeConfig]);
 
   useEffect(() => {
@@ -136,6 +152,12 @@ export function MobilePairingDialog({ open, runtimeConfig, onOpenChange }: Mobil
     setPairingCode({ code: result.code, expiresAt: result.expiresAt });
   }
 
+  function updateDraft(nextDraft: MobilePairingDraft) {
+    setDraft(nextDraft);
+    setPairingCode(null);
+    setPairingError("");
+  }
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-[680px]">
@@ -153,7 +175,7 @@ export function MobilePairingDialog({ open, runtimeConfig, onOpenChange }: Mobil
                 <img src={qrDataUrl} alt="Iris Mobile pairing QR code" className="size-[240px]" />
               ) : (
                 <div className="grid min-h-[240px] place-items-center px-4 text-center text-[13px] text-muted-foreground">
-                  Enter a Tailscale-reachable Core host before scanning.
+                  {payloadStatus}
                 </div>
               )}
             </div>
@@ -171,9 +193,9 @@ export function MobilePairingDialog({ open, runtimeConfig, onOpenChange }: Mobil
               The phone connects directly to Iris Core over Tailscale, then authenticates with a phone-generated device token.
             </FieldDescription>
             <FieldGroup className="grid gap-3">
-              <PairingTextField id="mobile-host-label" label="Host label" value={draft.hostLabel} onChange={(hostLabel) => setDraft({ ...draft, hostLabel })} />
-              <PairingTextField id="mobile-core-host" label="Core host" value={draft.coreHost} onChange={(coreHost) => setDraft({ ...draft, coreHost })} />
-              <PairingTextField id="mobile-core-port" label="Core port" value={draft.corePort} onChange={(corePort) => setDraft({ ...draft, corePort })} />
+              <PairingTextField id="mobile-host-label" label="Host label" value={draft.hostLabel} onChange={(hostLabel) => updateDraft({ ...draft, hostLabel })} />
+              <PairingTextField id="mobile-core-host" label="Core host" value={draft.coreHost} onChange={(coreHost) => updateDraft({ ...draft, coreHost })} />
+              <PairingTextField id="mobile-core-port" label="Core port" value={draft.corePort} onChange={(corePort) => updateDraft({ ...draft, corePort })} />
             </FieldGroup>
           </FieldSet>
         </div>
@@ -204,6 +226,7 @@ export function MobilePairingDialog({ open, runtimeConfig, onOpenChange }: Mobil
 
 function payloadStatusText(
   draft: MobilePairingDraft,
+  pairingCode: MobilePairingCode | null,
   payloadIsValid: boolean,
   payloadHasSecrets: boolean,
   pairingBusy: boolean,
@@ -212,6 +235,7 @@ function payloadStatusText(
   if (pairingBusy) return "Creating a one-time pairing code.";
   if (pairingError) return pairingError;
   if (!draft.coreHost.trim()) return "Enter the Tailscale Core host before scanning.";
+  if (!pairingCode) return "Click Regenerate QR to create a one-time pairing code.";
   if (!payloadIsValid) return "Review required Core fields before scanning.";
   if (payloadHasSecrets) return "Payload needs review before scanning.";
   return "Ready to scan. The phone will generate and store its own device token.";
@@ -238,11 +262,23 @@ async function ensureManagedCoreForMobilePairing(
     if (status.ready && status.port === port && !isLoopbackBind(status.bindHost)) {
       return { ok: true };
     }
+    if (status.ready && status.port === port && isLoopbackBind(status.bindHost) && !status.startedByApp) {
+      return {
+        ok: false,
+        error: `Iris Core is running on ${status.bindHost || "127.0.0.1"}:${port}, so mobile cannot reach it. Restart the dev session with \`IRIS_CORE_HOST=0.0.0.0 npm run dev\`, then regenerate the QR.`,
+      };
+    }
     const result = await invoke<CoreSidecarStatus>(
       status.startedByApp || status.ready ? "core_sidecar_restart" : "core_sidecar_start",
       { config },
     );
-    if (result.ready) return { ok: true };
+    if (result.ready && !isLoopbackBind(result.bindHost)) return { ok: true };
+    if (result.ready) {
+      return {
+        ok: false,
+        error: `Iris Core is still listening on ${result.bindHost || "127.0.0.1"}:${port}. Restart Core with host 0.0.0.0 before generating a mobile QR.`,
+      };
+    }
     return {
       ok: false,
       error: result.error || "Iris Core could not be prepared for mobile pairing.",
@@ -257,6 +293,15 @@ async function ensureManagedCoreForMobilePairing(
 
 function isLoopbackBind(host: string) {
   return ["", "localhost", "127.0.0.1", "::1", "[::1]"].includes(host.trim().toLowerCase());
+}
+
+async function mobilePairingHostCandidates() {
+  if (!isTauri()) return [];
+  try {
+    return await invoke<string[]>("mobile_pairing_host_candidates");
+  } catch {
+    return [];
+  }
 }
 
 function parsePort(value: string, fallback: number) {

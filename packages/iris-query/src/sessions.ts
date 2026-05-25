@@ -1,9 +1,11 @@
 import { queryOptions, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   createSession,
+  deleteSession,
   getSessionDetail,
   getSessions,
   sendMessage,
+  updateSession,
   type CreateSessionPayload,
   type IrisCoreClient,
   type IrisCoreSendMessageResult,
@@ -54,6 +56,15 @@ export type SendMessageMutationPayload = {
   payload: SendMessagePayload;
 };
 
+export type RenameSessionMutationPayload = {
+  sessionId: string;
+  title: string;
+};
+
+// Project session lists live under this prefix in @iris/iris-query's projects module.
+// Referenced by literal to avoid a circular import between sessions and projects.
+const projectsQueryPrefix = (clientKey: string) => ["projects", clientKey] as const;
+
 export function useSessionsQuery(
   client: IrisCoreClient | null,
   clientKey: string,
@@ -79,6 +90,38 @@ export function useCreateSessionMutation(client: IrisCoreClient | null, clientKe
       if (result.session?.id) {
         queryClient.invalidateQueries({ queryKey: sessionKeys.detail(clientKey, result.session.id) });
       }
+    },
+  });
+}
+
+export function useRenameSessionMutation(client: IrisCoreClient | null, clientKey: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ sessionId, title }: RenameSessionMutationPayload) => {
+      if (!client) throw new Error("Iris Core is not connected.");
+      const cleanTitle = title.trim();
+      if (!cleanTitle) throw new Error("Enter a session name.");
+      return ensureOk(updateSession(client, sessionId, { title: cleanTitle }), "Could not rename session.");
+    },
+    onSuccess: (_result, variables) => {
+      queryClient.invalidateQueries({ queryKey: sessionKeys.all(clientKey) });
+      queryClient.invalidateQueries({ queryKey: sessionKeys.detail(clientKey, variables.sessionId) });
+      queryClient.invalidateQueries({ queryKey: projectsQueryPrefix(clientKey) });
+    },
+  });
+}
+
+export function useDeleteSessionMutation(client: IrisCoreClient | null, clientKey: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (sessionId: string) => {
+      if (!client) throw new Error("Iris Core is not connected.");
+      return ensureOk(deleteSession(client, sessionId), "Could not delete session.");
+    },
+    onSuccess: (_result, sessionId) => {
+      queryClient.invalidateQueries({ queryKey: sessionKeys.all(clientKey) });
+      queryClient.removeQueries({ queryKey: sessionKeys.detail(clientKey, sessionId) });
+      queryClient.invalidateQueries({ queryKey: projectsQueryPrefix(clientKey) });
     },
   });
 }

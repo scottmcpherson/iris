@@ -5,6 +5,7 @@ mod ssh_tunnel;
 use serde_json::Value;
 use std::fs::{create_dir_all, OpenOptions};
 use std::io::Write;
+use std::net::Ipv4Addr;
 use std::panic;
 use std::path::PathBuf;
 use std::process::Command;
@@ -17,6 +18,80 @@ async fn core_bridge(action: String, payload: Value) -> Result<Value, String> {
     tauri::async_runtime::spawn_blocking(move || run_python_bridge(&action, payload))
         .await
         .map_err(|err| format!("Core bridge task failed: {err}"))?
+}
+
+#[tauri::command]
+async fn mobile_pairing_host_candidates() -> Result<Vec<String>, String> {
+    tauri::async_runtime::spawn_blocking(detect_mobile_pairing_hosts)
+        .await
+        .map_err(|err| format!("Mobile pairing host detection failed: {err}"))
+}
+
+fn detect_mobile_pairing_hosts() -> Vec<String> {
+    let mut candidates = Vec::new();
+    collect_ipv4_candidates(&mut candidates, &command_output("ifconfig", &[]));
+    collect_ipv4_candidates(
+        &mut candidates,
+        &command_output("ip", &["-o", "-4", "addr", "show", "scope", "global"]),
+    );
+    collect_ipv4_candidates(&mut candidates, &command_output("ipconfig", &[]));
+    candidates.sort_by_key(|host| host_candidate_rank(host));
+    candidates.dedup();
+    candidates
+}
+
+fn command_output(command: &str, args: &[&str]) -> String {
+    Command::new(command)
+        .args(args)
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .map(|output| String::from_utf8_lossy(&output.stdout).to_string())
+        .unwrap_or_default()
+}
+
+fn collect_ipv4_candidates(candidates: &mut Vec<String>, output: &str) {
+    for token in output.split(|char: char| char.is_whitespace() || char == ':' || char == '/') {
+        let host = token.trim_matches(|char: char| !char.is_ascii_digit() && char != '.');
+        if !host.contains('.') || candidates.iter().any(|candidate| candidate == host) {
+            continue;
+        }
+        if let Ok(address) = host.parse::<Ipv4Addr>() {
+            if is_mobile_pairing_host_candidate(address) {
+                candidates.push(host.to_string());
+            }
+        }
+    }
+}
+
+fn is_mobile_pairing_host_candidate(address: Ipv4Addr) -> bool {
+    !address.is_loopback()
+        && !address.is_unspecified()
+        && !address.is_link_local()
+        && !address.is_broadcast()
+        && !address.is_multicast()
+        && address.octets()[0] != 255
+}
+
+fn host_candidate_rank(host: &str) -> (u8, String) {
+    let address = host.parse::<Ipv4Addr>().ok();
+    let rank = address
+        .map(|address| {
+            if is_tailscale_address(address) {
+                0
+            } else if address.is_private() {
+                1
+            } else {
+                2
+            }
+        })
+        .unwrap_or(3);
+    (rank, host.to_string())
+}
+
+fn is_tailscale_address(address: Ipv4Addr) -> bool {
+    let octets = address.octets();
+    octets[0] == 100 && (64..=127).contains(&octets[1])
 }
 
 fn run_python_bridge(action: &str, payload: Value) -> Result<Value, String> {
@@ -89,8 +164,8 @@ pub fn run() {
         .manage(ssh_state.clone());
     #[cfg(any(target_os = "macos", windows, target_os = "linux"))]
     let builder = builder.plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
-            show_main_window(app);
-        }));
+        show_main_window(app);
+    }));
     let app = builder
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_opener::init())
@@ -160,6 +235,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             core_bridge,
+            mobile_pairing_host_candidates,
             core_process::core_sidecar_status,
             core_process::core_sidecar_start,
             core_process::core_sidecar_stop,

@@ -42,6 +42,70 @@ export type IrisCoreModelSelection = {
   providerName?: string;
 };
 
+export type IrisCoreModelProvider = {
+  slug: string;
+  name: string;
+  isCurrent: boolean;
+  isUserDefined: boolean;
+  models: string[];
+  totalModels: number;
+  source: string;
+};
+
+export type IrisCoreModelCatalog = {
+  profile: string;
+  current: IrisCoreModelSelection | null;
+  providers: IrisCoreModelProvider[];
+  generatedAt: number;
+  url?: string;
+  status?: number;
+  error?: string;
+};
+
+export type IrisCoreSlashCommandSource =
+  | "hermes"
+  | "skill"
+  | "quick-command"
+  | "plugin";
+
+export type IrisCoreSlashCommand = {
+  id: string;
+  name: string;
+  text: string;
+  label: string;
+  description: string;
+  category: string;
+  source: IrisCoreSlashCommandSource;
+  aliases: string[];
+  argsHint: string;
+  subcommands: string[];
+  requiresArgument: boolean;
+};
+
+export type IrisCoreSlashCommandsResult = {
+  profile: string;
+  commands: IrisCoreSlashCommand[];
+  generatedAt: number;
+  url?: string;
+  status?: number;
+  warning?: string;
+  error?: string;
+};
+
+export type IrisCoreSlashCompletionItem = {
+  text: string;
+  display: string;
+  meta?: string;
+};
+
+export type IrisCoreSlashCompletionResult = {
+  items: IrisCoreSlashCompletionItem[];
+  replaceFrom: number;
+  url?: string;
+  status?: number;
+  error?: string;
+};
+
 export type IrisCoreHealthResponse = {
   ok: boolean;
   status?: string;
@@ -151,6 +215,42 @@ export type CoreMessageAttachmentRef = {
   id: string;
 };
 
+export type IrisCoreAttachmentKind = "image" | "document" | "audio" | "video" | "archive" | "code" | "file";
+
+export type IrisCoreAttachment = {
+  id: string;
+  name: string;
+  kind: IrisCoreAttachmentKind;
+  mimeType: string;
+  size: number;
+  lastModified?: number;
+  previewUrl?: string;
+  downloadUrl?: string;
+  localPath?: string;
+};
+
+export type IrisCoreAttachmentFile = Blob | {
+  uri: string;
+  name?: string;
+  type?: string;
+};
+
+export type UploadAttachmentPayload = {
+  file: IrisCoreAttachmentFile;
+  name: string;
+  mimeType?: string;
+  kind?: IrisCoreAttachmentKind;
+  profile: string;
+  sessionId?: string;
+  messageId?: string;
+  runtimeId?: string;
+  metadata?: CoreMetadata;
+};
+
+export type UploadAttachmentResponse = {
+  attachment: IrisCoreAttachment;
+};
+
 export type CoreRuntimeResult = {
   ok?: boolean;
   accepted?: boolean;
@@ -169,6 +269,11 @@ export type IrisCoreSendMessageResult = {
   eventCursor: number;
   duplicate?: boolean;
   session?: IrisCoreSession;
+  runtime?: CoreRuntimeResult;
+};
+
+export type IrisCoreCancelMessageResult = {
+  sessionId: string;
   runtime?: CoreRuntimeResult;
 };
 

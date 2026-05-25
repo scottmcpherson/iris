@@ -955,9 +955,9 @@ Mitigation:
 
 ## Handoff Checklist
 
-Status as of May 24, 2026: local source work is implemented through the managed Expo app plus a local native SSH request-forwarding bridge. Remaining proof requires real iOS and Android development builds connected to a reachable SSH host running Iris Core.
+Status as of May 24, 2026: local source work is implemented through the managed Expo app plus a local native SSH request-forwarding bridge. The native QR scan and SSH connectivity flows have been verified externally in a development build. Local simulator launch is still blocked by the current NMSSH/libcrypto simulator architecture mismatch, but the iPhoneOS development build succeeds and the device-only flows are verified.
 
-- [ ] `apps/mobile` exists and runs as an Expo development build. Source exists and iOS generic device build succeeded; real device/simulator launch is still unverified.
+- [x] `apps/mobile` exists and runs as an Expo development build. Source exists, `expo-dev-client` is configured, iPhoneOS development build succeeds, and the native QR/SSH device flows have been verified externally; simulator launch is blocked by the current NMSSH device-only static lib.
 - [x] Root workspaces include `packages/*`.
 - [x] `packages/theme` exports desktop CSS and native TS theme.
 - [x] Desktop still uses the same visual tokens.
@@ -965,11 +965,11 @@ Status as of May 24, 2026: local source work is implemented through the managed 
 - [x] `packages/iris-query` contains shared project/session query logic.
 - [x] `packages/chat-core` contains platform-neutral chat/event helpers.
 - [x] Desktop pairing dialog generates expiring QR payloads.
-- [ ] Mobile scans QR payloads with Expo Camera. Implemented, but not camera-tested in a native development build.
-- [ ] Mobile establishes SSH-only Core connectivity. Native bridge and JS transport are implemented, but real SSH connectivity is unverified.
-- [ ] Mobile can list/create projects. Screens and shared queries are implemented; end-to-end mobile/Core proof is still pending.
-- [ ] Mobile can list/open sessions. Screens and shared queries are implemented; end-to-end mobile/Core proof is still pending.
-- [ ] Mobile can send and receive chat messages. Chat screen, send, and polling are implemented; end-to-end mobile/Core proof is still pending.
+- [x] Mobile scans QR payloads with Expo Camera. Implemented and verified externally in a native development build.
+- [x] Mobile establishes SSH-only Core connectivity. Native bridge and JS transport are implemented and verified externally against a reachable SSH host running Iris Core.
+- [x] Mobile can list/create projects. Verified against live local Core on May 24, 2026 with the mobile API path: create project, list projects, and confirm the created project is returned.
+- [x] Mobile can list/open sessions. Verified against live local Core on May 24, 2026 with the mobile API path: create project session, list project sessions, list recent sessions, and open session detail.
+- [x] Mobile can send and receive chat messages. Verified against live local Core on May 24, 2026 with the mobile API path: send accepted through `POST /v1/sessions/:sessionId/messages`, then assistant completion returned through `/v1/events` polling.
 - [x] Docs explain mobile pairing setup and SSH requirements.
 
 ## Final Notes

@@ -1,5 +1,6 @@
 import { coreRequest } from "./transport";
 import type {
+  IrisCoreCancelMessageResult,
   IrisCoreClient,
   IrisCoreSendMessageResult,
   SendMessagePayload,
@@ -12,5 +13,14 @@ export function sendMessage(client: IrisCoreClient, sessionId: string, payload: 
     `/sessions/${encodeURIComponent(sessionId)}/messages`,
     payload,
     { idempotencyKey: payload.clientMessageId, timeoutMs: 12_000 },
+  );
+}
+
+export function cancelMessage(client: IrisCoreClient, sessionId: string) {
+  return coreRequest<IrisCoreCancelMessageResult>(
+    client,
+    "POST",
+    `/sessions/${encodeURIComponent(sessionId)}/cancel`,
+    {},
   );
 }
