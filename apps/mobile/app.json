@@ -14,8 +14,13 @@
       "infoPlist": {
         "NSLocalNetworkUsageDescription": "Iris Mobile connects to Iris Core on your desktop during device pairing and local development.",
         "NSAppTransportSecurity": {
-          "NSAllowsArbitraryLoads": true,
-          "NSAllowsLocalNetworking": true
+          "NSAllowsLocalNetworking": true,
+          "NSExceptionDomains": {
+            "ts.net": {
+              "NSExceptionAllowsInsecureHTTPLoads": true,
+              "NSIncludesSubdomains": true
+            }
+          }
         }
       }
     },

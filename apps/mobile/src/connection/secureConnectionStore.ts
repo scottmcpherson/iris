@@ -1,9 +1,8 @@
 import * as SecureStore from "expo-secure-store";
 import type { SavedConnectionProfile } from "./pairingPayload";
-import type { SshAuthMethod } from "./sshTunnel";
 
 export type CoreTokenAuth = { kind: "core-token"; token: string };
-export type ConnectionAuth = SshAuthMethod | CoreTokenAuth;
+export type ConnectionAuth = CoreTokenAuth;
 
 const connectionProfileKey = "iris.mobile.connectionProfile.v1";
 const connectionAuthKey = "iris.mobile.connectionAuth.v1";

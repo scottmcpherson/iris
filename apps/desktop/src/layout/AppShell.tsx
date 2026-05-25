@@ -86,7 +86,7 @@ export function sidebarConnectionStatusLabel(
 function sidebarConnectionName(status: HermesStatus | null) {
   const connectionName = status?.activeConnectionName?.trim();
   if (connectionName) return connectionName;
-  if (status?.connectionMode === "ssh") return "SSH";
+  if (status?.connectionMode === "tailscale") return "Tailscale";
   return "Local";
 }
 

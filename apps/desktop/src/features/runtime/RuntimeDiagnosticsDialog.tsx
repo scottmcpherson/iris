@@ -6,7 +6,6 @@ import {
   Copy,
   Plug,
   RefreshCw,
-  Terminal,
   Wrench,
 } from "lucide-react";
 import { DiagnosticRow, type DiagnosticRowAction } from "../../shared/ui/diagnostic-row";
@@ -36,8 +35,6 @@ import type {
   IrisCoreConnectionProfile,
 } from "../../types/hermes";
 import type { IrisCoreGatewayAction } from "../../lib/irisCore";
-import { sshTargetLabel } from "../iris/sshConnectionDraft";
-import { useSshConnectionManager } from "../iris/useSshConnectionManager";
 
 type RuntimeDiagnosticsDialogProps = {
   open: boolean;
@@ -46,7 +43,6 @@ type RuntimeDiagnosticsDialogProps = {
   runtimeConfig: HermesRuntimeConfig;
   gatewayActionBusy: boolean;
   onOpenChange: (open: boolean) => void;
-  onRuntimeChange: (config: HermesRuntimeConfig) => void;
   onGatewayAction: (action: IrisCoreGatewayAction) => Promise<void> | void;
   onRefresh: () => void;
   onOpenSettings: () => void;
@@ -67,7 +63,6 @@ export function RuntimeDiagnosticsDialog({
   runtimeConfig,
   gatewayActionBusy,
   onOpenChange,
-  onRuntimeChange,
   onGatewayAction,
   onRefresh,
   onOpenSettings,
@@ -84,7 +79,6 @@ export function RuntimeDiagnosticsDialog({
   const coreOk = Boolean(status?.connected && status?.managementStatus?.ok);
   const adapterOk = Boolean(status?.activeApiStatus?.ok);
   const gatewayOk = runtimeGatewayIsReachable(status, profile);
-  const sshManager = useSshConnectionManager({ runtimeConfig, onRuntimeChange, onRefresh });
   const [busyAction, setBusyAction] = useState("");
 
   async function withBusy<T>(action: string, run: () => Promise<T>) {
@@ -113,16 +107,6 @@ export function RuntimeDiagnosticsDialog({
         toast.error(error instanceof Error ? error.message : "Could not start Iris Core.");
       }
       onRefresh();
-    });
-  }
-
-  async function reconnectSsh() {
-    if (connection.mode !== "ssh") return;
-    await withBusy("ssh-reconnect", async () => {
-      const result = await sshManager.connectSsh(connection);
-      if (!result.ok) {
-        toast.error(("error" in result && result.error) || "Iris could not reconnect to the remote host.");
-      }
     });
   }
 
@@ -162,18 +146,17 @@ export function RuntimeDiagnosticsDialog({
     onRefresh();
   }
 
-  const sshTarget = connection.mode === "ssh" ? sshTargetLabel(connection.ssh?.user || "", connection.ssh?.host || "") : "";
   const installCommandHint = remoteInstallCommandHint(connection);
   const restartGatewayBusy = busyAction === "gateway-restart" || gatewayActionBusy;
   const startGatewayBusy = busyAction === "gateway-start" || gatewayActionBusy;
 
   const coreAction: DiagnosticRowAction | null = !coreOk
-    ? connection.mode === "ssh"
+    ? connection.mode === "tailscale"
       ? {
-          label: busyAction === "ssh-reconnect" ? "Reconnecting…" : sshTarget ? `Reconnect to ${sshTarget}` : "Reconnect SSH",
-          icon: Terminal,
-          disabled: busyAction === "ssh-reconnect",
-          onClick: () => void reconnectSsh(),
+          label: "Recheck connection",
+          icon: RefreshCw,
+          disabled: false,
+          onClick: () => onRefresh(),
         }
       : {
           label: busyAction === "core-start" ? "Starting Core…" : "Start Iris Core",
@@ -241,9 +224,9 @@ export function RuntimeDiagnosticsDialog({
             command={installCommandHint}
           />
         ) : null}
-        {!coreOk && connection.mode === "ssh" ? (
+        {!coreOk && connection.mode === "tailscale" ? (
           <RemoteCommandHint
-            label="If reconnect fails, ensure Iris Core is running on the remote host:"
+            label="Make sure Tailscale is connected and Iris Core is running on the host:"
             command={remoteCoreStartHint(connection)}
           />
         ) : null}
@@ -327,20 +310,16 @@ function pluginInstallSummary(result: IrisCoreInstallPluginResult) {
 
 function connectionSummary(connection: IrisCoreConnectionProfile, status: HermesStatus | null) {
   const url = status?.coreApiUrl || connection.effectiveCoreApiUrl;
-  const transport = connection.mode === "ssh" ? "SSH" : "Local";
+  const transport = connection.mode === "tailscale" ? "Tailscale" : "Local";
   return url ? `${transport} · ${url}` : transport;
 }
 
 function remoteInstallCommandHint(connection: IrisCoreConnectionProfile) {
-  if (connection.mode !== "ssh" || !connection.ssh) return "";
-  const target = sshTargetLabel(connection.ssh.user, connection.ssh.host);
-  return target
-    ? `ssh ${target} -- iris-core install-hermes-plugin`
-    : "iris-core install-hermes-plugin";
+  if (connection.mode !== "tailscale") return "";
+  return "iris-core install-hermes-plugin";
 }
 
 function remoteCoreStartHint(connection: IrisCoreConnectionProfile) {
-  if (connection.mode !== "ssh" || !connection.ssh) return "";
-  const target = sshTargetLabel(connection.ssh.user, connection.ssh.host);
-  return target ? `ssh ${target} -- iris-core` : "iris-core";
+  if (connection.mode !== "tailscale") return "";
+  return "iris-core";
 }

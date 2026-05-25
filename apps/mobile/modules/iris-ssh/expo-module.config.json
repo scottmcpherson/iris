@@ -1,9 +1,0 @@
-{
-  "platforms": ["android", "apple"],
-  "apple": {
-    "modules": ["IrisSshModule"]
-  },
-  "android": {
-    "modules": ["com.nousresearch.iris.ssh.IrisSshModule"]
-  }
-}

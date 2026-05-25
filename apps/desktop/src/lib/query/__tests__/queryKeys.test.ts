@@ -24,32 +24,29 @@ describe("query helpers", () => {
       activeConnectionId: "core_local",
       coreConnections: [defaultManagedLocalProfile],
     });
-    const ssh = runtimeConfig({
-      connectionMode: "ssh",
-      activeConnectionId: "core_ssh_prod",
+    const tailscale = runtimeConfig({
+      connectionMode: "tailscale",
+      activeConnectionId: "core_ts_prod",
       coreConnections: [
         {
-          id: "core_ssh_prod",
+          id: "core_ts_prod",
           name: "prod",
-          mode: "ssh",
-          effectiveCoreApiUrl: "http://127.0.0.1:9876",
-          ssh: {
-            host: "prod.example.test",
-            user: "iris",
-            port: 2222,
-            remoteCoreHost: "127.0.0.1",
-            remoteCorePort: 8765,
-            localForwardPort: "auto",
-            autoStartRemoteCore: false,
+          mode: "tailscale",
+          effectiveCoreApiUrl: "http://prod.tailnet.ts.net:8765",
+          tailscale: {
+            hostId: "core_ts_prod",
+            hostLabel: "prod",
+            magicDnsName: "prod.tailnet.ts.net",
+            corePort: 8765,
           },
         },
         defaultManagedLocalProfile,
       ],
     });
 
-    expect(runtimeRouteQueryKey(local)).not.toBe(runtimeRouteQueryKey(ssh));
+    expect(runtimeRouteQueryKey(local)).not.toBe(runtimeRouteQueryKey(tailscale));
     expect(statusKeys.detail(runtimeRouteQueryKey(local), "default")).not.toEqual(
-      statusKeys.detail(runtimeRouteQueryKey(ssh), "default"),
+      statusKeys.detail(runtimeRouteQueryKey(tailscale), "default"),
     );
   });
 

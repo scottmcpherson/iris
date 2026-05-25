@@ -1,6 +1,6 @@
 mod connection_profiles;
 mod core_process;
-mod ssh_tunnel;
+mod tailscale;
 
 use serde_json::Value;
 use std::fs::{create_dir_all, OpenOptions};
@@ -158,10 +158,7 @@ fn python_candidates() -> Vec<String> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let core_state = core_process::CoreProcessState::default();
-    let ssh_state = ssh_tunnel::SshTunnelState::default();
-    let builder = tauri::Builder::default()
-        .manage(core_state.clone())
-        .manage(ssh_state.clone());
+    let builder = tauri::Builder::default().manage(core_state.clone());
     #[cfg(any(target_os = "macos", windows, target_os = "linux"))]
     let builder = builder.plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
         show_main_window(app);
@@ -209,9 +206,7 @@ pub fn run() {
                         .state::<core_process::CoreProcessState>()
                         .inner()
                         .clone();
-                    let ssh = app.state::<ssh_tunnel::SshTunnelState>().inner().clone();
                     core_process::stop_core_now(&core);
-                    ssh_tunnel::stop_all_tunnels(&ssh);
                     app.exit(0);
                 }
                 _ => {}
@@ -245,10 +240,9 @@ pub fn run() {
             connection_profiles::core_service_uninstall,
             connection_profiles::core_service_status,
             connection_profiles::open_core_logs,
-            ssh_tunnel::ssh_connection_probe,
-            ssh_tunnel::ssh_tunnel_start,
-            ssh_tunnel::ssh_tunnel_stop,
-            ssh_tunnel::ssh_tunnel_status
+            tailscale::tailscale_status,
+            tailscale::tailscale_probe_iris,
+            tailscale::tailscale_open_app
         ])
         .build(tauri::generate_context!())
         .unwrap_or_else(|err| {
@@ -269,9 +263,7 @@ fn cleanup_managed_processes(app: &tauri::AppHandle) {
         .state::<core_process::CoreProcessState>()
         .inner()
         .clone();
-    let ssh = app.state::<ssh_tunnel::SshTunnelState>().inner().clone();
     core_process::stop_core_now(&core);
-    ssh_tunnel::stop_all_tunnels(&ssh);
 }
 
 fn install_app_menu(app: &mut tauri::App) -> tauri::Result<()> {

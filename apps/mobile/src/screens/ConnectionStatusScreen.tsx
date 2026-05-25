@@ -1,7 +1,7 @@
 import { StyleSheet, Text, View } from "react-native";
 import { AppScreen } from "../components/AppScreen";
 import { Button } from "../components/Button";
-import { isDirectCoreConnectionProfile, type SavedConnectionProfile } from "../connection/pairingPayload";
+import type { SavedConnectionProfile } from "../connection/pairingPayload";
 import { useIrisConnection } from "../connection/useIrisConnection";
 import { useTheme } from "../theme/useTheme";
 
@@ -31,24 +31,15 @@ export function ConnectionStatusScreen() {
   );
 }
 
-function blockedText(reason: "host-key-changed" | "host-key-unverified" | "auth-required" | "ssh-unavailable") {
-  if (reason === "ssh-unavailable") {
-    return "The native SSH bridge is not available in this build. Rebuild the Expo development app.";
-  }
-  if (reason === "host-key-changed") {
-    return "The SSH host key changed. Verify the desktop host before reconnecting.";
-  }
-  if (reason === "host-key-unverified") {
-    return "The SSH host key must be verified before connecting.";
+function blockedText(reason: "auth-required" | "core-unreachable") {
+  if (reason === "core-unreachable") {
+    return "Couldn't reach the host. Make sure Tailscale is connected on this phone and the host is online.";
   }
   return "Connection credentials are required before reconnecting.";
 }
 
 function profileSummary(profile: SavedConnectionProfile) {
-  if (isDirectCoreConnectionProfile(profile)) {
-    return profile.coreUrl;
-  }
-  return `${profile.username || "User"}@${profile.sshHost}:${profile.sshPort} -> ${profile.remoteCoreHost}:${profile.remoteCorePort}`;
+  return profile.coreUrl;
 }
 
 function createStyles(theme: ReturnType<typeof useTheme>) {

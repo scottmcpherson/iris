@@ -45,7 +45,6 @@ import type {
   HermesSkill,
   HermesStatus,
 } from "../../types/hermes";
-import { ensureActiveSshTunnel } from "./sshRuntime";
 
 type RefreshOptions = {
   loadProfileData?: boolean;
@@ -118,12 +117,8 @@ export function useIrisRuntime() {
   }
 
   async function prepareRuntimeConfig(config: HermesRuntimeConfig) {
-    const activeConfig = await ensureActiveSshTunnel(config);
-    if (activeConfig !== config) {
-      setCurrentRuntimeConfig(activeConfig);
-      saveRuntimeConfig(activeConfig);
-    }
-    return activeConfig;
+    // Tailscale connections are direct HTTP to the host's Core; there is no tunnel to establish.
+    return config;
   }
 
   async function loadStatusWithPreparedRuntime(
@@ -270,11 +265,6 @@ export function useIrisRuntime() {
     let activeConfig = runtimeConfigRef.current;
     const preserveSelectedProfile = profile !== selectedProfileRef.current;
     try {
-      activeConfig = await ensureActiveSshTunnel(activeConfig);
-      if (activeConfig !== runtimeConfigRef.current) {
-        setCurrentRuntimeConfig(activeConfig);
-        saveRuntimeConfig(activeConfig);
-      }
       const agentResult = await getIrisCoreAgentForProfile(profile, activeConfig);
       if (!agentResult.ok || !agentResult.agent) {
         return {

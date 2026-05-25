@@ -417,7 +417,7 @@ fn status_from_health(health: CoreHealth, started_by_app: bool, error: &str) -> 
     }
 }
 
-pub fn probe_core_health(host: &str, port: u16, timeout: Duration) -> Result<CoreHealth, String> {
+fn http_get_json(host: &str, port: u16, path: &str, timeout: Duration) -> Result<Value, String> {
     let address = (host, port)
         .to_socket_addrs()
         .map_err(|err| format!("Could not resolve {host}:{port}: {err}"))?
@@ -427,29 +427,47 @@ pub fn probe_core_health(host: &str, port: u16, timeout: Duration) -> Result<Cor
         .map_err(|err| format!("Could not connect to {host}:{port}: {err}"))?;
     stream
         .set_read_timeout(Some(timeout))
-        .map_err(|err| format!("Could not set Core probe read timeout: {err}"))?;
+        .map_err(|err| format!("Could not set probe read timeout: {err}"))?;
     stream
         .set_write_timeout(Some(timeout))
-        .map_err(|err| format!("Could not set Core probe write timeout: {err}"))?;
+        .map_err(|err| format!("Could not set probe write timeout: {err}"))?;
     let request = format!(
-        "GET /v1/health HTTP/1.1\r\nHost: {host}:{port}\r\nAccept: application/json\r\nConnection: close\r\n\r\n"
+        "GET {path} HTTP/1.1\r\nHost: {host}:{port}\r\nAccept: application/json\r\nConnection: close\r\n\r\n"
     );
     stream
         .write_all(request.as_bytes())
-        .map_err(|err| format!("Could not write Core health probe: {err}"))?;
+        .map_err(|err| format!("Could not write probe request: {err}"))?;
     let mut response = String::new();
     stream
         .read_to_string(&mut response)
-        .map_err(|err| format!("Could not read Core health probe: {err}"))?;
+        .map_err(|err| format!("Could not read probe response: {err}"))?;
     let (headers, body) = response
         .split_once("\r\n\r\n")
-        .ok_or_else(|| "Core health probe returned an invalid HTTP response.".to_string())?;
+        .ok_or_else(|| "Probe returned an invalid HTTP response.".to_string())?;
     let status_line = headers.lines().next().unwrap_or_default();
     if !status_line.contains(" 200 ") {
-        return Err(format!("Core health probe returned {status_line}."));
+        return Err(format!("Probe returned {status_line}."));
     }
-    let parsed: Value = serde_json::from_str(body.trim())
-        .map_err(|err| format!("Core health probe returned invalid JSON: {err}"))?;
+    serde_json::from_str(body.trim()).map_err(|err| format!("Probe returned invalid JSON: {err}"))
+}
+
+/// Auth-exempt liveness probe used for Tailscale device discovery. Hits `/v1/ping`,
+/// which never requires a bearer token, so it works against a remote Core that is
+/// bound to a Tailscale interface and otherwise demands authentication.
+pub fn probe_iris_ping(host: &str, port: u16, timeout: Duration) -> Result<String, String> {
+    let parsed = http_get_json(host, port, "/v1/ping", timeout)?;
+    if parsed.get("service").and_then(Value::as_str) != Some("iris-core") {
+        return Err("The service on this port is not Iris Core.".to_string());
+    }
+    Ok(parsed
+        .get("version")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string())
+}
+
+pub fn probe_core_health(host: &str, port: u16, timeout: Duration) -> Result<CoreHealth, String> {
+    let parsed = http_get_json(host, port, "/v1/health", timeout)?;
     if parsed.get("service").and_then(Value::as_str) != Some("iris-core") {
         return Err("The service on this port is not Iris Core.".to_string());
     }

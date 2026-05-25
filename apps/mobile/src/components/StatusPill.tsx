@@ -25,7 +25,7 @@ function statusLabel(state: MobileConnectionState) {
     case "connected":
       return `Connected to ${state.profile.hostLabel}`;
     case "blocked":
-      return state.reason === "ssh-unavailable" ? "Native SSH unavailable" : "Connection blocked";
+      return state.reason === "core-unreachable" ? "Host unreachable" : "Connection blocked";
     case "disconnected":
       return state.error || `Disconnected from ${state.profile.hostLabel}`;
   }

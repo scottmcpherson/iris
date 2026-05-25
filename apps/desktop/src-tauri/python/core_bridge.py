@@ -189,6 +189,9 @@ def core_raw_request(
     timeout: int,
 ) -> dict[str, Any]:
     request_headers = dict(headers)
+    token = active_device_token(payload)
+    if token and "Authorization" not in request_headers:
+        request_headers["Authorization"] = f"Bearer {token}"
     idempotency_key = str(payload.get("idempotencyKey") or "").strip()
     if idempotency_key:
         request_headers["Idempotency-Key"] = idempotency_key
@@ -214,6 +217,9 @@ def core_raw_request(
 
 def core_bytes_request(url: str, payload: dict[str, Any], *, timeout: int) -> dict[str, Any]:
     request_headers = {"Accept": "*/*"}
+    token = active_device_token(payload)
+    if token:
+        request_headers["Authorization"] = f"Bearer {token}"
     request = urllib.request.Request(url, headers=request_headers, method="GET")
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
@@ -348,6 +354,22 @@ def multipart_body(
     return b"".join(chunks), f"multipart/form-data; boundary={boundary}"
 
 
+def active_connection(runtime: dict[str, Any]) -> dict[str, Any]:
+    active_id = str(runtime.get("activeConnectionId") or "").strip()
+    connections = runtime.get("coreConnections")
+    if isinstance(connections, list):
+        fallback: dict[str, Any] = {}
+        for connection in connections:
+            if not isinstance(connection, dict):
+                continue
+            if not fallback:
+                fallback = connection
+            if str(connection.get("id") or "") == active_id:
+                return connection
+        return fallback
+    return {}
+
+
 def active_runtime_url(runtime: dict[str, Any]) -> str:
     active_id = str(runtime.get("activeConnectionId") or "").strip()
     connections = runtime.get("coreConnections")
@@ -364,6 +386,15 @@ def active_runtime_url(runtime: dict[str, Any]) -> str:
         if first_url:
             return first_url
     return str(runtime.get("coreApiUrl") or "").strip()
+
+
+def active_device_token(payload: dict[str, Any]) -> str:
+    # Tailscale connections authenticate to a remote Core with a per-device bearer token.
+    # Managed-local connections have none and rely on loopback exemption.
+    runtime = payload.get("runtime") if isinstance(payload.get("runtime"), dict) else {}
+    connection = active_connection(runtime)
+    tailscale = connection.get("tailscale") if isinstance(connection.get("tailscale"), dict) else {}
+    return str((tailscale or {}).get("deviceToken") or "").strip()
 
 
 def connection_id_from_payload(payload: dict[str, Any]) -> str:

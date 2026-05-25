@@ -28,18 +28,7 @@ export type DirectCoreConnectionProfile = SavedConnectionProfileBase & {
   deviceId?: string;
 };
 
-export type SshConnectionProfile = SavedConnectionProfileBase & {
-  transport: "ssh";
-  sshHost: string;
-  sshPort: number;
-  username: string;
-  remoteCoreHost: "127.0.0.1";
-  remoteCorePort: number;
-  apiBasePath: "/v1";
-  hostKeyFingerprint?: string;
-};
-
-export type SavedConnectionProfile = DirectCoreConnectionProfile | SshConnectionProfile;
+export type SavedConnectionProfile = DirectCoreConnectionProfile;
 
 export type PairingParseResult =
   | { ok: true; payload: IrisMobilePairingPayloadV1 }
@@ -100,10 +89,6 @@ export function profileFromPairingPayload(
 
 export function isDirectCoreConnectionProfile(profile: SavedConnectionProfile): profile is DirectCoreConnectionProfile {
   return profile.transport === "direct-core";
-}
-
-export function isSshConnectionProfile(profile: SavedConnectionProfile): profile is SshConnectionProfile {
-  return profile.transport === "ssh";
 }
 
 function normalizeCoreUrl(value: string) {

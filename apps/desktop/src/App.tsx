@@ -570,7 +570,6 @@ function App() {
         runtimeConfig={iris.runtimeConfig}
         gatewayActionBusy={gatewayActionBusy}
         onOpenChange={setDiagnosticsOpen}
-        onRuntimeChange={iris.updateRuntimeConfig}
         onGatewayAction={async (action) => {
           await runGatewayAction(action, iris.selectedProfile);
         }}

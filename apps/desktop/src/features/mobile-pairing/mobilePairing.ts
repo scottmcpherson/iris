@@ -30,13 +30,13 @@ export type MobilePairingCode = {
 
 export function defaultMobilePairingDraft(runtimeConfig: HermesRuntimeConfig): MobilePairingDraft {
   const activeConnection = activeCoreConnection(runtimeConfig);
-  const ssh = activeConnection.mode === "ssh" ? activeConnection.ssh : null;
+  const tailscale = activeConnection.mode === "tailscale" ? activeConnection.tailscale : null;
   const coreUrl = resolveCoreApiUrl(runtimeConfig);
-  const remoteCorePort = ssh?.remoteCorePort || portFromUrl(coreUrl) || defaultCorePort;
+  const remoteCorePort = tailscale?.corePort || portFromUrl(coreUrl) || defaultCorePort;
   return {
     hostId: sanitizeHostId(activeConnection.id || "iris-desktop"),
     hostLabel: activeConnection.name || "Iris Desktop",
-    coreHost: ssh?.host || nonLoopbackHostFromUrl(coreUrl),
+    coreHost: tailscale?.magicDnsName || tailscale?.tailscaleIp || nonLoopbackHostFromUrl(coreUrl),
     corePort: String(remoteCorePort),
   };
 }

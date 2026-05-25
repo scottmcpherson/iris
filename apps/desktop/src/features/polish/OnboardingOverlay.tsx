@@ -1,7 +1,7 @@
 import "./polish.css";
 import { invoke } from "@tauri-apps/api/core";
 import { useEffect, useMemo, useState } from "react";
-import { ChevronLeft, Plug, RefreshCw, Server, Terminal, Wrench, X } from "lucide-react";
+import { ChevronLeft, Network, Plug, RefreshCw, Server, Wrench, X } from "lucide-react";
 import {
   activeCoreConnection,
   defaultCorePort,
@@ -21,8 +21,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "../../shared/ui/dialog";
-import { SshConnectionDialog } from "../iris/SshConnectionDialog";
-import { useSshConnectionManager } from "../iris/useSshConnectionManager";
+import { TailscaleConnectDialog } from "../iris/TailscaleConnectDialog";
 
 type OnboardingOverlayProps = {
   connected: boolean;
@@ -54,7 +53,7 @@ type LocalDraft = {
   autoStart: boolean;
 };
 
-type SetupPath = "choose" | "local" | "ssh";
+type SetupPath = "choose" | "local" | "tailscale";
 
 type StepStatus = "done" | "pending" | "action";
 
@@ -74,19 +73,13 @@ export function OnboardingOverlay({
   onRuntimeChange,
 }: OnboardingOverlayProps) {
   const [path, setPath] = useState<SetupPath>("choose");
-  const [sshDialogOpen, setSshDialogOpen] = useState(false);
+  const [tailscaleDialogOpen, setTailscaleDialogOpen] = useState(false);
   const [localBusy, setLocalBusy] = useState("");
   const [localMessage, setLocalMessage] = useState("");
   const [localDraft, setLocalDraft] = useState(() => localDraftFromConfig(runtimeConfig));
-  const sshManager = useSshConnectionManager({
-    runtimeConfig,
-    onRuntimeChange,
-    onRefresh,
-    toastResults: false,
-  });
   const activeConnection = activeCoreConnection(runtimeConfig);
   const localRows = useMemo(() => localStatusRows(status, connected), [status, connected]);
-  const sshRows = useMemo(() => sshStatusRows(status, activeConnection), [status, activeConnection]);
+  const tailscaleRows = useMemo(() => tailscaleStatusRows(status, activeConnection), [status, activeConnection]);
 
   useEffect(() => {
     setLocalDraft(localDraftFromConfig(runtimeConfig));
@@ -103,7 +96,6 @@ export function OnboardingOverlay({
         hermesHome: localDraft.hermesHome.trim() || undefined,
         autoStart: localDraft.autoStart,
         installLaunchAgent: false,
-        allowSshTunnel: true,
       },
     };
     onRuntimeChange(upsertCoreConnection(runtimeConfig, profile, { activate: true }));
@@ -143,9 +135,8 @@ export function OnboardingOverlay({
     }
   }
 
-  const sshError = sshManager.lastResult?.ok === false ? sshManager.lastResult.error : "";
   const isChoose = path === "choose";
-  const rows = path === "ssh" ? sshRows : localRows;
+  const rows = path === "tailscale" ? tailscaleRows : localRows;
   const readyCount = rows.filter((row) => row.status === "done").length;
 
   return (
@@ -179,7 +170,7 @@ export function OnboardingOverlay({
               Back
             </button>
             <div className="flex items-baseline justify-between gap-3 min-w-0">
-              <DialogTitle>{path === "local" ? "Local Hermes" : "Hermes via SSH"}</DialogTitle>
+              <DialogTitle>{path === "local" ? "Local Hermes" : "Hermes over Tailscale"}</DialogTitle>
               <span className="onboarding-progress">{readyCount} of {rows.length} ready</span>
             </div>
             <DialogDescription className="sr-only">
@@ -203,16 +194,16 @@ export function OnboardingOverlay({
                 </Button>
               </CardContent>
             </Card>
-            <Card className="onboarding-path-card" onClick={() => setPath("ssh")}>
+            <Card className="onboarding-path-card" onClick={() => setPath("tailscale")}>
               <CardHeader>
-                <Terminal />
-                <CardTitle>Hermes via SSH</CardTitle>
-                <CardDescription>Connect to a remote host that runs Iris Core and Hermes.</CardDescription>
+                <Network />
+                <CardTitle>Hermes over Tailscale</CardTitle>
+                <CardDescription>Connect to another machine on your tailnet that runs Iris Core and Hermes.</CardDescription>
               </CardHeader>
               <CardContent>
                 <Button size="appSmall">
-                  <Terminal data-icon="inline-start" />
-                  Set up SSH
+                  <Network data-icon="inline-start" />
+                  Set up Tailscale
                 </Button>
               </CardContent>
             </Card>
@@ -273,54 +264,38 @@ export function OnboardingOverlay({
           </div>
         ) : null}
 
-        {path === "ssh" ? (
+        {path === "tailscale" ? (
           <div className="grid gap-3.5 min-w-0">
             <ol className="setup-steps">
-              {sshRows.map((row, index) => (
+              {tailscaleRows.map((row, index) => (
                 <SetupStep key={row.label} index={index + 1} {...row} />
               ))}
             </ol>
-            {sshError ? (
-              <Alert className="onboarding-inline-alert">
-                <AlertDescription>{sshError}</AlertDescription>
-              </Alert>
-            ) : null}
             <p className="onboarding-remediation">
-              If Iris Core is offline, start it on the remote host, keep it bound to 127.0.0.1, then retry the tunnel.
+              The host must be on your tailnet with Iris Core running. Open “Let other devices connect” in Iris on
+              that machine to get its pairing code.
             </p>
             <div className="flex flex-wrap items-center justify-between gap-2.5">
               <button type="button" className="onboarding-footer-link" onClick={onOpenSettings}>
                 Open Settings
               </button>
               <div className="flex flex-wrap items-center justify-end gap-2 ml-auto">
-                <Button
-                  variant="appNeutral"
-                  size="appSmall"
-                  disabled={sshManager.busyAction === "ssh-connect" || activeConnection.mode !== "ssh"}
-                  onClick={() => {
-                    if (activeConnection.mode === "ssh") void sshManager.connectSsh(activeConnection);
-                  }}
-                >
+                <Button variant="appNeutral" size="appSmall" onClick={onRefresh}>
                   <RefreshCw data-icon="inline-start" />
-                  Retry tunnel
+                  Check again
                 </Button>
-                <Button size="appSmall" onClick={() => setSshDialogOpen(true)}>
-                  <Terminal data-icon="inline-start" />
-                  Add SSH connection
+                <Button size="appSmall" onClick={() => setTailscaleDialogOpen(true)}>
+                  <Network data-icon="inline-start" />
+                  Connect a host
                 </Button>
               </div>
             </div>
-            <SshConnectionDialog
-              open={sshDialogOpen}
-              draft={sshManager.draft}
-              busy={sshManager.busyAction === "ssh-connect"}
-              onOpenChange={setSshDialogOpen}
-              onDraftChange={sshManager.setDraft}
-              onSave={() => {
-                void sshManager.connectSsh().then((result) => {
-                  if (result.ok) setSshDialogOpen(false);
-                });
-              }}
+            <TailscaleConnectDialog
+              open={tailscaleDialogOpen}
+              runtimeConfig={runtimeConfig}
+              onOpenChange={setTailscaleDialogOpen}
+              onRuntimeChange={onRuntimeChange}
+              onRefresh={onRefresh}
             />
           </div>
         ) : null}
@@ -394,38 +369,38 @@ function localStatusRows(status: HermesStatus | null, connected: boolean): Setup
   ];
 }
 
-function sshStatusRows(status: HermesStatus | null, activeConnection: IrisCoreConnectionProfile): SetupRow[] {
-  const usingSsh = activeConnection.mode === "ssh";
-  const tunnelReady = usingSsh && Boolean(status?.connected);
-  const coreReady = usingSsh && Boolean(status?.managementStatus?.ok || status?.connected);
-  const versionReady = usingSsh && status?.coreVersionStatus?.ok !== false;
-  const gatewayReady = usingSsh && Boolean(status?.gatewayStatus?.ok || status?.activeProfile?.gatewayRunning);
-  const adapterReady = usingSsh && Boolean(status?.activeApiStatus?.ok);
+function tailscaleStatusRows(status: HermesStatus | null, activeConnection: IrisCoreConnectionProfile): SetupRow[] {
+  const usingTailscale = activeConnection.mode === "tailscale";
+  const linkReady = usingTailscale && Boolean(status?.connected);
+  const coreReady = usingTailscale && Boolean(status?.managementStatus?.ok || status?.connected);
+  const versionReady = usingTailscale && status?.coreVersionStatus?.ok !== false;
+  const gatewayReady = usingTailscale && Boolean(status?.gatewayStatus?.ok || status?.activeProfile?.gatewayRunning);
+  const adapterReady = usingTailscale && Boolean(status?.activeApiStatus?.ok);
   return [
     {
-      label: "SSH tunnel",
-      status: stepStatus(tunnelReady, true),
-      detail: usingSsh ? activeConnection.name : "Add an SSH connection.",
+      label: "Tailscale host",
+      status: stepStatus(linkReady, true),
+      detail: usingTailscale ? activeConnection.name : "Connect a host on your tailnet.",
     },
     {
       label: "Remote Core",
       status: stepStatus(coreReady, false),
-      detail: coreReady ? "Core is reachable through the tunnel." : "Start Iris Core on the remote host.",
+      detail: coreReady ? "Core is reachable over Tailscale." : "Start Iris Core on the host.",
     },
     {
       label: "Version match",
       status: stepStatus(versionReady, false),
-      detail: versionReady ? "Desktop and Core versions match." : status?.error || "Update Iris on the remote host.",
+      detail: versionReady ? "Desktop and Core versions match." : status?.error || "Update Iris on the host.",
     },
     {
       label: "Hermes gateway",
       status: stepStatus(gatewayReady, false),
-      detail: gatewayReady ? "Gateway responded." : "Restart Hermes gateway on the remote host.",
+      detail: gatewayReady ? "Gateway responded." : "Restart Hermes gateway on the host.",
     },
     {
       label: "Iris adapter",
       status: stepStatus(adapterReady, false),
-      detail: adapterReady ? "Adapter is reachable." : "Install the adapter from the remote Core setup.",
+      detail: adapterReady ? "Adapter is reachable." : "Install the adapter from the host Core setup.",
     },
   ];
 }

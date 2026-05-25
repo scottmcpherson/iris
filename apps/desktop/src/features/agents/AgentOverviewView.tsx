@@ -94,7 +94,7 @@ export function AgentOverviewView({
   const gatewayOk = runtimeGatewayIsReachable(status, profile);
   const adapterOk = Boolean(status?.activeApiStatus?.ok);
   const coreUrl = status?.coreApiUrl || resolveCoreApiUrl(runtimeConfig);
-  const coreTransportShort = activeConnection.mode === "ssh" ? "SSH" : "Local";
+  const coreTransportShort = activeConnection.mode === "tailscale" ? "Tailscale" : "Local";
   const coreSublabel = coreUrl ? `${coreTransportShort} · ${coreUrl}` : coreTransportShort;
   const gatewayActionBusyForStart = gatewayActionBusy && gatewayActionBusyAction === "start";
   const gatewayActionBusyForRestart = gatewayActionBusy && gatewayActionBusyAction === "restart";

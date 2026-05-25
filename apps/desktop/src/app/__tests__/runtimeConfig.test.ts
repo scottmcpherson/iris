@@ -2,7 +2,6 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   activateCoreConnection,
   defaultRuntimeConfig,
-  defaultSshPort,
   loadRuntimeConfig,
   managedLocalConnectionId,
   resolveCoreApiUrl,
@@ -55,7 +54,63 @@ describe("runtimeConfig", () => {
     expect(loadRuntimeConfig()).toEqual(defaultRuntimeConfig);
   });
 
-  it("defaults saved SSH profiles without a port to port 22", () => {
+  it("loads a saved Tailscale profile and computes its Core URL from MagicDNS + port", () => {
+    localStorage.setItem(
+      "iris.desktop.runtime.v2",
+      JSON.stringify({
+        connectionMode: "tailscale",
+        activeConnectionId: "tailscale_mac_mini",
+        coreConnections: [
+          {
+            id: "tailscale_mac_mini",
+            name: "Mac mini",
+            mode: "tailscale",
+            effectiveCoreApiUrl: "http://mac-mini.tailnet.ts.net:8765/v1",
+            tailscale: {
+              hostId: "tailscale_mac_mini",
+              hostLabel: "Mac mini",
+              magicDnsName: "mac-mini.tailnet.ts.net",
+              tailscaleIp: "100.64.0.7",
+              corePort: 8765,
+              deviceToken: "iris_mobile_abc",
+            },
+          },
+        ],
+      }),
+    );
+
+    const config = loadRuntimeConfig();
+    const ts = config.coreConnections.find((connection) => connection.id === "tailscale_mac_mini");
+
+    expect(config.connectionMode).toBe("tailscale");
+    expect(ts?.tailscale?.magicDnsName).toBe("mac-mini.tailnet.ts.net");
+    expect(ts?.tailscale?.deviceToken).toBe("iris_mobile_abc");
+    // The /v1 suffix is dropped and the URL is rebuilt from the host + Core port.
+    expect(resolveCoreApiUrl(config)).toBe("http://mac-mini.tailnet.ts.net:8765");
+  });
+
+  it("prefers the Tailscale IP when no MagicDNS name is present", () => {
+    const config = upsertCoreConnection(
+      defaultRuntimeConfig,
+      {
+        id: "tailscale_ip",
+        name: "IP host",
+        mode: "tailscale",
+        effectiveCoreApiUrl: "",
+        tailscale: {
+          hostId: "tailscale_ip",
+          hostLabel: "IP host",
+          tailscaleIp: "100.64.0.9",
+          corePort: 8765,
+        },
+      },
+      { activate: true },
+    );
+
+    expect(resolveCoreApiUrl(config)).toBe("http://100.64.0.9:8765");
+  });
+
+  it("drops legacy SSH profiles back to managed local", () => {
     localStorage.setItem(
       "iris.desktop.runtime.v2",
       JSON.stringify({
@@ -67,41 +122,13 @@ describe("runtimeConfig", () => {
             name: "Mac mini",
             mode: "ssh",
             effectiveCoreApiUrl: "http://127.0.0.1:52942",
-            ssh: {
-              user: "agent",
-              host: "agents-mac-mini",
-              remoteCorePort: 8765,
-              localForwardPort: "auto",
-            },
+            ssh: { user: "agent", host: "agents-mac-mini", remoteCorePort: 8765, localForwardPort: "auto" },
           },
         ],
       }),
     );
 
-    const config = loadRuntimeConfig();
-    const ssh = config.coreConnections.find((connection) => connection.id === "ssh_mac_mini");
-
-    expect(ssh?.ssh?.port).toBe(defaultSshPort);
-  });
-
-  it("strips /v1 from SSH effective profile URLs", () => {
-    const config = upsertCoreConnection(defaultRuntimeConfig, {
-      id: "ssh_dev",
-      name: "Dev SSH",
-      mode: "ssh",
-      effectiveCoreApiUrl: "http://127.0.0.1:8766/v1",
-      ssh: {
-        user: "agent",
-        host: "dev-host",
-        port: 22,
-        remoteCoreHost: "127.0.0.1",
-        remoteCorePort: 8765,
-        localForwardPort: 8766,
-        autoStartRemoteCore: false,
-      },
-    }, { activate: true });
-
-    expect(resolveCoreApiUrl(config)).toBe("http://127.0.0.1:8766");
+    expect(loadRuntimeConfig()).toEqual(defaultRuntimeConfig);
   });
 
   it("sanitizes legacy manual-url configs back to managed local", () => {
@@ -125,19 +152,19 @@ describe("runtimeConfig", () => {
     expect(loadRuntimeConfig()).toEqual(defaultRuntimeConfig);
   });
 
-  it("sanitizes legacy tailscale configs back to managed local", () => {
+  it("drops Tailscale profiles that have no reachable host", () => {
     localStorage.setItem(
       "iris.desktop.runtime.v2",
       JSON.stringify({
         connectionMode: "tailscale",
-        activeConnectionId: "tailscale_mac_mini",
+        activeConnectionId: "tailscale_broken",
         coreConnections: [
           {
-            id: "tailscale_mac_mini",
-            name: "Mac mini",
+            id: "tailscale_broken",
+            name: "Broken",
             mode: "tailscale",
             effectiveCoreApiUrl: "http://mac-mini.tailnet.ts.net:8765",
-            tailscale: { host: "mac-mini.tailnet.ts.net", port: 8765, requiresToken: true },
+            tailscale: { hostId: "tailscale_broken", hostLabel: "Broken", corePort: 8765 },
           },
         ],
       }),
@@ -146,63 +173,62 @@ describe("runtimeConfig", () => {
     expect(loadRuntimeConfig()).toEqual(defaultRuntimeConfig);
   });
 
-  it("activates saved SSH profiles by id", () => {
+  it("activates saved Tailscale profiles by id", () => {
     const config = upsertCoreConnection(defaultRuntimeConfig, {
-      id: "ssh_dev",
-      name: "Dev SSH",
-      mode: "ssh",
-      effectiveCoreApiUrl: "http://127.0.0.1:8777",
-      ssh: {
-        user: "agent",
-        host: "dev-host",
-        port: 22,
-        remoteCoreHost: "127.0.0.1",
-        remoteCorePort: 8765,
-        localForwardPort: 8777,
-        autoStartRemoteCore: false,
+      id: "tailscale_dev",
+      name: "Dev host",
+      mode: "tailscale",
+      effectiveCoreApiUrl: "http://dev-host.tailnet.ts.net:8765",
+      tailscale: {
+        hostId: "tailscale_dev",
+        hostLabel: "Dev host",
+        magicDnsName: "dev-host.tailnet.ts.net",
+        corePort: 8765,
       },
     });
 
-    const active = activateCoreConnection(config, "ssh_dev");
+    const active = activateCoreConnection(config, "tailscale_dev");
 
-    expect(active.connectionMode).toBe("ssh");
-    expect(resolveCoreApiUrl(active)).toBe("http://127.0.0.1:8777");
+    expect(active.connectionMode).toBe("tailscale");
+    expect(resolveCoreApiUrl(active)).toBe("http://dev-host.tailnet.ts.net:8765");
   });
 
   it("keys session data by the selected Core route, not just the profile name", () => {
-    const sshConfig = upsertCoreConnection(defaultRuntimeConfig, {
-      id: "ssh_mac_mini",
-      name: "Mac mini",
-      mode: "ssh",
-      effectiveCoreApiUrl: "http://127.0.0.1:52942",
-      ssh: {
-        user: "agent",
-        host: "agents-mac-mini",
-        port: 22,
-        identityFile: "~/.ssh/id_ed25519",
-        remoteCoreHost: "127.0.0.1",
-        remoteCorePort: 8765,
-        localForwardPort: "auto",
-        autoStartRemoteCore: false,
+    const tailscaleConfig = upsertCoreConnection(
+      defaultRuntimeConfig,
+      {
+        id: "tailscale_mac_mini",
+        name: "Mac mini",
+        mode: "tailscale",
+        effectiveCoreApiUrl: "http://mac-mini.tailnet.ts.net:8765",
+        tailscale: {
+          hostId: "tailscale_mac_mini",
+          hostLabel: "Mac mini",
+          magicDnsName: "mac-mini.tailnet.ts.net",
+          corePort: 8765,
+        },
       },
-    }, { activate: true });
+      { activate: true },
+    );
 
-    const reopenedTunnelConfig = {
-      ...sshConfig,
-      coreConnections: sshConfig.coreConnections.map((connection) =>
-        connection.id === "ssh_mac_mini"
-          ? {
-              ...connection,
-              effectiveCoreApiUrl: "http://127.0.0.1:54116",
-              ssh: connection.ssh
-                ? { ...connection.ssh, localForwardPort: 54116 }
-                : connection.ssh,
-            }
-          : connection,
-      ),
-    };
+    const otherHostConfig = upsertCoreConnection(
+      defaultRuntimeConfig,
+      {
+        id: "tailscale_mac_mini",
+        name: "Mac mini",
+        mode: "tailscale",
+        effectiveCoreApiUrl: "http://other-host.tailnet.ts.net:8765",
+        tailscale: {
+          hostId: "tailscale_mac_mini",
+          hostLabel: "Mac mini",
+          magicDnsName: "other-host.tailnet.ts.net",
+          corePort: 8765,
+        },
+      },
+      { activate: true },
+    );
 
-    expect(runtimeDataRouteKey(defaultRuntimeConfig)).not.toBe(runtimeDataRouteKey(sshConfig));
-    expect(runtimeDataRouteKey(reopenedTunnelConfig)).toBe(runtimeDataRouteKey(sshConfig));
+    expect(runtimeDataRouteKey(defaultRuntimeConfig)).not.toBe(runtimeDataRouteKey(tailscaleConfig));
+    expect(runtimeDataRouteKey(otherHostConfig)).not.toBe(runtimeDataRouteKey(tailscaleConfig));
   });
 });

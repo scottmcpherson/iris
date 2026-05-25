@@ -7,7 +7,6 @@ import { loadJsonValue, saveJsonValue, storageKeys } from "./storage";
 
 export const managedLocalConnectionId = "core_local";
 export const defaultCorePort = 8765;
-export const defaultSshPort = 22;
 export const defaultCoreApiUrl = `http://127.0.0.1:${defaultCorePort}`;
 
 export const defaultManagedLocalProfile: IrisCoreConnectionProfile = {
@@ -19,7 +18,6 @@ export const defaultManagedLocalProfile: IrisCoreConnectionProfile = {
     port: defaultCorePort,
     autoStart: true,
     installLaunchAgent: false,
-    allowSshTunnel: true,
   },
 };
 
@@ -31,8 +29,8 @@ export const defaultRuntimeConfig: HermesRuntimeConfig = {
   model: "",
 };
 
-const validModes = new Set<IrisCoreConnectionMode>(["managed-local", "ssh"]);
-const legacyUnsupportedModes = new Set(["tailscale", "manual-url"]);
+const validModes = new Set<IrisCoreConnectionMode>(["managed-local", "tailscale"]);
+const legacyUnsupportedModes = new Set(["ssh", "manual-url"]);
 
 export function loadRuntimeConfig(): HermesRuntimeConfig {
   try {
@@ -63,28 +61,25 @@ export function activeCoreConnection(config: HermesRuntimeConfig | undefined) {
 
 export function runtimeDataRouteKey(config: HermesRuntimeConfig | undefined) {
   const active = activeCoreConnection(config);
-  if (active.mode === "ssh") {
-    const ssh = active.ssh;
+  if (active.mode === "tailscale") {
+    const ts = active.tailscale;
     return [
-      "ssh",
+      "tailscale",
       active.id,
-      ssh?.user || "",
-      ssh?.host || "",
-      ssh?.port || defaultSshPort,
-      ssh?.remoteCoreHost || "127.0.0.1",
-      ssh?.remoteCorePort || defaultCorePort,
+      ts?.magicDnsName || ts?.tailscaleIp || "",
+      ts?.corePort || defaultCorePort,
     ].join("|");
   }
   return [active.mode, active.id, resolveCoreApiUrl(config)].join("|");
 }
 
 export function connectionTransport(profile: IrisCoreConnectionProfile | undefined) {
-  if (profile?.mode === "ssh") return "ssh-tunnel" as const;
+  if (profile?.mode === "tailscale") return "tailscale" as const;
   return "sidecar" as const;
 }
 
 export function hermesOwner(profile: IrisCoreConnectionProfile | undefined) {
-  if (profile?.mode === "ssh") return "remote-host" as const;
+  if (profile?.mode === "tailscale") return "remote-host" as const;
   return "this-mac" as const;
 }
 
@@ -228,27 +223,27 @@ function normalizeProfile(value: unknown): IrisCoreConnectionProfile | null {
       hermesHome: stringValue(local?.hermesHome),
       autoStart: booleanValue(local?.autoStart, true),
       installLaunchAgent: booleanValue(local?.installLaunchAgent, false),
-      allowSshTunnel: booleanValue(local?.allowSshTunnel, true),
     };
     profile.effectiveCoreApiUrl = `http://127.0.0.1:${port}`;
-  } else if (mode === "ssh") {
-    const ssh = objectValue(record.ssh);
-    const host = stringValue(ssh?.host);
-    const user = stringValue(ssh?.user);
-    const remoteCorePort = validPort(ssh?.remoteCorePort) || defaultCorePort;
-    const localForwardPort =
-      ssh?.localForwardPort === "auto" ? "auto" : validPort(ssh?.localForwardPort) || "auto";
-    profile.ssh = {
-      user,
-      host,
-      port: validPort(ssh?.port) || defaultSshPort,
-      identityFile: stringValue(ssh?.identityFile) || undefined,
-      remoteCoreHost: "127.0.0.1",
-      remoteCorePort,
-      localForwardPort,
-      autoStartRemoteCore: booleanValue(ssh?.autoStartRemoteCore, false),
+  } else if (mode === "tailscale") {
+    const ts = objectValue(record.tailscale);
+    const magicDnsName = stringValue(ts?.magicDnsName);
+    const tailscaleIp = stringValue(ts?.tailscaleIp);
+    const host = magicDnsName || tailscaleIp;
+    // Drop records without a reachable Tailscale host (e.g. legacy manual-URL profiles).
+    if (!host) return null;
+    const corePort = validPort(ts?.corePort) || portFromUrl(effectiveCoreApiUrl) || defaultCorePort;
+    const deviceToken = stringValue(ts?.deviceToken);
+    profile.tailscale = {
+      hostId: stringValue(ts?.hostId) || id,
+      hostLabel: stringValue(ts?.hostLabel) || name,
+      magicDnsName: magicDnsName || undefined,
+      tailscaleIp: tailscaleIp || undefined,
+      corePort,
+      deviceToken: deviceToken || undefined,
     };
-    profile.effectiveCoreApiUrl = normalizeServerUrl(record.effectiveCoreApiUrl) || defaultCoreApiUrl;
+    const bracketedHost = host.includes(":") && !host.startsWith("[") ? `[${host}]` : host;
+    profile.effectiveCoreApiUrl = `http://${bracketedHost}:${corePort}`;
   }
 
   return profile;
@@ -316,6 +311,6 @@ function portFromUrl(value: string) {
 }
 
 function defaultNameForMode(mode: IrisCoreConnectionMode) {
-  if (mode === "ssh") return "Remote host over SSH";
+  if (mode === "tailscale") return "Tailscale host";
   return "Local";
 }

@@ -1,4 +1,4 @@
-export type IrisCoreConnectionMode = "managed-local" | "ssh";
+export type IrisCoreConnectionMode = "managed-local" | "tailscale";
 
 export type IrisCoreConnectionProfile = {
   id: string;
@@ -10,17 +10,17 @@ export type IrisCoreConnectionProfile = {
     hermesHome?: string;
     autoStart: boolean;
     installLaunchAgent: boolean;
-    allowSshTunnel?: boolean;
   };
-  ssh?: {
-    user: string;
-    host: string;
-    port: number;
-    identityFile?: string;
-    remoteCoreHost: "127.0.0.1";
-    remoteCorePort: number;
-    localForwardPort: number | "auto";
-    autoStartRemoteCore: boolean;
+  tailscale?: {
+    hostId: string;
+    hostLabel: string;
+    /** MagicDNS name (preferred, stable across IP changes), e.g. "mac-mini.tailnet.ts.net". */
+    magicDnsName?: string;
+    /** Tailscale 100.x address, used as a fallback when MagicDNS is unavailable. */
+    tailscaleIp?: string;
+    corePort: number;
+    /** Per-device bearer token issued by the host's Core during pairing. */
+    deviceToken?: string;
   };
 };
 
@@ -222,7 +222,7 @@ export type HermesStatus = {
   connectionMode?: IrisCoreConnectionMode;
   activeConnectionId?: string;
   activeConnectionName?: string;
-  transport?: "sidecar" | "ssh-tunnel";
+  transport?: "sidecar" | "tailscale";
   hermesOwner?: "this-mac" | "remote-host";
   coreApiUrl?: string;
   activeApiUrl?: string;

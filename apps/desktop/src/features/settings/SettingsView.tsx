@@ -5,15 +5,16 @@ import { toast } from "sonner";
 import {
   ChevronDown,
   FileText,
+  Network,
   Plug,
   RotateCw,
   Server,
   Smartphone,
-  Terminal,
   Unplug,
   Wrench,
 } from "lucide-react";
 import {
+  activateCoreConnection,
   activeCoreConnection,
   connectionTransport,
   defaultCorePort,
@@ -56,9 +57,7 @@ import type {
   IrisCoreConnectionMode,
   IrisCoreConnectionProfile,
 } from "../../types/hermes";
-import { SshConnectionDialog } from "../iris/SshConnectionDialog";
-import { sshTargetLabel } from "../iris/sshConnectionDraft";
-import { useSshConnectionManager } from "../iris/useSshConnectionManager";
+import { TailscaleConnectDialog } from "../iris/TailscaleConnectDialog";
 import { MobilePairingDialog } from "../mobile-pairing/MobilePairingDialog";
 
 type SettingsViewProps = {
@@ -95,10 +94,9 @@ type LocalDraft = {
   hermesHome: string;
   autoStart: boolean;
   installLaunchAgent: boolean;
-  allowSshTunnel: boolean;
 };
 
-type SettingsConnectionTab = "managed-local" | "ssh";
+type SettingsConnectionTab = "managed-local" | "tailscale";
 
 export function SettingsView({
   status,
@@ -109,17 +107,14 @@ export function SettingsView({
   const activeConnection = activeCoreConnection(runtimeConfig);
   const [modeTab, setModeTab] = useState<SettingsConnectionTab>(() => settingsTabFromMode(runtimeConfig.connectionMode));
   const [localDraft, setLocalDraft] = useState(() => localDraftFromProfile(activeConnection));
-  const [sshDialogOpen, setSshDialogOpen] = useState(false);
+  const [tailscaleDialogOpen, setTailscaleDialogOpen] = useState(false);
   const [mobilePairingOpen, setMobilePairingOpen] = useState(false);
   const [sidecarStatus, setSidecarStatus] = useState<CoreSidecarStatus | null>(null);
   const [busyAction, setBusyAction] = useState("");
-  const sshManager = useSshConnectionManager({ runtimeConfig, onRuntimeChange, onRefresh });
   const checkedAt = status?.checkedAt ? formatTimestamp(status.checkedAt) : "Not checked";
   const statusConnection = status?.activeConnectionName || activeConnection.name;
-  const profilesByMode = useMemo(
-    () => ({
-      ssh: runtimeConfig.coreConnections.filter((connection) => connection.mode === "ssh"),
-    }),
+  const tailscaleProfiles = useMemo(
+    () => runtimeConfig.coreConnections.filter((connection) => connection.mode === "tailscale"),
     [runtimeConfig.coreConnections],
   );
 
@@ -176,7 +171,6 @@ export function SettingsView({
         hermesHome: localDraft.hermesHome.trim() || undefined,
         autoStart: localDraft.autoStart,
         installLaunchAgent: localDraft.installLaunchAgent,
-        allowSshTunnel: localDraft.allowSshTunnel,
       },
     };
     commitProfile(profile);
@@ -284,9 +278,9 @@ export function SettingsView({
             <Server data-icon="inline-start" />
             Local
           </TabsTrigger>
-          <TabsTrigger value="ssh">
-            <Terminal data-icon="inline-start" />
-            SSH
+          <TabsTrigger value="tailscale">
+            <Network data-icon="inline-start" />
+            Tailscale
           </TabsTrigger>
         </TabsList>
 
@@ -373,46 +367,44 @@ export function SettingsView({
           </Card>
         </TabsContent>
 
-        <TabsContent value="ssh">
+        <TabsContent value="tailscale">
           <Card className="settings-mode-card">
             <CardHeader>
               <div>
-                <CardTitle>SSH connections</CardTitle>
-                <CardDescription>Use any SSH hostname or address for the remote host.</CardDescription>
+                <CardTitle>Tailscale connections</CardTitle>
+                <CardDescription>Connect to another machine running Iris Core on your tailnet.</CardDescription>
               </div>
               <CardAction>
-                <Button size="appSmall" onClick={() => setSshDialogOpen(true)}>
-                  <Terminal data-icon="inline-start" />
-                  Add SSH connection
+                <Button size="appSmall" onClick={() => setTailscaleDialogOpen(true)}>
+                  <Network data-icon="inline-start" />
+                  Connect a host
                 </Button>
               </CardAction>
             </CardHeader>
             <CardContent className="grid gap-3.5">
               <ConnectionList
-                profiles={profilesByMode.ssh}
+                profiles={tailscaleProfiles}
                 activeId={activeConnection.id}
                 connectedId={status?.connected ? activeConnection.id : ""}
-                busy={sshManager.busyAction === "ssh-connect" || sshManager.busyAction === "ssh-disconnect"}
+                busy={false}
                 onActivate={(id) => {
-                  const profile = runtimeConfig.coreConnections.find((connection) => connection.id === id);
-                  if (profile) void sshManager.connectSsh(profile);
+                  onRuntimeChange(activateCoreConnection(runtimeConfig, id));
+                  onRefresh();
                 }}
                 onDelete={deleteProfile}
-                onDisconnect={(id) => void sshManager.disconnectSsh(id)}
+                onDisconnect={() => {
+                  onRuntimeChange(activateCoreConnection(runtimeConfig, managedLocalConnectionId));
+                  onRefresh();
+                }}
               />
             </CardContent>
           </Card>
-          <SshConnectionDialog
-            open={sshDialogOpen}
-            draft={sshManager.draft}
-            busy={sshManager.busyAction === "ssh-connect"}
-            onOpenChange={setSshDialogOpen}
-            onDraftChange={sshManager.setDraft}
-            onSave={() => {
-              void sshManager.connectSsh().then((result) => {
-                if (result.ok) setSshDialogOpen(false);
-              });
-            }}
+          <TailscaleConnectDialog
+            open={tailscaleDialogOpen}
+            runtimeConfig={runtimeConfig}
+            onOpenChange={setTailscaleDialogOpen}
+            onRuntimeChange={onRuntimeChange}
+            onRefresh={onRefresh}
           />
         </TabsContent>
       </Tabs>
@@ -543,14 +535,13 @@ function SwitchField({
 
 function transportLabel(connection: IrisCoreConnectionProfile) {
   const transport = connectionTransport(connection);
-  if (transport === "ssh-tunnel") return "SSH tunnel";
+  if (transport === "tailscale") return "Tailscale";
   return "Sidecar";
 }
 
 function profileSubtitle(profile: IrisCoreConnectionProfile) {
-  if (profile.mode === "ssh") {
-    const target = sshTargetLabel(profile.ssh?.user || "", profile.ssh?.host || "");
-    return target || profile.effectiveCoreApiUrl;
+  if (profile.mode === "tailscale") {
+    return profile.tailscale?.magicDnsName || profile.tailscale?.tailscaleIp || profile.effectiveCoreApiUrl;
   }
   return profile.effectiveCoreApiUrl;
 }
@@ -568,7 +559,7 @@ function managedProfile(config: HermesRuntimeConfig) {
 }
 
 function settingsTabFromMode(mode: IrisCoreConnectionMode): SettingsConnectionTab {
-  return mode === "managed-local" ? "managed-local" : "ssh";
+  return mode === "managed-local" ? "managed-local" : "tailscale";
 }
 
 function localDraftFromProfile(profile: IrisCoreConnectionProfile): LocalDraft {
@@ -578,7 +569,6 @@ function localDraftFromProfile(profile: IrisCoreConnectionProfile): LocalDraft {
     hermesHome: local?.hermesHome || "",
     autoStart: local?.autoStart !== false,
     installLaunchAgent: Boolean(local?.installLaunchAgent),
-    allowSshTunnel: local?.allowSshTunnel !== false,
   };
 }
 

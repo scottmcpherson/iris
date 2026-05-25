@@ -13,14 +13,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "../../shared/ui/dialog";
-import {
-  Field,
-  FieldDescription,
-  FieldGroup,
-  FieldLabel,
-  FieldLegend,
-  FieldSet,
-} from "../../shared/ui/field";
+import { Field, FieldLabel } from "../../shared/ui/field";
 import { Input } from "../../shared/ui/input";
 import { coreRequest } from "../../lib/coreTransport";
 import type { HermesRuntimeConfig } from "../../types/hermes";
@@ -80,6 +73,8 @@ export function MobilePairingDialog({ open, runtimeConfig, onOpenChange }: Mobil
     async function preparePairingDraft() {
       const nextDraft = defaultMobilePairingDraft(runtimeConfig);
       if (nextDraft.coreHost.trim()) return nextDraft;
+      const tailscaleHost = await tailscaleSelfHost();
+      if (tailscaleHost) return { ...nextDraft, coreHost: tailscaleHost };
       const candidates = await mobilePairingHostCandidates();
       return draftWithPreferredMobileHost(nextDraft, candidates);
     }
@@ -112,6 +107,12 @@ export function MobilePairingDialog({ open, runtimeConfig, onOpenChange }: Mobil
     if (!canScanPayload) return;
     await navigator.clipboard.writeText(payloadText);
     toast.success("Mobile pairing payload copied.");
+  }
+
+  async function copyCode() {
+    if (!pairingCode?.code) return;
+    await navigator.clipboard.writeText(pairingCode.code);
+    toast.success("Pairing code copied.");
   }
 
   async function regeneratePairingCode(nextDraft = draft) {
@@ -162,42 +163,59 @@ export function MobilePairingDialog({ open, runtimeConfig, onOpenChange }: Mobil
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-[680px]">
         <DialogHeader>
-          <DialogTitle>Pair Mobile Device</DialogTitle>
+          <DialogTitle>Pair a device</DialogTitle>
           <DialogDescription>
-            Scan this QR code from Iris Mobile. It contains a short-lived pairing code, not a reusable Core token or SSH key.
+            Scan the QR from Iris Mobile, or type the code below into Iris on another desktop. The code is
+            short-lived and carries no reusable secret.
           </DialogDescription>
         </DialogHeader>
 
-        <div className="grid gap-4 md:grid-cols-[260px_1fr]">
-          <div className="grid content-start gap-3">
-            <div className="grid min-h-[260px] place-items-center rounded-md border border-border bg-background p-3">
+        <div className="grid items-start gap-5 md:grid-cols-[220px_1fr]">
+          <div className="grid content-start gap-2">
+            <div className="grid aspect-square place-items-center rounded-lg border border-border bg-background p-3">
               {qrDataUrl ? (
-                <img src={qrDataUrl} alt="Iris Mobile pairing QR code" className="size-[240px]" />
+                <img src={qrDataUrl} alt="Iris pairing QR code" className="size-full rounded-sm" />
               ) : (
-                <div className="grid min-h-[240px] place-items-center px-4 text-center text-[13px] text-muted-foreground">
+                <div className="grid place-items-center px-4 text-center text-[13px] text-muted-foreground">
                   {payloadStatus}
                 </div>
               )}
             </div>
-            <div className="grid gap-1 text-[13px] text-muted-foreground">
-              <span>
-                Expires at <strong className="text-foreground">{expiresAt}</strong>
-              </span>
-              <span aria-live="polite">{payloadStatus}</span>
-            </div>
+            <p className="text-center text-[12px] text-muted-foreground" aria-live="polite">
+              {pairingCode?.expiresAt ? (
+                <>
+                  Expires at <strong className="text-foreground">{expiresAt}</strong>
+                </>
+              ) : (
+                payloadStatus
+              )}
+            </p>
           </div>
 
-          <FieldSet className="grid gap-3 border-0 p-0">
-            <FieldLegend className="sr-only">Mobile Core connection details</FieldLegend>
-            <FieldDescription>
-              The phone connects directly to Iris Core over Tailscale, then authenticates with a phone-generated device token.
-            </FieldDescription>
-            <FieldGroup className="grid gap-3">
-              <PairingTextField id="mobile-host-label" label="Host label" value={draft.hostLabel} onChange={(hostLabel) => updateDraft({ ...draft, hostLabel })} />
+          <div className="grid content-start gap-4">
+            {pairingCode?.code ? (
+              <div className="flex items-center justify-between gap-3 rounded-lg border border-border bg-background px-3.5 py-2.5">
+                <div className="grid min-w-0 gap-0.5">
+                  <span className="text-[11px] uppercase tracking-[0.08em] text-muted-foreground">Pairing code</span>
+                  <span className="font-mono text-[22px] font-[700] leading-none tracking-[0.18em] text-foreground">
+                    {formatPairingCode(pairingCode.code)}
+                  </span>
+                </div>
+                <Button variant="appNeutral" size="appSmall" onClick={() => void copyCode()}>
+                  <Copy data-icon="inline-start" />
+                  Copy
+                </Button>
+              </div>
+            ) : null}
+
+            <div className="grid gap-3">
+              <div className="grid grid-cols-2 gap-3">
+                <PairingTextField id="mobile-host-label" label="Host label" value={draft.hostLabel} onChange={(hostLabel) => updateDraft({ ...draft, hostLabel })} />
+                <PairingTextField id="mobile-core-port" label="Core port" value={draft.corePort} onChange={(corePort) => updateDraft({ ...draft, corePort })} />
+              </div>
               <PairingTextField id="mobile-core-host" label="Core host" value={draft.coreHost} onChange={(coreHost) => updateDraft({ ...draft, coreHost })} />
-              <PairingTextField id="mobile-core-port" label="Core port" value={draft.corePort} onChange={(corePort) => updateDraft({ ...draft, corePort })} />
-            </FieldGroup>
-          </FieldSet>
+            </div>
+          </div>
         </div>
 
         <details className="rounded-md border border-border bg-background p-3 text-[12px] text-muted-foreground">
@@ -302,6 +320,29 @@ async function mobilePairingHostCandidates() {
   } catch {
     return [];
   }
+}
+
+async function tailscaleSelfHost(): Promise<string> {
+  if (!isTauri()) return "";
+  try {
+    const status = await invoke<{
+      running: boolean;
+      selfNode: { dnsName?: string; tailscaleIps?: string[] } | null;
+    }>("tailscale_status");
+    if (!status.running || !status.selfNode) return "";
+    return (
+      status.selfNode.dnsName ||
+      status.selfNode.tailscaleIps?.find((ip) => !ip.includes(":")) ||
+      ""
+    );
+  } catch {
+    return "";
+  }
+}
+
+function formatPairingCode(code: string) {
+  const clean = code.trim();
+  return clean.length === 8 ? `${clean.slice(0, 4)}-${clean.slice(4)}` : clean;
 }
 
 function parsePort(value: string, fallback: number) {

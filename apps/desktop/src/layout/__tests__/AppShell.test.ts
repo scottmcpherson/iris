@@ -25,7 +25,7 @@ describe("AppShell connection status", () => {
       sidebarConnectionStatusLabel(true, {
         ...statusFixture(),
         activeConnectionName: "Mac mini",
-        connectionMode: "ssh",
+        connectionMode: "tailscale",
       }),
     ).toBe("Mac mini");
   });
@@ -35,9 +35,9 @@ describe("AppShell connection status", () => {
       sidebarConnectionStatusLabel(true, {
         ...statusFixture(),
         activeConnectionName: "",
-        connectionMode: "ssh",
+        connectionMode: "tailscale",
       }),
-    ).toBe("SSH");
+    ).toBe("Tailscale");
     expect(
       sidebarConnectionStatusLabel(true, {
         ...statusFixture(),
@@ -52,7 +52,7 @@ describe("AppShell connection status", () => {
       sidebarConnectionStatusLabel(true, {
         ...statusFixture(),
         activeConnectionName: "Mac mini",
-        connectionMode: "ssh",
+        connectionMode: "tailscale",
         gatewayStatus: { ok: false },
         activeApiStatus: { ok: false },
         activeProfile: { ...profileFixture(), gatewayRunning: false },
@@ -63,7 +63,7 @@ describe("AppShell connection status", () => {
       sidebarConnectionStatusLabel(true, {
         ...statusFixture(),
         activeConnectionName: "Mac mini",
-        connectionMode: "ssh",
+        connectionMode: "tailscale",
         activeApiStatus: { ok: false },
       }),
     ).toBe("Mac mini");

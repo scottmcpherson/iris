@@ -69,8 +69,8 @@ export function runtimeReadinessLabel(readiness: RuntimeReadiness, profileName =
 
 export function runtimeReadinessDetail(readiness: RuntimeReadiness, profileName = "default", connectionMode = "") {
   if (readiness === "checking") return "";
-  if (readiness === "offline" && connectionMode === "ssh") {
-    return "Remote Core is offline. Start Iris Core on that host, then retry.";
+  if (readiness === "offline" && connectionMode === "tailscale") {
+    return "Can't reach the host over Tailscale. Make sure Tailscale is connected and Iris Core is running on that host, then retry.";
   }
   if (readiness === "offline") return "Start Iris Core, then retry.";
   if (readiness === "gateway-stopped") return `${profileName} gateway is stopped.`;

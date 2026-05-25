@@ -97,6 +97,9 @@ DEFAULT_IRIS_INBOUND_PORT = 8766
 DEFAULT_RUNTIME_THREAD_LIMIT = 16
 DEFAULT_RUNTIME_CALL_TIMEOUT_SECONDS = 30
 MOBILE_PAIRING_CODE_TTL_SECONDS = 5 * 60
+# Crockford base32 alphabet (no I, L, O, U) so codes are short and unambiguous to type.
+PAIRING_CODE_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
+PAIRING_CODE_LENGTH = 8
 
 logger = logging.getLogger(__name__)
 
@@ -850,13 +853,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "core": core_store.health(),
         }
 
+    @app.get("/v1/ping")
+    async def core_ping() -> dict[str, Any]:
+        # Auth-exempt liveness probe for Tailscale device discovery. Intentionally
+        # minimal: reveals only that an Iris Core is listening, and its version.
+        return {"ok": True, "service": "iris-core", "version": __version__}
+
     @app.post("/v1/mobile/pairing-codes")
     async def mobile_pairing_code(
         request: MobilePairingCodeCreateRequest,
         _auth: None = Depends(require_auth),
     ) -> dict[str, Any]:
         prune_mobile_pairing_codes(app)
-        code = f"mp_{secrets.token_urlsafe(24)}"
+        code = generate_pairing_code()
+        for _ in range(10):
+            if mobile_pairing_code_hash(code) not in app.state.mobile_pairing_codes:
+                break
+            code = generate_pairing_code()
         expires_at = now() + MOBILE_PAIRING_CODE_TTL_SECONDS
         app.state.mobile_pairing_codes[mobile_pairing_code_hash(code)] = {
             "hostLabel": str(request.hostLabel or "Iris Desktop").strip()[:120] or "Iris Desktop",
@@ -3397,8 +3410,18 @@ def json_dumps(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
 
 
+def generate_pairing_code() -> str:
+    return "".join(secrets.choice(PAIRING_CODE_ALPHABET) for _ in range(PAIRING_CODE_LENGTH))
+
+
+def normalize_pairing_code(code: str) -> str:
+    # Accept any case, dashes/spaces, and common visual confusions (I/L->1, O->0).
+    raw = str(code or "").strip().upper().translate(str.maketrans({"I": "1", "L": "1", "O": "0"}))
+    return "".join(ch for ch in raw if ch in PAIRING_CODE_ALPHABET)
+
+
 def mobile_pairing_code_hash(code: str) -> str:
-    return stable_hash("mobile-pairing-code", str(code or "").strip(), length=64)
+    return stable_hash("mobile-pairing-code", normalize_pairing_code(code), length=64)
 
 
 def prune_mobile_pairing_codes(app: FastAPI) -> None:
