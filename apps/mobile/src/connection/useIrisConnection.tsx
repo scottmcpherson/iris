@@ -2,6 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState, t
 import { getHealth, type IrisCoreClient } from "@iris/core-client";
 import { createMobileCoreClient } from "../lib/coreClient";
 import type { SavedConnectionProfile } from "./pairingPayload";
+import type { MobileConnectionState } from "./mobileConnectionStatus";
 import {
   clearConnectionProfile,
   type ConnectionAuth,
@@ -14,16 +15,7 @@ import {
 const UNREACHABLE_HOST_ERROR =
   "Couldn't reach the host. Make sure Tailscale is connected on this phone and the host is online.";
 
-export type MobileConnectionState =
-  | { status: "unpaired" }
-  | { status: "connecting"; profile: SavedConnectionProfile }
-  | { status: "connected"; profile: SavedConnectionProfile; localCoreUrl: string }
-  | { status: "disconnected"; profile: SavedConnectionProfile; error?: string }
-  | {
-      status: "blocked";
-      profile: SavedConnectionProfile;
-      reason: "auth-required" | "core-unreachable";
-    };
+export type { MobileConnectionState } from "./mobileConnectionStatus";
 
 type IrisConnectionContextValue = {
   state: MobileConnectionState;

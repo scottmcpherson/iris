@@ -266,7 +266,7 @@ describe("AppShell pinned sessions", () => {
     expect(html).not.toContain("http://127.0.0.1:8765");
   });
 
-  it("aligns loose session rows with the project folder icon gutter", () => {
+  it("keeps loose session pin controls inside the full row hover target", () => {
     const looseChat = sessionFixture({ id: "session_loose", title: "Loose chat" });
 
     const html = renderToStaticMarkup(
@@ -314,9 +314,12 @@ describe("AppShell pinned sessions", () => {
       }),
     );
 
-    expect(html).toContain("sidebar-session-row relative rounded-[8px] active ml-[9px]");
-    expect(html).toContain("sidebar-session rounded-[8px] text-left !pl-0");
-    expect(html).toContain("sidebar-session-pin !-left-[24px]");
+    expect(html).toContain("sidebar-session-row relative rounded-[8px] active");
+    expect(html).toContain("sidebar-session rounded-[8px] text-left");
+    expect(html).toContain("sidebar-session-pin");
+    expect(html).not.toContain("ml-[9px]");
+    expect(html).not.toContain("!-left-[24px]");
+    expect(html).not.toContain("!pl-0");
   });
 
   it("honors persisted top-level sidebar section collapse state", () => {

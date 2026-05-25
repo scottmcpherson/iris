@@ -217,7 +217,27 @@ function completedStreamEvents(message: Message) {
 function appendDeltaContent(content: string, addition: string) {
   if (!content) return addition;
   if (!addition) return content;
+  const replayContent = cumulativeReplayContent(content, addition);
+  if (replayContent !== null) return replayContent;
+  const overlap = streamAppendOverlap(content, addition);
+  if (overlap >= 12) return `${content}${addition.slice(overlap)}`;
   return `${content}${addition}`;
+}
+
+function cumulativeReplayContent(content: string, addition: string) {
+  if (addition.startsWith(content) && (addition.length > content.length || content.length >= 12)) return addition;
+  const current = content.trimEnd();
+  const next = addition.trimStart();
+  if (current && next.startsWith(current) && (next.length > current.length || current.length >= 12)) return next;
+  return null;
+}
+
+function streamAppendOverlap(content: string, addition: string) {
+  const max = Math.min(content.length, addition.length);
+  for (let size = max; size > 0; size -= 1) {
+    if (content.endsWith(addition.slice(0, size))) return size;
+  }
+  return 0;
 }
 
 function chunkOperation(metadata: HermesInboxMessage["metadata"]) {

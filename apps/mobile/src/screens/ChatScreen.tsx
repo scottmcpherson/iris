@@ -44,7 +44,8 @@ import {
 import { ChatComposer } from "../components/ChatComposer";
 import { ComposerOptionMenu, type ComposerOptionGroup } from "../components/ComposerOptionMenu";
 import { MessageBubble } from "../components/MessageBubble";
-import { MobileSidebarDrawer, SidebarButton } from "../components/MobileSidebar";
+import { SidebarButton } from "../components/MobileSidebar";
+import { useMobileSidebar } from "../components/MobileSidebarContext";
 import { type OptionSheetItem } from "../components/OptionSheet";
 import { useMobileAttachmentDrafts } from "../chat/mobileAttachments";
 import { mergeMobileChatEvent, mobileChatEventInfo, mobileSendMetadata } from "../chat/mobileChat";
@@ -112,7 +113,7 @@ export function ChatScreen() {
   const processedDeliveryIdsRef = useRef<Set<string>>(new Set());
   const [eventCursorReady, setEventCursorReady] = useState(false);
   const [requestActive, setRequestActive] = useState(false);
-  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const { open: sidebarOpen, toggleSidebar, setSelectedSessionId } = useMobileSidebar();
   const [isAtBottom, setIsAtBottom] = useState(true);
   const [composerHeight, setComposerHeight] = useState(0);
   const activeSelectionReadMarkedRef = useRef("");
@@ -191,6 +192,10 @@ export function ChatScreen() {
   useEffect(() => {
     setModelSelection(null);
   }, [agentId, sessionId]);
+
+  useEffect(() => {
+    setSelectedSessionId(sessionId || "");
+  }, [sessionId, setSelectedSessionId]);
 
   useEffect(() => {
     cursorRef.current = cursor;
@@ -520,83 +525,76 @@ export function ChatScreen() {
   );
 
   return (
-    <MobileSidebarDrawer
-      open={sidebarOpen}
-      onClose={() => setSidebarOpen(false)}
-      onOpen={() => setSidebarOpen(true)}
-      selectedSessionId={sessionId}
-    >
-      <View style={styles.root}>
-        <FlatList
-          ref={listRef}
-          data={messages}
-          style={styles.list}
-          keyExtractor={(item) => item.id}
-          renderItem={({ item }) => <MessageBubble message={item} client={client} />}
-          onScroll={handleTranscriptScroll}
-          scrollEventThrottle={16}
-          onContentSizeChange={() => {
-            if (isAtBottomRef.current) scrollToLatest(false, requestActive ? "stream" : "none");
-          }}
-          onLayout={() => {
-            if (isAtBottomRef.current) scrollToLatest(false, "stream");
-          }}
-          contentContainerStyle={[
-            styles.messages,
-            showEmptyPanel ? styles.emptyMessages : null,
-            { paddingTop: insets.top + HEADER_BAR_HEIGHT + theme.spacing[3] },
-          ]}
-          ListHeaderComponent={listHeader}
-          // Bottom breathing room lives in a footer, not contentContainerStyle.paddingBottom,
-          // because FlatList.scrollToEnd counts the footer length but ignores container padding —
-          // padding here leaves an unreachable gap below the last message after a jump-to-bottom.
-          ListFooterComponent={<View style={styles.messagesFooter} />}
-        />
-        <View pointerEvents="box-none" style={[styles.header, { height: insets.top + HEADER_BAR_HEIGHT }]}>
-          <View pointerEvents="box-none" style={[styles.headerRow, { paddingTop: insets.top }]}>
-            <SidebarButton open={sidebarOpen} onPress={() => setSidebarOpen((current) => !current)} />
-          </View>
-        </View>
-        {!isAtBottom ? (
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Jump to latest message"
-            onPress={() => {
-              isAtBottomRef.current = true;
-              setIsAtBottom(true);
-              scrollToLatest(true, "button");
-            }}
-            style={({ pressed }) => [
-              styles.scrollBottomButton,
-              { bottom: Math.max(theme.spacing[4], composerHeight + theme.spacing[2]) },
-              pressed ? styles.pressed : null,
-            ]}
-          >
-            <ArrowDown color={theme.colors.textSecondary} size={18} />
-          </Pressable>
-        ) : null}
-        <View onLayout={(event) => setComposerHeight(event.nativeEvent.layout.height)}>
-          <ChatComposer
-            disabled={!client || sending || (!isExistingSession && !selectedAgent)}
-            requestActive={requestActive}
-            controls={composerControls}
-            trailingControls={composerTrailingControls}
-            slashCommands={slashCommandsQuery.data?.commands || []}
-            slashCommandsLoading={slashCommandsQuery.isFetching}
-            slashCommandsError={slashCommandsQuery.error instanceof Error ? slashCommandsQuery.error.message : null}
-            attachments={attachmentDrafts.attachments}
-            onAddAttachment={attachmentDrafts.addPickedFiles}
-            onPickPhoto={attachmentDrafts.addPhotosFromLibrary}
-            onTakePhoto={attachmentDrafts.takePhoto}
-            onRemoveAttachment={attachmentDrafts.removeAttachment}
-            onVoiceRecording={attachmentDrafts.addVoiceRecording}
-            placeholder="Ask anything"
-            onCancel={() => void cancelActiveRequest()}
-            onSend={(value) => send(value)}
-          />
+    <View style={styles.root}>
+      <FlatList
+        ref={listRef}
+        data={messages}
+        style={styles.list}
+        keyExtractor={(item) => item.id}
+        renderItem={({ item }) => <MessageBubble message={item} client={client} />}
+        onScroll={handleTranscriptScroll}
+        scrollEventThrottle={16}
+        onContentSizeChange={() => {
+          if (isAtBottomRef.current) scrollToLatest(false, requestActive ? "stream" : "none");
+        }}
+        onLayout={() => {
+          if (isAtBottomRef.current) scrollToLatest(false, "stream");
+        }}
+        contentContainerStyle={[
+          styles.messages,
+          showEmptyPanel ? styles.emptyMessages : null,
+          { paddingTop: insets.top + HEADER_BAR_HEIGHT + theme.spacing[3] },
+        ]}
+        ListHeaderComponent={listHeader}
+        // Bottom breathing room lives in a footer, not contentContainerStyle.paddingBottom,
+        // because FlatList.scrollToEnd counts the footer length but ignores container padding —
+        // padding here leaves an unreachable gap below the last message after a jump-to-bottom.
+        ListFooterComponent={<View style={styles.messagesFooter} />}
+      />
+      <View pointerEvents="box-none" style={[styles.header, { height: insets.top + HEADER_BAR_HEIGHT }]}>
+        <View pointerEvents="box-none" style={[styles.headerRow, { paddingTop: insets.top }]}>
+          <SidebarButton open={sidebarOpen} onPress={toggleSidebar} />
         </View>
       </View>
-    </MobileSidebarDrawer>
+      {!isAtBottom ? (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Jump to latest message"
+          onPress={() => {
+            isAtBottomRef.current = true;
+            setIsAtBottom(true);
+            scrollToLatest(true, "button");
+          }}
+          style={({ pressed }) => [
+            styles.scrollBottomButton,
+            { bottom: Math.max(theme.spacing[4], composerHeight + theme.spacing[2]) },
+            pressed ? styles.pressed : null,
+          ]}
+        >
+          <ArrowDown color={theme.colors.textSecondary} size={18} />
+        </Pressable>
+      ) : null}
+      <View onLayout={(event) => setComposerHeight(event.nativeEvent.layout.height)}>
+        <ChatComposer
+          disabled={!client || sending || (!isExistingSession && !selectedAgent)}
+          requestActive={requestActive}
+          controls={composerControls}
+          trailingControls={composerTrailingControls}
+          slashCommands={slashCommandsQuery.data?.commands || []}
+          slashCommandsLoading={slashCommandsQuery.isFetching}
+          slashCommandsError={slashCommandsQuery.error instanceof Error ? slashCommandsQuery.error.message : null}
+          attachments={attachmentDrafts.attachments}
+          onAddAttachment={attachmentDrafts.addPickedFiles}
+          onPickPhoto={attachmentDrafts.addPhotosFromLibrary}
+          onTakePhoto={attachmentDrafts.takePhoto}
+          onRemoveAttachment={attachmentDrafts.removeAttachment}
+          onVoiceRecording={attachmentDrafts.addVoiceRecording}
+          placeholder="Ask anything"
+          onCancel={() => void cancelActiveRequest()}
+          onSend={(value) => send(value)}
+        />
+      </View>
+    </View>
   );
 }
 

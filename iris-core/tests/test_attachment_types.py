@@ -52,3 +52,4 @@ def test_allowed_attachment_mime_stays_permissive_for_generic_files():
     assert is_allowed_attachment_mime("application/octet-stream")
     assert is_allowed_attachment_mime("application/zip")
     assert is_allowed_attachment_mime("text/typescript")
+    assert is_allowed_attachment_mime("application/vnd.sqlite3")

@@ -77,6 +77,27 @@ def test_append_delta_content_keeps_empty_terminal_delta_stable():
     assert append_delta_content("complete", "") == "complete"
 
 
+def test_append_delta_content_replaces_cumulative_replay():
+    assert (
+        append_delta_content("This answer starts", "This answer starts and continues once.")
+        == "This answer starts and continues once."
+    )
+
+
+def test_append_delta_content_stitches_meaningful_overlap():
+    assert (
+        append_delta_content(
+            "The assistant response must stay unique across",
+            " unique across mobile and desktop.",
+        )
+        == "The assistant response must stay unique across mobile and desktop."
+    )
+
+
+def test_append_delta_content_preserves_intentionally_repeated_short_delta():
+    assert append_delta_content("no", "no") == "nono"
+
+
 def test_prepare_assistant_delivery_replaces_non_monotonic_stream_content():
     messages = [
         {

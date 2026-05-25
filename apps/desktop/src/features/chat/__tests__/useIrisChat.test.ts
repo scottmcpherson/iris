@@ -470,6 +470,42 @@ describe("Iris chat inbox merging", () => {
     });
   });
 
+  it("replaces live stream content when an append chunk replays the cumulative prefix", () => {
+    const existing: Message[] = [
+      { id: "user-1", role: "user", content: "test", clientRequestId: "user-1" },
+      {
+        id: "stream-1",
+        role: "assistant",
+        content: "This desktop answer starts",
+        streaming: true,
+        streamMessageId: "stream-1",
+        clientRequestId: "user-1",
+      },
+    ];
+
+    const merged = mergeStreamDelivery(
+      existing,
+      inboxMessage({
+        id: "stream-1:edit:2",
+        content: "This desktop answer starts and continues once.",
+        metadata: {
+          streamMessageId: "stream-1",
+          chunkOperation: "append",
+          streaming: true,
+          finalize: false,
+        },
+      }),
+      "stream-1",
+      false,
+      "user-1",
+    );
+
+    expect(merged[1]).toMatchObject({
+      content: "This desktop answer starts and continues once.",
+      streaming: true,
+    });
+  });
+
   it("normalizes live tool metadata into stream tool events", () => {
     const existing: Message[] = [
       { id: "user-1", role: "user", content: "Run a command", clientRequestId: "user-1" },

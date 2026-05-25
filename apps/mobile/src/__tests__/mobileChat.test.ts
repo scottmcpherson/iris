@@ -87,6 +87,42 @@ describe("mobile chat helpers", () => {
     });
   });
 
+  it("does not duplicate visible text when a live stream event replays cumulative content", () => {
+    const messages: ChatMessage[] = [
+      { id: "request_1", role: "user", content: "Hi", clientRequestId: "request_1" },
+      {
+        id: "stream_1",
+        role: "assistant",
+        content: "This mobile answer starts",
+        streaming: true,
+        streamMessageId: "stream_1",
+        clientRequestId: "request_1",
+      },
+    ];
+
+    const result = mergeMobileChatEvent(
+      messages,
+      assistantEvent({
+        id: "event_stream_2",
+        externalMessageId: "stream_1:edit:2",
+        content: "This mobile answer starts and continues once.",
+        metadata: {
+          clientRequestId: "request_1",
+          streamMessageId: "stream_1",
+          streaming: true,
+          finalize: false,
+          chunkOperation: "append",
+        },
+        type: "message.assistant.delta",
+      }),
+    );
+
+    expect(result.messages[1]).toMatchObject({
+      content: "This mobile answer starts and continues once.",
+      streaming: true,
+    });
+  });
+
   it("exposes stable delivery info for deduping before merge", () => {
     expect(mobileChatEventInfo(assistantEvent({
       externalMessageId: "stream_1:edit:1",

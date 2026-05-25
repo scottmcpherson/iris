@@ -899,32 +899,9 @@ export async function uploadIrisCoreAttachment(
   runtime?: HermesRuntimeConfig,
 ) {
   if (payload.file) {
-    const form = new FormData();
-    form.set("file", payload.file, payload.name || payload.file.name);
-    form.set("profile", payload.profile);
-    form.set("runtimeId", payload.runtimeId || "runtime_local_hermes");
-    if (payload.mimeType) form.set("mimeType", payload.mimeType);
-    form.set("kind", payload.kind || attachmentKindFromMime(payload.mimeType || payload.file.type, payload.name));
-    if (payload.sessionId) form.set("sessionId", payload.sessionId);
-    if (payload.messageId) form.set("messageId", payload.messageId);
-    if (payload.metadata) form.set("metadata", JSON.stringify(payload.metadata));
-    try {
-      const response = await fetch(`${coreBaseUrl(runtime)}/attachments`, {
-        method: "POST",
-        headers: { Accept: "application/json" },
-        body: form,
-      });
-      const parsed = await response.json().catch(() => ({}));
-      if (!response.ok && parsed.ok !== false) {
-        return { ok: false, error: parsed.error || `HTTP ${response.status}` } as CoreResponse<{ attachment: IrisCoreAttachment }>;
-      }
-      return normalizeAttachmentUploadResponse(parsed as CoreResponse<{ attachment: IrisCoreAttachment }>, runtime);
-    } catch (error) {
-      return {
-        ok: false,
-        error: error instanceof Error ? error.message : "Attachment upload failed.",
-      } as CoreResponse<{ attachment: IrisCoreAttachment }>;
-    }
+    const result = await uploadBrowserAttachment(payload, runtime);
+    if (!shouldRetryAttachmentAsOctetStream(result, payload.mimeType)) return result;
+    return uploadBrowserAttachment(octetStreamAttachmentPayload(payload), runtime);
   }
 
   if (payload.localPath) {
@@ -932,10 +909,80 @@ export async function uploadIrisCoreAttachment(
       action: "core_upload_path",
       payload: { ...payload, runtime, connectionId: activeCoreConnection(runtime)?.id },
     });
-    return normalizeAttachmentUploadResponse(result, runtime);
+    const normalized = normalizeAttachmentUploadResponse(result, runtime);
+    if (!shouldRetryAttachmentAsOctetStream(normalized, payload.mimeType)) return normalized;
+    const retry = await invoke<CoreResponse<{ attachment: IrisCoreAttachment }>>("core_bridge", {
+      action: "core_upload_path",
+      payload: { ...octetStreamAttachmentPayload(payload), runtime, connectionId: activeCoreConnection(runtime)?.id },
+    });
+    return normalizeAttachmentUploadResponse(retry, runtime);
   }
 
   return { ok: false, error: "Attachment file is required." } as CoreResponse<{ attachment: IrisCoreAttachment }>;
+}
+
+async function uploadBrowserAttachment(
+  payload: {
+    file?: File;
+    name: string;
+    mimeType?: string;
+    kind?: AttachmentKind;
+    profile: string;
+    sessionId?: string;
+    messageId?: string;
+    runtimeId?: string;
+    metadata?: CoreMetadata;
+  },
+  runtime?: HermesRuntimeConfig,
+) {
+  if (!payload.file) {
+    return { ok: false, error: "Attachment file is required." } as CoreResponse<{ attachment: IrisCoreAttachment }>;
+  }
+  const form = new FormData();
+  form.set("file", payload.file, payload.name || payload.file.name);
+  form.set("profile", payload.profile);
+  form.set("runtimeId", payload.runtimeId || "runtime_local_hermes");
+  if (payload.mimeType) form.set("mimeType", payload.mimeType);
+  form.set("kind", payload.kind || attachmentKindFromMime(payload.mimeType || payload.file.type, payload.name));
+  if (payload.sessionId) form.set("sessionId", payload.sessionId);
+  if (payload.messageId) form.set("messageId", payload.messageId);
+  if (payload.metadata) form.set("metadata", JSON.stringify(payload.metadata));
+  try {
+    const response = await fetch(`${coreBaseUrl(runtime)}/attachments`, {
+      method: "POST",
+      headers: { Accept: "application/json" },
+      body: form,
+    });
+    const parsed = await response.json().catch(() => ({}));
+    if (!response.ok && parsed.ok !== false) {
+      return { ok: false, error: parsed.error || `HTTP ${response.status}` } as CoreResponse<{ attachment: IrisCoreAttachment }>;
+    }
+    return normalizeAttachmentUploadResponse(parsed as CoreResponse<{ attachment: IrisCoreAttachment }>, runtime);
+  } catch (error) {
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : "Attachment upload failed.",
+    } as CoreResponse<{ attachment: IrisCoreAttachment }>;
+  }
+}
+
+function shouldRetryAttachmentAsOctetStream(
+  result: CoreResponse<{ attachment: IrisCoreAttachment }>,
+  mimeType = "",
+) {
+  return !result.ok && mimeType !== "application/octet-stream" && /unsupported attachment type/i.test(result.error || "");
+}
+
+function octetStreamAttachmentPayload<T extends { mimeType?: string; metadata?: CoreMetadata }>(payload: T): T {
+  return {
+    ...payload,
+    mimeType: "application/octet-stream",
+    metadata: {
+      ...payload.metadata,
+      originalMimeType: payload.mimeType || "",
+      uploadFallback: "octet-stream",
+    },
+  };
 }
 
 export function irisCoreAttachmentUrl(runtime: HermesRuntimeConfig | undefined, path: string | undefined) {

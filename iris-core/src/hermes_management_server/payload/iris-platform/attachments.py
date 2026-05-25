@@ -78,7 +78,7 @@ def normalized_inbound_attachments(
                 name,
             )
             kind = kind or mime_type.split("/", 1)[0]
-            path = cache_inbound_attachment(file_bytes, name, kind, mime_type)
+            path, kind, mime_type = cache_inbound_attachment(file_bytes, name, kind, mime_type)
         else:
             path = str(item.get("path") or item.get("url") or item.get("mediaUrl") or "").strip()
         if not path:
@@ -92,15 +92,25 @@ def normalized_inbound_attachments(
     return attachments
 
 
-def cache_inbound_attachment(file_bytes: bytes, name: str, kind: str, mime_type: str) -> str:
+def cache_inbound_attachment(file_bytes: bytes, name: str, kind: str, mime_type: str) -> tuple[str, str, str]:
     extension = attachment_extension(name, mime_type, kind)
+    document_name = name or f"attachment{extension}"
     if kind == "audio" or mime_type.startswith("audio/"):
-        return cache_audio_from_bytes(file_bytes, extension=extension)
+        try:
+            return cache_audio_from_bytes(file_bytes, ext=extension), kind, mime_type
+        except ValueError:
+            return cache_document_from_bytes(file_bytes, document_name), "document", "application/octet-stream"
     if kind == "image" or mime_type.startswith("image/"):
-        return cache_image_from_bytes(file_bytes, extension=extension)
+        try:
+            return cache_image_from_bytes(file_bytes, ext=extension), kind, mime_type
+        except ValueError:
+            return cache_document_from_bytes(file_bytes, document_name), "document", "application/octet-stream"
     if kind == "video" or mime_type.startswith("video/"):
-        return cache_video_from_bytes(file_bytes, extension=extension)
-    return cache_document_from_bytes(file_bytes, extension=extension)
+        try:
+            return cache_video_from_bytes(file_bytes, ext=extension), kind, mime_type
+        except ValueError:
+            return cache_document_from_bytes(file_bytes, document_name), "document", "application/octet-stream"
+    return cache_document_from_bytes(file_bytes, document_name), kind, mime_type
 
 
 def attachment_extension(name: str, mime_type: str, kind: str) -> str:

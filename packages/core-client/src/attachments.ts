@@ -94,6 +94,8 @@ function isReactNativeFile(file: UploadAttachmentPayload["file"]): file is Exclu
       typeof file === "object" &&
       "uri" in file &&
       typeof file.uri === "string" &&
-      file.uri,
+      file.uri &&
+      !(file instanceof Blob) &&
+      !("bytes" in file),
   );
 }

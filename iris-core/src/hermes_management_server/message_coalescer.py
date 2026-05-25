@@ -273,7 +273,31 @@ def append_delta_content(existing: str, delta: str) -> str:
         return delta
     if not delta:
         return existing
+    replay_content = cumulative_replay_content(existing, delta)
+    if replay_content is not None:
+        return replay_content
+    overlap = stream_append_overlap(existing, delta)
+    if overlap >= 12:
+        return f"{existing}{delta[overlap:]}"
     return f"{existing}{delta}"
+
+
+def cumulative_replay_content(existing: str, delta: str) -> str | None:
+    if delta.startswith(existing) and (len(delta) > len(existing) or len(existing) >= 12):
+        return delta
+    current = existing.rstrip()
+    next_content = delta.lstrip()
+    if current and next_content.startswith(current) and (len(next_content) > len(current) or len(current) >= 12):
+        return next_content
+    return None
+
+
+def stream_append_overlap(existing: str, delta: str) -> int:
+    limit = min(len(existing), len(delta))
+    for size in range(limit, 0, -1):
+        if existing.endswith(delta[:size]):
+            return size
+    return 0
 
 
 def apply_stream_content(existing: str, content: str, operation: str) -> str:

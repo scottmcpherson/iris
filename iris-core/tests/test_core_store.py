@@ -405,6 +405,28 @@ def test_core_store_accepts_general_attachment_mime_types(tmp_path):
     assert is_allowed_attachment_mime("video/mp4")
     assert is_allowed_attachment_mime("application/zip")
     assert is_allowed_attachment_mime("application/octet-stream")
+    assert is_allowed_attachment_mime("application/vnd.sqlite3")
+
+
+def test_core_store_accepts_arbitrary_attachment_mime_types(tmp_path):
+    store = CoreStore(tmp_path / "core.sqlite3")
+    source = tmp_path / "data.sqlite"
+    content = b"SQLite format 3\x00"
+    source.write_bytes(content)
+
+    attachment = store.create_attachment(
+        source_path=source,
+        runtime_id="runtime_local_hermes",
+        profile="default",
+        name="data.sqlite",
+        mime_type="application/vnd.sqlite3",
+        kind="file",
+        size_bytes=len(content),
+        sha256=hashlib.sha256(content).hexdigest(),
+    )
+
+    assert attachment["kind"] == "file"
+    assert attachment["mimeType"] == "application/vnd.sqlite3"
 
 
 def test_client_message_metadata_overlay_drops_ambiguous_content_hashes(tmp_path):

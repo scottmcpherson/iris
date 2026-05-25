@@ -227,6 +227,59 @@ describe("core transport", () => {
     ]);
   });
 
+  it("keeps Expo FileSystem files as Blob-like multipart parts", async () => {
+    const NativeFormData = globalThis.FormData;
+    class FakeFormData {
+      parts: unknown[][] = [];
+
+      append(...args: unknown[]) {
+        this.parts.push(args);
+      }
+    }
+
+    vi.stubGlobal("FormData", FakeFormData);
+    let capturedForm: FakeFormData | undefined;
+    const fetchMock = vi.fn(async (_input, init) => {
+      capturedForm = init?.body as FakeFormData;
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          ok: true,
+          attachment: {
+            id: "att_image",
+            name: "photo.heic",
+            kind: "image",
+            mimeType: "image/heic",
+            size: 10,
+            downloadUrl: "/v1/attachments/att_image/content",
+          },
+        }),
+      };
+    }) as unknown as typeof fetch;
+    const client = createIrisCoreClient({ baseUrl: "http://core.local", fetch: fetchMock });
+    const expoFile = {
+      uri: "file:///tmp/photo.heic",
+      name: "photo.heic",
+      type: "image/heic",
+      bytes: async () => new Uint8Array([1, 2, 3]),
+    } as unknown as Blob;
+
+    try {
+      await uploadAttachment(client, {
+        file: expoFile,
+        name: "photo.heic",
+        mimeType: "image/heic",
+        kind: "image",
+        profile: "default",
+      });
+    } finally {
+      vi.stubGlobal("FormData", NativeFormData);
+    }
+
+    expect(capturedForm?.parts[0]).toEqual(["file", expoFile, "photo.heic"]);
+  });
+
   it("normalizes non-ok HTTP responses", async () => {
     const fetchMock = vi.fn(async () => ({
       ok: false,

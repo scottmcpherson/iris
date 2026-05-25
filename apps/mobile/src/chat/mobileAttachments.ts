@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Platform } from "react-native";
 import * as DocumentPicker from "expo-document-picker";
+import { File as ExpoFile } from "expo-file-system";
 import * as ImagePicker from "expo-image-picker";
 import {
   attachmentKindFromMime,
@@ -56,7 +57,7 @@ export function useMobileAttachmentDrafts() {
   async function addPhotosFromLibrary() {
     const result = await ImagePicker.launchImageLibraryAsync({
       allowsMultipleSelection: true,
-      mediaTypes: ["images"],
+      mediaTypes: ["images", "videos"],
       quality: 0.92,
     });
     if (result.canceled) return;
@@ -142,7 +143,7 @@ export function useMobileAttachmentDrafts() {
   };
 }
 
-async function uploadDraftAttachment(
+export async function uploadDraftAttachment(
   client: IrisCoreClient,
   draft: MobileAttachmentDraft,
   options: UploadDraftOptions,
@@ -161,7 +162,7 @@ async function uploadDraftAttachment(
     },
   };
   const result = await uploadAttachment(client, payload);
-  if (result.ok || draft.kind !== "audio" || !isUnsupportedAttachmentError(result.error)) {
+  if (result.ok || !isUnsupportedAttachmentError(result.error) || payload.mimeType === "application/octet-stream") {
     return result;
   }
   return uploadAttachment(client, {
@@ -170,7 +171,7 @@ async function uploadDraftAttachment(
     metadata: {
       ...payload.metadata,
       originalMimeType: draft.mimeType,
-      uploadFallback: "audio-octet-stream",
+      uploadFallback: "octet-stream",
     },
   });
 }
@@ -189,8 +190,8 @@ export function visibleAttachmentDrafts(attachments: MobileAttachmentDraft[]): M
   }));
 }
 
-function imageAssetToDraft(asset: ImagePicker.ImagePickerAsset): MobileAttachmentDraft {
-  const name = asset.fileName || imageFilename(asset.uri, asset.mimeType);
+export function imageAssetToDraft(asset: ImagePicker.ImagePickerAsset): MobileAttachmentDraft {
+  const name = asset.fileName || mediaFilename(asset.uri, asset.mimeType);
   const mimeType = asset.mimeType || mimeTypeFromName(name) || "image/jpeg";
   return {
     id: createAttachmentDraftId("image"),
@@ -206,7 +207,7 @@ function imageAssetToDraft(asset: ImagePicker.ImagePickerAsset): MobileAttachmen
   };
 }
 
-function documentAssetToDraft(asset: DocumentPicker.DocumentPickerAsset): MobileAttachmentDraft {
+export function documentAssetToDraft(asset: DocumentPicker.DocumentPickerAsset): MobileAttachmentDraft {
   const mimeType = asset.mimeType || mimeTypeFromName(asset.name);
   return {
     id: createAttachmentDraftId(),
@@ -222,7 +223,7 @@ function documentAssetToDraft(asset: DocumentPicker.DocumentPickerAsset): Mobile
   };
 }
 
-function voiceRecordingToDraft(recording: { uri: string; durationMillis: number }): MobileAttachmentDraft {
+export function voiceRecordingToDraft(recording: { uri: string; durationMillis: number }): MobileAttachmentDraft {
   const name = voiceRecordingFilename(recording.uri);
   const mimeType = voiceRecordingMimeType(name);
   return {
@@ -238,12 +239,30 @@ function voiceRecordingToDraft(recording: { uri: string; durationMillis: number 
 }
 
 function attachmentUploadFile(draft: MobileAttachmentDraft): IrisCoreAttachmentFile {
-  if (draft.file) return draft.file;
-  return {
+  const uriFile = {
     uri: draft.localPath || draft.previewUrl || "",
     name: draft.name,
     type: draft.mimeType,
   };
+  if (Platform.OS !== "web" && uriFile.uri) return nativeUploadFile(uriFile.uri, draft.name, draft.mimeType);
+  if (draft.file) return draft.file;
+  return uriFile;
+}
+
+function nativeUploadFile(uri: string, name: string, mimeType: string): IrisCoreAttachmentFile {
+  const file = new ExpoFile(uri) as unknown as Blob & { name?: string; type?: string };
+  defineReadonlyFallback(file, "name", name);
+  defineReadonlyFallback(file, "type", mimeType);
+  return file;
+}
+
+function defineReadonlyFallback(target: object, key: "name" | "type", value: string) {
+  if (!value || (key in target && typeof (target as Record<string, unknown>)[key] === "string")) return;
+  Object.defineProperty(target, key, {
+    configurable: true,
+    enumerable: true,
+    value,
+  });
 }
 
 function mergeUploadedAttachment(draft: MobileAttachmentDraft, uploaded: MessageAttachment): MessageAttachment {
@@ -269,10 +288,13 @@ function isUnsupportedAttachmentError(error = "") {
   return /unsupported attachment type/i.test(error);
 }
 
-function imageFilename(uri: string, mimeType?: string) {
+function mediaFilename(uri: string, mimeType?: string) {
   const cleanUri = uri.split("?")[0] || "";
   const uriName = cleanUri.split("/").filter(Boolean).pop();
   if (uriName && uriName.includes(".")) return uriName;
+  if (mimeType === "video/mp4") return "video.mp4";
+  if (mimeType === "video/quicktime") return "video.mov";
+  if (mimeType === "video/webm") return "video.webm";
   if (mimeType === "image/png") return "photo.png";
   if (mimeType === "image/webp") return "photo.webp";
   if (mimeType === "image/gif") return "photo.gif";

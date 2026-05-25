@@ -586,6 +586,57 @@ describe("irisCore", () => {
     expect(result.attachment.downloadUrl).toBe("http://127.0.0.1:8765/v1/attachments/att_123/content");
   });
 
+  it("retries uncommon file MIME uploads as octet-stream when Core rejects the type", async () => {
+    const fetch = vi.fn(async (_url: string, init: RequestInit) => {
+      const form = init.body as FormData;
+      if (fetch.mock.calls.length === 1) {
+        expect(form.get("mimeType")).toBe("application/vnd.sqlite3");
+        return {
+          ok: false,
+          status: 400,
+          json: async () => ({ ok: false, error: "Unsupported attachment type: application/vnd.sqlite3." }),
+        };
+      }
+      expect(form.get("mimeType")).toBe("application/octet-stream");
+      expect(JSON.parse(String(form.get("metadata")))).toMatchObject({
+        originalMimeType: "application/vnd.sqlite3",
+        uploadFallback: "octet-stream",
+      });
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          ok: true,
+          attachment: {
+            id: "att_sqlite",
+            name: "data.sqlite",
+            kind: "file",
+            mimeType: "application/octet-stream",
+            size: 12,
+            previewUrl: "",
+            downloadUrl: "/v1/attachments/att_sqlite/content",
+          },
+        }),
+      };
+    });
+    vi.stubGlobal("fetch", fetch);
+
+    const result = await uploadIrisCoreAttachment(
+      {
+        file: new File(["sqlite-bytes"], "data.sqlite", { type: "application/vnd.sqlite3" }),
+        name: "data.sqlite",
+        mimeType: "application/vnd.sqlite3",
+        kind: "file",
+        profile: "default",
+      },
+      defaultRuntimeConfig,
+    );
+
+    expect(result.ok).toBe(true);
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(result.attachment.downloadUrl).toBe("http://127.0.0.1:8765/v1/attachments/att_sqlite/content");
+  });
+
   it("routes local-path attachment uploads through the explicit native action", async () => {
     invoke.mockResolvedValue({
       ok: true,

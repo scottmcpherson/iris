@@ -74,7 +74,14 @@ export function MessageAttachments({
               if (contentUrl) openAttachment(contentUrl);
             }}
           >
-            {previewUrl ? (
+            {attachment.kind === "image" ? (
+              <ImageAttachmentPreview
+                attachment={attachment}
+                previewUrl={previewUrl}
+                contentUrl={contentUrl}
+                runtimeConfig={runtimeConfig}
+              />
+            ) : previewUrl ? (
               <img src={previewUrl} alt={attachment.name} />
             ) : (
               <span className="message-attachment-file">
@@ -88,6 +95,57 @@ export function MessageAttachments({
       })}
     </div>
   );
+}
+
+function ImageAttachmentPreview({
+  attachment,
+  previewUrl,
+  contentUrl,
+  runtimeConfig,
+}: {
+  attachment: MessageAttachment;
+  previewUrl: string;
+  contentUrl: string;
+  runtimeConfig: HermesRuntimeConfig;
+}) {
+  const sourceUrl = previewUrl || contentUrl;
+  const fallbackUrl = attachment.localPath ? convertFileSrc(attachment.localPath) : "";
+  const [imageSource, setImageSource] = useState(() => directImageSource(sourceUrl) || fallbackUrl);
+
+  useEffect(() => {
+    let cancelled = false;
+    const directSource = directImageSource(sourceUrl);
+    setImageSource(directSource || fallbackUrl);
+    if (!sourceUrl || directSource) return undefined;
+
+    getIrisCoreAttachmentDataUrl(runtimeConfig, sourceUrl, attachment.mimeType, attachment.name)
+      .then((result) => {
+        if (cancelled) return;
+        if (result.ok && result.dataUrl) {
+          setImageSource(result.localPath ? convertFileSrc(result.localPath) : result.dataUrl);
+          return;
+        }
+        setImageSource(fallbackUrl);
+      })
+      .catch(() => {
+        if (!cancelled) setImageSource(fallbackUrl);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [attachment.mimeType, attachment.name, fallbackUrl, runtimeConfig, sourceUrl]);
+
+  if (imageSource) return <img src={imageSource} alt={attachment.name} />;
+  return (
+    <span className="message-attachment-file">
+      <AttachmentKindIcon attachment={attachment} />
+    </span>
+  );
+}
+
+function directImageSource(url: string) {
+  return /^(asset|blob|data|file):/i.test(url) ? url : "";
 }
 
 function attachmentPreviewUrl(attachment: MessageAttachment, runtimeConfig: HermesRuntimeConfig) {

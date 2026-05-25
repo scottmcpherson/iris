@@ -13,6 +13,9 @@
       "appleTeamId": "5E845CEVPW",
       "infoPlist": {
         "NSLocalNetworkUsageDescription": "Iris Mobile connects to Iris Core on your desktop during device pairing and local development.",
+        "NSPhotoLibraryUsageDescription": "Allow Iris Mobile to access your photos.",
+        "NSCameraUsageDescription": "Allow Iris Mobile to use your camera to take photos.",
+        "NSMicrophoneUsageDescription": "Allow Iris Mobile to access your microphone.",
         "NSAppTransportSecurity": {
           "NSAllowsLocalNetworking": true,
           "NSExceptionDomains": {

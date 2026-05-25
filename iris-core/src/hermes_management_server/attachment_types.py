@@ -116,15 +116,7 @@ def normalize_attachment_mime_type(value: str) -> str:
 
 def is_allowed_attachment_mime(mime_type: str) -> bool:
     normalized = normalize_attachment_mime_type(mime_type)
-    if normalized == "application/octet-stream":
-        return True
-    if normalized.startswith(("image/", "audio/", "video/", "text/")):
-        return True
-    return normalized in (
-        DOCUMENT_ATTACHMENT_MIME_TYPES
-        | CODE_ATTACHMENT_MIME_TYPES
-        | ARCHIVE_ATTACHMENT_MIME_TYPES
-    )
+    return bool(normalized)
 
 
 def normalize_attachment_kind(kind: str, mime_type: str, filename: str = "") -> str:

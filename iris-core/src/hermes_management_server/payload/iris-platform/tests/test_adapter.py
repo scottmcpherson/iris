@@ -79,10 +79,10 @@ def load_adapter_module(monkeypatch: pytest.MonkeyPatch):
     gateway_platforms_base.MessageEvent = FakeMessageEvent
     gateway_platforms_base.MessageType = FakeMessageType
     gateway_platforms_base.SendResult = FakeSendResult
-    gateway_platforms_base.cache_audio_from_bytes = lambda *args, **kwargs: "/tmp/audio"
-    gateway_platforms_base.cache_document_from_bytes = lambda *args, **kwargs: "/tmp/document"
-    gateway_platforms_base.cache_image_from_bytes = lambda *args, **kwargs: "/tmp/image"
-    gateway_platforms_base.cache_video_from_bytes = lambda *args, **kwargs: "/tmp/video"
+    gateway_platforms_base.cache_audio_from_bytes = lambda _data, ext=".ogg": f"/tmp/audio{ext}"
+    gateway_platforms_base.cache_document_from_bytes = lambda _data, filename: f"/tmp/{filename}"
+    gateway_platforms_base.cache_image_from_bytes = lambda _data, ext=".jpg": f"/tmp/image{ext}"
+    gateway_platforms_base.cache_video_from_bytes = lambda _data, ext=".mp4": f"/tmp/video{ext}"
     gateway_session.SessionSource = FakeSessionSource
 
     monkeypatch.setitem(sys.modules, "gateway", gateway)
@@ -662,7 +662,7 @@ def test_discovery_filters_disabled_and_config_gated_commands(monkeypatch: pytes
     assert discovery.command_available({"name": "needs-key", "config_key": "openai"}, {"openai": "set"}) is True
 
 
-def test_attachment_normalization_accepts_paths_and_uploaded_audio(monkeypatch: pytest.MonkeyPatch):
+def test_attachment_normalization_accepts_paths_and_uploaded_files(monkeypatch: pytest.MonkeyPatch):
     load_adapter_module(monkeypatch)
     attachments = importlib.import_module("attachments")
 
@@ -673,11 +673,57 @@ def test_attachment_normalization_accepts_paths_and_uploaded_audio(monkeypatch: 
         [{"field": "clip", "name": "clip.webm", "kind": "audio"}],
         {"clip": {"filename": "clip.webm", "mimeType": "video/webm", "bytes": b"audio-bytes"}},
     )
+    document_rows = attachments.normalized_inbound_attachments(
+        [{"field": "doc", "name": "notes.txt", "kind": "document"}],
+        {"doc": {"filename": "notes.txt", "mimeType": "text/plain", "bytes": b"hello"}},
+    )
+    image_rows = attachments.normalized_inbound_attachments(
+        [{"field": "photo", "name": "photo.png", "kind": "image"}],
+        {"photo": {"filename": "photo.png", "mimeType": "image/png", "bytes": b"png"}},
+    )
 
     assert path_rows == [
         {"path": "/tmp/photo.png", "name": "photo.png", "kind": "image", "mimeType": "image/png"}
     ]
     assert upload_rows == [
-        {"path": "/tmp/audio", "name": "clip.webm", "kind": "audio", "mimeType": "audio/webm"}
+        {"path": "/tmp/audio.webm", "name": "clip.webm", "kind": "audio", "mimeType": "audio/webm"}
+    ]
+    assert document_rows == [
+        {"path": "/tmp/notes.txt", "name": "notes.txt", "kind": "document", "mimeType": "text/plain"}
+    ]
+    assert image_rows == [
+        {"path": "/tmp/image.png", "name": "photo.png", "kind": "image", "mimeType": "image/png"}
     ]
     assert attachments.message_type_for_attachments(upload_rows) == "voice"
+
+
+def test_attachment_normalization_falls_back_to_document_cache_for_unvalidated_media(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    load_adapter_module(monkeypatch)
+    attachments = importlib.import_module("attachments")
+
+    monkeypatch.setattr(
+        attachments,
+        "cache_image_from_bytes",
+        lambda _data, ext=".jpg": (_ for _ in ()).throw(ValueError("Unsupported image")),
+    )
+    monkeypatch.setattr(
+        attachments,
+        "cache_document_from_bytes",
+        lambda _data, name: f"/tmp/{name}",
+    )
+
+    rows = attachments.normalized_inbound_attachments(
+        [{"field": "photo", "name": "IMG_0111.heic", "kind": "image"}],
+        {"photo": {"filename": "IMG_0111.heic", "mimeType": "image/heic", "bytes": b"heic-bytes"}},
+    )
+
+    assert rows == [
+        {
+            "path": "/tmp/IMG_0111.heic",
+            "name": "IMG_0111.heic",
+            "kind": "document",
+            "mimeType": "application/octet-stream",
+        }
+    ]

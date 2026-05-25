@@ -1,5 +1,5 @@
 import { Stack } from "expo-router";
-import { ChatScreen } from "../../src/screens/ChatScreen";
+import { ChatScreen } from "../../../src/screens/ChatScreen";
 
 export default function SessionDetailRoute() {
   return (

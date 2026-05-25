@@ -62,6 +62,59 @@ describe("chat core", () => {
     });
   });
 
+  it("replaces live stream content when an append chunk replays the cumulative prefix", () => {
+    const optimistic = appendOptimisticSend([], "Hi", "request_1");
+    const partial = mergeStreamDelivery(optimistic.messages, delivery({ content: "This answer starts" }), "stream_1", false);
+    const replayed = mergeStreamDelivery(
+      partial,
+      delivery({ id: "event_2", content: "This answer starts with the final wording" }),
+      "stream_1",
+      false,
+    );
+
+    expect(replayed[1]).toMatchObject({
+      content: "This answer starts with the final wording",
+      streaming: true,
+    });
+  });
+
+  it("stitches meaningful overlap between live stream append chunks", () => {
+    const optimistic = appendOptimisticSend([], "Hi", "request_1");
+    const partial = mergeStreamDelivery(
+      optimistic.messages,
+      delivery({ content: "The assistant response must stay unique across" }),
+      "stream_1",
+      false,
+    );
+    const replayed = mergeStreamDelivery(
+      partial,
+      delivery({ id: "event_2", content: " unique across mobile and desktop." }),
+      "stream_1",
+      false,
+    );
+
+    expect(replayed[1]).toMatchObject({
+      content: "The assistant response must stay unique across mobile and desktop.",
+      streaming: true,
+    });
+  });
+
+  it("keeps intentionally repeated short live stream chunks", () => {
+    const optimistic = appendOptimisticSend([], "Hi", "request_1");
+    const partial = mergeStreamDelivery(optimistic.messages, delivery({ content: "no" }), "stream_1", false);
+    const repeated = mergeStreamDelivery(
+      partial,
+      delivery({ id: "event_2", content: "no" }),
+      "stream_1",
+      false,
+    );
+
+    expect(repeated[1]).toMatchObject({
+      content: "nono",
+      streaming: true,
+    });
+  });
+
   it("merges live tool metadata into streamed assistant messages", () => {
     const optimistic = appendOptimisticSend([], "Read the page", "request_1");
     const withTool = mergeStreamDelivery(

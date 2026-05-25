@@ -1,6 +1,6 @@
 import { router, useLocalSearchParams, type Href } from "expo-router";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { Alert, BackHandler, Platform, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from "react-native";
+import { BackHandler, Image, Platform, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import { GlassView, isLiquidGlassAvailable } from "expo-glass-effect";
@@ -23,6 +23,10 @@ import {
 } from "@iris/iris-query";
 import { type IrisCoreSession, type IrisProject } from "@iris/core-client";
 import { markMobileSessionRead, mobileSessionShowsUnread } from "../chat/sessionReadState";
+import {
+  mobileSidebarConnectionAccessibilityLabel,
+  mobileSidebarConnectionStatusLabel,
+} from "../connection/mobileConnectionStatus";
 import { useIrisConnection } from "../connection/useIrisConnection";
 import { useTheme } from "../theme/useTheme";
 import {
@@ -40,10 +44,10 @@ import {
   type MobileSidebarSectionId,
 } from "./mobileSidebarModel";
 import { MobileSettingsModal } from "./MobileSettingsModal";
-import { NativeSessionRow } from "./NativeSessionRow";
 import { SessionActionMenu, SessionRenameDialog, type SessionMenuAnchor } from "./SessionActionMenu";
 
-const useNativeContextMenu = Platform.OS === "ios";
+const SESSION_ROW_HEIGHT = 38;
+const irisSidebarIcon = require("../../../desktop/src/assets/iris-sidebar-icon-borderless.png");
 
 type MobileSidebarProps = {
   open: boolean;
@@ -64,8 +68,6 @@ type SessionMenuTarget = {
   pinKey: string;
   anchor: SessionMenuAnchor;
 };
-
-let mobileSidebarLastScrollY = 0;
 
 export function SidebarButton({ open = false, onPress }: { open?: boolean; onPress: () => void }) {
   const theme = useTheme();
@@ -215,7 +217,6 @@ function MobileSidebar({
   const insets = useSafeAreaInsets();
   const { client, clientKey, state } = useIrisConnection();
   const queryClient = useQueryClient();
-  const scrollRef = useRef<ScrollView>(null);
   const [settingsVisible, setSettingsVisible] = useState(false);
   const [collapsedSections, setCollapsedSections] = useState(
     () => loadMobileSidebarCollapsedSections(),
@@ -225,7 +226,6 @@ function MobileSidebar({
   );
   const { sessionId: routeSessionId } = useLocalSearchParams<{ sessionId?: string }>();
   const selectedSessionId = activeSessionId || (typeof routeSessionId === "string" ? routeSessionId : "");
-  const profile = "profile" in state ? state.profile : null;
   const [pinnedSessions, setPinnedSessions] = useState(() => loadMobileSidebarPinnedSessions());
   const [menuTarget, setMenuTarget] = useState<SessionMenuTarget | null>(null);
   const [menuError, setMenuError] = useState("");
@@ -255,16 +255,13 @@ function MobileSidebar({
   });
   const projectSessionsLoading = projectSessionQueries.some((query) => query.isLoading || query.isFetching);
   const projectSessionError = projectSessionQueries.find((query) => query.error)?.error;
-
-  useEffect(() => {
-    if (!open) return undefined;
-    const frame = requestAnimationFrame(() => {
-      if (mobileSidebarLastScrollY > 0) {
-        scrollRef.current?.scrollTo({ y: mobileSidebarLastScrollY, animated: false });
-      }
-    });
-    return () => cancelAnimationFrame(frame);
-  }, [open]);
+  const statusDotStyle = state.status === "connected"
+    ? styles.statusDotReady
+    : state.status === "connecting"
+      ? styles.statusDotConnecting
+      : state.status === "unpaired"
+        ? styles.statusDotIdle
+        : styles.statusDotOffline;
 
   function navigate(path: Href) {
     onClose();
@@ -367,56 +364,8 @@ function MobileSidebar({
     }
   }
 
-  // Direct handlers used by the native iOS context menu (no anchored glass overlay).
-  function startSessionRename(session: IrisCoreSession) {
-    setRenameTarget(session);
-    setRenameError("");
-  }
-
-  function confirmDeleteSession(session: IrisCoreSession, pinKey: string, pinned: boolean) {
-    Alert.alert(
-      "Delete session?",
-      `“${session.title || "Untitled session"}” will be permanently deleted.`,
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Delete",
-          style: "destructive",
-          onPress: () => {
-            void runSessionDelete(session, pinKey, pinned);
-          },
-        },
-      ],
-    );
-  }
-
-  async function runSessionDelete(session: IrisCoreSession, pinKey: string, pinned: boolean) {
-    try {
-      await deleteMutation.mutateAsync(session.id);
-      if (pinned) {
-        setPinnedSessions((current) => {
-          if (!current[pinKey]) return current;
-          const next = { ...current };
-          delete next[pinKey];
-          saveMobileSidebarPinnedSessions(next);
-          return next;
-        });
-      }
-      if (selectedSessionId === session.id) {
-        onClose();
-        router.replace("/sessions/new");
-      }
-    } catch (error) {
-      Alert.alert("Delete failed", error instanceof Error ? error.message : "Could not delete this session.");
-    }
-  }
-
   function sessionRowActions(session: IrisCoreSession, pinned: boolean, pinKey: string) {
     return {
-      pinned,
-      onPin: () => toggleSessionPinned(pinKey),
-      onRename: () => startSessionRename(session),
-      onDelete: () => confirmDeleteSession(session, pinKey, pinned),
       onLongPress: (anchor: SessionMenuAnchor) => openSessionMenu({ session, pinned, pinKey, anchor }),
     };
   }
@@ -445,31 +394,29 @@ function MobileSidebar({
       style={[styles.panel, !open ? styles.panelClosed : null, { width: panelWidth }]}
     >
       <View style={styles.header}>
-        <Text style={styles.brand}>Iris</Text>
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel="Open settings"
+          accessibilityLabel={`Open settings. ${mobileSidebarConnectionAccessibilityLabel(state)}`}
           onPress={() => setSettingsVisible(true)}
-          style={({ pressed }) => [styles.avatarButton, pressed ? styles.pressed : null]}
+          style={({ pressed }) => [styles.brandButton, pressed ? styles.pressed : null]}
         >
-          <Text style={styles.avatarText}>{avatarInitials(profile?.hostLabel)}</Text>
+          <Image source={irisSidebarIcon} resizeMode="cover" style={styles.brandMark} />
+          <View style={styles.brandCopy}>
+            <Text style={styles.brand} numberOfLines={1}>Iris</Text>
+            <View style={styles.brandStatusRow}>
+              <View style={[styles.statusDot, statusDotStyle]} />
+              <Text style={styles.brandStatusText} numberOfLines={1}>
+                {mobileSidebarConnectionStatusLabel(state)}
+              </Text>
+            </View>
+          </View>
         </Pressable>
       </View>
 
       <ScrollView
-        ref={scrollRef}
         style={styles.sidebarScroll}
         contentContainerStyle={styles.sidebarScrollInner}
         showsVerticalScrollIndicator={false}
-        scrollEventThrottle={16}
-        onContentSizeChange={() => {
-          if (open && mobileSidebarLastScrollY > 0) {
-            scrollRef.current?.scrollTo({ y: mobileSidebarLastScrollY, animated: false });
-          }
-        }}
-        onScroll={(event) => {
-          mobileSidebarLastScrollY = Math.max(0, event.nativeEvent.contentOffset.y);
-        }}
       >
         {!client ? <Text style={styles.empty}>Reconnect to load the sidebar.</Text> : null}
         {sessionsQuery.isLoading || projectsQuery.isLoading ? <Text style={styles.empty}>Loading sidebar...</Text> : null}
@@ -597,16 +544,6 @@ function MobileSidebar({
   );
 }
 
-function avatarInitials(label?: string) {
-  const words = (label || "Iris")
-    .trim()
-    .split(/\s+/u)
-    .filter(Boolean);
-  if (!words.length) return "I";
-  if (words.length === 1) return words[0].slice(0, 2).toUpperCase();
-  return `${words[0][0] || ""}${words[1][0] || ""}`.toUpperCase();
-}
-
 function SidebarSection({
   children,
   collapsed,
@@ -673,20 +610,12 @@ function SidebarSessionRow({
   nested = false,
   onPress,
   onLongPress,
-  onPin,
-  onRename,
-  onDelete,
-  pinned = false,
   selected,
   session,
 }: {
   nested?: boolean;
   onPress: () => void;
   onLongPress?: (anchor: SessionMenuAnchor) => void;
-  onPin: () => void;
-  onRename: () => void;
-  onDelete: () => void;
-  pinned?: boolean;
   selected?: boolean;
   session: IrisCoreSession;
 }) {
@@ -694,21 +623,6 @@ function SidebarSessionRow({
   const styles = createStyles(theme);
   const rowRef = useRef<View>(null);
   const unread = mobileSessionShowsUnread(session, Boolean(selected));
-
-  if (useNativeContextMenu) {
-    return (
-      <NativeSessionRow
-        session={session}
-        selected={selected}
-        nested={nested}
-        pinned={pinned}
-        onPress={onPress}
-        onPin={onPin}
-        onRename={onRename}
-        onDelete={onDelete}
-      />
-    );
-  }
 
   function handleLongPress() {
     if (!onLongPress) return;
@@ -800,13 +714,7 @@ function createStyles(theme: ReturnType<typeof useTheme>) {
       minHeight: 76,
       flexDirection: "row",
       alignItems: "center",
-      justifyContent: "space-between",
       gap: theme.spacing[3],
-    },
-    brand: {
-      color: theme.colors.text,
-      fontSize: 32,
-      fontWeight: "700",
     },
     roundButton: {
       width: 52,
@@ -829,21 +737,60 @@ function createStyles(theme: ReturnType<typeof useTheme>) {
       alignItems: "center",
       justifyContent: "center",
     },
-    avatarButton: {
-      width: 52,
-      height: 52,
-      borderRadius: 26,
+    brandButton: {
+      flex: 1,
+      minWidth: 0,
+      minHeight: 64,
+      borderRadius: theme.radius.xl,
+      flexDirection: "row",
       alignItems: "center",
-      justifyContent: "center",
-      borderWidth: 1,
-      borderColor: theme.colors.borderStrong,
-      backgroundColor: theme.colors.surfaceRaised,
+      gap: theme.spacing[3],
     },
-    avatarText: {
+    brandMark: {
+      width: 56,
+      height: 56,
+      borderRadius: 15,
+    },
+    brandCopy: {
+      flex: 1,
+      minWidth: 0,
+      gap: 4,
+    },
+    brand: {
       color: theme.colors.text,
-      fontSize: 16,
-      fontWeight: "800",
-      lineHeight: 20,
+      fontSize: 26,
+      lineHeight: 31,
+      fontWeight: "700",
+    },
+    brandStatusRow: {
+      minWidth: 0,
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 8,
+    },
+    statusDot: {
+      width: 13,
+      height: 13,
+      borderRadius: 7,
+    },
+    statusDotReady: {
+      backgroundColor: theme.colors.success,
+    },
+    statusDotConnecting: {
+      backgroundColor: theme.colors.warning,
+    },
+    statusDotOffline: {
+      backgroundColor: theme.colors.danger,
+    },
+    statusDotIdle: {
+      backgroundColor: theme.colors.textMuted,
+    },
+    brandStatusText: {
+      flex: 1,
+      minWidth: 0,
+      color: theme.colors.textMuted,
+      fontSize: 18,
+      lineHeight: 23,
     },
     sidebarScroll: {
       flex: 1,
@@ -898,7 +845,7 @@ function createStyles(theme: ReturnType<typeof useTheme>) {
       fontWeight: "600",
     },
     sessionRow: {
-      minHeight: 34,
+      height: SESSION_ROW_HEIGHT,
       borderRadius: theme.radius.md,
       paddingLeft: theme.spacing[2],
       paddingRight: 0,
@@ -928,6 +875,7 @@ function createStyles(theme: ReturnType<typeof useTheme>) {
     sessionTime: {
       color: theme.colors.textMuted,
       fontSize: 12,
+      lineHeight: 18,
       minWidth: 36,
       textAlign: "right",
     },
