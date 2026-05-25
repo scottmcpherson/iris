@@ -235,6 +235,7 @@ pub fn run() {
             core_process::core_sidecar_start,
             core_process::core_sidecar_stop,
             core_process::core_sidecar_restart,
+            core_process::core_set_remote_access,
             connection_profiles::core_install_hermes_plugin,
             connection_profiles::core_service_install,
             connection_profiles::core_service_uninstall,

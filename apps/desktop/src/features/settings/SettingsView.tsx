@@ -117,6 +117,9 @@ export function SettingsView({
     () => runtimeConfig.coreConnections.filter((connection) => connection.mode === "tailscale"),
     [runtimeConfig.coreConnections],
   );
+  const remoteAccessOn = Boolean(sidecarStatus && !isLoopbackBind(sidecarStatus.bindHost));
+  const coreManagedByApp = Boolean(sidecarStatus?.startedByApp);
+  const coreHost = remoteAccessOn ? "0.0.0.0" : "127.0.0.1";
 
   useEffect(() => {
     const connection = activeCoreConnection(runtimeConfig);
@@ -135,6 +138,31 @@ export function SettingsView({
     } catch {
       setSidecarStatus(null);
     }
+  }
+
+  async function setRemoteAccess(next: boolean) {
+    await withBusy("remote-access", async () => {
+      try {
+        await invoke("core_set_remote_access", { allow: next });
+        const result = await invoke<CoreSidecarStatus>("core_sidecar_restart", {
+          config: {
+            host: next ? "0.0.0.0" : "127.0.0.1",
+            port: parsePort(localDraft.port, defaultCorePort),
+            hermesHome: localDraft.hermesHome.trim() || undefined,
+            autoStart: true,
+          },
+        });
+        setSidecarStatus(result);
+        if (result.ready) {
+          toast.success(next ? "Other devices can now reach this Mac over Tailscale." : "Iris Core is now local-only.");
+        } else {
+          toast.error(result.error || "Could not update the Iris Core binding.");
+        }
+        onRefresh();
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : "Could not update remote access.");
+      }
+    });
   }
 
   async function withBusy(action: string, run: () => Promise<void>) {
@@ -178,7 +206,7 @@ export function SettingsView({
 
   async function startOrRestartCore(restart = false) {
     await withBusy(restart ? "core-restart" : "core-start", async () => {
-      const config = localCoreConfig(localDraft);
+      const config = localCoreConfig(localDraft, coreHost);
       const result = await invoke<CoreSidecarStatus>(restart ? "core_sidecar_restart" : "core_sidecar_start", { config });
       setSidecarStatus(result);
       if (result.ready) {
@@ -193,7 +221,7 @@ export function SettingsView({
   async function installCoreService() {
     await withBusy("service-install", async () => {
       const result = await invoke<CoreCliResult>("core_service_install", {
-        config: localServiceConfig(localDraft),
+        config: localServiceConfig(localDraft, coreHost),
         replace: true,
       });
       if (result.ok) {
@@ -206,7 +234,7 @@ export function SettingsView({
 
   async function uninstallCoreService() {
     await withBusy("service-uninstall", async () => {
-      const result = await invoke<CoreCliResult>("core_service_uninstall", { config: localCoreConfig(localDraft) });
+      const result = await invoke<CoreCliResult>("core_service_uninstall", { config: localCoreConfig(localDraft, coreHost) });
       if (result.ok) {
         toast.success("Iris Core login service removed.");
       } else {
@@ -253,7 +281,7 @@ export function SettingsView({
           onClick={() => setMobilePairingOpen(true)}
         >
           <Smartphone data-icon="inline-start" />
-          Pair mobile device
+          Pair a device
         </Button>
         <Button
           variant="appNeutral"
@@ -314,6 +342,18 @@ export function SettingsView({
                     description="Installs a LaunchAgent so Core stays available even when Iris isn't open."
                     checked={localDraft.installLaunchAgent}
                     onCheckedChange={(installLaunchAgent) => setLocalDraft({ ...localDraft, installLaunchAgent })}
+                  />
+                  <SwitchField
+                    id="local-remote-access"
+                    label="Allow other devices to connect over Tailscale"
+                    description={
+                      coreManagedByApp
+                        ? "Binds Iris Core to your tailnet so paired phones and desktops can reach this Mac. Off keeps Core on this Mac only."
+                        : "In development, Core is started by the dev server — run `npm run dev:mobile-pairing` to host over Tailscale. The packaged app uses this switch."
+                    }
+                    checked={remoteAccessOn}
+                    disabled={!coreManagedByApp || busyAction === "remote-access"}
+                    onCheckedChange={(next) => void setRemoteAccess(next)}
                   />
                 </FieldGroup>
               </FieldSet>
@@ -514,17 +554,19 @@ function SwitchField({
   label,
   description,
   checked,
+  disabled,
   onCheckedChange,
 }: {
   id: string;
   label: string;
   description?: string;
   checked: boolean;
+  disabled?: boolean;
   onCheckedChange: (checked: boolean) => void;
 }) {
   return (
     <Field orientation="horizontal" className="min-h-8 items-center">
-      <Switch id={id} checked={checked} onCheckedChange={onCheckedChange} />
+      <Switch id={id} checked={checked} disabled={disabled} onCheckedChange={onCheckedChange} />
       <FieldContent>
         <FieldLabel htmlFor={id}>{label}</FieldLabel>
         {description ? <FieldDescription>{description}</FieldDescription> : null}
@@ -572,22 +614,26 @@ function localDraftFromProfile(profile: IrisCoreConnectionProfile): LocalDraft {
   };
 }
 
-function localCoreConfig(draft: LocalDraft) {
+function localCoreConfig(draft: LocalDraft, host: string) {
   return {
-    host: "127.0.0.1",
+    host,
     port: parsePort(draft.port, defaultCorePort),
     hermesHome: draft.hermesHome.trim() || undefined,
     autoStart: draft.autoStart,
   };
 }
 
-function localServiceConfig(draft: LocalDraft) {
+function localServiceConfig(draft: LocalDraft, host: string) {
   return {
-    host: "127.0.0.1",
+    host,
     port: parsePort(draft.port, defaultCorePort),
     hermesHome: draft.hermesHome.trim() || undefined,
     autoStart: draft.autoStart,
   };
+}
+
+function isLoopbackBind(host: string) {
+  return ["", "localhost", "127.0.0.1", "::1", "[::1]"].includes(host.trim().toLowerCase());
 }
 
 function parsePort(value: string, fallback: number) {

@@ -283,7 +283,7 @@ async function ensureManagedCoreForMobilePairing(
     if (status.ready && status.port === port && isLoopbackBind(status.bindHost) && !status.startedByApp) {
       return {
         ok: false,
-        error: `Iris Core is running on ${status.bindHost || "127.0.0.1"}:${port}, so mobile cannot reach it. Restart the dev session with \`IRIS_CORE_HOST=0.0.0.0 npm run dev\`, then regenerate the QR.`,
+        error: `Iris Core is on ${status.bindHost || "127.0.0.1"}:${port} and is managed by the dev server, so other devices can't reach it. Run \`npm run dev:mobile-pairing\`, then regenerate the QR.`,
       };
     }
     const result = await invoke<CoreSidecarStatus>(

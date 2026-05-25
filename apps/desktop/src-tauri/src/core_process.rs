@@ -88,8 +88,13 @@ pub struct CoreHealth {
 
 pub async fn startup_managed_core(app: AppHandle, state: CoreProcessState) {
     let handle = app.clone();
+    let allow_remote = read_remote_access_pref(&app);
     let result = tauri::async_runtime::spawn_blocking(move || {
-        start_core_blocking(&handle, &state, CoreSidecarConfig::default())
+        let config = CoreSidecarConfig {
+            host: Some(if allow_remote { "0.0.0.0" } else { "127.0.0.1" }.to_string()),
+            ..CoreSidecarConfig::default()
+        };
+        start_core_blocking(&handle, &state, config)
     })
     .await
     .map_err(|err| format!("Core startup task failed: {err}"))
@@ -150,6 +155,40 @@ pub async fn core_sidecar_restart(
 
 pub fn stop_core_now(state: &CoreProcessState) {
     let _ = stop_core_blocking(state);
+}
+
+/// Persisted preference for whether managed Core binds to the tailnet (0.0.0.0) so other
+/// devices can reach it, or stays loopback-only. Read by `startup_managed_core` so the
+/// choice survives app restarts.
+#[tauri::command]
+pub async fn core_set_remote_access(app: AppHandle, allow: bool) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || write_remote_access_pref(&app, allow))
+        .await
+        .map_err(|err| format!("Set remote access task failed: {err}"))?
+}
+
+fn remote_access_pref_path(app: &AppHandle) -> PathBuf {
+    app.path()
+        .app_config_dir()
+        .unwrap_or_else(|_| std::env::temp_dir().join("Iris"))
+        .join("managed-core.json")
+}
+
+fn write_remote_access_pref(app: &AppHandle, allow: bool) -> Result<(), String> {
+    let path = remote_access_pref_path(app);
+    if let Some(parent) = path.parent() {
+        create_dir_all(parent).map_err(|err| format!("Could not create Iris config dir: {err}"))?;
+    }
+    std::fs::write(&path, format!("{{\"allowRemote\":{allow}}}"))
+        .map_err(|err| format!("Could not save remote access preference: {err}"))
+}
+
+fn read_remote_access_pref(app: &AppHandle) -> bool {
+    std::fs::read_to_string(remote_access_pref_path(app))
+        .ok()
+        .and_then(|text| serde_json::from_str::<Value>(&text).ok())
+        .and_then(|value| value.get("allowRemote").and_then(Value::as_bool))
+        .unwrap_or(false)
 }
 
 fn status_blocking(state: &CoreProcessState) -> Result<CoreSidecarStatus, String> {
