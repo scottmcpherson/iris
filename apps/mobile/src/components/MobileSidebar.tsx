@@ -9,7 +9,6 @@ import { GlassButton } from "./GlassButton";
 import { GlassSurface } from "./GlassSurface";
 import Animated, {
   Easing,
-  interpolate,
   runOnJS,
   useAnimatedStyle,
   useSharedValue,
@@ -31,6 +30,7 @@ import {
 } from "../connection/mobileConnectionStatus";
 import { useIrisConnection } from "../connection/useIrisConnection";
 import { useTheme } from "../theme/useTheme";
+import { useMobileSidebarActions } from "./MobileSidebarContext";
 import {
   buildMobileSidebarModel,
   loadMobileSidebarCollapsedSections,
@@ -53,6 +53,9 @@ const SESSION_ROW_HEIGHT = 38;
 const PROJECT_ACTION_SIZE = 38;
 const PROJECT_ACTION_ICON_SIZE = 17;
 const SIDEBAR_RIGHT_RAIL_INSET = (PROJECT_ACTION_SIZE - PROJECT_ACTION_ICON_SIZE) / 2;
+const DRAWER_OPEN_DURATION_MS = 320;
+const DRAWER_CLOSE_DURATION_MS = 180;
+const SIDEBAR_SELECTION_NAVIGATION_DELAY_MS = DRAWER_CLOSE_DURATION_MS;
 // Height (below the safe-area top) of the page header row kept clear of the close
 // overlay so the nav toggle stays directly pressable while the sidebar is open.
 const PAGE_HEADER_TAP_INSET = 60;
@@ -100,7 +103,13 @@ export function SidebarButton({ open = false, onPress }: { open?: boolean; onPre
   );
 }
 
-export function MobileSidebarDrawer({ open, onClose, onOpen, selectedSessionId, children }: MobileSidebarDrawerProps) {
+export function MobileSidebarDrawer({
+  open,
+  onClose,
+  onOpen,
+  selectedSessionId,
+  children,
+}: MobileSidebarDrawerProps) {
   const theme = useTheme();
   const styles = createStyles(theme);
   const insets = useSafeAreaInsets();
@@ -112,7 +121,7 @@ export function MobileSidebarDrawer({ open, onClose, onOpen, selectedSessionId, 
 
   useEffect(() => {
     progress.set(withTiming(open ? 1 : 0, {
-      duration: 320,
+      duration: open ? DRAWER_OPEN_DURATION_MS : DRAWER_CLOSE_DURATION_MS,
       easing: Easing.out(Easing.cubic),
     }));
   }, [open, progress]);
@@ -173,15 +182,17 @@ export function MobileSidebarDrawer({ open, onClose, onOpen, selectedSessionId, 
   }, [onClose, open]);
 
   const pageStyle = useAnimatedStyle(() => ({
-    borderTopLeftRadius: interpolate(progress.value, [0, 1], [0, 28]),
-    borderBottomLeftRadius: interpolate(progress.value, [0, 1], [0, 28]),
     transform: [{ translateX: progress.value * drawerOffset }],
   }));
 
   return (
     <View style={styles.drawerRoot}>
       <MobileSidebar open={open} onClose={onClose} panelWidth={panelWidth} selectedSessionId={selectedSessionId} />
-      <Animated.View style={[styles.pageLayer, pageStyle]}>
+      <Animated.View
+        renderToHardwareTextureAndroid
+        shouldRasterizeIOS
+        style={[styles.pageLayer, pageStyle]}
+      >
         {children}
         {open ? (
           <GestureDetector gesture={closeGesture}>
@@ -220,6 +231,7 @@ function MobileSidebar({
   const keyboardOffset = useSharedValue(0);
   const keyboardStyle = useAnimatedStyle(() => ({ transform: [{ translateY: -keyboardOffset.value }] }));
   const { client, clientKey, state } = useIrisConnection();
+  const { startSessionTransition } = useMobileSidebarActions();
   const queryClient = useQueryClient();
   const [settingsVisible, setSettingsVisible] = useState(false);
   const searchInputRef = useRef<TextInput>(null);
@@ -329,7 +341,7 @@ function MobileSidebar({
 
   function navigate(path: Href) {
     onClose();
-    router.push(path);
+    setTimeout(() => router.replace(path), SIDEBAR_SELECTION_NAVIGATION_DELAY_MS);
   }
 
   function newChatHref(projectId?: string): Href {
@@ -356,9 +368,17 @@ function MobileSidebar({
   }
 
   function openSession(session: IrisCoreSession) {
-    markSessionRead(session);
+    if (session.id === selectedSessionId) {
+      onClose();
+      setTimeout(() => markSessionRead(session), SIDEBAR_SELECTION_NAVIGATION_DELAY_MS);
+      return;
+    }
+    startSessionTransition(session.id);
     onClose();
-    router.push({ pathname: "/sessions/[sessionId]", params: { sessionId: session.id } });
+    setTimeout(() => {
+      markSessionRead(session);
+      router.replace({ pathname: "/sessions/[sessionId]", params: { sessionId: session.id } });
+    }, SIDEBAR_SELECTION_NAVIGATION_DELAY_MS);
   }
 
   function markSessionRead(session: IrisCoreSession) {
@@ -882,13 +902,7 @@ function createStyles(theme: ReturnType<typeof useTheme>) {
     web: {
       boxShadow: `-10px 0 24px ${theme.colors.background}`,
     },
-    default: {
-      shadowColor: theme.colors.background,
-      shadowOffset: { width: -10, height: 0 },
-      shadowOpacity: 0.42,
-      shadowRadius: 24,
-      elevation: 18,
-    },
+    default: {},
   });
 
   return StyleSheet.create({
@@ -901,7 +915,6 @@ function createStyles(theme: ReturnType<typeof useTheme>) {
       flex: 1,
       zIndex: 1,
       backgroundColor: theme.colors.screen,
-      overflow: "hidden",
       ...pageShadow,
     },
     pageCloseLayer: {

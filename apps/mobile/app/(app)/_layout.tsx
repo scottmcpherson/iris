@@ -1,11 +1,16 @@
 import { Stack } from "expo-router";
 import { MobileSidebarDrawer } from "../../src/components/MobileSidebar";
-import { MobileSidebarStateProvider, useMobileSidebar } from "../../src/components/MobileSidebarContext";
+import {
+  MobileSidebarStateProvider,
+  useMobileSidebarActions,
+  useMobileSidebarState,
+} from "../../src/components/MobileSidebarContext";
 import { useTheme } from "../../src/theme/useTheme";
 
 function AppDrawer() {
   const theme = useTheme();
-  const { open, selectedSessionId, openSidebar, closeSidebar } = useMobileSidebar();
+  const { open, selectedSessionId } = useMobileSidebarState();
+  const { openSidebar, closeSidebar } = useMobileSidebarActions();
 
   return (
     <MobileSidebarDrawer

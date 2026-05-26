@@ -56,7 +56,7 @@ import { ComposerOptionMenu, type ComposerOptionGroup } from "../components/Comp
 import { GlassButton } from "../components/GlassButton";
 import { MessageBubble } from "../components/MessageBubble";
 import { SidebarButton } from "../components/MobileSidebar";
-import { useMobileSidebar } from "../components/MobileSidebarContext";
+import { useMobileSidebarActions, useMobileSidebarState } from "../components/MobileSidebarContext";
 import { type OptionSheetItem } from "../components/OptionSheet";
 import { useMobileAttachmentDrafts } from "../chat/mobileAttachments";
 import { mergeMobileChatEvent, mobileChatEventInfo, mobileSendMetadata } from "../chat/mobileChat";
@@ -71,6 +71,7 @@ import { keyboardHideDuration, requestFastKeyboardDismiss } from "../lib/keyboar
 import { useTheme } from "../theme/useTheme";
 
 const HEADER_BAR_HEIGHT = 60;
+const FALLBACK_COMPOSER_CLEARANCE = 220;
 const NO_PROJECT_ID = "__no-project__";
 
 export function ChatScreen() {
@@ -137,7 +138,7 @@ export function ChatScreen() {
   const processedDeliveryIdsRef = useRef<Set<string>>(new Set());
   const [eventCursorReady, setEventCursorReady] = useState(false);
   const [requestActive, setRequestActive] = useState(false);
-  const { open: sidebarOpen, toggleSidebar, setSelectedSessionId } = useMobileSidebar();
+  const { finishSessionTransition, setSelectedSessionId } = useMobileSidebarActions();
   const [isAtBottom, setIsAtBottom] = useState(true);
   const [composerHeight, setComposerHeight] = useState(0);
   const activeSelectionReadMarkedRef = useRef("");
@@ -265,6 +266,11 @@ export function ChatScreen() {
   useEffect(() => {
     setSelectedSessionId(sessionId || "");
   }, [sessionId, setSelectedSessionId]);
+
+  useEffect(() => {
+    if (!isExistingSession || !sessionId || detailQuery.isLoading) return;
+    finishSessionTransition(sessionId);
+  }, [detailQuery.isLoading, finishSessionTransition, isExistingSession, sessionId]);
 
   useEffect(() => {
     cursorRef.current = cursor;
@@ -587,7 +593,6 @@ export function ChatScreen() {
       {!client ? (
         <Text style={styles.empty}>{isExistingSession ? "Reconnect before chatting." : "Reconnect before starting a chat."}</Text>
       ) : null}
-      {isExistingSession && detailQuery.isLoading ? <ActivityIndicator color={theme.colors.textMuted} /> : null}
       {isExistingSession && detailQuery.error ? <Text style={styles.error}>{detailQuery.error.message}</Text> : null}
       {!isExistingSession && (agentsQuery.isLoading || projectsQuery.isLoading) ? (
         <ActivityIndicator color={theme.colors.textMuted} />
@@ -637,18 +642,10 @@ export function ChatScreen() {
           <Text style={styles.emptyTitle}>What should we work on?</Text>
         </Animated.View>
       ) : null}
+      <ChatContentCurtain bottom={composerHeight || FALLBACK_COMPOSER_CLEARANCE} />
       <View pointerEvents="box-none" style={[styles.header, { height: insets.top + HEADER_BAR_HEIGHT }]}>
         <View pointerEvents="box-none" style={[styles.headerRow, { paddingTop: insets.top }]}>
-          <SidebarButton
-            open={sidebarOpen}
-            onPress={() => {
-              // Drop composer focus/keyboard so the sidebar isn't competing with
-              // it, and collapse it snappily rather than trailing the keyboard.
-              requestFastKeyboardDismiss();
-              Keyboard.dismiss();
-              toggleSidebar();
-            }}
-          />
+          <ChatSidebarButton />
           {isExistingSession ? (
             <GlassButton
               accessibilityLabel="Start new chat"
@@ -687,7 +684,6 @@ export function ChatScreen() {
         <ChatComposer
           disabled={!client || sending || (!isExistingSession && !selectedAgent)}
           requestActive={requestActive}
-          obscured={sidebarOpen}
           contextBar={composerContextBar}
           slashCommands={slashCommandsQuery.data?.commands || []}
           slashCommandsLoading={slashCommandsQuery.isFetching}
@@ -704,6 +700,48 @@ export function ChatScreen() {
         />
       </View>
     </View>
+  );
+}
+
+function ChatSidebarButton() {
+  const { open } = useMobileSidebarState();
+  const { toggleSidebar } = useMobileSidebarActions();
+
+  return (
+    <SidebarButton
+      open={open}
+      onPress={() => {
+        // Drop composer focus/keyboard so the sidebar isn't competing with it.
+        requestFastKeyboardDismiss();
+        Keyboard.dismiss();
+        toggleSidebar();
+      }}
+    />
+  );
+}
+
+function ChatContentCurtain({ bottom }: { bottom: number }) {
+  const theme = useTheme();
+  const styles = createStyles(theme);
+  const { transitioningSessionId } = useMobileSidebarState();
+  const opacity = useSharedValue(transitioningSessionId ? 1 : 0);
+
+  useEffect(() => {
+    opacity.set(withTiming(transitioningSessionId ? 1 : 0, {
+      duration: transitioningSessionId ? 0 : 180,
+      easing: Easing.out(Easing.cubic),
+    }));
+  }, [opacity, transitioningSessionId]);
+
+  const curtainStyle = useAnimatedStyle(() => ({
+    opacity: opacity.value,
+  }));
+
+  return (
+    <Animated.View
+      pointerEvents="none"
+      style={[styles.chatContentCurtain, { bottom }, curtainStyle]}
+    />
   );
 }
 
@@ -818,7 +856,15 @@ function createStyles(theme: ReturnType<typeof useTheme>) {
       top: 0,
       left: 0,
       right: 0,
+      zIndex: 2,
+    },
+    chatContentCurtain: {
+      position: "absolute",
+      top: 0,
+      left: 0,
+      right: 0,
       zIndex: 1,
+      backgroundColor: theme.colors.screen,
     },
     headerRow: {
       flex: 1,
