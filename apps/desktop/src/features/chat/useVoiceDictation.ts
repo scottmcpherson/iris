@@ -21,7 +21,13 @@ type UseVoiceDictationOptions = {
 const MAX_RECORDING_MS = 120_000;
 const MIN_RECORDING_MS = 400;
 const MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
-export const DICTATION_WAVEFORM_BAR_COUNT = 34;
+// Length of the scrolling amplitude history. The strip is right-anchored and
+// clipped by the pill, so this only needs to comfortably exceed the number of
+// bars that fit across the composer at its widest.
+export const DICTATION_WAVEFORM_BAR_COUNT = 72;
+// How often a fresh amplitude sample is pushed onto the history. ~15 samples a
+// second reads as a smooth leftward scroll without re-rendering on every frame.
+const WAVEFORM_SAMPLE_INTERVAL_MS = 66;
 const EMPTY_AUDIO_LEVELS = Array.from({ length: DICTATION_WAVEFORM_BAR_COUNT }, () => 0);
 
 export function useVoiceDictation({
@@ -36,6 +42,7 @@ export function useVoiceDictation({
   const analyserRef = useRef<AnalyserNode | null>(null);
   const silentGainRef = useRef<GainNode | null>(null);
   const animationFrameRef = useRef<number | null>(null);
+  const waveformRef = useRef<number[]>(EMPTY_AUDIO_LEVELS.slice());
   const elapsedIntervalRef = useRef<number | null>(null);
   const maxTimeoutRef = useRef<number | null>(null);
   const chunksRef = useRef<Blob[]>([]);
@@ -195,10 +202,8 @@ export function useVoiceDictation({
     const audioContext = new AudioContextConstructor();
     const source = audioContext.createMediaStreamSource(stream);
     const analyser = audioContext.createAnalyser();
-    analyser.fftSize = 512;
-    analyser.smoothingTimeConstant = 0.28;
-    analyser.minDecibels = -78;
-    analyser.maxDecibels = -12;
+    analyser.fftSize = 1024;
+    analyser.smoothingTimeConstant = 0.2;
     const silentGain = audioContext.createGain();
     silentGain.gain.value = 0.00001;
     source.connect(analyser);
@@ -209,22 +214,35 @@ export function useVoiceDictation({
     analyserRef.current = analyser;
     silentGainRef.current = silentGain;
     void audioContext.resume().catch(() => undefined);
-    const data = new Uint8Array(analyser.frequencyBinCount);
-    const tick = () => {
+
+    const timeData = new Uint8Array(analyser.fftSize);
+    waveformRef.current = EMPTY_AUDIO_LEVELS.slice();
+    let lastSampleAt = 0;
+    let pendingPeak = 0;
+    let smoothedLevel = 0;
+    const tick = (now: number) => {
       if (audioContext.state === "suspended") {
         void audioContext.resume().catch(() => undefined);
       }
-      analyser.getByteFrequencyData(data);
-      const nextLevels = audioLevelsFromFrequencyData(data);
-      const audioLevel = nextLevels.reduce((sum, value) => sum + value, 0) / Math.max(1, nextLevels.length);
-      setState((current) => {
-        if (current.status !== "recording") return current;
-        return {
-          ...current,
-          audioLevel,
-          audioLevels: smoothAudioLevels(current.audioLevels, nextLevels),
-        };
-      });
+      analyser.getByteTimeDomainData(timeData);
+      // Track the loudest reading between sample points so brief transients
+      // (consonants, plosives) still register as a bar.
+      pendingPeak = Math.max(pendingPeak, amplitudeFromTimeDomainData(timeData));
+      if (now - lastSampleAt >= WAVEFORM_SAMPLE_INTERVAL_MS) {
+        lastSampleAt = now;
+        const sample = pendingPeak;
+        pendingPeak = 0;
+        // Drop the oldest sample and append the newest at the right; the bars
+        // then scroll leftward as time passes, voice-memo style.
+        const history = waveformRef.current.slice(1);
+        history.push(sample);
+        waveformRef.current = history;
+        smoothedLevel = smoothedLevel * 0.55 + sample * 0.45;
+        const audioLevel = smoothedLevel;
+        setState((current) => (current.status === "recording"
+          ? { ...current, audioLevel, audioLevels: history }
+          : current));
+      }
       animationFrameRef.current = window.requestAnimationFrame(tick);
     };
     animationFrameRef.current = window.requestAnimationFrame(tick);
@@ -288,52 +306,23 @@ export function formatDictationElapsed(ms: number) {
   return `${minutes}:${String(seconds).padStart(2, "0")}`;
 }
 
-export function audioLevelsFromTimeDomainData(
-  data: Uint8Array,
-  barCount = DICTATION_WAVEFORM_BAR_COUNT,
-) {
-  if (barCount <= 0) return [];
-  if (!data.length) return Array.from({ length: barCount }, () => 0);
-  return Array.from({ length: barCount }, (_, index) => {
-    const start = Math.floor((index * data.length) / barCount);
-    const end = Math.max(start + 1, Math.floor(((index + 1) * data.length) / barCount));
-    let peak = 0;
-    for (let cursor = start; cursor < end && cursor < data.length; cursor += 1) {
-      peak = Math.max(peak, Math.abs(data[cursor] - 128) / 128);
-    }
-    return Math.min(1, peak * 3.4);
-  });
-}
-
-export function audioLevelsFromFrequencyData(
-  data: Uint8Array,
-  barCount = DICTATION_WAVEFORM_BAR_COUNT,
-) {
-  if (barCount <= 0) return [];
-  if (!data.length) return Array.from({ length: barCount }, () => 0);
-  const startBin = 2;
-  const endBin = Math.max(startBin + 1, Math.floor(data.length * 0.72));
-  const usableBins = Math.max(1, endBin - startBin);
-  return Array.from({ length: barCount }, (_, index) => {
-    const startRatio = index / barCount;
-    const endRatio = (index + 1) / barCount;
-    const start = startBin + Math.floor(Math.pow(startRatio, 1.55) * usableBins);
-    const end = Math.max(start + 1, startBin + Math.floor(Math.pow(endRatio, 1.55) * usableBins));
-    let peak = 0;
-    for (let cursor = start; cursor < end && cursor < data.length; cursor += 1) {
-      peak = Math.max(peak, data[cursor]);
-    }
-    const level = Math.max(0, (peak - 5) / 82);
-    return Math.min(1, Math.pow(level, 0.78));
-  });
-}
-
-function smoothAudioLevels(previous: number[] | undefined, next: number[]) {
-  return next.map((level, index) => {
-    const current = previous?.[index] ?? 0;
-    const attack = level > current ? 0.72 : 0.38;
-    return current + (level - current) * attack;
-  });
+// Collapse a window of time-domain PCM samples into a single 0..1 loudness
+// level for one waveform bar. Blends RMS (perceived volume) with peak (so sharp
+// transients still poke up), subtracts a small noise floor, and applies a gentle
+// curve so quiet speech is visible while silence stays at the baseline.
+export function amplitudeFromTimeDomainData(data: Uint8Array) {
+  if (!data.length) return 0;
+  let sumSquares = 0;
+  let peak = 0;
+  for (let index = 0; index < data.length; index += 1) {
+    const sample = (data[index] - 128) / 128;
+    sumSquares += sample * sample;
+    const magnitude = Math.abs(sample);
+    if (magnitude > peak) peak = magnitude;
+  }
+  const rms = Math.sqrt(sumSquares / data.length);
+  const voiced = Math.max(0, rms - 0.006) * 6.4 + Math.max(0, peak - 0.02) * 0.4;
+  return Math.min(1, Math.pow(voiced, 0.82));
 }
 
 function createRecorder(stream: MediaStream) {

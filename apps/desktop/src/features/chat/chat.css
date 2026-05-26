@@ -1030,15 +1030,16 @@
 }
 
 .composer-recording-wave-wrap {
+  position: relative;
   display: flex;
-  flex: 0 1 auto;
+  flex: 1 1 auto;
   align-items: center;
-  justify-content: flex-end;
+  gap: 6px;
   min-width: 0;
-  max-width: min(270px, 42vw);
-  height: 36px;
-  gap: 8px;
-  padding: 3px 4px 3px 12px;
+  width: 100%;
+  height: 38px;
+  padding: 4px 5px;
+  overflow: hidden;
   border: 1px solid var(--menu-border);
   border-radius: 999px;
   color: var(--text-secondary);
@@ -1046,51 +1047,72 @@
   box-shadow: inset 0 1px 0 var(--border-subtle);
 }
 
-.composer-recording-waveform::before {
-  content: none;
+/* Flowing blue→teal sheen behind the bars that brightens with the voice level. */
+.composer-recording-wave-wrap::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  border-radius: inherit;
+  background: linear-gradient(
+    90deg,
+    var(--accent-cool-bright),
+    var(--accent-success) 45%,
+    var(--accent-cool-bright) 90%
+  );
+  background-size: 220% 100%;
+  opacity: calc(0.12 + var(--dictation-level, 0) * 0.55);
+  animation: dictation-flow 4.5s linear infinite;
+  transition: opacity 140ms ease;
+  pointer-events: none;
 }
 
+@keyframes dictation-flow {
+  from {
+    background-position: 0% 50%;
+  }
+  to {
+    background-position: -220% 50%;
+  }
+}
+
+.composer-recording-wave-wrap.is-error::before {
+  display: none;
+}
+
+.composer-recording-wave-wrap.is-error {
+  border-color: var(--status-offline-border);
+  color: var(--accent-rose-fill);
+  background: var(--status-offline-fill);
+}
+
+/* Right-anchored scrolling history: a new bar enters at the right each sample
+   tick and the strip clips on the left, so speech scrolls leftward. Quiet
+   samples collapse to a small dot, drawing the dotted baseline. */
 .composer-recording-waveform span {
-  position: relative;
-  z-index: 1;
-  display: block;
-  flex: 0 0 3px;
-  height: 8px;
-  margin: 0 1.5px;
+  flex: 0 0 2.5px;
+  height: 18px;
   border-radius: 999px;
   background: var(--text-secondary-translucent);
-  transform: scaleY(calc(0.35 + var(--bar-level, 0) * 2.25 + var(--dictation-level, 0) * 0.18));
+  transform: scaleY(max(0.12, var(--bar-level, 0)));
   transform-origin: center;
-  transition:
-    height 120ms ease,
-    transform 80ms linear,
-    opacity 120ms ease;
+  transition: transform 90ms linear;
 }
 
-.composer-recording-waveform span:nth-child(3n + 1) {
-  height: 7px;
-  opacity: 0.82;
-}
+@media (prefers-reduced-motion: reduce) {
+  .composer-recording-wave-wrap::before {
+    animation: none;
+  }
 
-.composer-recording-waveform span:nth-child(3n + 2) {
-  height: 16px;
-}
-
-.composer-recording-waveform span:nth-child(4n) {
-  height: 20px;
-  opacity: 0.9;
-}
-
-.composer-recording-waveform span:nth-child(-n + 8),
-.composer-recording-waveform span:nth-last-child(-n + 8) {
-  opacity: 0;
+  .composer-recording-waveform span {
+    transition: none;
+  }
 }
 
 .composer-recording-status {
   min-width: 0;
-  max-width: 110px;
   overflow: hidden;
-  color: var(--muted-foreground);
+  color: inherit;
   font-size: 12px;
   font-weight: 680;
   text-overflow: ellipsis;

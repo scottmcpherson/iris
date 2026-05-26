@@ -67,6 +67,7 @@ import {
   isTranscriptAtBottom,
 } from "../chat/transcriptScroll";
 import { useIrisConnection } from "../connection/useIrisConnection";
+import { keyboardHideDuration, requestFastKeyboardDismiss } from "../lib/keyboardDismiss";
 import { useTheme } from "../theme/useTheme";
 
 const HEADER_BAR_HEIGHT = 60;
@@ -130,8 +131,6 @@ export function ChatScreen() {
   const cursorRef = useRef(0);
   const isAtBottomRef = useRef(true);
   const scrollSettleTimersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
-  const keyboardOffsetCommitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const keyboardOffsetTargetRef = useRef(0);
   const keyboardOffset = useSharedValue(0);
   const activeRequestIdRef = useRef("");
   const pollInFlightRef = useRef(false);
@@ -226,20 +225,7 @@ export function ChatScreen() {
     if (Platform.OS === "web") return undefined;
 
     function commitKeyboardOffset(target: number, duration: number) {
-      if (keyboardOffsetCommitTimerRef.current) {
-        clearTimeout(keyboardOffsetCommitTimerRef.current);
-        keyboardOffsetCommitTimerRef.current = null;
-      }
-      const previousTarget = keyboardOffsetTargetRef.current;
-      keyboardOffsetTargetRef.current = target;
-      const animate = () => {
-        keyboardOffset.value = withTiming(target, { duration, easing: Easing.out(Easing.cubic) });
-      };
-      if (target >= previousTarget) {
-        animate();
-      } else {
-        keyboardOffsetCommitTimerRef.current = setTimeout(animate, 120);
-      }
+      keyboardOffset.value = withTiming(target, { duration, easing: Easing.out(Easing.cubic) });
     }
 
     function syncToKeyboard(event: KeyboardEvent) {
@@ -248,7 +234,7 @@ export function ChatScreen() {
     }
 
     function resetKeyboardOffset(event?: KeyboardEvent) {
-      commitKeyboardOffset(0, event?.duration || 220);
+      commitKeyboardOffset(0, keyboardHideDuration(event?.duration));
     }
 
     const showSubscription = Keyboard.addListener(
@@ -263,7 +249,6 @@ export function ChatScreen() {
     return () => {
       showSubscription.remove();
       hideSubscription.remove();
-      if (keyboardOffsetCommitTimerRef.current) clearTimeout(keyboardOffsetCommitTimerRef.current);
     };
   }, [insets.bottom, keyboardOffset, windowHeight]);
 
@@ -654,7 +639,16 @@ export function ChatScreen() {
       ) : null}
       <View pointerEvents="box-none" style={[styles.header, { height: insets.top + HEADER_BAR_HEIGHT }]}>
         <View pointerEvents="box-none" style={[styles.headerRow, { paddingTop: insets.top }]}>
-          <SidebarButton open={sidebarOpen} onPress={toggleSidebar} />
+          <SidebarButton
+            open={sidebarOpen}
+            onPress={() => {
+              // Drop composer focus/keyboard so the sidebar isn't competing with
+              // it, and collapse it snappily rather than trailing the keyboard.
+              requestFastKeyboardDismiss();
+              Keyboard.dismiss();
+              toggleSidebar();
+            }}
+          />
           {isExistingSession ? (
             <GlassButton
               accessibilityLabel="Start new chat"
@@ -693,6 +687,7 @@ export function ChatScreen() {
         <ChatComposer
           disabled={!client || sending || (!isExistingSession && !selectedAgent)}
           requestActive={requestActive}
+          obscured={sidebarOpen}
           contextBar={composerContextBar}
           slashCommands={slashCommandsQuery.data?.commands || []}
           slashCommandsLoading={slashCommandsQuery.isFetching}

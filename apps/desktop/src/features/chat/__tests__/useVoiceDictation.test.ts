@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  audioLevelsFromFrequencyData,
-  audioLevelsFromTimeDomainData,
+  amplitudeFromTimeDomainData,
   formatDictationElapsed,
 } from "../useVoiceDictation";
 
@@ -12,26 +11,22 @@ describe("voice recording helpers", () => {
     expect(formatDictationElapsed(72_100)).toBe("1:12");
   });
 
-  it("maps microphone time-domain samples into independent waveform bars", () => {
-    const silent = new Uint8Array([128, 128, 128, 128]);
-    expect(audioLevelsFromTimeDomainData(silent, 4)).toEqual([0, 0, 0, 0]);
-
-    const voiced = new Uint8Array([128, 160, 128, 142, 128, 136, 128, 128]);
-    const levels = audioLevelsFromTimeDomainData(voiced, 4);
-    expect(levels).toHaveLength(4);
-    expect(levels[0]).toBeGreaterThan(levels[2]);
-    expect(levels[1]).toBeGreaterThan(0);
-    expect(levels[2]).toBeGreaterThan(0);
+  it("reports no amplitude for an empty buffer", () => {
+    expect(amplitudeFromTimeDomainData(new Uint8Array())).toBe(0);
   });
 
-  it("maps microphone frequency bins into independent waveform bars", () => {
-    const silent = new Uint8Array([0, 0, 0, 0, 0, 0, 0, 0]);
-    expect(audioLevelsFromFrequencyData(silent, 4)).toEqual([0, 0, 0, 0]);
+  it("reports silence at the baseline for a flat (centered) waveform", () => {
+    const silent = new Uint8Array([128, 128, 128, 128, 128, 128, 128, 128]);
+    expect(amplitudeFromTimeDomainData(silent)).toBe(0);
+  });
 
-    const voiced = new Uint8Array([0, 0, 70, 22, 120, 12, 52, 18, 0, 0, 0, 0]);
-    const levels = audioLevelsFromFrequencyData(voiced, 4);
-    expect(levels).toHaveLength(4);
-    expect(levels.some((level) => level > 0.5)).toBe(true);
-    expect(new Set(levels.map((level) => level.toFixed(2))).size).toBeGreaterThan(1);
+  it("scales the amplitude with how loud the samples deviate from center", () => {
+    const quiet = new Uint8Array([128, 140, 128, 118, 128, 138, 128, 120]);
+    const loud = new Uint8Array([128, 220, 128, 30, 128, 210, 128, 40]);
+    const quietLevel = amplitudeFromTimeDomainData(quiet);
+    const loudLevel = amplitudeFromTimeDomainData(loud);
+    expect(quietLevel).toBeGreaterThan(0);
+    expect(loudLevel).toBeGreaterThan(quietLevel);
+    expect(loudLevel).toBeLessThanOrEqual(1);
   });
 });

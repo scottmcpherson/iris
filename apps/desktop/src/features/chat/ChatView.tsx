@@ -772,7 +772,7 @@ export function ChatView({
         </div>
         <AttachmentTray attachments={attachments} onRemove={removeAttachment} />
         <div className={["composer-toolbar flex items-center justify-between gap-2 min-w-0", dictationToolbarOpen ? "recording" : ""].filter(Boolean).join(" ")}>
-          <div className="composer-tools flex items-center gap-2 min-w-0 justify-start flex-auto">
+          <div className={["composer-tools flex items-center gap-2 min-w-0 justify-start flex-auto", dictationToolbarOpen ? "hidden" : ""].filter(Boolean).join(" ")}>
             <div className="relative inline-flex">
               <DropdownMenu open={addMenuOpen} onOpenChange={setAddMenuOpen}>
                 <DropdownMenuTrigger asChild>
@@ -828,7 +828,7 @@ export function ChatView({
               />
             </div>
           </div>
-          <div className="composer-tools flex items-center gap-2 min-w-0 justify-start flex-none">
+          <div className={["composer-tools flex items-center gap-2 min-w-0 justify-start", dictationToolbarOpen ? "flex-auto" : "flex-none"].join(" ")}>
             {dictationToolbarOpen ? (
               <DictationWaveform
                 state={dictation.state}
@@ -947,7 +947,7 @@ function DictationWaveform({
   onConfirm: () => void;
 }) {
   const audioLevel = state.status === "recording" ? state.audioLevel : 0;
-  const waveformStyle = { "--dictation-level": audioLevel } as CSSProperties;
+  const wrapStyle = { "--dictation-level": audioLevel } as CSSProperties;
   const audioLevels = state.status === "recording" ? state.audioLevels : [];
   const statusText =
     state.status === "requesting-permission"
@@ -960,7 +960,7 @@ function DictationWaveform({
             ? state.message
             : "Recording";
 
-  const showStatus = shouldShowVisibleDictationStatus(state);
+  const isError = shouldShowVisibleDictationStatus(state);
   const canCancel =
     state.status === "requesting-permission" ||
     state.status === "recording" ||
@@ -968,32 +968,42 @@ function DictationWaveform({
   const canConfirm = state.status === "recording";
 
   return (
-    <div className="composer-recording-wave-wrap" role={state.status === "error" ? "alert" : "status"} aria-live="polite">
-      <div className="composer-recording-waveform relative flex flex-[0_1_96px] items-center justify-center min-w-[58px] max-w-[112px] h-[22px] overflow-hidden" style={waveformStyle} aria-hidden="true">
-        {Array.from({ length: DICTATION_WAVEFORM_BAR_COUNT }, (_, index) => (
-          <span
-            key={`dictation-waveform-bar-${index}`}
-            style={{
-              "--bar-index": index,
-              "--bar-level": audioLevels[index] ?? 0,
-            } as CSSProperties}
-          />
-        ))}
-      </div>
-      {!showStatus ? <span className="sr-only">{statusText}</span> : null}
-      {showStatus ? <span className="composer-recording-status">{statusText}</span> : null}
+    <div
+      className={["composer-recording-wave-wrap", isError ? "is-error" : ""].filter(Boolean).join(" ")}
+      role={isError ? "alert" : "status"}
+      aria-live="polite"
+      style={wrapStyle}
+    >
       <Button
+        className="relative z-[1]"
         type="button"
         variant="composerRecordingCancel"
         size="composerRecording"
-        title={state.status === "error" ? "Dismiss voice error" : "Cancel voice input"}
-        aria-label={state.status === "error" ? "Dismiss voice error" : "Cancel voice input"}
+        title={isError ? "Dismiss voice error" : "Cancel voice input"}
+        aria-label={isError ? "Dismiss voice error" : "Cancel voice input"}
         disabled={!canCancel}
         onClick={onCancel}
       >
         <X data-icon="inline-start" />
       </Button>
+      {isError ? (
+        <span className="composer-recording-status relative z-[1] flex-1">{statusText}</span>
+      ) : (
+        <div
+          className="composer-recording-waveform relative z-[1] flex flex-1 items-center justify-end gap-[2px] min-w-0 h-[22px] overflow-hidden"
+          aria-hidden="true"
+        >
+          {Array.from({ length: DICTATION_WAVEFORM_BAR_COUNT }, (_, index) => (
+            <span
+              key={`dictation-waveform-bar-${index}`}
+              style={{ "--bar-level": audioLevels[index] ?? 0 } as CSSProperties}
+            />
+          ))}
+        </div>
+      )}
+      {!isError ? <span className="sr-only">{statusText}</span> : null}
       <Button
+        className="relative z-[1]"
         type="button"
         variant="composerRecordingConfirm"
         size="composerRecording"

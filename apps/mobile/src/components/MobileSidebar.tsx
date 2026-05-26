@@ -46,7 +46,7 @@ import {
   type MobileSidebarSectionId,
 } from "./mobileSidebarModel";
 import { MobileSettingsModal } from "./MobileSettingsModal";
-import { NativeSessionRow } from "./NativeSessionRow";
+import { NativeSessionContextMenu } from "./NativeSessionRow";
 import { SessionActionMenu, SessionRenameDialog, type SessionMenuAnchor } from "./SessionActionMenu";
 
 const SESSION_ROW_HEIGHT = 38;
@@ -56,8 +56,8 @@ const SIDEBAR_RIGHT_RAIL_INSET = (PROJECT_ACTION_SIZE - PROJECT_ACTION_ICON_SIZE
 // Height (below the safe-area top) of the page header row kept clear of the close
 // overlay so the nav toggle stays directly pressable while the sidebar is open.
 const PAGE_HEADER_TAP_INSET = 60;
-// iOS gets the real SwiftUI `.contextMenu` (the liquid-glass lift on long-press);
-// other platforms fall back to the JS SessionActionMenu modal.
+// iOS gets the real SwiftUI `.contextMenu`, but the visible row remains React
+// Native-owned so the sidebar scroll layout stays stable.
 const useNativeContextMenu = Platform.OS === "ios";
 const irisSidebarIcon = require("../../../desktop/src/assets/iris-sidebar-icon-borderless.png");
 
@@ -294,6 +294,10 @@ function MobileSidebar({
     if (Platform.OS === "web") return undefined;
 
     function syncToKeyboard(event: KeyboardEvent) {
+      // Only lift the bottom bar while the sidebar is open — that keyboard is
+      // the sidebar search. When closed, the chat composer's keyboard must not
+      // lift the (hidden) bar, or it would lag down when the sidebar opens.
+      if (!open) return;
       const keyboardHeight = Math.max(0, windowHeight - event.endCoordinates.screenY);
       keyboardOffset.value = withTiming(Math.max(0, keyboardHeight - insets.bottom), {
         duration: event.duration || 250,
@@ -321,7 +325,7 @@ function MobileSidebar({
       showSubscription.remove();
       hideSubscription.remove();
     };
-  }, [insets.bottom, keyboardOffset, windowHeight]);
+  }, [insets.bottom, keyboardOffset, open, windowHeight]);
 
   function navigate(path: Href) {
     onClose();
@@ -648,20 +652,24 @@ function MobileSidebar({
         style={[styles.bottomBar, keyboardStyle, { paddingBottom: Math.max(theme.spacing[4], insets.bottom + theme.spacing[2]) }]}
       >
         <GlassSurface style={styles.searchPill} fallbackStyle={styles.searchPillFill}>
-          <Search color={theme.colors.textMuted} size={18} />
-          <TextInput
-            ref={searchInputRef}
-            value={searchQuery}
-            onChangeText={setSearchQuery}
-            onFocus={() => setSearchFocused(true)}
-            onBlur={() => setSearchFocused(false)}
-            placeholder="Search"
-            placeholderTextColor={theme.colors.textMuted}
-            autoCorrect={false}
-            autoCapitalize="none"
-            returnKeyType="search"
-            style={styles.searchInput}
-          />
+          {/* Whole pill is tappable: focus the input even when the tap lands on
+              the icon, padding, or the empty rows above/below the text line. */}
+          <Pressable style={styles.searchPressable} onPress={() => searchInputRef.current?.focus()}>
+            <Search color={theme.colors.textMuted} size={18} />
+            <TextInput
+              ref={searchInputRef}
+              value={searchQuery}
+              onChangeText={setSearchQuery}
+              onFocus={() => setSearchFocused(true)}
+              onBlur={() => setSearchFocused(false)}
+              placeholder="Search"
+              placeholderTextColor={theme.colors.textMuted}
+              autoCorrect={false}
+              autoCapitalize="none"
+              returnKeyType="search"
+              style={styles.searchInput}
+            />
+          </Pressable>
         </GlassSurface>
         {searchActive ? (
           <GlassButton
@@ -828,22 +836,6 @@ function SidebarSessionRow({
   const rowRef = useRef<View>(null);
   const unread = mobileSessionShowsUnread(session, Boolean(selected));
 
-  // Module-level constant, so this branch is stable across renders (hooks above run unconditionally).
-  if (useNativeContextMenu) {
-    return (
-      <NativeSessionRow
-        session={session}
-        selected={selected}
-        nested={nested}
-        pinned={pinned}
-        onPress={onPress}
-        onPin={onPin}
-        onRename={onRename}
-        onDelete={onDelete}
-      />
-    );
-  }
-
   function handleLongPress() {
     if (!onLongPress) return;
     rowRef.current?.measureInWindow((x, y, width, height) => {
@@ -856,7 +848,7 @@ function SidebarSessionRow({
       ref={rowRef}
       accessibilityRole="button"
       onPress={onPress}
-      onLongPress={onLongPress ? handleLongPress : undefined}
+      onLongPress={useNativeContextMenu ? undefined : onLongPress ? handleLongPress : undefined}
       delayLongPress={300}
       style={({ pressed }) => [
         styles.sessionRow,
@@ -870,6 +862,17 @@ function SidebarSessionRow({
       <Text style={styles.sessionTime} numberOfLines={1}>
         {mobileSidebarTimeLabel(session.updatedAt || session.createdAt)}
       </Text>
+      {useNativeContextMenu ? (
+        <NativeSessionContextMenu
+          session={session}
+          selected={selected}
+          pinned={pinned}
+          onPress={onPress}
+          onPin={onPin}
+          onRename={onRename}
+          onDelete={onDelete}
+        />
+      ) : null}
     </Pressable>
   );
 }
@@ -1139,6 +1142,9 @@ function createStyles(theme: ReturnType<typeof useTheme>) {
       height: 52,
       borderRadius: 26,
       overflow: "hidden",
+    },
+    searchPressable: {
+      flex: 1,
       flexDirection: "row",
       alignItems: "center",
       gap: theme.spacing[2],

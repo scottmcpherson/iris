@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   Keyboard,
   Platform,
@@ -23,9 +23,8 @@ import {
   requestRecordingPermissionsAsync,
   setAudioModeAsync,
   useAudioRecorder,
-  useAudioRecorderState,
 } from "expo-audio";
-import { Check, Command as CommandIcon, Mic, Plus, Send, Sparkles, Square, X } from "lucide-react-native";
+import { Command as CommandIcon, Mic, Plus, Send, Sparkles, Square, X } from "lucide-react-native";
 import { Button as MenuButton, Host, Menu } from "@expo/ui/swift-ui";
 import { disabled as disabledModifier, tint } from "@expo/ui/swift-ui/modifiers";
 import { isLiquidGlassAvailable } from "expo-glass-effect";
@@ -39,13 +38,16 @@ import {
 } from "@iris/chat-core";
 import type { IrisCoreSlashCommand } from "@iris/core-client";
 import type { MobileAttachmentDraft } from "../chat/mobileAttachments";
+import { keyboardHideDuration } from "../lib/keyboardDismiss";
 import { useTheme } from "../theme/useTheme";
 import { GlassSurface } from "./GlassSurface";
 import { OptionSheet, type OptionSheetItem } from "./OptionSheet";
+import { RecordingBar } from "./RecordingBar";
 
 export function ChatComposer({
   disabled,
   requestActive = false,
+  obscured = false,
   contextBar,
   slashCommands = [],
   slashCommandsLoading = false,
@@ -62,6 +64,9 @@ export function ChatComposer({
 }: {
   disabled?: boolean;
   requestActive?: boolean;
+  /** When true (e.g. behind the open sidebar) the composer ignores the keyboard
+   * so it doesn't ride up off-screen while another input is focused. */
+  obscured?: boolean;
   contextBar?: ReactNode;
   slashCommands?: IrisCoreSlashCommand[];
   slashCommandsLoading?: boolean;
@@ -80,10 +85,8 @@ export function ChatComposer({
   const insets = useSafeAreaInsets();
   const { height: windowHeight } = useWindowDimensions();
   const styles = createStyles(theme, windowHeight);
-  const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
-  const recorderState = useAudioRecorderState(recorder, 250);
+  const recorder = useAudioRecorder({ ...RecordingPresets.HIGH_QUALITY, isMeteringEnabled: true });
   const keyboardOffset = useSharedValue(0);
-  const offsetCommitTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [text, setText] = useState("");
   const [selection, setSelection] = useState({ start: 0, end: 0 });
   const [sendPending, setSendPending] = useState(false);
@@ -91,6 +94,10 @@ export function ChatComposer({
   const [attachmentSourceOpen, setAttachmentSourceOpen] = useState(false);
   const [voiceError, setVoiceError] = useState("");
   const [voiceBusy, setVoiceBusy] = useState(false);
+  // Tracks recording intent synchronously. The recorder's polled status lags
+  // behind `record()`, so deriving the pill's visibility from it makes the pill
+  // flash off for a beat right after recording starts.
+  const [voiceRecording, setVoiceRecording] = useState(false);
   // iOS 26 renders a native Liquid Glass menu; older OS / Android fall back to the bottom sheet.
   const [nativeMenuAvailable] = useState(() => Platform.OS === "ios" && isLiquidGlassAvailable());
   const contextDisabled = Boolean(disabled || requestActive || sendPending || voiceBusy);
@@ -107,7 +114,7 @@ export function ChatComposer({
       !requestActive &&
       !disabled,
   );
-  const voiceToolbarOpen = Boolean(recorderState.isRecording || voiceBusy || voiceError);
+  const voiceToolbarOpen = Boolean(voiceRecording || voiceBusy || voiceError);
   const attachmentSourceItems = useMemo(
     () => attachmentOptions({ onAddAttachment, onPickPhoto, onTakePhoto }),
     [onAddAttachment, onPickPhoto, onTakePhoto],
@@ -116,32 +123,20 @@ export function ChatComposer({
   useEffect(() => {
     if (Platform.OS === "web") return undefined;
 
-    // Tapping a native pill menu briefly resigns/re-acquires the text field's first
-    // responder, which fires a hide-then-show pair. Growth applies immediately (so the
-    // composer never lags the keyboard rising), but shrink is debounced — a quick
-    // hide→show cancels the pending drop, so the composer doesn't bounce.
     function commitKeyboardOffset(target: number, duration: number) {
-      if (offsetCommitTimer.current) {
-        clearTimeout(offsetCommitTimer.current);
-        offsetCommitTimer.current = null;
-      }
-      const animate = () => {
-        keyboardOffset.value = withTiming(target, { duration, easing: Easing.out(Easing.cubic) });
-      };
-      if (target >= keyboardOffset.value) {
-        animate();
-      } else {
-        offsetCommitTimer.current = setTimeout(animate, 120);
-      }
+      keyboardOffset.value = withTiming(target, { duration, easing: Easing.out(Easing.cubic) });
     }
 
     function syncToKeyboard(event: KeyboardEvent) {
+      // Don't follow the keyboard while obscured by the open sidebar — that
+      // keyboard belongs to the sidebar search, not the composer.
+      if (obscured) return;
       const keyboardHeight = Math.max(0, windowHeight - event.endCoordinates.screenY);
       commitKeyboardOffset(Math.max(0, keyboardHeight - insets.bottom), event.duration || 250);
     }
 
     function resetKeyboardOffset(event?: KeyboardEvent) {
-      commitKeyboardOffset(0, event?.duration || 220);
+      commitKeyboardOffset(0, keyboardHideDuration(event?.duration));
     }
 
     const showSubscription = Keyboard.addListener(
@@ -156,9 +151,8 @@ export function ChatComposer({
     return () => {
       showSubscription.remove();
       hideSubscription.remove();
-      if (offsetCommitTimer.current) clearTimeout(offsetCommitTimer.current);
     };
-  }, [insets.bottom, keyboardOffset, windowHeight]);
+  }, [insets.bottom, keyboardOffset, obscured, windowHeight]);
 
   const keyboardStyle = useAnimatedStyle(() => ({
     bottom: keyboardOffset.value,
@@ -214,6 +208,7 @@ export function ChatComposer({
       await setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true });
       await recorder.prepareToRecordAsync();
       recorder.record();
+      setVoiceRecording(true);
     } catch (error) {
       setVoiceError(error instanceof Error ? error.message : "Could not start voice input.");
     } finally {
@@ -225,12 +220,14 @@ export function ChatComposer({
     if (!onVoiceRecording || voiceBusy) return;
     setVoiceBusy(true);
     try {
-      const durationMillis = recorderState.durationMillis;
-      if (recorderState.isRecording) await recorder.stop();
-      const uri = recorder.uri || recorderState.url;
+      const status = recorder.getStatus();
+      const durationMillis = status.durationMillis;
+      if (status.isRecording) await recorder.stop();
+      const uri = recorder.uri || status.url;
       if (!uri) throw new Error("Voice recording did not produce a file.");
       onVoiceRecording({ uri, durationMillis });
       await setAudioModeAsync({ allowsRecording: false });
+      setVoiceRecording(false);
       setVoiceError("");
     } catch (error) {
       setVoiceError(error instanceof Error ? error.message : "Could not finish voice input.");
@@ -246,10 +243,12 @@ export function ChatComposer({
     }
     setVoiceBusy(true);
     try {
-      if (recorderState.isRecording) await recorder.stop();
+      if (recorder.getStatus().isRecording) await recorder.stop();
       await setAudioModeAsync({ allowsRecording: false });
+      setVoiceRecording(false);
     } catch {
       setVoiceError("");
+      setVoiceRecording(false);
     } finally {
       setVoiceBusy(false);
     }
@@ -382,6 +381,7 @@ export function ChatComposer({
           ) : null}
           {attachmentError ? <Text style={styles.composerStatus}>{attachmentError}</Text> : null}
           <View style={styles.toolRow}>
+            {!voiceToolbarOpen ? (
             <View style={styles.leadingTools}>
               {attachmentSourceItems.length ? (
                 nativeMenuAvailable ? (
@@ -421,38 +421,19 @@ export function ChatComposer({
                 )
               ) : null}
             </View>
-            <View style={styles.trailingTools}>
+            ) : null}
+            <View style={[styles.trailingTools, voiceToolbarOpen ? styles.trailingToolsActive : null]}>
               {onVoiceRecording ? (
                 voiceToolbarOpen ? (
-                  <View style={styles.voicePanel}>
-                    <Text style={styles.voiceStatus} numberOfLines={1}>
-                      {voiceError || (recorderState.isRecording ? `Recording ${formatDuration(recorderState.durationMillis)}` : "Preparing voice input")}
-                    </Text>
-                    <Pressable
-                      accessibilityRole="button"
-                      accessibilityLabel={voiceError ? "Dismiss voice error" : "Cancel voice input"}
-                      disabled={voiceBusy && !voiceError}
-                      onPress={() => void cancelVoiceInput()}
-                      style={({ pressed }) => [styles.toolButton, pressed ? styles.pressed : null]}
-                    >
-                      <X color={theme.colors.textMuted} size={20} />
-                    </Pressable>
-                    {!voiceError ? (
-                      <Pressable
-                        accessibilityRole="button"
-                        accessibilityLabel="Send voice input"
-                        disabled={voiceBusy || !recorderState.isRecording}
-                        onPress={() => void confirmVoiceInput()}
-                        style={({ pressed }) => [
-                          styles.toolButton,
-                          !recorderState.isRecording ? styles.toolButtonDisabled : null,
-                          pressed && recorderState.isRecording ? styles.pressed : null,
-                        ]}
-                      >
-                        <Check color={theme.colors.textMuted} size={20} />
-                      </Pressable>
-                    ) : null}
-                  </View>
+                  <RecordingBar
+                    recorder={recorder}
+                    recording={voiceRecording}
+                    error={voiceError || undefined}
+                    cancelDisabled={voiceBusy && !voiceError}
+                    confirmDisabled={voiceBusy || !voiceRecording}
+                    onCancel={() => void cancelVoiceInput()}
+                    onConfirm={() => void confirmVoiceInput()}
+                  />
                 ) : (
                   <Pressable
                     accessibilityRole="button"
@@ -469,7 +450,7 @@ export function ChatComposer({
                   </Pressable>
                 )
               ) : null}
-              {requestActive && onCancel ? (
+              {voiceToolbarOpen ? null : requestActive && onCancel ? (
                 <Pressable
                   accessibilityRole="button"
                   accessibilityLabel="Cancel request"
@@ -555,13 +536,6 @@ function attachmentAction(
   if (id === "photos") return actions.onPickPhoto;
   if (id === "camera") return actions.onTakePhoto;
   return null;
-}
-
-function formatDuration(durationMillis: number) {
-  const totalSeconds = Math.max(0, Math.round(durationMillis / 1000));
-  const minutes = Math.floor(totalSeconds / 60);
-  const seconds = totalSeconds % 60;
-  return `${minutes}:${seconds.toString().padStart(2, "0")}`;
 }
 
 function createStyles(theme: ReturnType<typeof useTheme>, windowHeight: number) {
@@ -724,6 +698,9 @@ function createStyles(theme: ReturnType<typeof useTheme>, windowHeight: number) 
       justifyContent: "flex-end",
       gap: theme.spacing[2],
     },
+    trailingToolsActive: {
+      flex: 1,
+    },
     toolButton: {
       width: 34,
       height: 38,
@@ -745,22 +722,6 @@ function createStyles(theme: ReturnType<typeof useTheme>, windowHeight: number) 
       alignItems: "center",
       justifyContent: "center",
       backgroundColor: theme.colors.surface,
-    },
-    voicePanel: {
-      maxWidth: 220,
-      minHeight: 38,
-      borderRadius: 19,
-      backgroundColor: theme.colors.input,
-      paddingLeft: theme.spacing[2],
-      flexDirection: "row",
-      alignItems: "center",
-      gap: theme.spacing[1],
-    },
-    voiceStatus: {
-      flex: 1,
-      color: theme.colors.textMuted,
-      fontSize: 13,
-      fontWeight: "700",
     },
     input: {
       minHeight: 26,
