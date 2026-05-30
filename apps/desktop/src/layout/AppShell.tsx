@@ -570,7 +570,7 @@ export function AppShell({
                 {renderSidebarSectionToggle("pinned", "Pinned", pinnedSectionCollapsed)}
               </div>
               {!pinnedSectionCollapsed ? (
-                <div className="grid gap-px mt-[9px]" id="sidebar-pinned-section">
+                <div className="grid gap-px" id="sidebar-pinned-section">
                   {pinnedSessionItems.map((item) =>
                     renderSessionRow(item.profileName, item.session, {
                       pinnedSection: true,
@@ -617,7 +617,7 @@ export function AppShell({
               </div>
 
               <div className="sidebar-section profile-tree chats-tree flex flex-none flex-col min-h-0 px-0">
-                <div className="profile-tree-header flex items-stretch justify-between gap-2.5 pr-0">
+                <div className="profile-tree-header flex items-stretch justify-between gap-2.5 pl-2 pr-0">
                   {renderSidebarSectionToggle("chats", "Sessions", chatsSectionCollapsed)}
                 </div>
                 {!chatsSectionCollapsed ? (
@@ -821,7 +821,7 @@ export function AppShell({
         <Button
           type="button"
           variant="ghost"
-          className={activeView === "settings" ? "nav-item flex-none mt-3 active" : "nav-item flex-none mt-3"}
+          className={activeView === "settings" ? "nav-item flex-none active" : "nav-item flex-none"}
           aria-label="Settings"
           onClick={() => onSelectView("settings")}
           title="Settings"
@@ -934,7 +934,7 @@ export function AppShell({
           if (open) closeSidebarMenus();
         }}>
           <ContextMenuTrigger asChild>
-            <div className="profile-node-row relative grid grid-cols-[minmax(0,1fr)_auto] items-center min-w-0 rounded-[8px]">
+            <div className="profile-node-row relative -ml-[9px] grid grid-cols-[minmax(0,1fr)_auto] items-center min-w-0 rounded-[8px]">
               <Button
                 type="button"
                 variant="ghost"
@@ -1009,7 +1009,7 @@ export function AppShell({
           </ContextMenuContent>
         </ContextMenu>
         {showSessionBranch ? (
-          <div className="grid gap-(--sidebar-tree-row-gap) p-0">
+          <div className="project-session-list grid gap-(--sidebar-tree-row-gap) p-0">
             {projectError ? <div className="history-notice">{projectError}</div> : null}
             {visibleProjectSessions.length ? (
               visibleProjectSessions.map((session) => {
@@ -1085,7 +1085,7 @@ export function AppShell({
             <Button
               type="button"
               variant="ghost"
-              className="sidebar-session-pin"
+              className="sidebar-session-pin !size-[18px] !p-0 hover:bg-transparent hover:text-menu-hover-foreground"
               aria-label={pinned ? `Unpin ${session.title}` : `Pin ${session.title}`}
               title={pinned ? "Unpin session" : "Pin session"}
               onClick={(event) => {
@@ -1093,7 +1093,7 @@ export function AppShell({
                 toggleSessionPinned(pinKey);
               }}
             >
-              <Pin size={14} />
+              <Pin className="size-[13px]" />
             </Button>
             <Button
               type="button"

@@ -148,12 +148,20 @@
 }
 
 .pinned-tree {
-  --profile-text-inset: 34px;
+  --profile-text-inset: 9px;
   --sidebar-row-hover: var(--input);
   flex: 0 0 auto;
   padding-right: 0;
   padding-bottom: 10px;
   padding-left: 0;
+}
+
+.flat-chat-list {
+  --profile-text-inset: 9px;
+}
+
+.project-session-list {
+  --profile-text-inset: 25px;
 }
 
 .sidebar-session-row:hover,
@@ -200,23 +208,25 @@
   color: var(--muted-foreground);
   font-size: 12px;
   font-style: normal;
+  transition: opacity 140ms ease;
 }
 
 .sidebar-session-pin {
   position: absolute;
   top: 50%;
-  left: 8px;
+  right: 8px;
   z-index: 2;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 20px;
-  height: 20px;
+  width: 18px;
+  height: 18px;
   border: 0;
   border-radius: 6px;
   color: var(--text-tertiary);
   background: transparent;
   opacity: 0;
+  pointer-events: none;
   transform: translateY(-50%);
   transition:
     opacity 140ms ease,
@@ -226,18 +236,24 @@
 
 .sidebar-session-row:hover .sidebar-session-pin,
 .sidebar-session-row:has(.sidebar-session:focus-visible) .sidebar-session-pin,
-.sidebar-session-row:has(.sidebar-session-pin:focus-visible) .sidebar-session-pin,
-.sidebar-session-row.pinned .sidebar-session-pin {
+.sidebar-session-row:has(.sidebar-session-pin:focus-visible) .sidebar-session-pin {
   opacity: 1;
+  pointer-events: auto;
 }
 
 .sidebar-session-row.pinned .sidebar-session-pin {
   color: var(--text-secondary);
 }
 
+.sidebar-session-row:hover .sidebar-session-status,
+.sidebar-session-row:has(.sidebar-session:focus-visible) .sidebar-session-status,
+.sidebar-session-row:has(.sidebar-session-pin:focus-visible) .sidebar-session-status {
+  opacity: 0;
+}
+
 .sidebar-session-pin:hover {
   color: var(--menu-hover-foreground);
-  background: var(--accent);
+  background: transparent;
 }
 
 .sidebar-session-status.streaming {

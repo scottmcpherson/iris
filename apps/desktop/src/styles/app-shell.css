@@ -307,6 +307,10 @@
   padding-right: 0;
 }
 
+.sidebar-section.chats-tree {
+  padding-left: 0;
+}
+
 .sidebar-scroll-region > .sidebar-section:first-child {
   border-top: 1px solid var(--secondary);
 }

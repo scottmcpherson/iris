@@ -317,6 +317,8 @@ describe("AppShell pinned sessions", () => {
     expect(html).toContain("sidebar-session-row relative rounded-[8px] active");
     expect(html).toContain("sidebar-session rounded-[8px] text-left");
     expect(html).toContain("sidebar-session-pin");
+    expect(html).toContain("!size-[18px] !p-0 hover:bg-transparent hover:text-menu-hover-foreground");
+    expect(html).toContain("size-[13px]");
     expect(html).not.toContain("ml-[9px]");
     expect(html).not.toContain("!-left-[24px]");
     expect(html).not.toContain("!pl-0");

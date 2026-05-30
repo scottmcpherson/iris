@@ -15,7 +15,6 @@
   align-content: start;
   gap: var(--sidebar-tree-row-gap);
   min-height: 0;
-  margin: 9px 0 0;
   padding-right: 0;
   overflow: visible;
 }
