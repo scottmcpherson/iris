@@ -79,6 +79,33 @@ def prepare_assistant_delivery_event(
     return merged, merged_metadata, False
 
 
+def assemble_stream_snapshot(
+    prior: dict[str, Any] | None,
+    *,
+    delta_content: str,
+    metadata: dict[str, Any],
+    status: str,
+) -> tuple[str, bool]:
+    """Accumulate one streaming delivery into a full content-so-far snapshot.
+
+    Core is the single assembler of the assistant message: every event it
+    publishes carries the entire message-so-far (``chunkOperation: "replace"``),
+    so a dropped/duplicated/reordered delivery can no longer corrupt the text.
+
+    ``prior`` is the last snapshot dict (``{"content": str, ...}``) or ``None``
+    for the first delivery in a stream. The adapter still sends incremental
+    deltas; this honors the ``chunkOperation`` it stamped ("append" | "replace").
+
+    Returns ``(full_content, changed)``. Errors always replace and always emit.
+    """
+    existing = str((prior or {}).get("content") or "")
+    if status == "error":
+        return delta_content, True
+    operation = chunk_operation(metadata)
+    merged = apply_stream_content(existing, delta_content, operation)
+    return merged, not same_normalized_content(merged, existing)
+
+
 def has_stream_message_id(metadata: dict[str, Any]) -> bool:
     return bool(metadata.get("streamMessageId") or metadata.get("stream_message_id"))
 

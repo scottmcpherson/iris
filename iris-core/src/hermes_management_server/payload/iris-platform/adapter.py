@@ -77,6 +77,11 @@ logger = logging.getLogger(__name__)
 MAX_INBOUND_BYTES = 250 * 1024 * 1024
 STREAM_STATE_TTL_SECONDS = 60 * 60
 STREAM_STATE_MAX_ENTRIES = 512
+# How recently the per-chat clientRequestId hint must have been seen to be used as a
+# last-resort correlation fallback. A finalized turn already pops its per-chat entry,
+# so this only guards against a stale entry left by an abandoned/crashed stream being
+# mis-attributed to an unrelated later delivery on the same chat.
+ACTIVE_CLIENT_REQUEST_FENCE_SECONDS = 120
 
 
 def current_cron_delivery_metadata() -> Dict[str, str]:
@@ -198,7 +203,12 @@ class IrisPlatformAdapter(BasePlatformAdapter):
             return SendResult(success=False, error="Iris chat id is required")
 
         merged_metadata = dict(metadata or {})
-        client_request_id = self._client_request_id_from_metadata(merged_metadata)
+        preview_stream_id = str(merged_metadata.get("streamMessageId") or "").strip()
+        client_request_id = (
+            (self._stream_client_request_ids.get(preview_stream_id, "") if preview_stream_id else "")
+            or self._client_request_id_from_metadata(merged_metadata)
+            or self._fenced_active_client_request_id(target)
+        )
         if client_request_id:
             merged_metadata["clientRequestId"] = client_request_id
             self._active_client_request_ids_by_chat[target] = client_request_id
@@ -243,6 +253,11 @@ class IrisPlatformAdapter(BasePlatformAdapter):
             "content": visible_content,
             "metadata": {
                 **merged_metadata,
+                **(
+                    {"uncorrelated": True}
+                    if is_stream_preview and not client_request_id and not reply_to
+                    else {}
+                ),
                 "deliveredAt": int(time.time()),
             },
         }
@@ -298,16 +313,21 @@ class IrisPlatformAdapter(BasePlatformAdapter):
         self._stream_last_sent_content[stream_message_id] = clean_content
         self._touch_stream_state(stream_message_id)
         delivery_metadata = dict(metadata or {})
+        # Prefer the per-stream binding (authoritative once registered) so a late or
+        # reordered edit for an earlier turn cannot be mis-attributed to a newer turn
+        # that has since updated the per-chat hint. Fall back to the edit's own
+        # metadata, then to a time-fenced per-chat hint as a last resort.
         client_request_id = (
-            self._client_request_id_from_metadata(delivery_metadata)
-            or self._stream_client_request_ids.get(stream_message_id, "")
-            or self._active_client_request_ids_by_chat.get(target, "")
+            self._stream_client_request_ids.get(stream_message_id, "")
+            or self._client_request_id_from_metadata(delivery_metadata)
+            or self._fenced_active_client_request_id(target)
         )
         if client_request_id:
             self._stream_client_request_ids[stream_message_id] = client_request_id
             self._active_streams_by_client_request_id[client_request_id] = (target, stream_message_id)
             self._active_client_request_ids_by_chat[target] = client_request_id
             self._active_client_request_id_updated_at[target] = time.time()
+        reply_to = str(delivery_metadata.get("replyTo") or delivery_metadata.get("reply_to") or "")
         body = {
             "runtimeId": "runtime_local_hermes",
             "profile": self.profile,
@@ -323,6 +343,10 @@ class IrisPlatformAdapter(BasePlatformAdapter):
                 "streaming": not finalize,
                 "finalize": bool(finalize),
                 **({"clientRequestId": client_request_id} if client_request_id else {}),
+                # Mark a genuinely uncorrelated delta (no clientRequestId and no
+                # replyTo) so Core/desktop render it by streamMessageId instead of
+                # silently dropping it.
+                **({"uncorrelated": True} if not client_request_id and not reply_to else {}),
                 "deliveredAt": int(time.time()),
             },
         }
@@ -361,6 +385,14 @@ class IrisPlatformAdapter(BasePlatformAdapter):
             or metadata.get("client_message_id")
             or ""
         ).strip()
+
+    def _fenced_active_client_request_id(self, chat_id: str) -> str:
+        # Last-resort correlation: only trust the per-chat hint if it was refreshed
+        # recently, so a stale entry from an earlier turn can't mis-label a delivery.
+        updated_at = self._active_client_request_id_updated_at.get(chat_id, 0.0)
+        if updated_at and time.time() - updated_at <= ACTIVE_CLIENT_REQUEST_FENCE_SECONDS:
+            return self._active_client_request_ids_by_chat.get(chat_id, "")
+        return ""
 
     def _touch_stream_state(self, stream_message_id: str) -> None:
         self._stream_state_updated_at[stream_message_id] = time.time()
@@ -618,9 +650,42 @@ class IrisPlatformAdapter(BasePlatformAdapter):
 
     async def _emit_active_stream_error(self, chat_id: str, client_request_id: str, error: Exception) -> None:
         active = self._active_streams_by_client_request_id.get(client_request_id)
-        if not active:
+        if active:
+            await self._emit_stream_error_delivery(active[0] or chat_id, active[1], client_request_id, error)
             return
-        await self._emit_stream_error_delivery(active[0] or chat_id, active[1], client_request_id, error)
+        # A3: the handler failed before any stream was registered (e.g. the agent
+        # errored before its first edit). Surface a real failure keyed by the inbound
+        # clientRequestId so the client shows an error instead of a stuck "Thinking…".
+        await self._emit_pre_stream_error_delivery(chat_id, client_request_id, error)
+
+    async def _emit_pre_stream_error_delivery(self, chat_id: str, client_request_id: str, error: Exception) -> None:
+        if not client_request_id:
+            return
+        # Drop the stale per-chat hint so it can't mis-label a later delivery.
+        if self._active_client_request_ids_by_chat.get(chat_id) == client_request_id:
+            self._active_client_request_ids_by_chat.pop(chat_id, None)
+            self._active_client_request_id_updated_at.pop(chat_id, None)
+        body = {
+            "runtimeId": "runtime_local_hermes",
+            "profile": self.profile,
+            "chatId": chat_id,
+            "messageId": f"iris-prestream-error-{uuid.uuid4()}",
+            "source": "hermes-error",
+            "content": "",
+            "metadata": {
+                "clientRequestId": client_request_id,
+                "replyTo": client_request_id,
+                "chunkProtocol": "v2-delta",
+                "streaming": False,
+                "finalize": True,
+                "error": str(error),
+                "deliveredAt": int(time.time()),
+            },
+        }
+        try:
+            await self._request("POST", "/v1/runtime-deliveries/hermes", body)
+        except Exception:
+            logger.exception("[Iris] failed to emit pre-stream error for %s", client_request_id)
 
     async def _inbound_models(self, request):
         if not self._authorized(request):

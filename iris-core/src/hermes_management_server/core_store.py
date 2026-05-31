@@ -23,7 +23,7 @@ from .attachment_types import (
 from .models import SessionMessage, SessionSummary, ProfileSummary
 
 
-CORE_SCHEMA_VERSION = 9
+CORE_SCHEMA_VERSION = 11
 DEFAULT_RUNTIME_ID = "runtime_local_hermes"
 PROFILE_SLUG_RE = re.compile(r"[^A-Za-z0-9_.-]+")
 DEFAULT_MAX_ATTACHMENT_SIZE_MB = 250
@@ -50,6 +50,8 @@ CORE_OWNED_TABLES = (
     "device_cursors",
     "core_events",
     "client_message_metadata",
+    "assistant_message_metadata",
+    "accepted_client_messages",
     "attachments",
     "message_attachments",
     "projects",
@@ -344,6 +346,34 @@ class CoreStore:
 
                 create index if not exists idx_client_message_metadata_content
                   on client_message_metadata(runtime_id, profile, chat_id, content_hash);
+
+                create table if not exists assistant_message_metadata (
+                  runtime_id text not null,
+                  profile text not null,
+                  chat_id text not null,
+                  stream_message_id text not null,
+                  client_request_id text not null,
+                  reply_to text not null,
+                  content_hash text not null,
+                  normalized_content text not null,
+                  created_at integer not null,
+                  updated_at integer not null,
+                  primary key (runtime_id, profile, chat_id, stream_message_id)
+                );
+
+                create index if not exists idx_assistant_message_metadata_content
+                  on assistant_message_metadata(runtime_id, profile, chat_id, content_hash);
+
+                create table if not exists accepted_client_messages (
+                  session_id text not null,
+                  idempotency_key text not null,
+                  response_json text not null,
+                  created_at integer not null,
+                  primary key (session_id, idempotency_key)
+                );
+
+                create index if not exists idx_accepted_client_messages_created
+                  on accepted_client_messages(created_at);
 
                 create table if not exists attachments (
                   id text primary key,
@@ -1306,6 +1336,178 @@ class CoreStore:
             "attachmentFallbacks": attachment_fallbacks,
         }
 
+    def upsert_assistant_message_metadata(
+        self,
+        *,
+        runtime_id: str,
+        profile: str,
+        chat_id: str,
+        stream_message_id: str,
+        client_request_id: str,
+        reply_to: str,
+        content: str,
+    ) -> None:
+        """Persist the streamed correlation identity for a finalized assistant turn.
+
+        Keyed by (runtime_id, profile, chat_id, stream_message_id) so a re-finalize
+        upserts in place. The content hash + normalized content let a later history
+        read match the Hermes assistant row back to the stream it arrived under.
+        """
+        if not runtime_id or not profile or not chat_id or not stream_message_id:
+            return
+        if not client_request_id and not reply_to:
+            return
+        timestamp = now()
+        content_hash = stable_hash(content, length=32)
+        normalized = normalize_assistant_content(content)
+        with self.connect() as connection:
+            existing = connection.execute(
+                """
+                select created_at from assistant_message_metadata
+                where runtime_id = ? and profile = ? and chat_id = ? and stream_message_id = ?
+                """,
+                (runtime_id, profile, chat_id, stream_message_id),
+            ).fetchone()
+            connection.execute(
+                """
+                insert into assistant_message_metadata(
+                  runtime_id, profile, chat_id, stream_message_id, client_request_id,
+                  reply_to, content_hash, normalized_content, created_at, updated_at
+                ) values(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                on conflict(runtime_id, profile, chat_id, stream_message_id) do update set
+                  client_request_id = excluded.client_request_id,
+                  reply_to = excluded.reply_to,
+                  content_hash = excluded.content_hash,
+                  normalized_content = excluded.normalized_content,
+                  updated_at = excluded.updated_at
+                """,
+                (
+                    runtime_id,
+                    profile,
+                    chat_id,
+                    stream_message_id,
+                    client_request_id,
+                    reply_to,
+                    content_hash,
+                    normalized,
+                    int(existing["created_at"]) if existing else timestamp,
+                    timestamp,
+                ),
+            )
+
+    def assistant_message_metadata_for_messages(
+        self,
+        *,
+        runtime_id: str,
+        profile: str,
+        chat_id: str,
+        messages: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        """Overlay rows for assistant history messages, grouped for positional match.
+
+        Returns lists per content hash / normalized content (ordered by creation)
+        so the caller can consume them in transcript order and never drop an
+        overlay on a hash collision (two identical assistant replies resolve to
+        distinct overlays positionally).
+        """
+        if not runtime_id or not profile or not chat_id:
+            return {"byStreamMessageId": {}, "byContentHash": {}, "byNormalizedContent": {}}
+        assistant_messages = [
+            message for message in messages if str(message.get("role") or "") == "assistant"
+        ]
+        content_hashes = sorted({
+            hash_value
+            for message in assistant_messages
+            for hash_value in message_content_hash_candidates(str(message.get("content") or ""))
+        })
+        if not content_hashes:
+            return {"byStreamMessageId": {}, "byContentHash": {}, "byNormalizedContent": {}}
+        placeholders = ", ".join("?" for _ in content_hashes)
+        with self.connect() as connection:
+            rows = connection.execute(
+                f"""
+                select stream_message_id, client_request_id, reply_to, content_hash, normalized_content
+                from assistant_message_metadata
+                where runtime_id = ? and profile = ? and chat_id = ?
+                  and content_hash in ({placeholders})
+                order by created_at, stream_message_id
+                """,
+                (runtime_id, profile, chat_id, *content_hashes),
+            ).fetchall()
+        by_stream_message_id: dict[str, dict[str, Any]] = {}
+        by_content_hash: dict[str, list[dict[str, Any]]] = {}
+        by_normalized_content: dict[str, list[dict[str, Any]]] = {}
+        for row in rows:
+            overlay = {
+                "streamMessageId": str(row["stream_message_id"] or ""),
+                "clientRequestId": str(row["client_request_id"] or ""),
+                "replyTo": str(row["reply_to"] or ""),
+            }
+            by_stream_message_id[overlay["streamMessageId"]] = overlay
+            by_content_hash.setdefault(str(row["content_hash"] or ""), []).append(overlay)
+            by_normalized_content.setdefault(str(row["normalized_content"] or ""), []).append(overlay)
+        return {
+            "byStreamMessageId": by_stream_message_id,
+            "byContentHash": by_content_hash,
+            "byNormalizedContent": by_normalized_content,
+        }
+
+    def get_accepted_client_message(
+        self,
+        *,
+        session_id: str,
+        idempotency_key: str,
+        ttl_seconds: int = 24 * 60 * 60,
+    ) -> dict[str, Any] | None:
+        """Return the stored accept response for a duplicate send, or None.
+
+        Persisted so a client resend after a dropped/slow send response dedupes
+        across a Core restart instead of re-running the agent.
+        """
+        if not session_id or not idempotency_key:
+            return None
+        with self.connect() as connection:
+            row = connection.execute(
+                """
+                select response_json, created_at from accepted_client_messages
+                where session_id = ? and idempotency_key = ?
+                """,
+                (session_id, idempotency_key),
+            ).fetchone()
+        if not row:
+            return None
+        if int(row["created_at"] or 0) < now() - ttl_seconds:
+            return None
+        parsed = loads(row["response_json"])
+        return parsed if isinstance(parsed, dict) else None
+
+    def record_accepted_client_message(
+        self,
+        *,
+        session_id: str,
+        idempotency_key: str,
+        response: dict[str, Any],
+        ttl_seconds: int = 24 * 60 * 60,
+    ) -> None:
+        if not session_id or not idempotency_key:
+            return
+        timestamp = now()
+        with self.connect() as connection:
+            connection.execute(
+                """
+                insert into accepted_client_messages(session_id, idempotency_key, response_json, created_at)
+                values(?, ?, ?, ?)
+                on conflict(session_id, idempotency_key) do update set
+                  response_json = excluded.response_json,
+                  created_at = excluded.created_at
+                """,
+                (session_id, idempotency_key, dumps(response), timestamp),
+            )
+            connection.execute(
+                "delete from accepted_client_messages where created_at < ?",
+                (timestamp - ttl_seconds,),
+            )
+
     def create_attachment(
         self,
         *,
@@ -1738,6 +1940,12 @@ def session_read_state_from_row(row: sqlite3.Row) -> dict[str, Any]:
         "updatedAt": int(row["updated_at"]),
         "metadata": loads(row["metadata_json"]),
     }
+
+
+def normalize_assistant_content(content: str) -> str:
+    # Mirrors message_coalescer.normalize_message_content so overlay matching and
+    # live dedupe agree on what "the same assistant text" means.
+    return "\n".join(line.rstrip() for line in str(content or "").strip().splitlines())
 
 
 def message_content_hash_candidates(content: str) -> set[str]:

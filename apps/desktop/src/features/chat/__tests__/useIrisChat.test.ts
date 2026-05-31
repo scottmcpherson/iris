@@ -28,6 +28,7 @@ import {
   mergeCompletedDelivery,
   mergeMessageLists,
   mergeStreamDelivery,
+  reconcileMessages,
 } from "../chatStreamMerging";
 import {
   isHiddenDeliveryMetadata,
@@ -105,10 +106,10 @@ describe("Iris chat inbox merging", () => {
     expect(preserveLocalSessionProjectMetadata(endpoint, current)[0].metadata?.projectId).toBe("project_1");
   });
 
-  it("caps retries for unmapped inbox deliveries so stale rows cannot refresh forever", () => {
+  it("retries unmapped inbox deliveries generously but still caps them", () => {
     expect(shouldRetryUnmappedDelivery(0)).toBe(true);
-    expect(shouldRetryUnmappedDelivery(1)).toBe(true);
-    expect(shouldRetryUnmappedDelivery(2)).toBe(false);
+    expect(shouldRetryUnmappedDelivery(7)).toBe(true);
+    expect(shouldRetryUnmappedDelivery(8)).toBe(false);
   });
 
   it("uses active replyTo metadata when completed deliveries omit clientRequestId", () => {
@@ -391,6 +392,68 @@ describe("Iris chat inbox merging", () => {
         clientRequestId: "user-1",
       },
     ]);
+  });
+
+  it("renders an assembled snapshot as a full replace without delta-stitching", () => {
+    const existing: Message[] = [
+      { id: "user-1", role: "user", content: "Write a long answer", clientRequestId: "user-1" },
+      {
+        id: "stream-1",
+        role: "assistant",
+        content: "Hello",
+        streaming: true,
+        streamMessageId: "stream-1",
+        clientRequestId: "user-1",
+      },
+    ];
+
+    const merged = mergeStreamDelivery(
+      existing,
+      inboxMessage({
+        id: "stream-1:edit:2",
+        content: "Hello, world!",
+        metadata: { streamMessageId: "stream-1", assembled: true, chunkOperation: "replace", streaming: true },
+      }),
+      "stream-1",
+      false,
+      "user-1",
+    );
+
+    expect(merged[1]).toMatchObject({ id: "stream-1", content: "Hello, world!", streaming: true });
+  });
+
+  it("renders an assembled snapshot verbatim even when it diverges from the prior content", () => {
+    // A reordered/garbled prior render cannot corrupt the result: the snapshot is
+    // authoritative, so no overlap/append heuristic is applied.
+    const existing: Message[] = [
+      { id: "user-1", role: "user", content: "test", clientRequestId: "user-1" },
+      {
+        id: "stream-1",
+        role: "assistant",
+        content: "garbled XYZ partial",
+        streaming: true,
+        streamMessageId: "stream-1",
+        clientRequestId: "user-1",
+      },
+    ];
+
+    const merged = mergeStreamDelivery(
+      existing,
+      inboxMessage({
+        id: "stream-1:edit:final",
+        content: "The complete, correct answer.",
+        metadata: { streamMessageId: "stream-1", assembled: true, chunkOperation: "replace", streaming: false, finalize: true },
+      }),
+      "stream-1",
+      true,
+      "user-1",
+    );
+
+    expect(merged[1]).toMatchObject({
+      id: "stream-1",
+      content: "The complete, correct answer.",
+      streaming: false,
+    });
   });
 
   it("replaces finalized stream content when the final chunk repeats the streamed prefix", () => {
@@ -774,13 +837,16 @@ describe("Iris chat inbox merging", () => {
     });
   });
 
-  it("drops stream deliveries that do not carry clientRequestId", () => {
+  it("renders an uncorrelated assembled snapshot by streamMessageId instead of dropping it", () => {
+    // A1/D5: a snapshot whose clientRequestId could not be resolved still carries a
+    // streamMessageId, so it renders (full replace) keyed by that — a late reply is
+    // never lost.
     const existing: Message[] = [
       { id: "user-1", role: "user", content: "Write a long answer" },
       {
         id: "stream-1",
         role: "assistant",
-        content: "Paragraph one.\n\nParagraph two was already visible.",
+        content: "Paragraph one.",
         streaming: true,
         streamMessageId: "stream-1",
       },
@@ -788,14 +854,18 @@ describe("Iris chat inbox merging", () => {
 
     const merged = mergeStreamDelivery(
       existing,
-      inboxMessage({ id: "stream-1:edit:2", content: "Paragraph one." }),
+      inboxMessage({
+        id: "stream-1:edit:2",
+        content: "Paragraph one.\n\nParagraph two.",
+        metadata: { streamMessageId: "stream-1", assembled: true, chunkOperation: "replace", uncorrelated: true },
+      }),
       "stream-1",
       false,
     );
 
     expect(merged[1]).toMatchObject({
       id: "stream-1",
-      content: "Paragraph one.\n\nParagraph two was already visible.",
+      content: "Paragraph one.\n\nParagraph two.",
       streaming: true,
       streamMessageId: "stream-1",
     });
@@ -1454,7 +1524,9 @@ describe("clientRequestId dedup", () => {
     expect(merged.map((message) => message.id)).toEqual(["uuid-user", "12345"]);
   });
 
-  it("drops unmatched finalize deltas without clientRequestId", () => {
+  it("renders an uncorrelated finalize for an unknown stream as a new assistant message", () => {
+    // D5: a late reply we cannot correlate is rendered (keyed by streamMessageId)
+    // rather than dropped, so it is never lost.
     const existing: Message[] = [
       { id: "user-1", role: "user", content: "hi" },
       {
@@ -1468,12 +1540,24 @@ describe("clientRequestId dedup", () => {
 
     const merged = mergeStreamDelivery(
       existing,
-      inboxMessage({ id: "stream-z:edit:1", content: "final answer" }),
+      inboxMessage({
+        id: "stream-z:edit:1",
+        content: "final answer",
+        metadata: { streamMessageId: "stream-z", assembled: true, chunkOperation: "replace", finalize: true },
+      }),
       "stream-z",
       true,
     );
 
-    expect(merged).toEqual(existing);
+    expect(merged).toHaveLength(3);
+    expect(merged[0]).toEqual(existing[0]);
+    expect(merged[1]).toEqual(existing[1]);
+    expect(merged[2]).toMatchObject({
+      id: "stream-z",
+      streamMessageId: "stream-z",
+      content: "final answer",
+      streaming: false,
+    });
   });
 });
 
@@ -2194,5 +2278,128 @@ describe("scheduleDedupedTimer", () => {
 
     expect(scheduled).toBe(false);
     expect(pending.size).toBe(0);
+  });
+});
+
+describe("reconcileMessages (history-authoritative, no reorder)", () => {
+  it("keeps a repeated-message turn in place instead of appending its local copy at the end", () => {
+    // Reproduces the long-chat reorder: the two "ok" user rows collided in the
+    // overlay, so history can't recover their clientRequestId. The live copies still
+    // carry it. The old mergeMessageLists appended them at the end (reorder + dup).
+    const history: Message[] = [
+      { id: "h-u1", role: "user", content: "first question", clientRequestId: "c1" },
+      { id: "h-a1", role: "assistant", content: "first answer", clientRequestId: "c1" },
+      { id: "h-u2", role: "user", content: "ok" }, // collision-dropped → no clientRequestId
+      { id: "h-a2", role: "assistant", content: "second answer", clientRequestId: "c2" },
+      { id: "h-u3", role: "user", content: "ok" }, // collision-dropped → no clientRequestId
+      { id: "h-a3", role: "assistant", content: "third answer", clientRequestId: "c3" },
+    ];
+    const local: Message[] = [
+      { id: "l-u1", role: "user", content: "first question", clientRequestId: "c1" },
+      { id: "s-a1", role: "assistant", content: "first answer", streamMessageId: "s-a1", clientRequestId: "c1" },
+      { id: "l-u2", role: "user", content: "ok", clientRequestId: "c2" },
+      { id: "s-a2", role: "assistant", content: "second answer", streamMessageId: "s-a2", clientRequestId: "c2" },
+      { id: "l-u3", role: "user", content: "ok", clientRequestId: "c3" },
+      { id: "s-a3", role: "assistant", content: "third answer", streamMessageId: "s-a3", clientRequestId: "c3" },
+    ];
+
+    // Document the bug in the old merge: the unmatched "ok" copies pile up at the end.
+    const oldMerge = mergeMessageLists(history, local);
+    expect(oldMerge.map((m) => m.content)).toEqual([
+      "first question", "first answer", "ok", "second answer", "ok", "third answer", "ok", "ok",
+    ]);
+
+    // The fix: order preserved, no duplicate "ok"s appended.
+    const reconciled = reconcileMessages(local, history);
+    expect(reconciled.map((m) => `${m.role}:${m.content}`)).toEqual([
+      "user:first question",
+      "assistant:first answer",
+      "user:ok",
+      "assistant:second answer",
+      "user:ok",
+      "assistant:third answer",
+    ]);
+    // Live identity preserved where matched (assistant kept its streamMessageId).
+    expect(reconciled.find((m) => m.content === "first answer")?.streamMessageId).toBe("s-a1");
+  });
+
+  it("appends a genuinely-new local turn that history hasn't persisted yet", () => {
+    const history: Message[] = [
+      { id: "h-u1", role: "user", content: "q1", clientRequestId: "c1" },
+      { id: "h-a1", role: "assistant", content: "a1", clientRequestId: "c1" },
+    ];
+    const local: Message[] = [
+      { id: "h-u1", role: "user", content: "q1", clientRequestId: "c1" },
+      { id: "h-a1", role: "assistant", content: "a1", clientRequestId: "c1" },
+      { id: "l-u2", role: "user", content: "q2", clientRequestId: "c2" },
+      { id: "s-a2", role: "assistant", content: ASSISTANT_THINKING_TEXT, streaming: true, streamMessageId: "s-a2", clientRequestId: "c2" },
+    ];
+    const reconciled = reconcileMessages(local, history);
+    expect(reconciled.map((m) => `${m.role}:${m.content}`)).toEqual([
+      "user:q1", "assistant:a1", "user:q2", `assistant:${ASSISTANT_THINKING_TEXT}`,
+    ]);
+  });
+
+  it("keeps a genuinely-repeated message when history hasn't caught up (count-aware append)", () => {
+    // History has one "ok"; locally the user just sent "ok" again (not yet persisted).
+    const history: Message[] = [
+      { id: "h-u1", role: "user", content: "ok" },
+      { id: "h-a1", role: "assistant", content: "sure", clientRequestId: "c1" },
+    ];
+    const local: Message[] = [
+      { id: "l-u1", role: "user", content: "ok", clientRequestId: "c1" },
+      { id: "s-a1", role: "assistant", content: "sure", streamMessageId: "s-a1", clientRequestId: "c1" },
+      { id: "l-u2", role: "user", content: "ok", clientRequestId: "c2" },
+      { id: "s-a2", role: "assistant", content: "sure again", streamMessageId: "s-a2", clientRequestId: "c2" },
+    ];
+    const reconciled = reconcileMessages(local, history);
+    // The first "ok"/"sure" reconcile to history; the second turn (history lacks it) appends.
+    expect(reconciled.map((m) => `${m.role}:${m.content}`)).toEqual([
+      "user:ok", "assistant:sure", "user:ok", "assistant:sure again",
+    ]);
+  });
+
+  it("is a no-op on session open (empty local) — pure history order", () => {
+    const history: Message[] = [
+      { id: "h-u1", role: "user", content: "q" },
+      { id: "h-a1", role: "assistant", content: "a" },
+    ];
+    expect(reconcileMessages([], history)).toEqual(history);
+  });
+
+  it("keeps event-only turns (slash-command/cron) in chronological place, not reversed after history", () => {
+    // The /sethome turn and cron deliveries never enter Hermes history — only the
+    // reminder turn does. The transcript must not be reordered to put the history
+    // turn first and the older event-only turn at the end.
+    const local: Message[] = [
+      { id: "u-sethome", role: "user", content: "/sethome", clientRequestId: "c1" },
+      { id: "a-sethome", role: "assistant", content: "Home channel set.", clientRequestId: "c1" },
+      { id: "u-reminder", role: "user", content: "remind me in 1 minute", clientRequestId: "c2" },
+      {
+        id: "s-reminder",
+        role: "assistant",
+        content: "Done — reminding you.",
+        streamMessageId: "s-reminder",
+        clientRequestId: "c2",
+      },
+    ];
+    // Hermes history holds ONLY the reminder turn (different ids; assistant row's
+    // clientRequestId was not recovered).
+    const history: Message[] = [
+      { id: "h-u-reminder", role: "user", content: "remind me in 1 minute", clientRequestId: "c2" },
+      { id: "h-a-reminder", role: "assistant", content: "Done — reminding you." },
+    ];
+
+    const reconciled = reconcileMessages(local, history);
+    expect(reconciled.map((message) => `${message.role}:${message.content}`)).toEqual([
+      "user:/sethome",
+      "assistant:Home channel set.",
+      "user:remind me in 1 minute",
+      "assistant:Done — reminding you.",
+    ]);
+
+    // The old history-primary merge produced the reversed transcript (reminder first).
+    const reversed = mergeMessageLists(history, local);
+    expect(reversed[0].content).toBe("remind me in 1 minute");
   });
 });

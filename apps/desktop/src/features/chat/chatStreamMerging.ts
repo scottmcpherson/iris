@@ -15,24 +15,33 @@ export function mergeStreamDelivery(
   finalized: boolean,
   clientRequestId = "",
 ) {
-  if (!clientRequestId) {
-    // Cron deliveries are expected to arrive completed; streaming updates must be tied to a user request.
-    console.warn("Dropped assistant stream delivery without clientRequestId.", {
+  if (!streamMessageId) {
+    // A stream delivery is always keyed by a streamMessageId; without one there is
+    // nothing to attach the snapshot to.
+    console.warn("Dropped assistant stream delivery without streamMessageId.", {
       deliveryId: delivery.id,
-      streamMessageId,
     });
     return existing;
   }
+  // An uncorrelated delivery (A1: no clientRequestId/replyTo resolvable) still
+  // carries a streamMessageId, so we render the snapshot keyed by that rather than
+  // dropping it — a late reply is never lost (D5).
   const deliveryAttachments = attachmentsFromDelivery(delivery);
   const content = contentWithoutRenderedAttachmentMarkers(delivery.content, deliveryAttachments, delivery.metadata);
   const liveToolEvents = streamToolEventsFromMetadata(delivery.metadata, delivery.id);
   const messageContent = liveToolEvents.length && !content.trim() ? "" : content;
   const operation = chunkOperation(delivery.metadata);
+  // Core assembles the message server-side and publishes full content-so-far
+  // snapshots (assembled === true / chunkOperation === "replace"). We render the
+  // snapshot verbatim — no delta-stitching — so a dropped/duplicated/reordered
+  // event can never corrupt the text. The append path below is kept only as a
+  // fallback for an older Core that still streams incremental deltas.
+  const assembled = isAssembledSnapshot(delivery.metadata, operation);
   const streaming = !finalized;
   const updateMessage = (message: Message): Message => {
     const streamEvents = streamEventsForUpdate(message, liveToolEvents, finalized);
     const replacingPlaceholder = !message.streamMessageId;
-    const nextContent = replacingPlaceholder || operation === "replace"
+    const nextContent = assembled || replacingPlaceholder
       ? messageContent
       : finalized
         ? completedContentForStream(message.content, messageContent, operation)
@@ -249,6 +258,13 @@ function chunkOperation(metadata: HermesInboxMessage["metadata"]) {
   return value.toLowerCase() === "replace" ? "replace" : "append";
 }
 
+function isAssembledSnapshot(
+  metadata: HermesInboxMessage["metadata"],
+  operation: "append" | "replace",
+) {
+  return metadata?.assembled === true || operation === "replace";
+}
+
 function appendBlockContent(content: string, addition: string) {
   // Attachment post-processing joins adjacent generated-file text; stream chunks use appendDeltaContent/chunkOperation.
   const left = content.trimEnd();
@@ -423,4 +439,68 @@ export function mergeMessageLists(primary: Message[], secondary: Message[]) {
     merged.push(message);
   }
   return merged;
+}
+
+/**
+ * Reconcile the live transcript with Hermes history.
+ *
+ * LOCAL is chronologically authoritative: it is accumulated in send/delivery order
+ * and includes messages that never enter Hermes history at all — slash-command
+ * replies (e.g. /sethome) and cron deliveries arrive only over the event buffer. So
+ * we keep local's ORDER and IDENTITY (no id-swap flicker, no reorder) and only fold
+ * in history messages that local genuinely lacks. Each history message claims at
+ * most one local message — by id, then clientRequestId, then role+normalized content
+ * — so a history row is never duplicated against the local row it represents (this is
+ * what kept repeated short messages from duplicating). Unclaimed history messages are
+ * appended; on a fresh session open local is empty, so the result is pure history
+ * order.
+ */
+export function reconcileMessages(local: Message[], history: Message[]): Message[] {
+  const result = [...local];
+  const claimed = new Array<boolean>(local.length).fill(false);
+  const firstIndexById = new Map<string, number>();
+  local.forEach((message, index) => {
+    if (!firstIndexById.has(message.id)) firstIndexById.set(message.id, index);
+  });
+
+  for (const message of history) {
+    const idIndex = firstIndexById.get(message.id);
+    if (idIndex !== undefined && !claimed[idIndex]) {
+      claimed[idIndex] = true; // local already holds this exact message
+      continue;
+    }
+    let matchIndex = -1;
+    if (message.clientRequestId) {
+      matchIndex = local.findIndex(
+        (candidate, index) =>
+          !claimed[index] &&
+          candidate.clientRequestId === message.clientRequestId &&
+          candidate.role === message.role,
+      );
+    }
+    if (matchIndex === -1) {
+      const key = reconcileContentKey(message);
+      matchIndex = local.findIndex(
+        (candidate, index) => !claimed[index] && reconcileContentKey(candidate) === key,
+      );
+    }
+    if (matchIndex !== -1) {
+      claimed[matchIndex] = true; // local represents this history message — keep local in place
+      continue;
+    }
+    result.push(message); // history-only (fresh load, or a message from another source)
+  }
+  return result;
+}
+
+function reconcileContentKey(message: Message): string {
+  return `${message.role} ${normalizeReconcileContent(message.content)}`;
+}
+
+function normalizeReconcileContent(content: string): string {
+  return content
+    .trim()
+    .split("\n")
+    .map((line) => line.replace(/\s+$/, ""))
+    .join("\n");
 }

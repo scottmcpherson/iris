@@ -15,7 +15,7 @@ import tempfile
 import threading
 import time
 import urllib.parse
-from collections import deque
+from collections import OrderedDict, deque
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -45,10 +45,10 @@ from .core_store import (
     stable_hash,
 )
 from .message_coalescer import (
+    assemble_stream_snapshot,
     coalesce_core_messages,
     has_stream_message_id,
     merge_client_attachments,
-    prepare_assistant_delivery_event,
 )
 from .models import (
     AgentCreateRequest,
@@ -105,10 +105,27 @@ logger = logging.getLogger(__name__)
 
 
 class LiveDeliveryBus:
-    def __init__(self, *, max_events: int = 500, ttl_seconds: int = 900, core_store: CoreStore | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        max_events: int = 500,
+        ttl_seconds: int = 900,
+        core_store: CoreStore | None = None,
+        store_max_events: int = 5000,
+        store_ttl_seconds: int = 24 * 60 * 60,
+        store_prune_interval: int = 200,
+    ) -> None:
         self.max_events = max_events
         self.ttl_seconds = ttl_seconds
         self.core_store = core_store
+        # SQLite retention bounds (the production path). prune() no-ops with a
+        # store, so growth is bounded explicitly here: keep at least the most
+        # recent ``store_max_events`` rows by cursor and anything younger than
+        # ``store_ttl_seconds``; a row is dropped only if it is both. Pruning is
+        # throttled to roughly every ``store_prune_interval`` publishes.
+        self.store_max_events = store_max_events
+        self.store_ttl_seconds = store_ttl_seconds
+        self.store_prune_interval = max(1, store_prune_interval)
         self._events: deque[dict[str, Any]] = deque(maxlen=max_events)
         self._cursor = 0
         self._lock = threading.RLock()
@@ -194,7 +211,65 @@ class LiveDeliveryBus:
                     json_dumps(metadata),
                 ),
             ).fetchone()["cursor"])
+            if cursor % self.store_prune_interval == 0:
+                self._prune_sqlite(connection)
             return self._event_payload({**event, "id": event_id, "createdAt": created_at}, cursor=cursor)
+
+    def _prune_sqlite(self, connection: Any) -> None:
+        # Drop rows that are BOTH older than the TTL AND beyond the recent-row
+        # cap, so the most recent ``store_max_events`` rows (the window any live
+        # SSE/poll consumer resumes from) are never pruned within the window.
+        cutoff = int(time.time()) - self.store_ttl_seconds
+        connection.execute(
+            """
+            delete from core_events
+            where created_at < ?
+              and cursor <= (
+                select max(cursor) from core_events
+              ) - ?
+            """,
+            (cutoff, self.store_max_events),
+        )
+
+    def latest_event_for_stream(self, stream_message_id: str, agent_id: str = "") -> dict[str, Any] | None:
+        """Newest buffered event for ``stream_message_id`` (or None).
+
+        Used to rehydrate the in-memory stream accumulator after a Core restart
+        mid-stream: the last published snapshot is a full content-so-far copy,
+        so the next delta appends to it correctly.
+        """
+        if not stream_message_id:
+            return None
+        if not self.core_store:
+            with self._lock:
+                for event in reversed(self._events):
+                    if agent_id and event.get("agentId") != agent_id:
+                        continue
+                    metadata = event.get("metadata") if isinstance(event.get("metadata"), dict) else {}
+                    if str(metadata.get("streamMessageId") or metadata.get("stream_message_id") or "") == stream_message_id:
+                        return event
+            return None
+        clauses = ["metadata_json like ?"]
+        values: list[Any] = [f"%{stream_message_id}%"]
+        if agent_id:
+            clauses.append("agent_id = ?")
+            values.append(agent_id)
+        with self._lock, self.core_store.connect() as connection:
+            rows = connection.execute(
+                f"""
+                select * from core_events
+                where {' and '.join(clauses)}
+                order by cursor desc
+                limit 50
+                """,
+                tuple(values),
+            ).fetchall()
+        for row in rows:
+            event = self._row_to_event(row)
+            metadata = event.get("metadata") if isinstance(event.get("metadata"), dict) else {}
+            if str(metadata.get("streamMessageId") or metadata.get("stream_message_id") or "") == stream_message_id:
+                return event
+        return None
 
     def list_events(
         self,
@@ -792,7 +867,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     app.state.active_sessions = {}
     app.state.active_sessions_by_chat = {}
-    app.state.accepted_client_messages = {}
+    # Bounded in-memory LRU of accepted client messages, backed by a persisted
+    # table (C4) so a client resend after a dropped/slow send response dedupes
+    # across a Core restart instead of re-running the agent.
+    app.state.accepted_client_messages = OrderedDict()
+    # Core is the single assembler of the streamed assistant message: per
+    # streamMessageId we accumulate deltas server-side and publish full-content
+    # snapshots. In-memory (lost on restart); rehydrated from the event buffer.
+    app.state.stream_assembly = {}
+    app.state.stream_assembly_lock = threading.RLock()
     app.state.mobile_pairing_codes = {}
     if app_settings.cors_origins:
         app.add_middleware(
@@ -1665,8 +1748,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise ManagementError("Message text is required.", status_code=400)
         idempotency_key = http_request.headers.get("Idempotency-Key") or request.clientMessageId
         message_id = request.clientMessageId or random_id("msg")
-        accepted_key = (session_id, idempotency_key or message_id)
-        accepted_message = app.state.accepted_client_messages.get(accepted_key)
+        accepted_idempotency_key = idempotency_key or message_id
+        accepted_message = lookup_accepted_client_message(app, session_id, accepted_idempotency_key)
         if accepted_message:
             return {**accepted_message, "duplicate": True}
         adapter = app.state.runtime_registry.adapter_for_runtime(agent["runtimeId"])
@@ -1820,7 +1903,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "session": response_session,
             "runtime": result,
         }
-        app.state.accepted_client_messages[accepted_key] = accepted_response
+        record_accepted_client_message(app, session_id, accepted_idempotency_key, accepted_response)
         return accepted_response
 
     @app.post("/v1/sessions/{session_id}/cancel")
@@ -2001,8 +2084,119 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if client_request_id:
             event_metadata["clientRequestId"] = client_request_id
         event_metadata = mark_hidden_model_switch_reply(event_metadata, delivery.replyTo or "")
-        if has_stream_message_id(delivery.metadata):
+        assembled_stream = has_stream_message_id(delivery.metadata)
+        if assembled_stream:
             event_metadata["streamMessageId"] = stream_message_id
+        resolved_delta_content = (
+            str(delivery.metadata.get("error") or delivery.content)
+            if is_error_delivery and not delivery.content
+            else delivery.content
+        )
+
+        # --- Core is the single assembler: accumulate deltas, publish full snapshots ---
+        if assembled_stream:
+            status = (
+                "error"
+                if is_error_delivery
+                else "completed" if is_final or not is_streaming else "streaming"
+            )
+            with app.state.stream_assembly_lock:
+                prior = app.state.stream_assembly.get(stream_message_id)
+                if prior is None:
+                    prior = rehydrate_stream_assembly(app, stream_message_id, agent["id"])
+                prior_status = str((prior or {}).get("status") or "")
+                if prior_status in ("completed", "error"):
+                    # Restart-safe terminal guard (A2): once a stream is finished, a
+                    # duplicated / reordered / post-restart delivery is a no-op so it
+                    # can never overwrite the finished message.
+                    return {
+                        "ok": True,
+                        "sessionId": session_id,
+                        "event": (prior or {}).get("event"),
+                        "suppressed": True,
+                    }
+                full_content, changed = assemble_stream_snapshot(
+                    prior,
+                    delta_content=resolved_delta_content,
+                    metadata=delivery.metadata,
+                    status=status,
+                )
+                suppress_publish = (not changed) and status == "streaming"
+                # Keep the accumulator byte-accurate even when we skip publishing a
+                # cosmetically-identical snapshot, so the next delta appends to the
+                # true content-so-far rather than a normalized copy.
+                app.state.stream_assembly[stream_message_id] = {
+                    "content": full_content,
+                    "status": status,
+                    "updatedAt": now(),
+                }
+                if status in ("completed", "error"):
+                    app.state.stream_assembly.pop(stream_message_id, None)
+            if suppress_publish:
+                return {"ok": True, "sessionId": session_id, "suppressed": True}
+
+            is_terminal = status in ("completed", "error")
+            event_content = full_content
+            if is_terminal:
+                # Generated-file ingestion runs once, on the full assembled content.
+                event_content, event_metadata = ingest_generated_file_attachments(
+                    app,
+                    runtime_id=delivery.runtimeId,
+                    profile=delivery.profile,
+                    chat_id=delivery.chatId,
+                    session_id=session_id,
+                    message_id=delivery.messageId,
+                    content=full_content,
+                    metadata=event_metadata,
+                )
+                persist_assistant_attachment_metadata(
+                    app,
+                    runtime_id=delivery.runtimeId,
+                    profile=delivery.profile,
+                    chat_id=delivery.chatId,
+                    message_id=delivery.messageId,
+                    stream_message_id=stream_message_id,
+                    content=event_content,
+                    original_content=full_content,
+                    metadata=event_metadata,
+                )
+                write_assistant_history_overlay(
+                    app,
+                    runtime_id=delivery.runtimeId,
+                    profile=delivery.profile,
+                    chat_id=delivery.chatId,
+                    stream_message_id=stream_message_id,
+                    client_request_id=client_request_id,
+                    reply_to=delivery.replyTo or str(event_metadata.get("replyTo") or ""),
+                    content=event_content,
+                )
+            event_metadata = {
+                **event_metadata,
+                "chunkOperation": "replace",
+                "streamMessageId": stream_message_id,
+                "assembled": True,
+            }
+            event = publish_core_event(
+                app,
+                session_id=session_id,
+                agent_id=agent["id"],
+                runtime_id=delivery.runtimeId,
+                event_type=event_type,
+                role="assistant",
+                content=event_content,
+                parent_event_id=delivery.replyTo or str(event_metadata.get("replyTo") or ""),
+                external_message_id=delivery.messageId,
+                metadata=event_metadata,
+                event_id=f"evt_delivery_{delivery.messageId}",
+            )
+            return {
+                "ok": True,
+                "sessionId": session_id,
+                "event": event,
+                "suppressed": False,
+            }
+
+        # --- One-shot deliveries (cron, model-switch, generated files): verbatim ---
         original_content = delivery.content
         event_content, event_metadata = ingest_generated_file_attachments(
             app,
@@ -2011,7 +2205,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             chat_id=delivery.chatId,
             session_id=session_id,
             message_id=delivery.messageId,
-            content=str(delivery.metadata.get("error") or delivery.content) if is_error_delivery and not delivery.content else delivery.content,
+            content=resolved_delta_content,
             metadata=event_metadata,
         )
         persist_assistant_attachment_metadata(
@@ -3003,6 +3197,112 @@ def publish_core_event(
             metadata={"eventCursor": event["cursor"], "eventType": event["type"]},
         )
     return event
+
+
+ACCEPTED_CLIENT_MESSAGE_LRU_MAX = 1000
+ACCEPTED_CLIENT_MESSAGE_TTL_SECONDS = 24 * 60 * 60
+
+
+def lookup_accepted_client_message(
+    app: FastAPI, session_id: str, idempotency_key: str
+) -> dict[str, Any] | None:
+    if not session_id or not idempotency_key:
+        return None
+    cache: "OrderedDict[tuple[str, str], dict[str, Any]]" = app.state.accepted_client_messages
+    key = (session_id, idempotency_key)
+    cached = cache.get(key)
+    if cached is not None:
+        cache.move_to_end(key)
+        return cached
+    stored = app.state.core_store.get_accepted_client_message(
+        session_id=session_id,
+        idempotency_key=idempotency_key,
+        ttl_seconds=ACCEPTED_CLIENT_MESSAGE_TTL_SECONDS,
+    )
+    if stored is not None:
+        cache[key] = stored
+        cache.move_to_end(key)
+        _bound_accepted_client_messages(cache)
+    return stored
+
+
+def record_accepted_client_message(
+    app: FastAPI, session_id: str, idempotency_key: str, response: dict[str, Any]
+) -> None:
+    if not session_id or not idempotency_key:
+        return
+    cache: "OrderedDict[tuple[str, str], dict[str, Any]]" = app.state.accepted_client_messages
+    key = (session_id, idempotency_key)
+    cache[key] = response
+    cache.move_to_end(key)
+    _bound_accepted_client_messages(cache)
+    app.state.core_store.record_accepted_client_message(
+        session_id=session_id,
+        idempotency_key=idempotency_key,
+        response=response,
+        ttl_seconds=ACCEPTED_CLIENT_MESSAGE_TTL_SECONDS,
+    )
+
+
+def _bound_accepted_client_messages(cache: "OrderedDict[tuple[str, str], dict[str, Any]]") -> None:
+    while len(cache) > ACCEPTED_CLIENT_MESSAGE_LRU_MAX:
+        cache.popitem(last=False)
+
+
+def rehydrate_stream_assembly(app: FastAPI, stream_message_id: str, agent_id: str) -> dict[str, Any] | None:
+    """Rebuild the in-memory accumulator state from the last buffered snapshot.
+
+    The accumulator is in-memory and lost on a Core restart; because every
+    published event is a full content-so-far snapshot, the newest buffered event
+    for a stream is enough to resume appending (or to recognize that it already
+    terminated, so a post-restart straggler is suppressed).
+    """
+    event = app.state.live_delivery_bus.latest_event_for_stream(stream_message_id, agent_id)
+    if not event:
+        return None
+    event_type = str(event.get("type") or "")
+    status = (
+        "error"
+        if "error" in event_type
+        else "completed" if event_type.endswith("completed") else "streaming"
+    )
+    return {
+        "content": str(event.get("content") or ""),
+        "status": status,
+        "updatedAt": int(event.get("createdAt") or 0),
+        "event": event,
+    }
+
+
+def write_assistant_history_overlay(
+    app: FastAPI,
+    *,
+    runtime_id: str,
+    profile: str,
+    chat_id: str,
+    stream_message_id: str,
+    client_request_id: str,
+    reply_to: str,
+    content: str,
+) -> None:
+    """Stamp the streamed correlation identity onto a finalized assistant turn.
+
+    When Desktop later fetches the full conversation from Hermes, this overlay
+    lets each assistant row recover the clientRequestId / streamMessageId it
+    streamed under, so live-vs-history dedupe is deterministic instead of a
+    content-hash guess (see ``with_client_message_metadata``).
+    """
+    if not stream_message_id and not client_request_id:
+        return
+    app.state.core_store.upsert_assistant_message_metadata(
+        runtime_id=runtime_id,
+        profile=profile,
+        chat_id=chat_id,
+        stream_message_id=stream_message_id,
+        client_request_id=client_request_id,
+        reply_to=reply_to,
+        content=content,
+    )
 
 
 def list_runtime_automations(app: FastAPI, agent_id: str | None = None) -> list[dict[str, Any]]:

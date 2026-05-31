@@ -25,6 +25,7 @@ from ..core_store import (
     session_from_runtime_summary,
     core_message_from_hermes,
     message_content_hash_candidates,
+    normalize_assistant_content,
 )
 from .hermes_store import (
     HermesStore,
@@ -837,9 +838,39 @@ class HermesRuntimeAdapter:
         by_content_hash = overlays["byContentHash"]
         attachment_fallbacks = overlays.get("attachmentFallbacks", [])
         used_attachment_fallbacks: set[str] = set()
+        # C3: deterministic assistant correlation. Each finalized stream wrote an
+        # overlay carrying the clientRequestId / streamMessageId it streamed under;
+        # we consume them in transcript order so two identical replies resolve to
+        # distinct overlays positionally instead of being dropped on a hash clash.
+        assistant_overlays = self.core_store.assistant_message_metadata_for_messages(
+            runtime_id=str(self.runtime["id"]),
+            profile=profile,
+            chat_id=chat_id,
+            messages=messages,
+        )
+        assistant_by_content_hash = assistant_overlays["byContentHash"]
+        assistant_by_normalized = assistant_overlays["byNormalizedContent"]
+        consumed_assistant_overlays: set[str] = set()
+
+        def consume_assistant_overlay(content: str) -> dict[str, Any] | None:
+            def take(bucket: list[dict[str, Any]] | None) -> dict[str, Any] | None:
+                while bucket:
+                    candidate = bucket.pop(0)
+                    if candidate["streamMessageId"] not in consumed_assistant_overlays:
+                        consumed_assistant_overlays.add(candidate["streamMessageId"])
+                        return candidate
+                return None
+
+            for content_hash in message_content_hash_candidates(content):
+                overlay = take(assistant_by_content_hash.get(content_hash))
+                if overlay:
+                    return overlay
+            return take(assistant_by_normalized.get(normalize_assistant_content(content)))
+
         enriched: list[dict[str, Any]] = []
         for message in messages:
-            if message.get("role") not in {"user", "assistant"}:
+            role = str(message.get("role") or "")
+            if role not in {"user", "assistant"}:
                 enriched.append(message)
                 continue
             overlay = by_message_id.get(str(message.get("id") or ""))
@@ -865,26 +896,40 @@ class HermesRuntimeAdapter:
                     ),
                     None,
                 ) if (
-                    str(message.get("role") or "") == "user" and
+                    role == "user" and
                     is_transformed_voice_message_content(str(message.get("content") or ""))
                 ) else None
                 if fallback and isinstance(fallback.get("metadata"), dict):
                     used_attachment_fallbacks.add(str(fallback.get("messageId") or ""))
                     overlay = fallback["metadata"]
-            if not overlay:
+            assistant_overlay = (
+                consume_assistant_overlay(str(message.get("content") or "")) if role == "assistant" else None
+            )
+            if not overlay and not assistant_overlay:
                 enriched.append(message)
                 continue
             content = str(message.get("content") or "")
-            client_content = overlay.get("clientContent")
-            if isinstance(client_content, str):
-                content = client_content
-            elif (
-                message.get("role") == "user" and
-                isinstance(overlay.get("attachments"), list) and
-                is_transformed_voice_message_content(content)
-            ):
-                content = ""
-            enriched.append({**message, "content": content, "metadata": {**metadata, **overlay}})
+            next_metadata = {**metadata}
+            if overlay:
+                client_content = overlay.get("clientContent")
+                if isinstance(client_content, str):
+                    content = client_content
+                elif (
+                    role == "user" and
+                    isinstance(overlay.get("attachments"), list) and
+                    is_transformed_voice_message_content(content)
+                ):
+                    content = ""
+                next_metadata = {**next_metadata, **overlay}
+            if assistant_overlay:
+                # The streamed correlation identity is authoritative for dedupe.
+                if assistant_overlay.get("clientRequestId"):
+                    next_metadata["clientRequestId"] = assistant_overlay["clientRequestId"]
+                if assistant_overlay.get("streamMessageId"):
+                    next_metadata["streamMessageId"] = assistant_overlay["streamMessageId"]
+                if assistant_overlay.get("replyTo"):
+                    next_metadata["replyTo"] = assistant_overlay["replyTo"]
+            enriched.append({**message, "content": content, "metadata": next_metadata})
         return enriched
 
     def probe(self, profile: str = "default") -> dict[str, Any]:

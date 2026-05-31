@@ -29,8 +29,10 @@ import {
   updateIrisCoreSessionReadState,
   updateIrisProject,
   uploadIrisCoreAttachment,
+  openCoreEventStream,
 } from "../irisCore";
 import { defaultRuntimeConfig } from "../../app/runtimeConfig";
+import type { HermesRuntimeConfig } from "../../types/hermes";
 
 const invoke = vi.hoisted(() => vi.fn());
 const tauriRuntime = vi.hoisted(() => ({ value: false }));
@@ -825,3 +827,104 @@ function coreAgentFixture(profile: string, isDefault = false) {
     },
   };
 }
+
+describe("openCoreEventStream", () => {
+  const tailscaleRuntime: HermesRuntimeConfig = {
+    connectionMode: "tailscale",
+    activeConnectionId: "core_remote",
+    coreConnections: [
+      {
+        id: "core_remote",
+        name: "Remote",
+        mode: "tailscale",
+        effectiveCoreApiUrl: "http://100.64.0.1:8765",
+        tailscale: {
+          hostId: "host-1",
+          hostLabel: "Mac mini",
+          magicDnsName: "core.ts.net",
+          corePort: 8765,
+          deviceToken: "device-token-xyz",
+        },
+      },
+    ],
+    provider: "",
+    model: "",
+  };
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("uses the browser EventSource for a tokenless (loopback) Core", () => {
+    const instances: Array<{ url: string }> = [];
+    class FakeEventSource {
+      url: string;
+      onopen: (() => void) | null = null;
+      onerror: (() => void) | null = null;
+      constructor(url: string) {
+        this.url = url;
+        instances.push(this);
+      }
+      addEventListener() {}
+      close() {}
+    }
+    vi.stubGlobal("EventSource", FakeEventSource as unknown as typeof EventSource);
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const handle = openCoreEventStream(defaultRuntimeConfig, {
+      after: 3,
+      agentId: "agent_default",
+      onEvent: () => {},
+      onError: () => {},
+    });
+
+    expect(instances).toHaveLength(1);
+    expect(instances[0].url).toContain("/events/stream?after=3");
+    expect(fetchMock).not.toHaveBeenCalled();
+    handle.close();
+  });
+
+  it("uses an authed fetch reader for a tokened Core and resumes from the cursor", async () => {
+    const chunks = [
+      'data: {"cursor":5,"type":"message.assistant.delta","content":"Hi"}\n\n',
+      ": keep-alive\n\n",
+      'data: {"cursor":6,"type":"message.assistant.completed","content":"Hi there"}\n\n',
+    ];
+    let index = 0;
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      body: {
+        getReader: () => ({
+          read: async () => {
+            if (index < chunks.length) {
+              return { done: false, value: new TextEncoder().encode(chunks[index++]) };
+            }
+            return { done: true, value: undefined };
+          },
+        }),
+      },
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+    const eventSource = vi.fn();
+    vi.stubGlobal("EventSource", eventSource);
+
+    const events: Array<{ cursor: number; content: string }> = [];
+    const handle = openCoreEventStream(tailscaleRuntime, {
+      after: 4,
+      agentId: "agent_default",
+      onEvent: (event) => events.push(event as unknown as { cursor: number; content: string }),
+      onError: () => {},
+    });
+
+    await vi.waitFor(() => expect(events).toHaveLength(2));
+
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(String(url)).toContain("/events/stream?after=4");
+    expect(init.headers).toMatchObject({ Authorization: "Bearer device-token-xyz" });
+    expect(events.map((event) => event.content)).toEqual(["Hi", "Hi there"]);
+    expect(eventSource).not.toHaveBeenCalled();
+    handle.close();
+  });
+});

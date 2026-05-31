@@ -45,7 +45,11 @@ export async function coreRequest<T>(
       },
       signal: controller?.signal,
       body: body === undefined ? undefined : JSON.stringify(body),
-    });
+      // Carried for transports that re-issue the request through their own layer
+      // (e.g. the desktop bridge) so the intended per-call timeout is honored
+      // instead of falling back to a short default. Standard fetch ignores it.
+      ...(options.timeoutMs ? { timeoutMs: options.timeoutMs } : {}),
+    } as RequestInit & { timeoutMs?: number });
     const parsed = await response.json().catch(() => ({}));
     if (!response.ok && (parsed as { ok?: boolean }).ok !== false) {
       return {

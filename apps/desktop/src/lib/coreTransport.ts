@@ -51,12 +51,18 @@ export function desktopIrisCoreClient(runtime?: HermesRuntimeConfig): IrisCoreCl
       const body = typeof init.body === "string" && init.body
         ? JSON.parse(init.body)
         : undefined;
+      // The shared client encodes the intended per-call timeout on the init; honor
+      // it here so a 12s send isn't capped by the transport's short GET default.
+      const timeoutMs = (init as RequestInit & { timeoutMs?: number }).timeoutMs;
       const result = await coreRequest(
         runtime,
         (init.method || "GET") as CoreMethod,
         path,
         body,
-        { idempotencyKey: headers.get("Idempotency-Key") || undefined },
+        {
+          idempotencyKey: headers.get("Idempotency-Key") || undefined,
+          ...(timeoutMs ? { timeoutMs } : {}),
+        },
       );
       return new Response(JSON.stringify(result), {
         status: result.ok ? 200 : 500,

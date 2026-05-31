@@ -1183,6 +1183,150 @@ export function irisCoreEventStreamUrl(
   return sharedEventStreamUrl(desktopIrisCoreClient(runtime), { after, limit, agentId });
 }
 
+// Server publishes named SSE events (event: message.assistant.delta, ...).
+export const CORE_DELIVERY_EVENT_NAMES = [
+  "message.assistant.delta",
+  "message.assistant.completed",
+  "message.assistant.error",
+  "message.error",
+] as const;
+
+export type CoreEventStreamHandle = { close: () => void };
+
+export type OpenCoreEventStreamOptions = {
+  after: number;
+  agentId: string;
+  limit?: number;
+  onEvent: (event: IrisCoreEvent) => void;
+  onError: (error?: unknown) => void;
+  onOpen?: () => void;
+};
+
+/**
+ * Open the Core event stream, picking a transport that authenticates correctly:
+ * a remote (tailscale) Core requires a bearer token, which the browser
+ * `EventSource` cannot send — so for tokened connections we consume the SSE
+ * response via an authed `fetch()` reader. Loopback / SSH-tunnel Core needs no
+ * token, so we keep the simpler `EventSource` there. Either way the caller owns
+ * reconnect (with `after = lastAppliedCursor`) and the polling fallback.
+ */
+export function openCoreEventStream(
+  runtime: HermesRuntimeConfig | undefined,
+  options: OpenCoreEventStreamOptions,
+): CoreEventStreamHandle {
+  const { after, agentId, limit = 200, onEvent, onError, onOpen } = options;
+  const url = irisCoreEventStreamUrl(runtime, after, limit, agentId);
+  const token = activeCoreConnection(runtime)?.tailscale?.deviceToken || "";
+  return token
+    ? openFetchEventStream(url, token, { onEvent, onError, onOpen })
+    : openEventSourceStream(url, { onEvent, onError, onOpen });
+}
+
+function openEventSourceStream(
+  url: string,
+  { onEvent, onError, onOpen }: Pick<OpenCoreEventStreamOptions, "onEvent" | "onError" | "onOpen">,
+): CoreEventStreamHandle {
+  let closed = false;
+  const source = new EventSource(url);
+  const handle = (event: MessageEvent<string>) => {
+    if (closed) return;
+    const parsed = parseEventStreamData(event.data);
+    if (parsed) onEvent(parsed);
+  };
+  source.onopen = () => {
+    if (!closed) onOpen?.();
+  };
+  for (const eventName of CORE_DELIVERY_EVENT_NAMES) {
+    source.addEventListener(eventName, handle as EventListener);
+  }
+  source.onerror = () => {
+    if (!closed) onError();
+  };
+  return {
+    close: () => {
+      closed = true;
+      // close() also stops EventSource's built-in auto-reconnect so the caller's
+      // cursor-resume reconnect is the only one in play.
+      source.close();
+    },
+  };
+}
+
+function openFetchEventStream(
+  url: string,
+  token: string,
+  { onEvent, onError, onOpen }: Pick<OpenCoreEventStreamOptions, "onEvent" | "onError" | "onOpen">,
+): CoreEventStreamHandle {
+  const controller = new AbortController();
+  let closed = false;
+  void (async () => {
+    try {
+      const response = await fetch(url, {
+        method: "GET",
+        headers: { Accept: "text/event-stream", Authorization: `Bearer ${token}` },
+        signal: controller.signal,
+      });
+      if (!response.ok || !response.body) {
+        if (!closed) onError(new Error(`Core event stream HTTP ${response.status}`));
+        return;
+      }
+      if (!closed) onOpen?.();
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      while (!closed) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        let separator = buffer.indexOf("\n\n");
+        while (separator !== -1) {
+          const rawEvent = buffer.slice(0, separator);
+          buffer = buffer.slice(separator + 2);
+          const data = sseDataPayload(rawEvent);
+          if (data) {
+            const parsed = parseEventStreamData(data);
+            if (parsed) onEvent(parsed);
+          }
+          separator = buffer.indexOf("\n\n");
+        }
+      }
+      if (!closed) onError();
+    } catch (error) {
+      if (!closed && !(error instanceof DOMException && error.name === "AbortError")) {
+        onError(error);
+      }
+    }
+  })();
+  return {
+    close: () => {
+      closed = true;
+      controller.abort();
+    },
+  };
+}
+
+function sseDataPayload(rawEvent: string): string {
+  // An SSE event block is `event:`/`id:`/`data:` lines; comments (`: keep-alive`)
+  // carry no data. Concatenate the data lines per the SSE spec.
+  const dataLines = rawEvent
+    .split("\n")
+    .filter((line) => line.startsWith("data:"))
+    .map((line) => line.slice(5).replace(/^ /, ""));
+  return dataLines.join("\n");
+}
+
+function parseEventStreamData(data: string): IrisCoreEvent | null {
+  try {
+    const parsed: unknown = JSON.parse(data);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+    const event = parsed as Partial<IrisCoreEvent>;
+    if (typeof event.cursor !== "number" || typeof event.type !== "string") return null;
+    return event as IrisCoreEvent;
+  } catch {
+    return null;
+  }
+}
+
 export async function getIrisCoreModels(agentId: string, runtime?: HermesRuntimeConfig) {
   return coreRequest<IrisCoreModelCatalog>(runtime, "GET", `/agents/${encodeURIComponent(agentId)}/models`);
 }

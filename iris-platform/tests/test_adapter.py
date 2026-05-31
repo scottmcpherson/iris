@@ -4,6 +4,7 @@ import importlib
 import asyncio
 import json
 import sys
+import time
 import types
 from dataclasses import dataclass
 from pathlib import Path
@@ -488,6 +489,88 @@ def test_edit_message_marks_non_monotonic_content_as_replace(monkeypatch: pytest
     assert requests[1]["content"] == "Goodbye"
     assert requests[1]["metadata"]["chunkOperation"] == "replace"
     assert requests[1]["metadata"]["clientRequestId"] == "client-1"
+
+
+def test_edit_message_marks_uncorrelated_delta_when_unresolved(monkeypatch: pytest.MonkeyPatch):
+    adapter_module = load_adapter_module(monkeypatch)
+    adapter = adapter_module.IrisPlatformAdapter(Config())
+    requests: list[dict[str, Any]] = []
+
+    async def fake_request(_method: str, _path: str, body: dict[str, Any] | None = None):
+        requests.append(body or {})
+        return {"ok": True}
+
+    adapter._request = fake_request
+
+    # No clientRequestId, no per-stream binding, no recent per-chat hint, no replyTo:
+    # the delta is genuinely uncorrelated and is marked (not silently unlabeled).
+    asyncio.run(adapter.edit_message("chat-1", "orphan-stream", "orphaned text"))
+
+    assert requests[0]["metadata"]["uncorrelated"] is True
+    assert "clientRequestId" not in requests[0]["metadata"]
+
+
+def test_edit_message_prefers_stream_binding_over_stale_per_chat_hint(monkeypatch: pytest.MonkeyPatch):
+    adapter_module = load_adapter_module(monkeypatch)
+    adapter = adapter_module.IrisPlatformAdapter(Config())
+    requests: list[dict[str, Any]] = []
+
+    async def fake_request(_method: str, _path: str, body: dict[str, Any] | None = None):
+        requests.append(body or {})
+        return {"ok": True}
+
+    adapter._request = fake_request
+
+    # Turn A registers its stream binding.
+    asyncio.run(adapter.edit_message("chat-1", "stream-a", "Answer A", metadata={"clientRequestId": "client-a"}))
+    # A newer turn B overlaps and updates the per-chat hint while A is still streaming.
+    adapter._active_client_request_ids_by_chat["chat-1"] = "client-b"
+    adapter._active_client_request_id_updated_at["chat-1"] = time.time()
+    # A straggler edit for stream-a must still resolve client-a, not the newer hint.
+    asyncio.run(adapter.edit_message("chat-1", "stream-a", "Answer A continued"))
+
+    assert requests[-1]["metadata"]["clientRequestId"] == "client-a"
+
+
+def test_inbound_task_failure_without_stream_emits_pre_stream_error(monkeypatch: pytest.MonkeyPatch):
+    adapter_module = load_adapter_module(monkeypatch)
+    adapter = adapter_module.IrisPlatformAdapter(Config())
+    requests: list[dict[str, Any]] = []
+
+    async def fake_payload_and_files(_request):
+        return {
+            "profile": "default",
+            "chatId": "core-chat-1",
+            "messageId": "client-message-1",
+            "text": "hello",
+        }, {}
+
+    async def fake_request(_method: str, _path: str, body: dict[str, Any] | None = None):
+        requests.append(body or {})
+        return {"ok": True}
+
+    async def fake_handle_message(_event):
+        # Fails before any edit_message/send registers a stream.
+        raise RuntimeError("agent failed before streaming")
+
+    async def run():
+        if not adapter_module.AIOHTTP_AVAILABLE:
+            monkeypatch.setattr(adapter_module, "web", FakeWeb)
+        monkeypatch.setattr(adapter_module, "inbound_payload_and_files", fake_payload_and_files)
+        adapter._request = fake_request
+        adapter.handle_message = fake_handle_message
+        response = await adapter._inbound_message(FakeInboundRequest())
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+        return response
+
+    response = asyncio.run(run())
+
+    assert response.status == 202
+    assert requests[-1]["source"] == "hermes-error"
+    assert requests[-1]["metadata"]["clientRequestId"] == "client-message-1"
+    assert requests[-1]["metadata"]["finalize"] is True
+    assert "streamMessageId" not in requests[-1]["metadata"]
 
 
 def test_stream_state_is_pruned_and_finalize_cleans_active_request(monkeypatch: pytest.MonkeyPatch):

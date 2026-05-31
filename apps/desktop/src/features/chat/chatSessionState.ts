@@ -367,7 +367,10 @@ export function mergeSessionChatIdMap(
   return changed ? next : current;
 }
 
-export function shouldRetryUnmappedDelivery(attempts: number, maxAttempts = 2) {
+export function shouldRetryUnmappedDelivery(attempts: number, maxAttempts = 8) {
+  // With stable shared identity (C3) and no mid-stream teardown, an unmapped
+  // delivery is rare and almost always transient (the session row is still
+  // resolving). Retry it generously before giving up so a late reply isn't lost.
   return attempts < maxAttempts;
 }
 

@@ -5,13 +5,14 @@ import {
   irisCoreEventToDeliveryMessage,
 } from "../../lib/irisRuntime";
 import {
-  irisCoreEventStreamUrl,
+  openCoreEventStream,
   cancelIrisCoreMessage,
   createIrisCoreSession,
   getIrisCoreEvents,
   getIrisCoreAgentForProfile,
   getIrisCoreLatestEventCursor,
   updateIrisCoreSessionReadState,
+  type CoreEventStreamHandle,
   type IrisCoreEvent,
   type CoreMetadata,
 } from "../../lib/irisCore";
@@ -33,7 +34,7 @@ import type {
 } from "../../types/hermes";
 import { compactText } from "../../shared/strings";
 import { AttachmentUploadError, formatPromptWithAttachments, uploadAttachmentsForSend } from "./chatAttachments";
-import { ASSISTANT_THINKING_TEXT } from "./assistantStatus";
+import { ASSISTANT_THINKING_TEXT, isAssistantThinkingPlaceholder } from "./assistantStatus";
 import type { PendingProfileSessionSelection, SendMessageOptions } from "./chatTypes";
 import {
   isHiddenDeliveryMetadata,
@@ -45,6 +46,7 @@ import {
   mergeErrorDelivery,
   mergeCompletedDelivery,
   mergeStreamDelivery,
+  reconcileMessages,
 } from "./chatStreamMerging";
 import {
   activeSessionReplacements,
@@ -91,7 +93,6 @@ import {
 } from "./chatSessionState";
 import {
   dedupeInboxDeliveries,
-  parseCoreEvent,
   runtimeChatId,
   shouldApplyDeliveryReadState,
   streamDeliveryFinalized,
@@ -136,13 +137,6 @@ type UseIrisChatOptions = {
   onSessionMetadataResolved?: (sessionId: string, projectId: string | null) => void;
 };
 
-const coreDeliveryEventNames = [
-  "message.assistant.delta",
-  "message.assistant.completed",
-  "message.assistant.error",
-  "message.error",
-];
-
 export const SESSION_TITLE_RESOLVE_DELAY_MS = 3000;
 export const STREAM_SAFETY_TIMEOUT_MS = 60_000;
 const STREAM_SAFETY_CHECK_INTERVAL_MS = 5_000;
@@ -175,21 +169,26 @@ export function useIrisChat({
   const [historySchemaVersion, setHistorySchemaVersion] = useState<number | null>(null);
   const [sessionChatIdsBySession, setSessionChatIdsBySession] = useState<Record<string, string>>({});
   const [modelSelectionBySession, setModelSelectionBySession] = useState<Record<string, HermesModelSelection>>({});
+  // Fetch cursor: the `after` for the next SSE/poll request. Advances past every
+  // fetched event so we never refetch. Applied high-water: the highest cursor we
+  // have committed to message state; used to dedupe SSE+poll overlap. Because
+  // every event is a full snapshot, reprocessing is idempotent, so this dedupe is
+  // belt-and-suspenders rather than load-bearing.
   const eventCursorsByProfileRef = useRef<Record<string, number>>({});
+  const lastAppliedCursorByProfileRef = useRef<Record<string, number>>({});
   const eventCursorBootstrapKeysRef = useRef<Record<string, string>>({});
   const eventConsumerStartedAtRef = useRef(Math.floor(Date.now() / 1000));
-  const processedInboxEventIdsRef = useRef<Set<string>>(new Set());
   const pendingGatewayDeliveriesRef = useRef<HermesInboxMessage[]>([]);
   const pendingUnmappedDeliveryAttemptsRef = useRef<Record<string, number>>({});
   const pendingProfileSelectionRef = useRef<PendingProfileSessionSelection | null>(null);
-  const coreEventSourceRef = useRef<EventSource | null>(null);
-  const activeDetailReconcileAtRef = useRef<Record<string, number>>({});
+  const coreEventStreamRef = useRef<CoreEventStreamHandle | null>(null);
   const sendInFlightRef = useRef(false);
   const messagesBySessionRef = useRef(messagesBySession);
   const activeRequestIdsBySessionRef = useRef(activeRequestIdsBySession);
   const activeRequestTouchedAtRef = useRef<Record<string, number>>({});
   const activeSessionTitlesBySessionRef = useRef<Record<string, string>>({});
   const selectedSessionIdRef = useRef(selectedSessionId);
+  const hasActiveRequestRef = useRef(false);
   const isChatViewActiveRef = useRef(isChatViewActive);
   const sessionChatIdsBySessionRef = useRef(sessionChatIdsBySession);
   const sessionsByProfileRef = useRef(sessionsByProfile);
@@ -229,6 +228,7 @@ export function useIrisChat({
 
   messagesBySessionRef.current = messagesBySession;
   activeRequestIdsBySessionRef.current = activeRequestIdsBySession;
+  hasActiveRequestRef.current = hasActiveRequest;
   selectedSessionIdRef.current = selectedSessionId;
   isChatViewActiveRef.current = isChatViewActive;
   sessionChatIdsBySessionRef.current = sessionChatIdsBySession;
@@ -279,62 +279,95 @@ export function useIrisChat({
   }, [profile]);
 
   useEffect(() => {
+    // One long-lived consumer per (requestKey, profile). It does NOT rebuild on
+    // send (hasActiveRequest is read from a ref), so an in-flight reply is never
+    // torn down. SSE is the fast path; polling is the floor while disconnected;
+    // reconnect resumes from the applied cursor with capped backoff.
     let closed = false;
-    let fallbackTimer: number | null = null;
+    let pollingActive = false;
+    let pollTimer: number | null = null;
+    let reconnectTimer: number | null = null;
+    let reconnectDelay = 500;
+    let agentId = "";
     const effectRequestKey = requestKey;
-    const startPollingFallback = () => {
-      if (closed || fallbackTimer !== null || !isCurrentRequest(effectRequestKey)) return;
-      void pollCoreEvents();
-      fallbackTimer = window.setInterval(() => {
-        void pollCoreEvents();
-      }, hasActiveRequest ? 400 : 2000);
+
+    const pollLoop = async () => {
+      if (closed || !pollingActive || !isCurrentRequest(effectRequestKey)) return;
+      await pollCoreEvents();
+      if (closed || !pollingActive || !isCurrentRequest(effectRequestKey)) return;
+      pollTimer = window.setTimeout(pollLoop, hasActiveRequestRef.current ? 400 : 2000);
+    };
+    const startPolling = () => {
+      if (closed || pollingActive || !isCurrentRequest(effectRequestKey)) return;
+      pollingActive = true;
+      void pollLoop();
+    };
+    const stopPolling = () => {
+      pollingActive = false;
+      if (pollTimer !== null) {
+        window.clearTimeout(pollTimer);
+        pollTimer = null;
+      }
+    };
+
+    const connect = () => {
+      if (closed || !agentId || !isCurrentRequest(effectRequestKey)) return;
+      coreEventStreamRef.current = openCoreEventStream(runtimeConfig, {
+        after: eventCursorsByProfileRef.current[profile] || 0,
+        agentId,
+        onEvent: (event) => {
+          if (!closed && isCurrentRequest(effectRequestKey)) handleCoreEvents([event]);
+        },
+        onOpen: () => {
+          // Stream is healthy: reset backoff and drop the polling floor.
+          reconnectDelay = 500;
+          stopPolling();
+        },
+        onError: () => {
+          if (closed) return;
+          coreEventStreamRef.current?.close();
+          coreEventStreamRef.current = null;
+          // Keep events flowing over polling while we retry the stream, resuming
+          // from the applied cursor so a reconnect can neither skip nor dup.
+          startPolling();
+          if (reconnectTimer === null && isCurrentRequest(effectRequestKey)) {
+            reconnectTimer = window.setTimeout(() => {
+              reconnectTimer = null;
+              reconnectDelay = Math.min(reconnectDelay * 2, 5000);
+              connect();
+            }, reconnectDelay);
+          }
+        },
+      });
     };
 
     void getIrisCoreAgentForProfile(profile, runtimeConfig)
       .then(async (agentResult) => {
         if (closed || !isCurrentRequest(effectRequestKey) || !agentResult.ok || !agentResult.agent) {
-          startPollingFallback();
+          startPolling();
           return;
         }
-        const bootstrapped = await bootstrapCoreEventCursor(profile, agentResult.agent.id);
-        if (closed) return;
+        agentId = agentResult.agent.id;
+        const bootstrapped = await bootstrapCoreEventCursor(profile, agentId);
+        if (closed || !isCurrentRequest(effectRequestKey)) return;
         if (!bootstrapped) {
-          startPollingFallback();
+          startPolling();
           return;
         }
-        const cursor = eventCursorsByProfileRef.current[profile] || 0;
-        const source = new EventSource(
-          irisCoreEventStreamUrl(runtimeConfig, cursor, 200, agentResult.agent.id),
-        );
-        if (closed || !isCurrentRequest(effectRequestKey)) {
-          source.close();
-          return;
-        }
-        coreEventSourceRef.current = source;
-        const onCoreEvent = (event: MessageEvent<string>) => {
-          const parsed = parseCoreEvent(event.data);
-          if (parsed) handleCoreEvents([parsed]);
-        };
-        for (const eventName of coreDeliveryEventNames) {
-          source.addEventListener(eventName, onCoreEvent as EventListener);
-        }
-        source.onerror = () => {
-          source.close();
-          if (coreEventSourceRef.current === source) coreEventSourceRef.current = null;
-          startPollingFallback();
-        };
+        connect();
       })
-      .catch(startPollingFallback);
+      .catch(() => startPolling());
 
     return () => {
       closed = true;
-      if (fallbackTimer !== null) window.clearInterval(fallbackTimer);
-      if (coreEventSourceRef.current) {
-        coreEventSourceRef.current.close();
-        coreEventSourceRef.current = null;
+      stopPolling();
+      if (reconnectTimer !== null) window.clearTimeout(reconnectTimer);
+      if (coreEventStreamRef.current) {
+        coreEventStreamRef.current.close();
+        coreEventStreamRef.current = null;
       }
     };
-  }, [requestKey, profile, hasActiveRequest]);
+  }, [requestKey, profile]);
 
   useEffect(() => {
     const timer = window.setInterval(() => {
@@ -359,6 +392,11 @@ export function useIrisChat({
     let sessionId = previousSessionId || optimisticSessionId;
     let activeSessionId = sessionId;
     let attachments: MessageAttachment[] = [];
+    // Once the send has been handed to Core, a failure (timeout/transport error)
+    // is ambiguous — Core may have accepted and a reply may still stream in — so
+    // we keep the request pending instead of tearing it down. A failure BEFORE
+    // this point (e.g. session create) is definitive and surfaces immediately.
+    let sendInitiated = false;
     try {
       attachments = await uploadAttachmentsForSend(draftAttachments, {
         profile,
@@ -529,6 +567,7 @@ export function useIrisChat({
       if (gatewayChatId) coreMetadata.chatId = gatewayChatId;
       if (projectId) coreMetadata.projectId = projectId;
       if (switchSelection) coreMetadata.modelSwitch = switchSelection;
+      sendInitiated = true;
       const result = await sendMessageMutation.mutateAsync({
         sessionId,
         payload: {
@@ -617,6 +656,18 @@ export function useIrisChat({
         error instanceof Error
           ? error.message
           : "Iris Core session is not available yet.";
+      if (sendInitiated && activeRequestIdsBySessionRef.current[activeSessionId]) {
+        // Resilient send: the request reached Core, so a lost/slow send response
+        // must not tear down the in-flight reply or fabricate an error over it.
+        // Keep the assistant placeholder streaming and let the event stream resolve
+        // it (a real snapshot, or a Core-published error event); the safety timeout
+        // (D7) is the final backstop. Durable idempotency (C4) makes this safe.
+        activeRequestTouchedAtRef.current = {
+          ...activeRequestTouchedAtRef.current,
+          [userMessageId]: Date.now(),
+        };
+        return false;
+      }
       activeRequestIdsBySessionRef.current = removeActiveRequestIds(
         activeRequestIdsBySessionRef.current,
         activeSessionId,
@@ -972,9 +1023,16 @@ export function useIrisChat({
             toAppMessages(result.messages),
             localMessages,
           );
+          // Reconcile keeping the LOCAL transcript's chronological order + identity
+          // (it already holds event-only messages like /sethome replies and cron
+          // deliveries that never enter Hermes history); history only folds in
+          // messages local genuinely lacks. This avoids both the long-chat reorder
+          // and the reversed-transcript bug where event-only turns were appended
+          // after the history turns.
+          const reconciled = reconcileMessages(localMessages, historyMessages);
           return {
             ...current,
-            [loadedSession.id]: historyMessages,
+            [loadedSession.id]: reconciled,
           };
         });
       }
@@ -1055,16 +1113,15 @@ export function useIrisChat({
   }
 
   function resetRouteScopedChatState() {
-    coreEventSourceRef.current?.close();
-    coreEventSourceRef.current = null;
+    coreEventStreamRef.current?.close();
+    coreEventStreamRef.current = null;
     pendingProfileSelectionRef.current = null;
     pendingGatewayDeliveriesRef.current = [];
     pendingUnmappedDeliveryAttemptsRef.current = {};
-    processedInboxEventIdsRef.current = new Set();
     eventCursorsByProfileRef.current = {};
+    lastAppliedCursorByProfileRef.current = {};
     eventCursorBootstrapKeysRef.current = {};
     eventConsumerStartedAtRef.current = Math.floor(Date.now() / 1000);
-    activeDetailReconcileAtRef.current = {};
     activeRequestIdsBySessionRef.current = {};
     activeRequestTouchedAtRef.current = {};
     activeSessionTitlesBySessionRef.current = {};
@@ -1194,32 +1251,29 @@ export function useIrisChat({
     if (!isCurrentRequest(activeRequestKey)) return;
     if (!bootstrapped) return;
     const cursor = eventCursorsByProfileRef.current[profile] || 0;
-    const result = await getIrisCoreEvents(cursor, 50, runtimeConfig, agentResult.agent.id);
+    const result = await getIrisCoreEvents(cursor, 200, runtimeConfig, agentResult.agent.id);
     if (!isCurrentRequest(activeRequestKey)) return;
     if (!result.ok) return;
-    eventCursorsByProfileRef.current = {
-      ...eventCursorsByProfileRef.current,
-      [profile]: result.cursor || cursor,
-    };
     handleCoreEvents(result.events);
   }
 
   function handleCoreEvents(events: IrisCoreEvent[]) {
     if (!isCurrentRequest(requestKey)) return;
+    const maxCursor = events.reduce((current, event) => Math.max(current, event.cursor || 0), 0);
     const deliveries = events
       .filter((event) => event.type.startsWith("message.assistant") || event.type === "message.error")
       .map((event) => irisCoreEventToDeliveryMessage(event, profile));
-    if (!deliveries.length) return;
-    const cursor = deliveries.reduce(
-      (current, delivery) => Math.max(current, delivery.cursor),
-      eventCursorsByProfileRef.current[profile] || 0,
-    );
-    eventCursorsByProfileRef.current = {
-      ...eventCursorsByProfileRef.current,
-      [profile]: cursor,
-    };
-    handleCoreDeliveries(deliveries);
-    reconcileActiveSessionDetails();
+    if (deliveries.length) {
+      handleCoreDeliveries(deliveries);
+    }
+    // Advance the fetch cursor only after the batch has been handed to state, and
+    // past every fetched event (including filtered ones) so we never refetch.
+    if (maxCursor > 0) {
+      eventCursorsByProfileRef.current = {
+        ...eventCursorsByProfileRef.current,
+        [profile]: Math.max(eventCursorsByProfileRef.current[profile] || 0, maxCursor),
+      };
+    }
   }
 
   async function bootstrapCoreEventCursor(profileName: string, agentId: string) {
@@ -1234,6 +1288,12 @@ export function useIrisChat({
     eventCursorsByProfileRef.current = {
       ...eventCursorsByProfileRef.current,
       [profileName]: Math.max(eventCursorsByProfileRef.current[profileName] || 0, latestCursor),
+    };
+    // Treat everything up to the bootstrap cursor as already applied so pre-connect
+    // events are skipped by the high-water dedupe instead of replayed.
+    lastAppliedCursorByProfileRef.current = {
+      ...lastAppliedCursorByProfileRef.current,
+      [profileName]: Math.max(lastAppliedCursorByProfileRef.current[profileName] || 0, latestCursor),
     };
     eventCursorBootstrapKeysRef.current = {
       ...eventCursorBootstrapKeysRef.current,
@@ -1266,9 +1326,24 @@ export function useIrisChat({
     const remaining: HermesInboxMessage[] = [];
     let handledDelivery = false;
     let unmappedDelivery = false;
+    const appliedHighWater = lastAppliedCursorByProfileRef.current[profile] || 0;
+    // Deliveries already queued for retry must still be reattempted even if a
+    // later cursor advanced the high-water past them.
+    const pendingRetryIds = new Set(pendingGatewayDeliveriesRef.current.map((delivery) => delivery.id));
+    let maxAppliedCursor = appliedHighWater;
+    const markApplied = (delivery: HermesInboxMessage) => {
+      maxAppliedCursor = Math.max(maxAppliedCursor, delivery.cursor || 0);
+    };
 
     for (const delivery of deliveries) {
-      if (processedInboxEventIdsRef.current.has(delivery.id)) continue;
+      if (
+        delivery.cursor > 0 &&
+        delivery.cursor <= appliedHighWater &&
+        !pendingRetryIds.has(delivery.id)
+      ) {
+        // Already committed (e.g. the same snapshot from both SSE and polling).
+        continue;
+      }
       if (delivery.profile && delivery.profile !== profile) {
         remaining.push(delivery);
         continue;
@@ -1276,7 +1351,7 @@ export function useIrisChat({
       const replyTo = stringMetadata(delivery.metadata, "replyTo") || stringMetadata(delivery.metadata, "reply_to");
       const hidden = isHiddenDeliveryMetadata(delivery.metadata);
       if (hidden) {
-        processedInboxEventIdsRef.current.add(delivery.id);
+        markApplied(delivery);
         handledDelivery = true;
         continue;
       }
@@ -1309,7 +1384,7 @@ export function useIrisChat({
           remaining.push(delivery);
           unmappedDelivery = true;
         } else {
-          processedInboxEventIdsRef.current.add(delivery.id);
+          markApplied(delivery);
           delete pendingUnmappedDeliveryAttemptsRef.current[delivery.id];
         }
         continue;
@@ -1319,6 +1394,19 @@ export function useIrisChat({
         sessionId,
         sessionChatIdsBySessionRef.current,
       );
+      // D7: any cursor advance for an active session keeps its safety timeout
+      // fresh, even if this delivery wasn't clientRequestId-matched (e.g. an
+      // uncorrelated snapshot or a delta for a concurrent turn on the chat). A
+      // healthy stream is never marked timed-out.
+      for (const relatedSessionId of relatedSessionIds) {
+        const activeId = activeRequestIdsBySessionRef.current[relatedSessionId];
+        if (activeId) {
+          activeRequestTouchedAtRef.current = {
+            ...activeRequestTouchedAtRef.current,
+            [activeId]: Date.now(),
+          };
+        }
+      }
       const existingBeforeMerge = mergeRelatedSessionMessages(
         messagesBySessionRef.current,
         relatedSessionIds,
@@ -1332,13 +1420,8 @@ export function useIrisChat({
         );
 
       handledDelivery = true;
-      processedInboxEventIdsRef.current.add(delivery.id);
+      markApplied(delivery);
       delete pendingUnmappedDeliveryAttemptsRef.current[delivery.id];
-      if (processedInboxEventIdsRef.current.size > 500) {
-        processedInboxEventIdsRef.current = new Set(
-          Array.from(processedInboxEventIdsRef.current).slice(-250),
-        );
-      }
       let postMergeMessages: Message[] | null = null;
       setMessagesBySession((current) => {
         const freshRelatedSessionIds = sessionIdsForChatId(
@@ -1397,29 +1480,23 @@ export function useIrisChat({
           markDeliveredSessionReadState(relatedSessionIds, delivery.cursor);
         }
         invalidateSessionQueries(profile, sessionId);
-        refreshSessionDetailSoon(sessionId, profile, delivery.chatId);
+        // No mid-stream refetch+replace: the Core-assembled snapshot is canonical
+        // for the active turn. Title/project metadata is resolved here; it runs the
+        // single idempotent post-completion reconcile (merge by clientRequestId,
+        // never a blind body replace) once the stream has finalized.
         scheduleSessionTitleResolveSoon(sessionId, delivery.chatId);
-      } else {
-        scheduleActiveStreamReconcile(relatedSessionIds);
       }
     }
 
     pendingGatewayDeliveriesRef.current = remaining.slice(-100);
+    if (maxAppliedCursor > appliedHighWater) {
+      lastAppliedCursorByProfileRef.current = {
+        ...lastAppliedCursorByProfileRef.current,
+        [profile]: maxAppliedCursor,
+      };
+    }
     if (handledDelivery || unmappedDelivery) {
       void refreshSessions({ profileName: profile, silent: true });
-    }
-  }
-
-  function reconcileActiveSessionDetails() {
-    const nowMs = Date.now();
-    for (const sessionId of Object.keys(activeRequestIdsBySessionRef.current)) {
-      if (isOptimisticSessionId(sessionId)) continue;
-      if (nowMs - (activeDetailReconcileAtRef.current[sessionId] || 0) < 1500) continue;
-      activeDetailReconcileAtRef.current = {
-        ...activeDetailReconcileAtRef.current,
-        [sessionId]: nowMs,
-      };
-      void refreshSessionDetail(sessionId, profile, { silent: true, reconcileActive: true });
     }
   }
 
@@ -1435,6 +1512,29 @@ export function useIrisChat({
       let next = current;
       for (const [sessionId, requestId] of timedOut) {
         const existing = next[sessionId] || [];
+        // Honest finalize: the safety timeout fires only after the touch went stale
+        // (no cursor progress for the whole window, see D7). If real content already
+        // streamed in, keep it and just stop the spinner — never overwrite a good
+        // partial reply with a fabricated error. Only show the stalled-stream error
+        // when nothing but the "Thinking…" placeholder ever arrived.
+        const hasStreamedContent = existing.some(
+          (message) =>
+            message.role === "assistant" &&
+            message.clientRequestId === requestId &&
+            Boolean(message.content) &&
+            !isAssistantThinkingPlaceholder(message.content),
+        );
+        if (hasStreamedContent) {
+          next = {
+            ...next,
+            [sessionId]: existing.map((message) =>
+              message.role === "assistant" && message.clientRequestId === requestId && message.streaming
+                ? { ...message, streaming: false }
+                : message,
+            ),
+          };
+          continue;
+        }
         const timeoutDelivery: HermesInboxMessage = {
           id: `iris-stream-timeout-${requestId}`,
           cursor: 0,
@@ -1472,13 +1572,6 @@ export function useIrisChat({
     for (const [, requestId] of timedOut) {
       delete activeRequestTouchedAtRef.current[requestId];
     }
-  }
-
-  function scheduleActiveStreamReconcile(sessionIds: string[]) {
-    window.setTimeout(() => {
-      if (!sessionIds.some((sessionId) => activeRequestIdsBySessionRef.current[sessionId])) return;
-      reconcileActiveSessionDetails();
-    }, 3500);
   }
 
   function chatIdForSession(sessionId: string | null | undefined) {

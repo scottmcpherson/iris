@@ -94,14 +94,12 @@
   outline-offset: 2px;
 }
 
-.message-list-frame-settling .message-list {
-  scrollbar-width: none;
-}
-
-.message-list-frame-settling .message-list::-webkit-scrollbar {
-  display: none;
-  width: 0;
-  height: 0;
+/* Reserve the scrollbar gutter so showing/hiding the transcript scrollbar never
+   changes the content width. Without this, the scrollbar toggling at reply
+   completion re-wrapped long messages and made stick-to-bottom re-anchor, which
+   read as a fast scroll jump on overflowing conversations. */
+.message-list {
+  scrollbar-gutter: stable;
 }
 
 .chat-scroll-bottom-button {

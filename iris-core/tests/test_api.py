@@ -10,7 +10,7 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 from hermes_management_server import __version__
-from hermes_management_server.core_store import MEMORY_REVISION_LIMIT
+from hermes_management_server.core_store import MEMORY_REVISION_LIMIT, CoreStore
 from hermes_management_server.main import LiveDeliveryBus, Settings, coalesce_core_messages, create_app, install_hermes_plugin
 from hermes_management_server.runtime_adapters import hermes as hermes_adapter
 from hermes_management_server.runtime_adapters.hermes_store import encode_skill_id
@@ -2930,3 +2930,135 @@ def test_core_rejects_unknown_agent_filters(tmp_path):
     assert sessions.json()["error"] == "Agent was not found."
     assert events.status_code == 404
     assert stream.status_code == 404
+
+
+def _publish_event(bus, stream_message_id, content, *, cursor_marker=""):
+    return bus.publish(
+        {
+            "id": f"evt_{stream_message_id}_{cursor_marker or content}",
+            "sessionId": "session-1",
+            "agentId": "agent-1",
+            "runtimeId": "runtime_local_hermes",
+            "type": "message.assistant.delta",
+            "role": "assistant",
+            "content": content,
+            "metadata": {"streamMessageId": stream_message_id, "assembled": True},
+        }
+    )
+
+
+def test_live_delivery_bus_latest_event_for_stream_returns_newest_snapshot(tmp_path):
+    store = CoreStore(tmp_path / "core.sqlite3")
+    bus = LiveDeliveryBus(core_store=store)
+
+    _publish_event(bus, "stream-a", "He", cursor_marker="1")
+    _publish_event(bus, "stream-b", "other", cursor_marker="2")
+    newest = _publish_event(bus, "stream-a", "Hello", cursor_marker="3")
+
+    found = bus.latest_event_for_stream("stream-a", "agent-1")
+    assert found is not None
+    assert found["content"] == "Hello"
+    assert found["cursor"] == newest["cursor"]
+    assert bus.latest_event_for_stream("stream-missing", "agent-1") is None
+
+
+def test_live_delivery_bus_prunes_past_cap_and_ttl(tmp_path):
+    store = CoreStore(tmp_path / "core.sqlite3")
+    bus = LiveDeliveryBus(
+        core_store=store,
+        store_max_events=10,
+        store_ttl_seconds=0,
+        store_prune_interval=5,
+    )
+
+    for index in range(60):
+        _publish_event(bus, f"stream-{index}", f"content-{index}", cursor_marker=str(index))
+
+    with store.connect() as connection:
+        remaining = connection.execute("select count(*) as count from core_events").fetchone()["count"]
+        max_cursor = connection.execute("select max(cursor) as cursor from core_events").fetchone()["cursor"]
+        min_cursor = connection.execute("select min(cursor) as cursor from core_events").fetchone()["cursor"]
+
+    # ttl=0 makes every older row prunable, so the recent-row cap is the floor:
+    # the most recent rows are always retained, oldest are dropped.
+    assert remaining <= 60
+    assert remaining >= 10
+    assert max_cursor - min_cursor < 60
+    # The newest snapshot is never pruned.
+    assert bus.latest_event_for_stream("stream-59", "agent-1") is not None
+
+
+def test_assistant_overlay_stamps_distinct_client_request_ids_positionally(tmp_path):
+    # Two identical assistant replies in one chat must recover their distinct
+    # streamed identities by transcript position, not collapse onto one overlay.
+    store = CoreStore(tmp_path / "core.sqlite3")
+    adapter = hermes_adapter.HermesRuntimeAdapter(
+        {"id": "runtime_local_hermes", "connection": {}}, core_store=store
+    )
+    duplicate_reply = "Two plus two is four."
+    for stream_id, request_id in (("stream-a", "req-a"), ("stream-b", "req-b")):
+        store.upsert_assistant_message_metadata(
+            runtime_id="runtime_local_hermes",
+            profile="default",
+            chat_id="chat-1",
+            stream_message_id=stream_id,
+            client_request_id=request_id,
+            reply_to=request_id,
+            content=duplicate_reply,
+        )
+
+    messages = [
+        {"id": "h-user-1", "role": "user", "content": "what is 2+2", "metadata": {}},
+        {"id": "h-asst-1", "role": "assistant", "content": duplicate_reply, "metadata": {}},
+        {"id": "h-user-2", "role": "user", "content": "ask again", "metadata": {}},
+        {"id": "h-asst-2", "role": "assistant", "content": duplicate_reply, "metadata": {}},
+    ]
+
+    enriched = adapter.with_client_message_metadata(messages, profile="default", chat_id="chat-1")
+    assistants = [message for message in enriched if message["role"] == "assistant"]
+
+    assert assistants[0]["metadata"]["clientRequestId"] == "req-a"
+    assert assistants[0]["metadata"]["streamMessageId"] == "stream-a"
+    assert assistants[1]["metadata"]["clientRequestId"] == "req-b"
+    assert assistants[1]["metadata"]["streamMessageId"] == "stream-b"
+
+
+def test_core_send_persists_accepted_message_for_restart_dedupe(tmp_path, monkeypatch):
+    root = tmp_path / ".hermes"
+    root.mkdir()
+    (root / ".env").write_text("IRIS_TOKEN=iris-local-test\n", encoding="utf-8")
+
+    def fake_http_json(url, *, method, token, body):
+        return {
+            "ok": True,
+            "status": 202,
+            "url": url,
+            "json": {
+                "ok": True,
+                "accepted": True,
+                "profile": body["profile"],
+                "chatId": body["chatId"],
+                "messageId": body["messageId"],
+            },
+        }
+
+    monkeypatch.setattr(hermes_adapter, "http_json", fake_http_json)
+    client = make_client(root)
+    agent = client.get("/v1/agents").json()["agents"][0]
+    session = client.post("/v1/sessions", json={"agentId": agent["id"], "title": "Durable send"}).json()["session"]
+
+    response = client.post(
+        f"/v1/sessions/{session['id']}/messages",
+        json={"text": "Persist me", "clientMessageId": "durable-1"},
+    )
+    assert response.status_code == 200
+
+    # The accept response is durably recorded (keyed by session + idempotency) so a
+    # resend after a dropped response — even across a restart — dedupes from the DB.
+    stored = client.app.state.core_store.get_accepted_client_message(
+        session_id=session["id"], idempotency_key="durable-1"
+    )
+    assert stored is not None
+    assert stored.get("duplicate") is not True
+    assert stored["messageId"] == "durable-1"
+    assert stored["accepted"] is True

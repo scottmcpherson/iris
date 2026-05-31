@@ -2,9 +2,61 @@ from __future__ import annotations
 
 from hermes_management_server.message_coalescer import (
     append_delta_content,
+    assemble_stream_snapshot,
     coalesce_core_messages,
     prepare_assistant_delivery_event,
 )
+
+
+def _snapshot(prior, delta, *, status="streaming", operation="append"):
+    return assemble_stream_snapshot(
+        prior,
+        delta_content=delta,
+        metadata={"chunkOperation": operation},
+        status=status,
+    )
+
+
+def test_assemble_stream_snapshot_accumulates_append_deltas_cumulatively():
+    snapshot = None
+    content = ""
+    for delta in ["He", "llo", ", wor", "ld"]:
+        content, changed = _snapshot({"content": content} if snapshot is not None else None, delta)
+        snapshot = {"content": content}
+        assert changed is True
+    assert content == "Hello, world"
+
+
+def test_assemble_stream_snapshot_replace_operation_resets_content():
+    merged, changed = _snapshot({"content": "stale partial"}, "fresh full content", operation="replace")
+    assert merged == "fresh full content"
+    assert changed is True
+
+
+def test_assemble_stream_snapshot_non_monotonic_replace_is_honored():
+    # The adapter sends chunkOperation=replace when the gateway content is no
+    # longer a monotonic extension; the accumulated content is replaced wholesale.
+    merged, changed = _snapshot({"content": "Hello wrld"}, "Hello world (corrected)", operation="replace")
+    assert merged == "Hello world (corrected)"
+    assert changed is True
+
+
+def test_assemble_stream_snapshot_redundant_delta_reports_unchanged():
+    merged, changed = _snapshot({"content": "Hello"}, "")
+    assert merged == "Hello"
+    assert changed is False
+
+
+def test_assemble_stream_snapshot_error_replaces_and_always_emits():
+    merged, changed = _snapshot({"content": "partial answer"}, "model stopped", status="error")
+    assert merged == "model stopped"
+    assert changed is True
+
+
+def test_assemble_stream_snapshot_first_delta_from_empty_prior():
+    merged, changed = _snapshot(None, "first chunk")
+    assert merged == "first chunk"
+    assert changed is True
 
 
 def test_prepare_assistant_delivery_suppresses_stream_snapshot_after_completion():

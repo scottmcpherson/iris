@@ -26,7 +26,7 @@ def test_core_store_creates_only_core_owned_schema(tmp_path):
         }
     )
 
-    assert store.health()["schemaVersion"] == 9
+    assert store.health()["schemaVersion"] == 11
     assert store.health()["sourceOfTruthMigration"] == "complete"
     assert runtime["id"] == "runtime_local_hermes"
     assert set(store.tables()) == {
@@ -36,6 +36,8 @@ def test_core_store_creates_only_core_owned_schema(tmp_path):
         "device_cursors",
         "core_events",
         "client_message_metadata",
+        "assistant_message_metadata",
+        "accepted_client_messages",
         "attachments",
         "message_attachments",
         "projects",
@@ -152,6 +154,8 @@ def test_source_of_truth_migration_drops_duplicate_tables_and_preserves_core_dat
         "device_cursors",
         "core_events",
         "client_message_metadata",
+        "assistant_message_metadata",
+        "accepted_client_messages",
         "attachments",
         "message_attachments",
         "projects",
@@ -478,3 +482,106 @@ def test_client_message_metadata_overlay_drops_ambiguous_content_hashes(tmp_path
     by_content_hash = overlay["byContentHash"]
     assert all(entry.get("clientMessageId") == "uuid-unique" for entry in by_content_hash.values())
     assert len(by_content_hash) == 1
+
+
+def test_assistant_message_metadata_overlay_retains_collisions_positionally(tmp_path):
+    store = CoreStore(tmp_path / "core.sqlite3")
+    runtime_id = "runtime_local_hermes"
+    profile = "default"
+    chat_id = "chat-1"
+    duplicate_reply = "The answer is 42."
+
+    store.upsert_assistant_message_metadata(
+        runtime_id=runtime_id,
+        profile=profile,
+        chat_id=chat_id,
+        stream_message_id="stream-a",
+        client_request_id="req-a",
+        reply_to="req-a",
+        content=duplicate_reply,
+    )
+    store.upsert_assistant_message_metadata(
+        runtime_id=runtime_id,
+        profile=profile,
+        chat_id=chat_id,
+        stream_message_id="stream-b",
+        client_request_id="req-b",
+        reply_to="req-b",
+        content=duplicate_reply,
+    )
+
+    overlay = store.assistant_message_metadata_for_messages(
+        runtime_id=runtime_id,
+        profile=profile,
+        chat_id=chat_id,
+        messages=[
+            {"id": "history-assistant-1", "role": "assistant", "content": duplicate_reply},
+            {"id": "history-assistant-2", "role": "assistant", "content": duplicate_reply},
+        ],
+    )
+
+    # Unlike the user overlay, an identical-content collision is NOT dropped: the
+    # shared hash bucket keeps both overlays in creation order for positional match.
+    buckets = list(overlay["byContentHash"].values())
+    assert len(buckets) == 1
+    assert [entry["clientRequestId"] for entry in buckets[0]] == ["req-a", "req-b"]
+    assert [entry["streamMessageId"] for entry in buckets[0]] == ["stream-a", "stream-b"]
+    assert overlay["byStreamMessageId"]["stream-a"]["clientRequestId"] == "req-a"
+    assert overlay["byStreamMessageId"]["stream-b"]["replyTo"] == "req-b"
+
+
+def test_assistant_message_metadata_overlay_upsert_is_idempotent(tmp_path):
+    store = CoreStore(tmp_path / "core.sqlite3")
+    args = dict(
+        runtime_id="runtime_local_hermes",
+        profile="default",
+        chat_id="chat-1",
+        stream_message_id="stream-1",
+        reply_to="req-1",
+    )
+    store.upsert_assistant_message_metadata(**args, client_request_id="req-1", content="partial")
+    store.upsert_assistant_message_metadata(**args, client_request_id="req-1", content="partial then full")
+
+    overlay = store.assistant_message_metadata_for_messages(
+        runtime_id="runtime_local_hermes",
+        profile="default",
+        chat_id="chat-1",
+        messages=[{"id": "h1", "role": "assistant", "content": "partial then full"}],
+    )
+    bucket = list(overlay["byContentHash"].values())
+    assert len(bucket) == 1
+    assert len(bucket[0]) == 1
+    assert bucket[0][0]["clientRequestId"] == "req-1"
+
+
+def test_accepted_client_message_persists_across_core_store_restart(tmp_path):
+    path = tmp_path / "core.sqlite3"
+    store = CoreStore(path)
+    response = {"ok": True, "messageId": "msg-1", "accepted": True, "eventCursor": 5}
+    store.record_accepted_client_message(session_id="session-1", idempotency_key="key-1", response=response)
+
+    # Simulate a Core restart by reopening the same database.
+    restarted = CoreStore(path)
+    found = restarted.get_accepted_client_message(session_id="session-1", idempotency_key="key-1")
+    assert found == response
+    assert restarted.get_accepted_client_message(session_id="session-1", idempotency_key="missing") is None
+    assert restarted.get_accepted_client_message(session_id="other", idempotency_key="key-1") is None
+
+
+def test_accepted_client_message_prunes_entries_past_ttl(tmp_path):
+    store = CoreStore(tmp_path / "core.sqlite3")
+    # Seed an expired row directly, then a fresh write should prune it.
+    with store.connect() as connection:
+        connection.execute(
+            "insert into accepted_client_messages(session_id, idempotency_key, response_json, created_at) values(?,?,?,?)",
+            ("session-1", "stale", "{}", 1),
+        )
+    store.record_accepted_client_message(
+        session_id="session-1", idempotency_key="fresh", response={"ok": True}, ttl_seconds=60
+    )
+    with store.connect() as connection:
+        keys = {
+            row["idempotency_key"]
+            for row in connection.execute("select idempotency_key from accepted_client_messages").fetchall()
+        }
+    assert keys == {"fresh"}
