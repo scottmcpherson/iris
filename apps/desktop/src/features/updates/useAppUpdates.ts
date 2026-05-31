@@ -17,32 +17,49 @@ export interface AppUpdatesController {
   status: AppUpdateStatus;
   /** Target version when an update is available/ready, else null. */
   version: string | null;
+  /** Release date (RFC3339) of the available update, if provided. */
+  date: string | null;
+  /** Release notes / body of the available update, if provided. */
+  notes: string | null;
   /** Download progress 0-100 while downloading, null when unknown/not downloading. */
   progressPct: number | null;
   /** Last error message, if status is "error". */
   error: string | null;
-  /** Check for updates. Pass `{ silent: true }` for background checks (no "up to date"/error toasts). */
+  /** Check for updates. Pass `{ silent: true }` for background checks (no toasts). */
   checkForUpdates: (options?: { silent?: boolean }) => Promise<void>;
-  /** Download and install the pending update, then mark it ready to relaunch. */
+  /** Download, install, and relaunch into the pending update. */
   install: () => Promise<void>;
   /** Relaunch the app to finish applying a downloaded update. */
   relaunchApp: () => Promise<void>;
+  /** Skip the available version: remember it and stop surfacing it. */
+  skip: () => void;
 }
 
 // Re-check in the background a few times a day for long-running sessions.
 const AUTO_CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000;
+const SKIPPED_VERSION_KEY = "iris.updates.skippedVersion";
+
+function readSkippedVersion(): string | null {
+  try {
+    return localStorage.getItem(SKIPPED_VERSION_KEY);
+  } catch {
+    return null;
+  }
+}
 
 /**
  * Drives the Tauri updater: check → download/install → relaunch.
  *
- * The same controller backs both the "Check for Updates…" menu item (via the
- * `iris://app-command` event handled in App.tsx) and the sidebar update button.
- * Auto-checking only runs in packaged production builds (`import.meta.env.PROD`)
- * so the Vite dev surface and the `*.desktop.dev` bundle never try to update.
+ * The same controller backs the "Check for Updates…" menu item (via the
+ * `iris://app-command` event in App.tsx) and the sidebar update indicator,
+ * which stays hidden until an update is available. Auto-checking only runs in
+ * packaged production builds (`import.meta.env.PROD`).
  */
 export function useAppUpdates(): AppUpdatesController {
   const [status, setStatus] = useState<AppUpdateStatus>("idle");
   const [version, setVersion] = useState<string | null>(null);
+  const [date, setDate] = useState<string | null>(null);
+  const [notes, setNotes] = useState<string | null>(null);
   const [progressPct, setProgressPct] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -80,10 +97,8 @@ export function useAppUpdates(): AppUpdatesController {
       });
       relaunchPending.current = true;
       setStatus("ready");
-      toast.success(`Iris ${update.version} is ready to install.`, {
-        description: "Restart Iris to finish updating.",
-        action: { label: "Restart now", onClick: () => void relaunch() },
-      });
+      // "Install and Relaunch": restart straight into the new version.
+      await relaunch();
     } catch (cause) {
       const message = cause instanceof Error ? cause.message : String(cause);
       setStatus("error");
@@ -102,32 +117,29 @@ export function useAppUpdates(): AppUpdatesController {
       }
       if (busy.current) return;
       if (relaunchPending.current) {
-        if (!silent) {
-          toast.success("An update is ready to install.", {
-            description: "Restart Iris to finish updating.",
-            action: { label: "Restart now", onClick: () => void relaunch() },
-          });
-        }
+        if (!silent) toast.success("An update is downloaded — restart Iris to finish.");
         return;
       }
       busy.current = true;
-      setStatus("checking");
+      // Keep an already-surfaced update visible while a background re-check runs.
+      setStatus((prev) => (prev === "available" ? prev : "checking"));
       setError(null);
       try {
         const update = await check();
-        if (update?.available) {
+        const skippedVersion = readSkippedVersion();
+        if (update?.available && !(silent && update.version === skippedVersion)) {
           pendingUpdate.current = update;
           setVersion(update.version);
+          setDate(update.date ?? null);
+          setNotes(update.body ?? null);
           setStatus("available");
-          toast.message(`Update available: Iris ${update.version}`, {
-            description: "Download and install the latest version.",
-            action: { label: "Install", onClick: () => void install() },
-          });
         } else {
           pendingUpdate.current = null;
           setVersion(null);
           setStatus("idle");
-          if (!silent) toast.success("Iris is up to date.");
+          if (!silent) {
+            toast.success(update?.available ? "That update is skipped." : "Iris is up to date.");
+          }
         }
       } catch (cause) {
         const message = cause instanceof Error ? cause.message : String(cause);
@@ -136,8 +148,7 @@ export function useAppUpdates(): AppUpdatesController {
           setStatus("error");
           toast.error("Iris could not check for updates.", { description: message });
         } else {
-          // Background checks fail quietly (offline, transient, or repo not yet public)
-          // so the sidebar button never alarms the user over an unprompted check.
+          // Background checks fail quietly (offline, transient, or repo not yet public).
           setStatus("idle");
           console.warn("Silent update check failed:", message);
         }
@@ -145,12 +156,22 @@ export function useAppUpdates(): AppUpdatesController {
         busy.current = false;
       }
     },
-    [install],
+    [],
   );
 
   const relaunchApp = useCallback(async () => {
     await relaunch();
   }, []);
+
+  const skip = useCallback(() => {
+    try {
+      if (version) localStorage.setItem(SKIPPED_VERSION_KEY, version);
+    } catch {
+      // Non-fatal: skipping just won't persist.
+    }
+    pendingUpdate.current = null;
+    setStatus("idle");
+  }, [version]);
 
   // Production-only: check once shortly after launch, then periodically.
   useEffect(() => {
@@ -160,5 +181,5 @@ export function useAppUpdates(): AppUpdatesController {
     return () => window.clearInterval(id);
   }, [checkForUpdates]);
 
-  return { status, version, progressPct, error, checkForUpdates, install, relaunchApp };
+  return { status, version, date, notes, progressPct, error, checkForUpdates, install, relaunchApp, skip };
 }
