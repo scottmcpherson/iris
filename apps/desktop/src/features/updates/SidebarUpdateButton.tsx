@@ -88,7 +88,7 @@ export function SidebarUpdateButton({ updates }: { updates: AppUpdatesController
                 <Button variant="appNeutral" size="xs" onClick={() => setOpen(false)}>
                   Later
                 </Button>
-                <Button variant="default" size="xs" onClick={() => void updates.install()}>
+                <Button variant="default" size="xs" className="ml-3" onClick={() => void updates.install()}>
                   Install and Relaunch
                 </Button>
               </div>
