@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!--
+    The bundled iris-core sidecar is a PyInstaller binary that loads its own
+    Python framework at runtime. Under hardened runtime (required for
+    notarization), macOS library validation rejects that framework because it
+    carries a different Team ID than the app's signature, crashing Core with
+    "different Team IDs". Disabling library validation (plus the dyld/exec
+    allowances PyInstaller-packaged Python needs) lets it load.
+  -->
+  <key>com.apple.security.cs.disable-library-validation</key>
+  <true/>
+  <key>com.apple.security.cs.allow-dyld-environment-variables</key>
+  <true/>
+  <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+  <true/>
+  <key>com.apple.security.cs.allow-jit</key>
+  <true/>
+</dict>
+</plist>
