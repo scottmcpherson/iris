@@ -17,9 +17,8 @@ export function runtimeReadinessForStatus(
   if (!status) return "checking";
   if (!status?.connected) return "offline";
   if (!runtimeGatewayIsReachable(status, selectedProfile)) return "gateway-stopped";
-  if (!status.activeApiStatus?.ok) return "adapter-unavailable";
-  if (status.activeApiStatus?.ok) return "ready";
-  return "core-only";
+  if (!runtimeAdapterIsReachable(status, selectedProfile)) return "adapter-unavailable";
+  return "ready";
 }
 
 export function agentRuntimeReadinessForStatus(
@@ -28,7 +27,7 @@ export function agentRuntimeReadinessForStatus(
 ): RuntimeReadiness {
   if (!status?.connected) return "offline";
   if (!profile?.gatewayRunning) return "gateway-stopped";
-  if (activeApiStatusBelongsToProfile(status, profile) && status.activeApiStatus && !status.activeApiStatus.ok) {
+  if (activeApiStatusWasRequestedForProfile(status, profile) && !runtimeAdapterIsReachable(status, profile)) {
     return "adapter-unavailable";
   }
   return "ready";
@@ -41,6 +40,28 @@ export function runtimeGatewayIsReachable(
   if (!status?.connected) return false;
   const profile = selectedProfile || status.activeProfile;
   return Boolean(status.gatewayStatus?.ok || profile?.gatewayRunning);
+}
+
+export function runtimeAdapterIsReachable(
+  status: HermesStatus | null,
+  selectedProfile?: HermesProfile | null,
+) {
+  if (!status?.connected || !status.activeApiStatus?.ok) return false;
+  const profile = selectedProfile || status.activeProfile;
+  if (!profile) return false;
+  return activeApiStatusBelongsToProfile(status, profile);
+}
+
+export function runtimeStatusForProfileReadiness(
+  primaryStatus: HermesStatus | null | undefined,
+  fallbackStatus: HermesStatus | null | undefined,
+  selectedProfile?: HermesProfile | null,
+) {
+  if (runtimeStatusCanDescribeProfile(primaryStatus, selectedProfile)) return primaryStatus ?? null;
+  if (runtimeStatusCanDescribeProfile(fallbackStatus, selectedProfile)) return fallbackStatus ?? null;
+  if (primaryStatus && !primaryStatus.connected) return primaryStatus;
+  if (fallbackStatus && !fallbackStatus.connected) return fallbackStatus;
+  return null;
 }
 
 export function runtimeReadinessTone(readiness: RuntimeReadiness): RuntimeReadinessTone {
@@ -89,4 +110,20 @@ function activeApiStatusBelongsToProfile(status: HermesStatus, profile: HermesPr
   const endpointProfile = status.activeApiStatus?.requestedProfile || status.activeApiStatus?.profile;
   if (endpointProfile) return endpointProfile === profile.name;
   return status.activeProfile?.name === profile.name;
+}
+
+function activeApiStatusWasRequestedForProfile(status: HermesStatus, profile: HermesProfile) {
+  const requestedProfile = status.activeApiStatus?.requestedProfile;
+  if (requestedProfile) return requestedProfile === profile.name;
+  return activeApiStatusBelongsToProfile(status, profile);
+}
+
+function runtimeStatusCanDescribeProfile(
+  status: HermesStatus | null | undefined,
+  profile?: HermesProfile | null,
+) {
+  if (!status) return false;
+  if (!status.connected) return true;
+  if (!profile) return false;
+  return activeApiStatusWasRequestedForProfile(status, profile);
 }

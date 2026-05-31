@@ -2,6 +2,7 @@ import "./agents.css";
 import { offlineProfile } from "../../app/offlineProfile";
 import type { ProfileActionHandler } from "../../app/types";
 import type { IrisCoreGatewayAction } from "../../lib/irisCore";
+import { useStatusQuery } from "../../lib/query";
 import type {
   HermesMemory,
   HermesMemoryResetExpectations,
@@ -25,7 +26,7 @@ type AgentsViewProps = {
   onDetailProfileChange: (profileName: string | null) => void;
   onSectionChange: (section: AgentDetailSection) => void;
   onOpenAgent: (profileName: string) => void;
-  onRefresh: () => void;
+  onRefresh: (profileName: string) => void | Promise<void>;
   onProfileSkillsChanged: (profileName: string) => void;
   onProfileAction: ProfileActionHandler;
   onGatewayAction: (action: IrisCoreGatewayAction, profileName: string) => void;
@@ -69,12 +70,14 @@ export function AgentsView({
   const profiles = status?.profiles?.length ? status.profiles : [offlineProfile];
   const detailAgentProfile =
     profiles.find((profile) => profile.name === detailProfile) ?? activeProfile;
+  const detailStatusQuery = useStatusQuery(runtimeConfig, detailAgentProfile.name);
+  const detailStatus = detailStatusQuery.data ?? status;
 
   return (
     <div className="tool-view agents-workspace grid min-h-0 gap-[18px] overflow-auto">
       <AgentDetailView
         section={section}
-        status={status}
+        status={detailStatus}
         profile={detailAgentProfile}
         selectedProfile={detailAgentProfile.name}
         runtimeConfig={runtimeConfig}
@@ -82,7 +85,7 @@ export function AgentsView({
         gatewayActionBusy={gatewayActionBusy}
         gatewayActionBusyAction={gatewayActionBusyAction}
         adapterInstallBusy={adapterInstallBusyProfile === detailAgentProfile.name}
-        onRefresh={onRefresh}
+        onRefresh={() => onRefresh(detailAgentProfile.name)}
         onOpenAgentProfile={(profileName) => {
           onDetailProfileChange(profileName);
           onOpenAgent(profileName);

@@ -14,12 +14,17 @@ import {
   defaultCorePort,
 } from "../../app/runtimeConfig";
 import {
+  runtimeAdapterIsReachable,
   runtimeGatewayIsReachable,
   runtimeReadinessForStatus,
   runtimeReadinessShortLabel,
   type RuntimeReadiness,
 } from "../../app/runtimeReadiness";
-import { installIrisCoreHermesPlugin, type IrisCoreInstallPluginResult } from "../../lib/irisCore";
+import {
+  getIrisCoreAgentForProfile,
+  installIrisCoreAgentHermesPlugin,
+  type IrisCoreInstallPluginResult,
+} from "../../lib/irisCore";
 import { Button } from "../../shared/ui/button";
 import {
   Dialog,
@@ -77,7 +82,7 @@ export function RuntimeDiagnosticsDialog({
   );
   const readiness: RuntimeReadiness = runtimeReadinessForStatus(status, profile);
   const coreOk = Boolean(status?.connected && status?.managementStatus?.ok);
-  const adapterOk = Boolean(status?.activeApiStatus?.ok);
+  const adapterOk = runtimeAdapterIsReachable(status, profile);
   const gatewayOk = runtimeGatewayIsReachable(status, profile);
   const [busyAction, setBusyAction] = useState("");
 
@@ -114,7 +119,12 @@ export function RuntimeDiagnosticsDialog({
     await withBusy("plugin-install", async () => {
       let installedOk = false;
       try {
-        const result = await installIrisCoreHermesPlugin(runtimeConfig);
+        if (!profile) throw new Error("Could not resolve Iris agent.");
+        const agentResult = await getIrisCoreAgentForProfile(profile.name, runtimeConfig);
+        if (!agentResult.ok || !agentResult.agent) {
+          throw new Error(("error" in agentResult ? agentResult.error : "") || "Could not resolve Iris agent.");
+        }
+        const result = await installIrisCoreAgentHermesPlugin(agentResult.agent.id, runtimeConfig);
         const detail = pluginInstallSummary(result);
         installedOk = result.ok && detail.ok;
         if (installedOk) {

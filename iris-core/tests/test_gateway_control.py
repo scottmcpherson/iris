@@ -173,6 +173,44 @@ def test_install_hermes_plugin_endpoint_installs_profile_homes(tmp_path, monkeyp
     assert [item["hermesHome"] for item in body["installations"]] == homes
 
 
+def test_agent_install_hermes_plugin_endpoint_installs_only_selected_profile(tmp_path, monkeypatch):
+    root = tmp_path / ".hermes"
+    (root / "profiles" / "socials").mkdir(parents=True)
+    (root / "profiles" / "research").mkdir(parents=True)
+    app = create_app(Settings(hermes_home=str(root), core_store_path=str(tmp_path / "core.sqlite3")))
+    client = TestClient(app)
+    agent = next(agent for agent in client.get("/v1/agents").json()["agents"] if agent["runtimeProfile"] == "socials")
+
+    homes = []
+    ports = []
+
+    def fake_install(hermes_home, *, host, port, inbound_port):
+        homes.append(hermes_home)
+        ports.append(inbound_port)
+        return {
+            "ok": True,
+            "hermesHome": hermes_home,
+            "pluginPath": f"{hermes_home}/plugins/iris-platform",
+            "enabled": True,
+            "enableError": "",
+            "restartRequired": True,
+        }
+
+    monkeypatch.setattr("hermes_management_server.main.install_hermes_plugin", fake_install)
+
+    response = client.post(f"/v1/agents/{agent['id']}/install-hermes-plugin")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["ok"] is True
+    assert body["agentId"] == agent["id"]
+    assert body["runtimeId"] == agent["runtimeId"]
+    assert body["profile"] == "socials"
+    assert body["inboundPort"] == 8767
+    assert homes == [os.fspath(root / "profiles" / "socials")]
+    assert ports == [8767]
+
+
 def test_agent_gateway_route_resolves_profile_and_returns_fresh_probe(tmp_path, monkeypatch):
     root = tmp_path / ".hermes"
     (root / "profiles" / "research").mkdir(parents=True)

@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { runtimeGatewayIsReachable, runtimeReadinessDetail, runtimeReadinessForStatus } from "../runtimeReadiness";
+import {
+  runtimeAdapterIsReachable,
+  runtimeGatewayIsReachable,
+  runtimeReadinessDetail,
+  runtimeReadinessForStatus,
+  runtimeStatusForProfileReadiness,
+} from "../runtimeReadiness";
 import type { HermesProfile, HermesStatus } from "../../types/hermes";
 
 describe("runtimeReadinessForStatus", () => {
@@ -46,6 +52,63 @@ describe("runtimeReadinessForStatus", () => {
         staleProfile,
       ),
     ).toBe("gateway-stopped");
+  });
+
+  it("does not treat another profile's adapter probe as selected profile readiness", () => {
+    const defaultProfile = profileFixture();
+    const socialProfile = {
+      ...profileFixture(),
+      name: "socials",
+      path: "/tmp/hermes/profiles/socials",
+      active: false,
+      gatewayRunning: true,
+    };
+    const status = {
+      ...statusFixture(),
+      activeProfile: socialProfile,
+      profiles: [defaultProfile, socialProfile],
+      activeApiStatus: {
+        ok: true,
+        profile: "default",
+        requestedProfile: "default",
+      },
+    };
+
+    expect(runtimeAdapterIsReachable(status, socialProfile)).toBe(false);
+    expect(runtimeReadinessForStatus(status, socialProfile)).toBe("adapter-unavailable");
+  });
+
+  it("prefers a profile-scoped probe over another profile's global status", () => {
+    const defaultProfile = profileFixture();
+    const socialProfile = {
+      ...profileFixture(),
+      name: "socials",
+      path: "/tmp/hermes/profiles/socials",
+      active: false,
+      gatewayRunning: true,
+    };
+    const defaultStatus = {
+      ...statusFixture(),
+      activeProfile: defaultProfile,
+      profiles: [defaultProfile, socialProfile],
+      activeApiStatus: {
+        ok: true,
+        profile: "default",
+        requestedProfile: "default",
+      },
+    };
+    const socialStatus = {
+      ...defaultStatus,
+      activeProfile: socialProfile,
+      activeApiStatus: {
+        ok: true,
+        profile: "socials",
+        requestedProfile: "socials",
+      },
+    };
+
+    expect(runtimeStatusForProfileReadiness(socialStatus, defaultStatus, socialProfile)).toBe(socialStatus);
+    expect(runtimeStatusForProfileReadiness(null, defaultStatus, socialProfile)).toBeNull();
   });
 });
 

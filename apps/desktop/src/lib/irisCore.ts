@@ -432,6 +432,10 @@ export async function controlIrisCoreGateway(
 export type IrisCoreInstallPluginResult = {
   ok: boolean;
   hermesHome: string;
+  agentId?: string;
+  runtimeId?: string;
+  profile?: string;
+  inboundPort?: number;
   pluginPath?: string;
   enabled?: boolean;
   enableError?: string;
@@ -453,6 +457,16 @@ export async function installIrisCoreHermesPlugin(runtime?: HermesRuntimeConfig)
     runtime,
     "POST",
     `/system/install-hermes-plugin`,
+    {},
+    { timeoutMs: 60_000 },
+  );
+}
+
+export async function installIrisCoreAgentHermesPlugin(agentId: string, runtime?: HermesRuntimeConfig) {
+  return coreRequest<IrisCoreInstallPluginResult>(
+    runtime,
+    "POST",
+    `/agents/${encodeURIComponent(agentId)}/install-hermes-plugin`,
     {},
     { timeoutMs: 60_000 },
   );

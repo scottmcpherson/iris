@@ -101,6 +101,42 @@ describe("AgentDetailView", () => {
     expect(html).toContain("Install adapter");
   });
 
+  it("does not show another profile's adapter probe as installed", () => {
+    const socialProfile = profileFixture({
+      name: "socials",
+      path: "/tmp/default/profiles/socials",
+      active: false,
+      gatewayRunning: true,
+    });
+    const html = renderAgentDetailView({
+      section: "overview",
+      status: {
+        ...statusFixture(socialProfile),
+        profiles: [profileFixture(), socialProfile],
+        activeApiStatus: { ok: true, profile: "default", requestedProfile: "default" },
+      },
+      profile: socialProfile,
+      selectedProfile: "socials",
+      runtimeConfig: runtimeConfigFixture(),
+      memory: memoryFixture(),
+      gatewayActionBusy: false,
+      gatewayActionBusyAction: null,
+      adapterInstallBusy: false,
+      onRefresh: noop,
+      onProfileSkillsChanged: noop,
+      onProfileAction: async () => "",
+      onGatewayAction: noop,
+      onInstallAdapter: noop,
+      onOpenSettings: noop,
+      onSaveMemory: async () => "",
+      onResetMemory: async () => "",
+    });
+
+    expect(html).toContain("Hermes gateway (socials)");
+    expect(html).toContain("Iris adapter");
+    expect(html).toContain("Install adapter");
+  });
+
   it("wraps memory in the shared workbench frame without a nested page shell", () => {
     const html = renderAgentDetailView({
       section: "memory",

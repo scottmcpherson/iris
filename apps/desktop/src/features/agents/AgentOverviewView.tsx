@@ -15,6 +15,7 @@ import {
   resolveCoreApiUrl,
 } from "../../app/runtimeConfig";
 import {
+  runtimeAdapterIsReachable,
   runtimeGatewayIsReachable,
 } from "../../app/runtimeReadiness";
 import type { ProfileActionHandler } from "../../app/types";
@@ -92,7 +93,7 @@ export function AgentOverviewView({
   const modelDisplay = modelSummary(profile.provider, profile.model);
   const coreOk = Boolean(status?.connected && status?.managementStatus?.ok);
   const gatewayOk = runtimeGatewayIsReachable(status, profile);
-  const adapterOk = Boolean(status?.activeApiStatus?.ok);
+  const adapterOk = runtimeAdapterIsReachable(status, profile);
   const coreUrl = status?.coreApiUrl || resolveCoreApiUrl(runtimeConfig);
   const coreTransportShort = activeConnection.mode === "tailscale" ? "Tailscale" : "Local";
   const coreSublabel = coreUrl ? `${coreTransportShort} · ${coreUrl}` : coreTransportShort;

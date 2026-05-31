@@ -8,6 +8,7 @@ import {
   managedLocalConnectionId,
   upsertCoreConnection,
 } from "../../app/runtimeConfig";
+import { runtimeAdapterIsReachable } from "../../app/runtimeReadiness";
 import type { HermesRuntimeConfig, HermesStatus, IrisCoreConnectionProfile } from "../../types/hermes";
 import { Alert, AlertDescription } from "../../shared/ui/alert";
 import { Button } from "../../shared/ui/button";
@@ -337,7 +338,7 @@ function localStatusRows(status: HermesStatus | null, connected: boolean): Setup
   const coreReady = Boolean(status?.managementStatus?.ok || connected);
   const hermesHome = status?.hermesPath || status?.activeProfile?.path || "";
   const gatewayReady = Boolean(status?.gatewayStatus?.ok || status?.activeProfile?.gatewayRunning);
-  const adapterReady = Boolean(status?.activeApiStatus?.ok);
+  const adapterReady = runtimeAdapterIsReachable(status, status?.activeProfile);
   const modelLabel = safeModelLabel(status?.activeProfile?.model);
   const modelReady = Boolean(modelLabel);
   return [
@@ -375,7 +376,7 @@ function tailscaleStatusRows(status: HermesStatus | null, activeConnection: Iris
   const coreReady = usingTailscale && Boolean(status?.managementStatus?.ok || status?.connected);
   const versionReady = usingTailscale && status?.coreVersionStatus?.ok !== false;
   const gatewayReady = usingTailscale && Boolean(status?.gatewayStatus?.ok || status?.activeProfile?.gatewayRunning);
-  const adapterReady = usingTailscale && Boolean(status?.activeApiStatus?.ok);
+  const adapterReady = usingTailscale && runtimeAdapterIsReachable(status, status?.activeProfile);
   return [
     {
       label: "Tailscale host",

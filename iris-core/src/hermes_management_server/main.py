@@ -2194,6 +2194,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def core_agent_gateway_restart(agent_id: str, _auth: None = Depends(require_auth)) -> dict[str, Any]:
         return await core_agent_gateway_action(app, agent_id, "restart")
 
+    @app.post("/v1/agents/{agent_id}/install-hermes-plugin")
+    async def core_agent_install_iris_hermes_plugin(agent_id: str, _auth: None = Depends(require_auth)) -> dict[str, Any]:
+        return await core_agent_install_iris_hermes_plugin_action(app, agent_id)
+
     @app.post("/v1/system/install-hermes-plugin")
     async def core_install_iris_hermes_plugin(_auth: None = Depends(require_auth)) -> dict[str, Any]:
         return await run_runtime_call(app, install_iris_hermes_plugin_for_app, app)
@@ -2261,6 +2265,28 @@ async def core_agent_gateway_action(app: FastAPI, agent_id: str, action: str) ->
         "command": command,
         "probe": probe,
         **({} if command.get("ok") else {"error": command.get("error") or f"Hermes gateway {action} failed."}),
+    }
+
+
+async def core_agent_install_iris_hermes_plugin_action(app: FastAPI, agent_id: str) -> dict[str, Any]:
+    agent = app.state.runtime_registry.agent(agent_id)
+    if not agent:
+        raise ManagementError("Agent was not found.", status_code=404)
+    profile = str(agent["runtimeProfile"])
+    runtime_id = str(agent["runtimeId"])
+    result = await run_runtime_call(
+        app,
+        install_iris_hermes_plugin_for_profile,
+        app,
+        profile,
+        runtime_id=runtime_id,
+        timeout=60,
+    )
+    return {
+        **result,
+        "agentId": agent_id,
+        "runtimeId": runtime_id,
+        "profile": profile,
     }
 
 
@@ -3452,11 +3478,13 @@ def install_hermes_plugin(
         shutil.rmtree(destination)
     destination.parent.mkdir(parents=True, exist_ok=True)
     shutil.copytree(source, destination, ignore=shutil.ignore_patterns("__pycache__", ".pytest_cache", "*.pyc"))
+    adapter_host = iris_adapter_loopback_host(host)
     update_plugin_env_hints(
         target_home / ".env",
         {
-            "IRIS_BASE_URL": f"http://{host}:{port}",
-            "IRIS_INBOUND_HOST": host,
+            "IRIS_ALLOWED_USERS": existing_env_value(target_home / ".env", "IRIS_ALLOWED_USERS") or "iris-user",
+            "IRIS_BASE_URL": f"http://{http_url_host(adapter_host)}:{port}",
+            "IRIS_INBOUND_HOST": adapter_host,
             "IRIS_INBOUND_PORT": str(inbound_port),
         },
         remove_keys={"IRIS_TOKEN"},
@@ -3478,6 +3506,53 @@ def install_hermes_plugin(
             file=sys.stderr,
         )
     return result
+
+
+def iris_adapter_loopback_host(host: str) -> str:
+    raw = str(host or "").strip()
+    normalized = raw.strip("[]").lower()
+    if not normalized or normalized in {"0.0.0.0", "::"}:
+        return "127.0.0.1"
+    return normalized if normalized == "localhost" else raw.strip("[]")
+
+
+def http_url_host(host: str) -> str:
+    raw = str(host or "").strip()
+    if ":" in raw and not raw.startswith("["):
+        return f"[{raw}]"
+    return raw
+
+
+def existing_env_value(path: Path, key: str) -> str:
+    if not path.exists():
+        return ""
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return ""
+    for line in lines:
+        parsed = parse_env_assignment(line)
+        if parsed and parsed[0] == key:
+            return parsed[1]
+    return ""
+
+
+def parse_env_assignment(line: str) -> tuple[str, str] | None:
+    stripped = line.strip()
+    if not stripped or stripped.startswith("#"):
+        return None
+    if stripped.startswith("export "):
+        stripped = stripped[len("export "):].lstrip()
+    name, separator, value = stripped.partition("=")
+    if not separator:
+        return None
+    name = name.strip()
+    if not name:
+        return None
+    value = value.strip()
+    if (value.startswith('"') and value.endswith('"')) or (value.startswith("'") and value.endswith("'")):
+        value = value[1:-1]
+    return name, value
 
 
 def bundled_iris_platform_path() -> Path:

@@ -18,5 +18,9 @@ export function statusQueryOptions(runtime: HermesRuntimeConfig, profile = "defa
 }
 
 export function useStatusQuery(runtime: HermesRuntimeConfig, profile = "default") {
-  return useQuery(statusQueryOptions(runtime, profile));
+  return useQuery({
+    ...statusQueryOptions(runtime, profile),
+    refetchInterval: () =>
+      typeof document !== "undefined" && document.visibilityState === "hidden" ? false : 5_000,
+  });
 }

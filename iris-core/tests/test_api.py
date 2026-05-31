@@ -198,10 +198,40 @@ def test_install_hermes_plugin_copies_payload_env_hints_and_removes_stale_iris_t
     env_text = (hermes_home / ".env").read_text(encoding="utf-8")
     assert "API_SERVER_KEY=keep-me" in env_text
     assert "CUSTOM_VALUE=still-here" in env_text
+    assert "IRIS_ALLOWED_USERS=iris-user" in env_text
     assert "IRIS_BASE_URL=http://127.0.0.1:8765" in env_text
     assert "IRIS_INBOUND_HOST=127.0.0.1" in env_text
     assert "IRIS_INBOUND_PORT=8766" in env_text
     assert "IRIS_TOKEN" not in env_text
+
+
+def test_install_hermes_plugin_writes_loopback_hints_for_wildcard_core_host(tmp_path, monkeypatch):
+    monkeypatch.setattr("hermes_management_server.main.run_hermes_plugin_enable", lambda _home: {"ok": True})
+    hermes_home = tmp_path / ".hermes"
+    hermes_home.mkdir()
+
+    result = install_hermes_plugin(str(hermes_home), host="0.0.0.0", port=8765, inbound_port=8767)
+
+    assert result["ok"] is True
+    env_text = (hermes_home / ".env").read_text(encoding="utf-8")
+    assert "IRIS_BASE_URL=http://127.0.0.1:8765" in env_text
+    assert "IRIS_INBOUND_HOST=127.0.0.1" in env_text
+    assert "IRIS_INBOUND_PORT=8767" in env_text
+    assert "0.0.0.0" not in env_text
+
+
+def test_install_hermes_plugin_preserves_custom_iris_allowed_users(tmp_path, monkeypatch):
+    monkeypatch.setattr("hermes_management_server.main.run_hermes_plugin_enable", lambda _home: {"ok": True})
+    hermes_home = tmp_path / ".hermes"
+    hermes_home.mkdir()
+    (hermes_home / ".env").write_text("IRIS_ALLOWED_USERS=alice,bob\n", encoding="utf-8")
+
+    result = install_hermes_plugin(str(hermes_home), host="127.0.0.1", port=8765)
+
+    assert result["ok"] is True
+    env_text = (hermes_home / ".env").read_text(encoding="utf-8")
+    assert 'IRIS_ALLOWED_USERS="alice,bob"' in env_text
+    assert "IRIS_ALLOWED_USERS=iris-user" not in env_text
 
 
 def test_agent_memory_and_skills_endpoints(tmp_path):

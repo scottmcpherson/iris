@@ -37,6 +37,7 @@ import {
 } from "./app/storage";
 import {
   runtimeReadinessForStatus,
+  runtimeStatusForProfileReadiness,
 } from "./app/runtimeReadiness";
 import {
   isProjectSession,
@@ -47,10 +48,12 @@ import {
 import { Toaster } from "./shared/ui/sonner";
 import { toast } from "sonner";
 import {
-  installIrisCoreHermesPlugin,
+  getIrisCoreAgentForProfile,
+  installIrisCoreAgentHermesPlugin,
   type IrisCoreGatewayAction,
   type IrisCoreInstallPluginResult,
 } from "./lib/irisCore";
+import { useStatusQuery } from "./lib/query";
 import { installIrisDeepLinkHandlers } from "./app/routing/deepLinks";
 import {
   routeIntentToUrl,
@@ -118,6 +121,7 @@ function App() {
       if (projectId) void projectsRef.current.refreshProjectSessions(projectId);
     },
   });
+  const chatStatusQuery = useStatusQuery(iris.runtimeConfig, chatProfile);
   const jobs = useIrisAutomations(iris.runtimeConfig, iris.selectedProfile, activeView === "jobs");
 
   useEffect(() => {
@@ -243,9 +247,17 @@ function App() {
   const agentProfiles = iris.status?.profiles?.length ? iris.status.profiles : [iris.activeProfile];
   const selectedProfileSummary =
     agentProfiles.find((profile) => profile.name === iris.selectedProfile) || iris.activeProfile;
+  const chatStatusProfiles = chatStatusQuery.data?.profiles?.length ? chatStatusQuery.data.profiles : agentProfiles;
   const chatProfileSummary =
-    agentProfiles.find((profile) => profile.name === chatProfile) || selectedProfileSummary;
-  const chatRuntimeReadiness = runtimeReadinessForStatus(iris.status, chatProfileSummary);
+    chatStatusProfiles.find((profile) => profile.name === chatProfile) ||
+    agentProfiles.find((profile) => profile.name === chatProfile) ||
+    selectedProfileSummary;
+  const chatReadinessStatus = runtimeStatusForProfileReadiness(
+    chatStatusQuery.data,
+    iris.status,
+    chatProfileSummary,
+  );
+  const chatRuntimeReadiness = runtimeReadinessForStatus(chatReadinessStatus, chatProfileSummary);
   const modelCatalog = useIrisModelCatalog({
     profile: chatProfile,
     profileSummary: chatProfileSummary,
@@ -327,17 +339,23 @@ function App() {
     setAdapterInstallBusyProfile(profileName);
     try {
       let installedOk = false;
+      let restartRequired = false;
       try {
-        const result = await installIrisCoreHermesPlugin(iris.runtimeConfig);
+        const agentResult = await getIrisCoreAgentForProfile(profileName, iris.runtimeConfig);
+        if (!agentResult.ok || !agentResult.agent) {
+          throw new Error(("error" in agentResult ? agentResult.error : "") || "Could not resolve Iris agent.");
+        }
+        const result = await installIrisCoreAgentHermesPlugin(agentResult.agent.id, iris.runtimeConfig);
         const detail = pluginInstallSummary(result);
         installedOk = result.ok && detail.ok;
+        restartRequired = result.restartRequired !== false;
         toast[installedOk ? "success" : "error"](detail.message);
       } catch (error) {
         toast.error(error instanceof Error ? error.message : "Iris could not install the Iris adapter.");
       }
       if (installedOk) {
         const profile = agentProfiles.find((item) => item.name === profileName);
-        if (profile?.gatewayRunning) await runGatewayAction("restart", profileName);
+        if (restartRequired && profile?.gatewayRunning) await runGatewayAction("restart", profileName);
         else await iris.refreshIris(profileName);
       }
     } finally {
@@ -813,8 +831,8 @@ function App() {
             })
           }
           onOpenAgent={() => {}}
-          onRefresh={async () => {
-            await iris.refreshIris();
+          onRefresh={async (profileName) => {
+            await iris.refreshIris(profileName);
           }}
           onProfileSkillsChanged={(profileName) =>
             void iris.refreshIris(profileName, iris.runtimeConfig, {

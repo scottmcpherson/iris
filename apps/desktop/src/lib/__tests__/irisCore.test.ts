@@ -14,6 +14,7 @@ import {
   controlIrisCoreGateway,
   getIrisCoreEvents,
   getIrisCoreGatewayStatus,
+  installIrisCoreAgentHermesPlugin,
   installIrisCoreHermesPlugin,
   installIrisCoreAgentSkill,
   getIrisCoreLatestEventCursor,
@@ -310,6 +311,33 @@ describe("irisCore", () => {
     expect(result.restartRequired).toBe(true);
     expect(fetch).toHaveBeenCalledWith(
       expect.stringContaining("/v1/system/install-hermes-plugin"),
+      expect.objectContaining({ method: "POST", body: "{}" }),
+    );
+  });
+
+  it("calls the agent-scoped plugin install endpoint through Core transport", async () => {
+    const fetch = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        ok: true,
+        agentId: "agent_socials",
+        runtimeId: "runtime_local_hermes",
+        profile: "socials",
+        hermesHome: "/home/user/.hermes/profiles/socials",
+        pluginPath: "/home/user/.hermes/profiles/socials/plugins/iris-platform",
+        enabled: true,
+        restartRequired: true,
+      }),
+    }));
+    vi.stubGlobal("fetch", fetch);
+
+    const result = await installIrisCoreAgentHermesPlugin("agent_socials", defaultRuntimeConfig);
+
+    expect(result.ok).toBe(true);
+    expect(result.profile).toBe("socials");
+    expect(fetch).toHaveBeenCalledWith(
+      expect.stringContaining("/v1/agents/agent_socials/install-hermes-plugin"),
       expect.objectContaining({ method: "POST", body: "{}" }),
     );
   });
