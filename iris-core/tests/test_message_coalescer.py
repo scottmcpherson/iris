@@ -4,7 +4,6 @@ from hermes_management_server.message_coalescer import (
     append_delta_content,
     assemble_stream_snapshot,
     coalesce_core_messages,
-    prepare_assistant_delivery_event,
 )
 
 
@@ -59,62 +58,6 @@ def test_assemble_stream_snapshot_first_delta_from_empty_prior():
     assert changed is True
 
 
-def test_prepare_assistant_delivery_suppresses_stream_snapshot_after_completion():
-    messages = [
-        {
-            "id": "stream-1",
-            "role": "assistant",
-            "content": "Final answer.",
-            "status": "completed",
-            "metadata": {"streamMessageId": "stream-1", "replyTo": "user-1"},
-        },
-    ]
-
-    content, metadata, suppress = prepare_assistant_delivery_event(
-        messages,
-        content="Partial",
-        metadata={"streamMessageId": "stream-1", "streaming": True},
-        stream_message_id="stream-1",
-        has_stream_id=True,
-        reply_to="user-1",
-        status="streaming",
-    )
-
-    assert content == "Final answer."
-    assert metadata["streamMessageId"] == "stream-1"
-    assert suppress is True
-
-
-def test_prepare_assistant_delivery_finalizes_stream_without_explicit_stream_id():
-    messages = [
-        {"id": "user-1", "role": "user", "content": "Draft", "status": "completed", "metadata": {}},
-        {
-            "id": "stream-1",
-            "role": "assistant",
-            "content": "The answer starts",
-            "status": "streaming",
-            "metadata": {"streamMessageId": "stream-1", "streaming": True},
-        },
-    ]
-
-    content, metadata, suppress = prepare_assistant_delivery_event(
-        messages,
-        content=" here.",
-        metadata={"source": "hermes-gateway"},
-        stream_message_id="",
-        has_stream_id=False,
-        reply_to="",
-        status="completed",
-    )
-
-    assert content == "The answer starts here."
-    assert metadata["streamMessageId"] == "stream-1"
-    assert metadata["replyTo"] == "user-1"
-    assert metadata["streaming"] is False
-    assert metadata["finalize"] is True
-    assert suppress is False
-
-
 def test_append_delta_content_concatenates_many_deltas():
     deltas = [f"{index}," for index in range(1000)]
     content = ""
@@ -148,32 +91,6 @@ def test_append_delta_content_stitches_meaningful_overlap():
 
 def test_append_delta_content_preserves_intentionally_repeated_short_delta():
     assert append_delta_content("no", "no") == "nono"
-
-
-def test_prepare_assistant_delivery_replaces_non_monotonic_stream_content():
-    messages = [
-        {
-            "id": "stream-1",
-            "role": "assistant",
-            "content": "Hello world",
-            "status": "streaming",
-            "metadata": {"streamMessageId": "stream-1"},
-        },
-    ]
-
-    content, metadata, suppress = prepare_assistant_delivery_event(
-        messages,
-        content="Goodbye",
-        metadata={"streamMessageId": "stream-1", "chunkOperation": "replace"},
-        stream_message_id="stream-1",
-        has_stream_id=True,
-        reply_to="user-1",
-        status="streaming",
-    )
-
-    assert content == "Goodbye"
-    assert metadata["streamMessageId"] == "stream-1"
-    assert suppress is False
 
 
 def test_coalesce_core_messages_preserves_non_gateway_duplicate_assistant_rows():

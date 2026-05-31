@@ -1,18 +1,5 @@
-import type { IrisCoreEvent } from "../../lib/irisCore";
 import type { HermesInboxMessage } from "../../types/hermes";
 import { booleanMetadata } from "./chatHistory";
-
-export function parseCoreEvent(data: string): IrisCoreEvent | null {
-  try {
-    const parsed: unknown = JSON.parse(data);
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
-    const event = parsed as Partial<IrisCoreEvent>;
-    if (typeof event.cursor !== "number" || typeof event.type !== "string") return null;
-    return event as IrisCoreEvent;
-  } catch {
-    return null;
-  }
-}
 
 export function runtimeChatId(runtime: Record<string, unknown> | undefined) {
   const value = runtime?.chatId;

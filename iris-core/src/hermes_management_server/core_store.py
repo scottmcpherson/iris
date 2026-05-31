@@ -20,6 +20,11 @@ from .attachment_types import (
     normalize_attachment_kind,
     normalize_attachment_mime_type,
 )
+from .message_coalescer import (
+    # Overlay matching and live dedupe must agree on what "the same assistant
+    # text" means, so both sides share one normalizer.
+    normalize_message_content as normalize_assistant_content,
+)
 from .models import SessionMessage, SessionSummary, ProfileSummary
 
 
@@ -1940,12 +1945,6 @@ def session_read_state_from_row(row: sqlite3.Row) -> dict[str, Any]:
         "updatedAt": int(row["updated_at"]),
         "metadata": loads(row["metadata_json"]),
     }
-
-
-def normalize_assistant_content(content: str) -> str:
-    # Mirrors message_coalescer.normalize_message_content so overlay matching and
-    # live dedupe agree on what "the same assistant text" means.
-    return "\n".join(line.rstrip() for line in str(content or "").strip().splitlines())
 
 
 def message_content_hash_candidates(content: str) -> set[str]:

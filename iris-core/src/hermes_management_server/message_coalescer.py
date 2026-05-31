@@ -23,62 +23,6 @@ def merge_client_attachments(existing: Any, additions: list[dict[str, Any]]) -> 
     return merged
 
 
-def prepare_assistant_delivery_event(
-    messages: list[dict[str, Any]],
-    *,
-    content: str,
-    metadata: dict[str, Any],
-    stream_message_id: str,
-    has_stream_id: bool,
-    reply_to: str,
-    status: str,
-) -> tuple[str, dict[str, Any], bool]:
-    if has_stream_id:
-        existing = message_by_id(messages, stream_message_id)
-        if not existing:
-            return content, metadata, False
-        existing_content = str(existing.get("content") or "")
-        existing_status = str(existing.get("status") or "")
-        if existing_status == "completed" and status == "streaming":
-            return existing_content, metadata, True
-        operation = chunk_operation(metadata)
-        if status == "streaming":
-            merged = apply_stream_content(existing_content, content, operation)
-            return merged, metadata, same_normalized_content(merged, existing_content)
-        merged = apply_stream_content(existing_content, content, operation)
-        merged_metadata = merged_completion_metadata(existing, metadata, reply_to=reply_to)
-        if existing_status == "completed" and same_normalized_content(merged, existing_content):
-            return existing_content, merged_metadata, True
-        return merged, merged_metadata, False
-
-    if status != "completed":
-        return content, metadata, False
-
-    fallback = stream_fallback_completion(messages, reply_to=reply_to, content=content)
-    if fallback:
-        logger.warning("Assistant delivery without streamMessageId entered legacy stream fallback path.")
-        return (
-            str(fallback["content"]),
-            finalized_stream_metadata(
-                metadata,
-                existing_metadata=fallback["metadata"],
-                stream_message_id=str(fallback["streamMessageId"]),
-                reply_to=reply_to or str(fallback.get("replyTo") or ""),
-            ),
-            False,
-        )
-
-    existing = last_mergeable_assistant_message(messages, reply_to=reply_to)
-    if not existing:
-        return content, metadata, False
-    existing_content = str(existing.get("content") or "")
-    merged = append_delta_content(existing_content, content)
-    merged_metadata = merged_completion_metadata(existing, metadata, reply_to=reply_to)
-    if str(existing.get("status") or "") == "completed" and same_normalized_content(merged, existing_content):
-        return existing_content, merged_metadata, True
-    return merged, merged_metadata, False
-
-
 def assemble_stream_snapshot(
     prior: dict[str, Any] | None,
     *,
@@ -108,35 +52,6 @@ def assemble_stream_snapshot(
 
 def has_stream_message_id(metadata: dict[str, Any]) -> bool:
     return bool(metadata.get("streamMessageId") or metadata.get("stream_message_id"))
-
-
-def stream_fallback_completion(
-    messages: list[dict[str, Any]],
-    *,
-    reply_to: str,
-    content: str,
-) -> dict[str, Any] | None:
-    existing = None
-    metadata: dict[str, Any] = {}
-    stream_message_id = ""
-    for message in reversed(messages):
-        if message.get("role") != "assistant" or message.get("status") != "streaming":
-            continue
-        metadata = message.get("metadata") if isinstance(message.get("metadata"), dict) else {}
-        stream_message_id = str(metadata.get("streamMessageId") or metadata.get("stream_message_id") or "")
-        if stream_message_id:
-            existing = message
-            break
-    if not existing or not stream_message_id:
-        return None
-    inferred_reply_to = reply_to or str(metadata.get("replyTo") or "") or last_user_message_id(messages)
-    return {
-        "content": append_delta_content(str(existing.get("content") or ""), content),
-        "messageId": str(existing.get("id") or stream_message_id),
-        "metadata": metadata,
-        "replyTo": inferred_reply_to,
-        "streamMessageId": stream_message_id,
-    }
 
 
 def finalized_stream_metadata(
@@ -179,20 +94,6 @@ def merged_metadata_attachments(left: dict[str, Any], right: dict[str, Any]) -> 
     return merge_client_attachments(left.get("attachments"), [
         item for item in right.get("attachments", []) if isinstance(item, dict)
     ] if isinstance(right.get("attachments"), list) else [])
-
-
-def last_user_message_id(messages: list[dict[str, Any]]) -> str:
-    for message in reversed(messages):
-        if message.get("role") == "user":
-            return str(message.get("id") or "")
-    return ""
-
-
-def message_by_id(messages: list[dict[str, Any]], message_id: str) -> dict[str, Any] | None:
-    for message in messages:
-        if message["id"] == message_id:
-            return message
-    return None
 
 
 def coalesce_core_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -261,34 +162,8 @@ def coalesced_gateway_replay_content(left: dict[str, Any], right: dict[str, Any]
     return None
 
 
-def last_mergeable_assistant_message(
-    messages: list[dict[str, Any]],
-    *,
-    reply_to: str,
-) -> dict[str, Any] | None:
-    reply_scope_exists = bool(reply_to and any(
-        message.get("role") == "user" and str(message.get("id") or "") == reply_to
-        for message in messages
-    ))
-    for message in reversed(messages):
-        if message["role"] == "user":
-            if reply_scope_exists and str(message.get("id") or "") == reply_to:
-                continue
-            break
-        if message["role"] != "assistant":
-            continue
-        metadata = message.get("metadata") if isinstance(message.get("metadata"), dict) else {}
-        reply_matches = bool(reply_to and metadata.get("replyTo") == reply_to)
-        unscoped_stream_message = bool((not reply_to or not reply_scope_exists) and metadata.get("streamMessageId"))
-        if message["status"] == "streaming":
-            return message
-        if reply_matches or unscoped_stream_message:
-            return message
-    return None
-
-
 def normalize_message_content(content: str) -> str:
-    return "\n".join(line.rstrip() for line in content.strip().splitlines())
+    return "\n".join(line.rstrip() for line in str(content or "").strip().splitlines())
 
 
 def same_normalized_content(left: str, right: str) -> bool:
