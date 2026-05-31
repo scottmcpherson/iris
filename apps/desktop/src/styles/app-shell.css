@@ -39,6 +39,14 @@
   -webkit-app-region: no-drag;
 }
 
+.sidebar-update-slot {
+  position: absolute;
+  z-index: 8;
+  top: 12px;
+  right: 14px;
+  -webkit-app-region: no-drag;
+}
+
 .chrome-action {
   display: grid;
   place-items: center;

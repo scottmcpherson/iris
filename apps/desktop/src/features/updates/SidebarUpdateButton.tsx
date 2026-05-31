@@ -74,7 +74,7 @@ export function SidebarUpdateButton({ updates }: SidebarUpdateButtonProps) {
   return (
     <button
       type="button"
-      className="sidebar-icon-button ml-auto flex-none"
+      className="chrome-action"
       aria-label={label}
       title={label}
       onClick={onClick}

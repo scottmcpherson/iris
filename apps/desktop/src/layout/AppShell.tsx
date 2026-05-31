@@ -490,6 +490,11 @@ export function AppShell({
       </div>
       <aside className="sidebar">
         <div className="window-drag-zone" data-tauri-drag-region />
+        {updates ? (
+          <div className="sidebar-update-slot">
+            <SidebarUpdateButton updates={updates} />
+          </div>
+        ) : null}
         <div className="flex items-center flex-none gap-3 min-h-11 pt-0 px-2 pb-[18px]">
           <div className="brand-mark">
             <img src={irisSidebarIcon} alt="" draggable={false} />
@@ -514,7 +519,6 @@ export function AppShell({
               </p>
             )}
           </div>
-          {updates ? <SidebarUpdateButton updates={updates} /> : null}
         </div>
 
         <nav className="grid flex-none gap-[3px] m-0 mb-[10px]" aria-label="Primary">
