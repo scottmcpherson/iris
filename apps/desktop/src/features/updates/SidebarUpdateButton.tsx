@@ -66,7 +66,7 @@ export function SidebarUpdateButton({ updates }: { updates: AppUpdatesController
           </span>
         </button>
       </PopoverTrigger>
-      <PopoverContent align="end" sideOffset={6} className="w-64 p-0">
+      <PopoverContent align="end" sideOffset={6} collisionPadding={16} className="w-[22rem] p-0">
         {status === "available" ? (
           <>
             <div className="flex flex-col gap-3 p-4">
@@ -81,14 +81,14 @@ export function SidebarUpdateButton({ updates }: { updates: AppUpdatesController
                   </>
                 ) : null}
               </dl>
-              <div className="flex items-center justify-end gap-2">
-                <Button variant="appNeutral" size="appSmall" onClick={() => { updates.skip(); setOpen(false); }}>
+              <div className="flex flex-wrap items-center justify-end gap-2">
+                <Button variant="appNeutral" size="xs" onClick={() => { updates.skip(); setOpen(false); }}>
                   Skip
                 </Button>
-                <Button variant="appNeutral" size="appSmall" onClick={() => setOpen(false)}>
+                <Button variant="appNeutral" size="xs" onClick={() => setOpen(false)}>
                   Later
                 </Button>
-                <Button variant="default" size="appSmall" onClick={() => void updates.install()}>
+                <Button variant="default" size="xs" onClick={() => void updates.install()}>
                   Install and Relaunch
                 </Button>
               </div>
