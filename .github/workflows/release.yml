@@ -96,5 +96,5 @@ jobs:
           args: --target ${{ matrix.target }} --config src-tauri/tauri.release.conf.json
           tagName: ${{ github.event.inputs.tag || github.ref_name }}
           releaseName: "Iris v__VERSION__"
-          releaseDraft: true
+          releaseDraft: false
           prerelease: false
