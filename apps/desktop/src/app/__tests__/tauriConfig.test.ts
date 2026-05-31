@@ -11,9 +11,9 @@ describe("Tauri desktop configuration", () => {
     expect(csp).toContain("http://localhost:*");
   });
 
-  it("uses the root generated Tauri icon set for dev desktop runs", () => {
+  it("uses the default Tauri icon set for dev runs and the Iris icon for packaged builds", () => {
     expect(devConfig.productName).toBe("Iris Dev");
-    expect(devConfig.bundle.icon).toContain("../../../icons/tauri-icons/icon.icns");
+    expect(devConfig.bundle.icon).toContain("icons-dev/icon.icns");
     expect(config.bundle.icon).toContain("icons/icon.icns");
   });
 
