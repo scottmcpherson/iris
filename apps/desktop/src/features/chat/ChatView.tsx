@@ -19,7 +19,7 @@ import {
   Square,
   X,
 } from "lucide-react";
-import { StickToBottom, useStickToBottomContext } from "use-stick-to-bottom";
+import { StickToBottom, useStickToBottomContext, type StickToBottomContext } from "use-stick-to-bottom";
 import type { Message, MessageAttachment } from "../../app/types";
 import type { IrisProject } from "../../lib/irisCore";
 import type { RuntimeReadiness } from "../../app/runtimeReadiness";
@@ -160,6 +160,8 @@ export function ChatView({
   const chatPaneRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const modelSearchRef = useRef<HTMLInputElement>(null);
+  const stickToBottomRef = useRef<StickToBottomContext | null>(null);
+  const lastScrolledUserMessageIdRef = useRef<string | null>(null);
   const seenRenderedMessageIdsRef = useRef<Set<string>>(new Set());
   const slashCommandRefs = useRef<Record<string, HTMLElement | null>>({});
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -319,6 +321,23 @@ export function ChatView({
         Array.from(seenRenderedMessageIdsRef.current).slice(-400),
       );
     }
+  }, [renderedMessages]);
+
+  useEffect(() => {
+    lastScrolledUserMessageIdRef.current = null;
+  }, [selectedSessionId]);
+
+  useEffect(() => {
+    const latestUserMessageId = latestUserMessageIdFor(renderedMessages);
+    if (!latestUserMessageId) return;
+    if (lastScrolledUserMessageIdRef.current === null) {
+      // Skip the initial population (history load); StickToBottom's `initial` prop handles that.
+      lastScrolledUserMessageIdRef.current = latestUserMessageId;
+      return;
+    }
+    if (lastScrolledUserMessageIdRef.current === latestUserMessageId) return;
+    lastScrolledUserMessageIdRef.current = latestUserMessageId;
+    stickToBottomRef.current?.scrollToBottom({ animation: "instant", ignoreEscapes: true });
   }, [renderedMessages]);
 
   useEffect(() => {
@@ -641,6 +660,7 @@ export function ChatView({
         <div className="grid grid-cols-[minmax(0,1fr)] min-h-0">
           <StickToBottom
             key={transcriptScrollKey}
+            contextRef={stickToBottomRef}
             className={[
               "relative h-full min-h-0 overflow-hidden",
               transcriptScrollSettling ? "message-list-frame-settling" : "",
@@ -1111,6 +1131,13 @@ export function shouldShowChatEmptyState(selectedSessionId: string | null, rende
 export function chatTranscriptScrollKey(selectedSessionId: string | null, renderedMessageCount: number) {
   if (!selectedSessionId) return "new-chat";
   return `${selectedSessionId}:${renderedMessageCount > 0 ? "ready" : "pending"}`;
+}
+
+export function latestUserMessageIdFor(messages: Message[]) {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    if (messages[index].role === "user") return messages[index].id;
+  }
+  return "";
 }
 
 export function shouldLockComposerModelSelection(composerBusy: boolean) {
