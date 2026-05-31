@@ -42,6 +42,9 @@
     "externalBin": [
       "binaries/iris-core"
     ],
+    "resources": [
+      "python/core_bridge.py"
+    ],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

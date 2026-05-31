@@ -7,17 +7,36 @@ use std::fs::{create_dir_all, OpenOptions};
 use std::io::Write;
 use std::net::Ipv4Addr;
 use std::panic;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use tauri::menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent};
 use tauri::{Emitter, Manager};
 
 #[tauri::command]
-async fn core_bridge(action: String, payload: Value) -> Result<Value, String> {
-    tauri::async_runtime::spawn_blocking(move || run_python_bridge(&action, payload))
+async fn core_bridge(
+    app: tauri::AppHandle,
+    action: String,
+    payload: Value,
+) -> Result<Value, String> {
+    let script = resolve_bridge_script(&app);
+    tauri::async_runtime::spawn_blocking(move || run_python_bridge(&script, &action, payload))
         .await
         .map_err(|err| format!("Core bridge task failed: {err}"))?
+}
+
+/// Locate `core_bridge.py`: the bundled resource in a packaged app, or the
+/// source-tree copy when running `tauri dev`.
+fn resolve_bridge_script(app: &tauri::AppHandle) -> PathBuf {
+    if let Ok(dir) = app.path().resource_dir() {
+        for rel in ["python/core_bridge.py", "core_bridge.py"] {
+            let candidate = dir.join(rel);
+            if candidate.exists() {
+                return candidate;
+            }
+        }
+    }
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("python/core_bridge.py")
 }
 
 #[tauri::command]
@@ -94,8 +113,7 @@ fn is_tailscale_address(address: Ipv4Addr) -> bool {
     octets[0] == 100 && (64..=127).contains(&octets[1])
 }
 
-fn run_python_bridge(action: &str, payload: Value) -> Result<Value, String> {
-    let script = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("python/core_bridge.py");
+fn run_python_bridge(script: &Path, action: &str, payload: Value) -> Result<Value, String> {
     if !script.exists() {
         return Err(format!(
             "Core bridge script not found at {}",
