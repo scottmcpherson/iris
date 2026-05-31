@@ -47,6 +47,7 @@ import {
 } from "./app/projectSessions";
 import { Toaster } from "./shared/ui/sonner";
 import { toast } from "sonner";
+import { useAppUpdates } from "./features/updates/useAppUpdates";
 import {
   getIrisCoreAgentForProfile,
   installIrisCoreAgentHermesPlugin,
@@ -92,6 +93,7 @@ function App() {
   const previousSelectedSessionIdRef = useRef<string | null>(null);
   const previousAppliedRouteUrlRef = useRef("");
   const warnedMissingProjectIdsRef = useRef<Set<string>>(new Set());
+  const updates = useAppUpdates();
 
   const location = useLocation({
     select: (item) => ({
@@ -438,6 +440,7 @@ function App() {
 
   appCommandHandlerRef.current = (payload: string) => {
     if (payload === "refresh") void refreshWithNoticeRef.current();
+    if (payload === "check-for-updates") void updates.checkForUpdates({ silent: false });
     if (payload === "show" || payload === "command-menu") setCommandMenuOpen(true);
     if (payload === "new-chat") {
       setCommandMenuOpen(false);
@@ -453,6 +456,7 @@ function App() {
   return (
     <>
       <AppShell
+        updates={updates}
         activeView={activeView}
         connected={iris.connected}
         error={iris.status?.error}

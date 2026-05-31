@@ -163,9 +163,14 @@ pub fn run() {
     let builder = builder.plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
         show_main_window(app);
     }));
-    let app = builder
+    let builder = builder
         .plugin(tauri_plugin_deep_link::init())
-        .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_opener::init());
+    #[cfg(any(target_os = "macos", windows, target_os = "linux"))]
+    let builder = builder
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init());
+    let app = builder
         .setup(move |app| {
             #[cfg(target_os = "macos")]
             app.set_activation_policy(tauri::ActivationPolicy::Regular);
@@ -269,6 +274,8 @@ fn cleanup_managed_processes(app: &tauri::AppHandle) {
 
 fn install_app_menu(app: &mut tauri::App) -> tauri::Result<()> {
     let about = PredefinedMenuItem::about(app, None, None)?;
+    let check_for_updates =
+        MenuItem::with_id(app, "check-for-updates", "Check for Updates…", true, None::<&str>)?;
     let hide = PredefinedMenuItem::hide(app, None)?;
     let hide_others = PredefinedMenuItem::hide_others(app, None)?;
     let show_all = PredefinedMenuItem::show_all(app, None)?;
@@ -281,6 +288,7 @@ fn install_app_menu(app: &mut tauri::App) -> tauri::Result<()> {
         true,
         &[
             &about,
+            &check_for_updates,
             &app_separator_one,
             &hide,
             &hide_others,
@@ -388,6 +396,10 @@ fn install_app_menu(app: &mut tauri::App) -> tauri::Result<()> {
         "refresh" => {
             show_main_window(app);
             let _ = app.emit("iris://app-command", "refresh");
+        }
+        "check-for-updates" => {
+            show_main_window(app);
+            let _ = app.emit("iris://app-command", "check-for-updates");
         }
         _ => {}
     });

@@ -24,6 +24,8 @@ import {
   SquarePen,
   Trash2,
 } from "lucide-react";
+import { SidebarUpdateButton } from "../features/updates/SidebarUpdateButton";
+import type { AppUpdatesController } from "../features/updates/useAppUpdates";
 import irisSidebarIcon from "../assets/iris-sidebar-icon-borderless.png";
 import { navItems } from "../app/navigation";
 import { useHistoryNav } from "../app/routing/useHistoryNav";
@@ -151,6 +153,7 @@ type AppShellProps = {
   onSelectProfile: (profile: string) => void;
   onSelectView: (view: View) => void;
   onOpenDiagnostics?: () => void;
+  updates?: AppUpdatesController;
 };
 
 export function AppShell({
@@ -197,6 +200,7 @@ export function AppShell({
   onSelectProfile,
   onSelectView,
   onOpenDiagnostics,
+  updates,
 }: AppShellProps) {
   const profiles = status?.profiles ?? [offlineProfile];
   const showSelectedSession = activeView === "chat";
@@ -510,6 +514,7 @@ export function AppShell({
               </p>
             )}
           </div>
+          {updates ? <SidebarUpdateButton updates={updates} /> : null}
         </div>
 
         <nav className="grid flex-none gap-[3px] m-0 mb-[10px]" aria-label="Primary">

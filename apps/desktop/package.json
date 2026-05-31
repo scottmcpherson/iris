@@ -14,7 +14,7 @@
     "package:check": "node scripts/package-checks.mjs",
     "stage:core-sidecar": "node scripts/stage-core-sidecar.mjs",
     "build:mac:app": "npm run stage:core-sidecar && npm run tauri build -- --bundles app",
-    "release:mac": "node scripts/check-release-env.mjs && npm run stage:core-sidecar && npm run tauri build -- --bundles app",
+    "release:mac": "node scripts/check-release-env.mjs && npm run stage:core-sidecar && npm run tauri build -- --bundles app --config src-tauri/tauri.release.conf.json",
     "preview": "vite preview",
     "tauri": "tauri"
   },
@@ -28,6 +28,8 @@
     "@tauri-apps/api": "^2",
     "@tauri-apps/plugin-deep-link": "^2.4.9",
     "@tauri-apps/plugin-opener": "^2",
+    "@tauri-apps/plugin-process": "^2",
+    "@tauri-apps/plugin-updater": "^2",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "cmdk": "^1.1.1",

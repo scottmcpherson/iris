@@ -1,0 +1,100 @@
+name: Release
+
+# Builds, signs, and notarizes the macOS desktop app and publishes a GitHub
+# Release with Tauri updater artifacts (`*.app.tar.gz` + `.sig`) and a merged
+# `latest.json`. The installed app's updater polls
+# https://github.com/scottmcpherson/iris/releases/latest/download/latest.json
+# (configured in apps/desktop/src-tauri/tauri.conf.json).
+#
+# Cut a release by bumping `version` in tauri.conf.json, committing, then pushing
+# a matching tag, e.g.  git tag release-0.2.0 && git push origin release-0.2.0
+#
+# The release is created as a DRAFT so both architecture jobs can upload to it;
+# publish it from the GitHub Releases UI to roll the update out (publishing makes
+# it the "latest" release the updater resolves).
+
+on:
+  push:
+    tags:
+      - "release-*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to publish to (e.g. release-0.2.0)"
+        required: true
+
+jobs:
+  release:
+    name: ${{ matrix.arch }}
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Two native runners: the iris-core sidecar is built with PyInstaller,
+          # which is host-arch only (no cross-compilation).
+          - runner: macos-14 # Apple Silicon
+            arch: arm64
+            target: aarch64-apple-darwin
+          - runner: macos-13 # Intel
+            arch: x86_64
+            target: x86_64-apple-darwin
+    runs-on: ${{ matrix.runner }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: apps/desktop/src-tauri -> target
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Set up iris-core (Python venv)
+        run: npm run core:setup
+
+      - name: Build iris-core sidecar binary
+        run: npm run core:build:binary
+
+      - name: Stage iris-core sidecar for Tauri
+        run: npm --workspace apps/desktop run stage:core-sidecar
+        env:
+          TAURI_ENV_TARGET_TRIPLE: ${{ matrix.target }}
+
+      - name: Build, sign, notarize, and publish
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Updater (minisign) signing — pairs with `plugins.updater.pubkey`.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          # Apple Developer ID code signing (cert imported into a temp keychain on CI).
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          # Notarization (required so Gatekeeper lets the updated app launch).
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        with:
+          projectPath: apps/desktop
+          args: --target ${{ matrix.target }} --config src-tauri/tauri.release.conf.json
+          tagName: ${{ github.event.inputs.tag || github.ref_name }}
+          releaseName: "Iris v__VERSION__"
+          releaseDraft: true
+          prerelease: false
