@@ -67,6 +67,28 @@ jobs:
         env:
           TAURI_ENV_TARGET_TRIPLE: ${{ matrix.target }}
 
+      - name: Import Apple signing certificate
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ github.run_id }}-${{ matrix.arch }}
+        run: |
+          CERTIFICATE_PATH="$RUNNER_TEMP/apple_signing_certificate.p12"
+          KEYCHAIN_PATH="$RUNNER_TEMP/apple_signing.keychain-db"
+
+          echo "$APPLE_CERTIFICATE" | base64 --decode > "$CERTIFICATE_PATH"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security import "$CERTIFICATE_PATH" -P "$APPLE_CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
+          security list-keychains -d user -s "$KEYCHAIN_PATH" $(security list-keychains -d user | tr -d '"')
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+
+      - name: Sign iris-core sidecar
+        run: npm --workspace apps/desktop run sign:macos-sidecars -- iris-core-${{ matrix.target }}
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+
       - uses: actions/upload-artifact@v4
         with:
           name: iris-core-${{ matrix.target }}
@@ -107,8 +129,16 @@ jobs:
           path: apps/desktop/src-tauri/binaries
           merge-multiple: true
 
+      - name: Restore sidecar executable bits
+        run: chmod 755 apps/desktop/src-tauri/binaries/iris-core-*-apple-darwin
+
       - name: Verify staged universal sidecars
         run: npm --workspace apps/desktop run verify:universal-sidecars
+
+      - name: Verify staged sidecar signatures
+        run: |
+          codesign --verify --strict --verbose=2 apps/desktop/src-tauri/binaries/iris-core-aarch64-apple-darwin
+          codesign --verify --strict --verbose=2 apps/desktop/src-tauri/binaries/iris-core-x86_64-apple-darwin
 
       - name: Build, sign, notarize, and publish
         uses: tauri-apps/tauri-action@v0

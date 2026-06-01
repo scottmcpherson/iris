@@ -13,6 +13,7 @@
     "check": "npm run check:css && npm run test && npm run test:bridge && npm run build",
     "package:check": "node scripts/package-checks.mjs",
     "stage:core-sidecar": "node scripts/stage-core-sidecar.mjs",
+    "sign:macos-sidecars": "node scripts/sign-macos-sidecars.mjs",
     "verify:universal-sidecars": "node scripts/verify-universal-sidecars.mjs",
     "build:mac:app": "npm run stage:core-sidecar && npm run tauri build -- --bundles app",
     "build:mac:app:universal": "npm run verify:universal-sidecars && npm run tauri build -- --bundles app --target universal-apple-darwin",
