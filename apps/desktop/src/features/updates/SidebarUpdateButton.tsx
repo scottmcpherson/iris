@@ -8,6 +8,11 @@ import type { AppUpdateStatus, AppUpdatesController } from "./useAppUpdates";
 
 const RELEASE_NOTES_URL = "https://github.com/scottmcpherson/iris/releases/latest";
 
+type UpdateAvailableActionsProps = {
+  updates: Pick<AppUpdatesController, "skip" | "install">;
+  onClose: () => void;
+};
+
 function formatReleaseDate(value: string | null): string | null {
   if (!value) return null;
   const parsed = new Date(value);
@@ -35,6 +40,31 @@ function triggerVisual(
     default:
       return { Icon: Package, colorClass: "text-accent-cool-bright", spin: false, label: "Update available" };
   }
+}
+
+export function UpdateAvailableActions({ updates, onClose }: UpdateAvailableActionsProps) {
+  return (
+    <div className="flex items-center justify-between gap-2">
+      <div className="flex items-center gap-2">
+        <Button
+          variant="appNeutral"
+          size="xs"
+          onClick={() => {
+            updates.skip();
+            onClose();
+          }}
+        >
+          Skip
+        </Button>
+        <Button variant="appNeutral" size="xs" onClick={onClose}>
+          Later
+        </Button>
+      </div>
+      <Button variant="default" size="xs" onClick={() => void updates.install()}>
+        Install and Relaunch
+      </Button>
+    </div>
+  );
 }
 
 /**
@@ -81,17 +111,7 @@ export function SidebarUpdateButton({ updates }: { updates: AppUpdatesController
                   </>
                 ) : null}
               </dl>
-              <div className="flex flex-wrap items-center justify-end gap-2">
-                <Button variant="appNeutral" size="xs" onClick={() => { updates.skip(); setOpen(false); }}>
-                  Skip
-                </Button>
-                <Button variant="appNeutral" size="xs" onClick={() => setOpen(false)}>
-                  Later
-                </Button>
-                <Button variant="default" size="xs" className="ml-3" onClick={() => void updates.install()}>
-                  Install and Relaunch
-                </Button>
-              </div>
+              <UpdateAvailableActions updates={updates} onClose={() => setOpen(false)} />
             </div>
             <button
               type="button"
