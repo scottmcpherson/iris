@@ -96,7 +96,10 @@ describe("composer responsive layout", () => {
 
   it("clears slash menu dismissal after the slash token changes", async () => {
     const { readFileSync } = await import("node:fs");
-    const chatSource = readFileSync(new URL("../ChatView.tsx", import.meta.url), "utf8") as string;
+    const chatSource = (readFileSync(new URL("../ChatView.tsx", import.meta.url), "utf8") as string).replace(
+      /\r\n/g,
+      "\n",
+    );
 
     expect(chatSource).toContain("if (!slashToken) setDismissedSlashToken(\"\")");
     expect(chatSource).toContain("setDismissedSlashToken(\"\");\n              updateComposerSelection(event.target);");
