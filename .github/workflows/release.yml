@@ -9,9 +9,8 @@ name: Release
 # Cut a release by bumping `version` in tauri.conf.json, committing, then pushing
 # a matching tag, e.g.  git tag release-0.2.0 && git push origin release-0.2.0
 #
-# The release is created as a DRAFT so both architecture jobs can upload to it;
-# publish it from the GitHub Releases UI to roll the update out (publishing makes
-# it the "latest" release the updater resolves).
+# Release builds are universal macOS artifacts: the Tauri app binary and the
+# bundled PyInstaller Iris Core sidecar both include arm64 and x86_64 slices.
 
 on:
   push:
@@ -22,82 +21,54 @@ on:
       tag:
         description: "Release tag to publish to (e.g. release-0.2.0)"
         required: true
-      arch:
-        description: "Architecture to build"
-        required: false
-        default: all
-        type: choice
-        options:
-          - all
-          - arm64
-          - x86_64
 
 jobs:
   release:
-    name: ${{ matrix.arch }}
+    name: macos-universal
     permissions:
       contents: write
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          # Two native runners: the iris-core sidecar is built with PyInstaller,
-          # which is host-arch only (no cross-compilation).
-          - runner: macos-14 # Apple Silicon
-            arch: arm64
-            target: aarch64-apple-darwin
-          - runner: macos-15-intel # Intel
-            arch: x86_64
-            target: x86_64-apple-darwin
-    runs-on: ${{ matrix.runner }}
+    runs-on: macos-14
 
     steps:
       - uses: actions/checkout@v4
-        if: ${{ github.event_name != 'workflow_dispatch' || inputs.arch == 'all' || inputs.arch == matrix.arch }}
         with:
           ref: ${{ github.event.inputs.tag || github.ref }}
 
       - uses: actions/setup-node@v4
-        if: ${{ github.event_name != 'workflow_dispatch' || inputs.arch == 'all' || inputs.arch == matrix.arch }}
         with:
           node-version: 22
           cache: npm
 
-      - uses: actions/setup-python@v5
-        if: ${{ github.event_name != 'workflow_dispatch' || inputs.arch == 'all' || inputs.arch == matrix.arch }}
-        with:
-          python-version: "3.11"
+      - name: Install Python 3.11 universal2
+        run: |
+          curl -fsSL https://www.python.org/ftp/python/3.11.9/python-3.11.9-macos11.pkg -o /tmp/python-3.11.9-macos11.pkg
+          sudo installer -pkg /tmp/python-3.11.9-macos11.pkg -target /
+          /Library/Frameworks/Python.framework/Versions/3.11/bin/python3.11 -m venv iris-core/.venv
+          lipo -archs iris-core/.venv/bin/python
 
       - uses: dtolnay/rust-toolchain@stable
-        if: ${{ github.event_name != 'workflow_dispatch' || inputs.arch == 'all' || inputs.arch == matrix.arch }}
         with:
-          targets: ${{ matrix.target }}
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
 
       - uses: swatinem/rust-cache@v2
-        if: ${{ github.event_name != 'workflow_dispatch' || inputs.arch == 'all' || inputs.arch == matrix.arch }}
         with:
           workspaces: apps/desktop/src-tauri -> target
 
       - name: Install dependencies
-        if: ${{ github.event_name != 'workflow_dispatch' || inputs.arch == 'all' || inputs.arch == matrix.arch }}
         run: npm ci
 
       - name: Set up iris-core (Python venv)
-        if: ${{ github.event_name != 'workflow_dispatch' || inputs.arch == 'all' || inputs.arch == matrix.arch }}
         run: npm run core:setup
 
       - name: Build iris-core sidecar binary
-        if: ${{ github.event_name != 'workflow_dispatch' || inputs.arch == 'all' || inputs.arch == matrix.arch }}
-        run: npm run core:build:binary
+        run: npm run core:build:binary:universal
 
       - name: Stage iris-core sidecar for Tauri
-        if: ${{ github.event_name != 'workflow_dispatch' || inputs.arch == 'all' || inputs.arch == matrix.arch }}
         run: npm --workspace apps/desktop run stage:core-sidecar
         env:
-          TAURI_ENV_TARGET_TRIPLE: ${{ matrix.target }}
+          TAURI_ENV_TARGET_TRIPLE: universal-apple-darwin
 
       - name: Build, sign, notarize, and publish
-        if: ${{ github.event_name != 'workflow_dispatch' || inputs.arch == 'all' || inputs.arch == matrix.arch }}
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -114,7 +85,7 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         with:
           projectPath: apps/desktop
-          args: --target ${{ matrix.target }} --config src-tauri/tauri.release.conf.json
+          args: --target universal-apple-darwin --config src-tauri/tauri.release.conf.json
           tagName: ${{ github.event.inputs.tag || github.ref_name }}
           releaseName: "Iris v__VERSION__"
           releaseDraft: false

@@ -172,7 +172,7 @@ npm run package:check
 npm run build:mac:app
 ```
 
-`npm run check` runs the desktop TypeScript/Vitest/build checks, the desktop Python bridge tests, and the Iris Core pytest suite. `npm run build:mac:app` builds the standalone Iris Core binary, stages it as the Tauri sidecar, and creates the macOS app bundle.
+`npm run check` runs the desktop TypeScript/Vitest/build checks, the desktop Python bridge tests, and the Iris Core pytest suite. `npm run build:mac:app` builds the standalone Iris Core binary for the current Mac, stages it as the Tauri sidecar, and creates the macOS app bundle. Use `npm run build:mac:app:universal` for a universal macOS bundle when `iris-core/.venv` was created from a python.org universal2 Python and both Rust macOS targets are installed.
 
 ## More Detail
 

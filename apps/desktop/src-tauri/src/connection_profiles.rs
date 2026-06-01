@@ -136,14 +136,16 @@ fn core_binary_path(app: &AppHandle) -> Result<std::path::PathBuf, String> {
         }
     }
     if let Ok(resource_dir) = app.path().resource_dir() {
-        let candidate = resource_dir.join("binaries").join(core_binary_name());
-        if candidate.is_file() {
-            return Ok(candidate);
+        for name in core_binary_candidates() {
+            let candidate = resource_dir.join("binaries").join(name);
+            if candidate.is_file() {
+                return Ok(candidate);
+            }
         }
     }
     if let Ok(current_exe) = std::env::current_exe() {
         if let Some(exe_dir) = current_exe.parent() {
-            for name in ["iris-core", core_binary_name()] {
+            for name in core_binary_candidates() {
                 let candidate = exe_dir.join(name);
                 if candidate.is_file() {
                     return Ok(candidate);
@@ -166,17 +168,25 @@ fn core_binary_path(app: &AppHandle) -> Result<std::path::PathBuf, String> {
     ))
 }
 
-fn core_binary_name() -> &'static str {
+fn core_binary_candidates() -> &'static [&'static str] {
     #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
     {
-        "iris-core-aarch64-apple-darwin"
+        &[
+            "iris-core-universal-apple-darwin",
+            "iris-core-aarch64-apple-darwin",
+            "iris-core",
+        ]
     }
     #[cfg(all(target_os = "macos", target_arch = "x86_64"))]
     {
-        "iris-core-x86_64-apple-darwin"
+        &[
+            "iris-core-universal-apple-darwin",
+            "iris-core-x86_64-apple-darwin",
+            "iris-core",
+        ]
     }
     #[cfg(not(target_os = "macos"))]
     {
-        "iris-core"
+        &["iris-core"]
     }
 }

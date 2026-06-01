@@ -1,10 +1,12 @@
 # -*- mode: python ; coding: utf-8 -*-
 
 from pathlib import Path
+import os
 
 
 root = Path(SPECPATH)
 payload = root / "src" / "hermes_management_server" / "payload"
+target_arch = os.environ.get("PYINSTALLER_TARGET_ARCH") or None
 
 a = Analysis(
     ["scripts/iris_core_entry.py"],
@@ -50,7 +52,7 @@ exe = EXE(
     console=True,
     disable_windowed_traceback=False,
     argv_emulation=False,
-    target_arch=None,
+    target_arch=target_arch,
     codesign_identity=None,
     entitlements_file=None,
 )

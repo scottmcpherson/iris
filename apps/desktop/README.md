@@ -87,3 +87,4 @@ npm run build
 ```
 
 From the repository root, `npm run build:mac:app` also builds the standalone Iris Core binary before staging it into the app bundle. See `docs/production-readiness.md` for the permissions review, packaging notes, and release environment requirements.
+Use `npm run build:mac:app:universal` from the repository root for a universal macOS bundle. That path requires a universal2 Iris Core Python environment and both `aarch64-apple-darwin` and `x86_64-apple-darwin` Rust targets.
