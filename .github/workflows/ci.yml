@@ -41,8 +41,8 @@ jobs:
 
       - run: npm run check
 
-      # Build + stage the iris-core sidecar so tauri-build's externalBin
-      # check passes during cargo check (matches the release workflow).
+      # Build + stage the host iris-core sidecar so packaging resources
+      # are present during desktop checks.
       - run: npm run core:build:binary
 
       - run: npm --workspace apps/desktop run stage:core-sidecar

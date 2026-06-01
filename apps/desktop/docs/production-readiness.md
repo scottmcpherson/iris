@@ -17,7 +17,7 @@
 ## Builds
 
 - `npm run build:mac:app` builds the macOS `.app` bundle only and bypasses the DMG path that previously hung.
-- `npm run build:mac:app:universal` builds a universal macOS `.app` bundle when the local Python and Rust toolchains have both macOS architecture targets available.
+- `npm run build:mac:app:universal` builds a universal macOS `.app` bundle after both native Iris Core sidecars have been staged.
 - `npm run release:mac` verifies the Apple signing/notarization environment first, then builds the universal `.app` bundle.
 - `npm run package:check` runs the frontend build, Rust check, and Tauri environment report on the current host.
 - The GitHub Actions workflow runs tests and packaging checks on macOS, Windows, and Linux. Release builds use one universal macOS job.

@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Iris",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "identifier": "com.nousresearch.hermes-agent.desktop",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -39,10 +39,8 @@
   "bundle": {
     "active": true,
     "targets": "all",
-    "externalBin": [
-      "binaries/iris-core"
-    ],
     "resources": [
+      "binaries",
       "python/core_bridge.py"
     ],
     "icon": [

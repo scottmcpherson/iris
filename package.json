@@ -13,7 +13,6 @@
     "core:dev": "iris-core/.venv/bin/iris-core --host 127.0.0.1 --port 8765",
     "core:test": "node scripts/test-iris-core.mjs",
     "core:build:binary": "node iris-core/scripts/build-binary.mjs",
-    "core:build:binary:universal": "node iris-core/scripts/build-binary.mjs --target-arch universal2",
     "iris:platform:install": "node scripts/install-iris-platform.mjs",
     "iris:hermes:install": "node scripts/install-iris-platform.mjs",
     "iris:reset": "node scripts/reset-iris-environment.mjs",
@@ -31,7 +30,7 @@
     "check": "npm --workspace apps/desktop run check && npm run core:test",
     "build": "npm --workspace apps/desktop run build",
     "build:mac:app": "npm run core:build:binary && npm --workspace apps/desktop run build:mac:app",
-    "build:mac:app:universal": "npm run core:build:binary:universal && npm --workspace apps/desktop run build:mac:app:universal",
+    "build:mac:app:universal": "npm --workspace apps/desktop run build:mac:app:universal",
     "package:check": "npm --workspace apps/desktop run package:check"
   },
   "engines": {

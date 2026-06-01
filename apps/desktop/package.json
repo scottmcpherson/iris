@@ -13,10 +13,10 @@
     "check": "npm run check:css && npm run test && npm run test:bridge && npm run build",
     "package:check": "node scripts/package-checks.mjs",
     "stage:core-sidecar": "node scripts/stage-core-sidecar.mjs",
-    "stage:core-sidecar:universal": "TAURI_ENV_TARGET_TRIPLE=universal-apple-darwin node scripts/stage-core-sidecar.mjs",
+    "verify:universal-sidecars": "node scripts/verify-universal-sidecars.mjs",
     "build:mac:app": "npm run stage:core-sidecar && npm run tauri build -- --bundles app",
-    "build:mac:app:universal": "npm run stage:core-sidecar:universal && npm run tauri build -- --bundles app --target universal-apple-darwin",
-    "release:mac": "node scripts/check-release-env.mjs && npm run stage:core-sidecar:universal && npm run tauri build -- --bundles app --target universal-apple-darwin --config src-tauri/tauri.release.conf.json",
+    "build:mac:app:universal": "npm run verify:universal-sidecars && npm run tauri build -- --bundles app --target universal-apple-darwin",
+    "release:mac": "node scripts/check-release-env.mjs && npm run verify:universal-sidecars && npm run tauri build -- --bundles app --target universal-apple-darwin --config src-tauri/tauri.release.conf.json",
     "preview": "vite preview",
     "tauri": "tauri"
   },

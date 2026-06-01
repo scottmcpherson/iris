@@ -9,8 +9,8 @@ name: Release
 # Cut a release by bumping `version` in tauri.conf.json, committing, then pushing
 # a matching tag, e.g.  git tag release-0.2.0 && git push origin release-0.2.0
 #
-# Release builds are universal macOS artifacts: the Tauri app binary and the
-# bundled PyInstaller Iris Core sidecar both include arm64 and x86_64 slices.
+# Release builds are universal macOS artifacts: one universal Tauri app bundles
+# native arm64 and x86_64 PyInstaller Iris Core sidecars.
 
 on:
   push:
@@ -23,8 +23,59 @@ on:
         required: true
 
 jobs:
+  sidecar:
+    name: sidecar-${{ matrix.arch }}
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-14
+            arch: arm64
+            target: aarch64-apple-darwin
+          - runner: macos-15-intel
+            arch: x86_64
+            target: x86_64-apple-darwin
+    runs-on: ${{ matrix.runner }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Set up iris-core
+        run: npm run core:setup
+
+      - name: Build iris-core sidecar binary
+        run: npm run core:build:binary
+
+      - name: Stage iris-core sidecar for Tauri
+        run: npm --workspace apps/desktop run stage:core-sidecar
+        env:
+          TAURI_ENV_TARGET_TRIPLE: ${{ matrix.target }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: iris-core-${{ matrix.target }}
+          path: apps/desktop/src-tauri/binaries/iris-core-${{ matrix.target }}
+          if-no-files-found: error
+
   release:
     name: macos-universal
+    needs: sidecar
     permissions:
       contents: write
     runs-on: macos-14
@@ -39,13 +90,6 @@ jobs:
           node-version: 22
           cache: npm
 
-      - name: Install Python 3.11 universal2
-        run: |
-          curl -fsSL https://www.python.org/ftp/python/3.11.9/python-3.11.9-macos11.pkg -o /tmp/python-3.11.9-macos11.pkg
-          sudo installer -pkg /tmp/python-3.11.9-macos11.pkg -target /
-          /Library/Frameworks/Python.framework/Versions/3.11/bin/python3.11 -m venv iris-core/.venv
-          lipo -archs iris-core/.venv/bin/python
-
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-apple-darwin,x86_64-apple-darwin
@@ -57,16 +101,14 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Set up iris-core (Python venv)
-        run: npm run core:setup
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: iris-core-*
+          path: apps/desktop/src-tauri/binaries
+          merge-multiple: true
 
-      - name: Build iris-core sidecar binary
-        run: npm run core:build:binary:universal
-
-      - name: Stage iris-core sidecar for Tauri
-        run: npm --workspace apps/desktop run stage:core-sidecar
-        env:
-          TAURI_ENV_TARGET_TRIPLE: universal-apple-darwin
+      - name: Verify staged universal sidecars
+        run: npm --workspace apps/desktop run verify:universal-sidecars
 
       - name: Build, sign, notarize, and publish
         uses: tauri-apps/tauri-action@v0
