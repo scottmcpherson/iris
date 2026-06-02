@@ -764,3 +764,143 @@ def test_attachment_normalization_accepts_paths_and_uploaded_audio(monkeypatch: 
         {"path": "/tmp/audio", "name": "clip.webm", "kind": "audio", "mimeType": "audio/webm"}
     ]
     assert attachments.message_type_for_attachments(upload_rows) == "voice"
+
+
+def _toolprog_adapter(adapter_module):
+    """Adapter wired with a request capture list and a seeded active-turn fence."""
+    adapter = adapter_module.IrisPlatformAdapter(Config())
+    requests: list[dict[str, Any]] = []
+
+    async def fake_request(method: str, path: str, body: dict[str, Any] | None = None):
+        requests.append({"method": method, "path": path, "body": body})
+        return {"ok": True}
+
+    adapter._request = fake_request
+    adapter._active_client_request_ids_by_chat["chat-1"] = "client-1"
+    adapter._active_client_request_id_updated_at["chat-1"] = time.time()
+    return adapter, requests
+
+
+def test_parse_tool_progress_line_recognizes_tool_lines(monkeypatch: pytest.MonkeyPatch):
+    adapter_module = load_adapter_module(monkeypatch)
+    adapter = adapter_module.IrisPlatformAdapter(Config())
+    assert adapter._parse_tool_progress_line('🔍 terminal: "ls -la"') == ("terminal", "ls -la")
+    assert adapter._parse_tool_progress_line("⚙️ execute_code...") == ("execute_code", "")
+    assert adapter._parse_tool_progress_line("🧠 browser(['url'])") == ("browser", "")
+    # Ordinary prose / notices must not be misread as tool progress.
+    assert adapter._parse_tool_progress_line("Here is the result: done") is None
+    assert adapter._parse_tool_progress_line("Done: finished the task") is None
+    assert adapter._parse_tool_progress_line("just some text") is None
+    assert adapter._parse_tool_progress_line("") is None
+
+
+def test_send_tool_progress_forwards_tool_event_delivery(monkeypatch: pytest.MonkeyPatch):
+    adapter_module = load_adapter_module(monkeypatch)
+    adapter, requests = _toolprog_adapter(adapter_module)
+
+    result = asyncio.run(adapter.send("chat-1", '🔍 terminal: "ls -la"'))
+
+    assert result.success is True
+    assert result.message_id.startswith("iris-toolprog-")
+    assert len(requests) == 1
+    body = requests[0]["body"]
+    assert body["source"] == "hermes-tool-progress"
+    assert body["messageId"] == f"{result.message_id}:tool:0"
+    meta = body["metadata"]
+    assert meta["toolProgress"] is True
+    assert meta["toolName"] == "terminal"
+    assert meta["arguments"] == "ls -la"
+    assert meta["clientRequestId"] == "client-1"
+    assert meta["toolCallId"] == f"{result.message_id}:tool:0"
+
+
+def test_edit_tool_progress_only_forwards_new_lines(monkeypatch: pytest.MonkeyPatch):
+    adapter_module = load_adapter_module(monkeypatch)
+    adapter, requests = _toolprog_adapter(adapter_module)
+
+    first = asyncio.run(adapter.send("chat-1", '🔍 terminal: "ls"'))
+    bubble = first.message_id
+    assert len(requests) == 1
+
+    # The gateway edits the same bubble to append a second tool line.
+    second = asyncio.run(
+        adapter.edit_message(
+            "chat-1",
+            bubble,
+            '🔍 terminal: "ls"\n🌐 browser: "example.com"',
+        )
+    )
+
+    assert second.success is True
+    assert second.message_id == bubble
+    # Only the NEW (second) line is forwarded — line 0 was already sent.
+    assert len(requests) == 2
+    body = requests[1]["body"]
+    assert body["messageId"] == f"{bubble}:tool:1"
+    assert body["metadata"]["toolName"] == "browser"
+    assert body["metadata"]["arguments"] == "example.com"
+
+
+def test_send_non_tool_text_uses_normal_delivery(monkeypatch: pytest.MonkeyPatch):
+    adapter_module = load_adapter_module(monkeypatch)
+    adapter, requests = _toolprog_adapter(adapter_module)
+
+    result = asyncio.run(adapter.send("chat-1", "Here is your answer."))
+
+    assert result.success is True
+    # Ordinary assistant text falls through to the normal delivery path.
+    assert requests[0]["body"]["source"] == "hermes-gateway"
+
+
+def test_tool_progress_survives_round_finalize_via_turn_fence(monkeypatch: pytest.MonkeyPatch):
+    # Regression: in a multi-round turn ("tool, text, tool, …"), each round's text
+    # stream finalize clears the per-chat STREAM fence. Rounds after the first would
+    # then lose correlation and fall through to a plain delivery (no tool card). The
+    # per-turn fence — seeded at turn start, not cleared on a round finalize — keeps
+    # every round's tool call attributed to the turn.
+    adapter_module = load_adapter_module(monkeypatch)
+    adapter, requests = _toolprog_adapter(adapter_module)
+
+    # Turn start: the inbound handler seeds the per-turn tool fence.
+    adapter._set_tool_turn("chat-1", "client-1")
+
+    # Round 1's text stream finalizes -> the stream fence is popped (as in
+    # edit_message(finalize=True)). The turn fence must NOT be popped.
+    adapter._active_client_request_ids_by_chat.pop("chat-1", None)
+    adapter._active_client_request_id_updated_at.pop("chat-1", None)
+    assert adapter._fenced_active_client_request_id("chat-1") == ""
+    assert adapter._fenced_tool_turn_client_request_id("chat-1") == "client-1"
+
+    # Round 2's tool call: no stream fence, but the turn fence still correlates it.
+    result = asyncio.run(adapter.send("chat-1", '💻 terminal: "round 2"'))
+
+    assert result.message_id.startswith("iris-toolprog-")
+    assert len(requests) == 1
+    body = requests[0]["body"]
+    assert body["source"] == "hermes-tool-progress"
+    assert body["metadata"]["toolName"] == "terminal"
+    assert body["metadata"]["clientRequestId"] == "client-1"
+
+
+def test_stream_edit_refreshes_turn_fence_from_reply_to(monkeypatch: pytest.MonkeyPatch):
+    # The gateway omits clientRequestId on rounds after the first but still sends
+    # replyTo (== the turn id). A stream edit must refresh the per-turn tool fence
+    # from replyTo so later tool calls stay correlated — WITHOUT correlating the
+    # stream delivery itself (which would clobber the first round's message).
+    adapter_module = load_adapter_module(monkeypatch)
+    adapter, requests = _toolprog_adapter(adapter_module)
+
+    asyncio.run(
+        adapter.edit_message(
+            "chat-2",
+            "stream-round-2",
+            "Round 2 text",
+            metadata={"replyTo": "turn-abc"},
+        )
+    )
+
+    # Turn fence is now warm for chat-2, keyed by the replyTo turn id.
+    assert adapter._fenced_tool_turn_client_request_id("chat-2") == "turn-abc"
+    # The stream delivery itself stays uncorrelated (rendered by streamMessageId),
+    # so round 2's text does not fold into / overwrite round 1's message.
+    assert "clientRequestId" not in requests[0]["body"]["metadata"]

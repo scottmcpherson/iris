@@ -37,15 +37,18 @@ import { AttachmentUploadError, formatPromptWithAttachments, uploadAttachmentsFo
 import { ASSISTANT_THINKING_TEXT, isAssistantThinkingPlaceholder } from "./assistantStatus";
 import type { PendingProfileSessionSelection, SendMessageOptions } from "./chatTypes";
 import {
+  booleanMetadata,
   isHiddenDeliveryMetadata,
   stringMetadata,
   toAppMessages,
 } from "./chatHistory";
 import {
+  completeRunningToolCards,
   deliveryCompletesActiveStream,
   mergeErrorDelivery,
   mergeCompletedDelivery,
   mergeStreamDelivery,
+  mergeToolProgressDelivery,
   reconcileMessages,
 } from "./chatStreamMerging";
 import {
@@ -1375,6 +1378,10 @@ export function useIrisChat({
         Boolean(delivery.metadata?.error);
       const isStreamDelivery = Boolean(streamMessageId);
       const isFinalStreamDelivery = isStreamDelivery && streamDeliveryFinalized(delivery.metadata);
+      const isToolProgress = !isStreamDelivery &&
+        (delivery.source === "hermes-tool-progress" ||
+          stringMetadata(delivery.metadata, "source") === "hermes-tool-progress" ||
+          booleanMetadata(delivery.metadata, "toolProgress") === true);
       const sessionId =
         sessionIdForActiveRequest(deliveryClientRequestId) ||
         (delivery.source === "hermes-cron" ? "" : sessionIdForActiveRequest(replyTo)) ||
@@ -1411,7 +1418,7 @@ export function useIrisChat({
         messagesBySessionRef.current,
         relatedSessionIds,
       );
-      const completesActiveStream = !isStreamDelivery &&
+      const completesActiveStream = !isStreamDelivery && !isToolProgress &&
         (
           deliveryCompletesActiveStream(existingBeforeMerge, delivery) ||
           Boolean(deliveryClientRequestId && existingBeforeMerge.some(
@@ -1422,6 +1429,23 @@ export function useIrisChat({
       handledDelivery = true;
       markApplied(delivery);
       delete pendingUnmappedDeliveryAttemptsRef.current[delivery.id];
+      if (isToolProgress) {
+        // Tool-progress deliveries append a standalone tool card in execution order
+        // (interleaving with the round's text) without touching any text content and
+        // without completing the turn — so they skip the stream-completion /
+        // active-request-clearing logic below.
+        setMessagesBySession((current) => {
+          const freshRelatedSessionIds = sessionIdsForChatId(
+            delivery.chatId,
+            sessionId,
+            sessionChatIdsBySessionRef.current,
+          );
+          const existing = mergeRelatedSessionMessages(current, freshRelatedSessionIds);
+          const nextMessages = mergeToolProgressDelivery(existing, delivery);
+          return setSessionMessages(current, freshRelatedSessionIds, sessionId, nextMessages);
+        });
+        continue;
+      }
       let postMergeMessages: Message[] | null = null;
       setMessagesBySession((current) => {
         const freshRelatedSessionIds = sessionIdsForChatId(
@@ -1437,11 +1461,19 @@ export function useIrisChat({
           postMergeMessages = existing;
           return current;
         }
-        const nextMessages = isErrorDelivery
+        const merged = isErrorDelivery
           ? mergeErrorDelivery(existing, delivery, deliveryClientRequestId)
           : isStreamDelivery
             ? mergeStreamDelivery(existing, delivery, streamMessageId, isFinalStreamDelivery, deliveryClientRequestId)
             : mergeCompletedDelivery(existing, delivery, replyTo, deliveryClientRequestId);
+        // A terminal delivery (final stream chunk, completed, or error) settles the
+        // turn, so flip any still-running standalone tool cards to completed. In a
+        // multi-round turn each round's stream finalize settles that round's card; the
+        // final delivery settles any remainder.
+        const nextMessages =
+          isFinalStreamDelivery || isErrorDelivery || !isStreamDelivery
+            ? completeRunningToolCards(merged)
+            : merged;
         postMergeMessages = nextMessages;
         return setSessionMessages(current, freshRelatedSessionIds, sessionId, nextMessages);
       });

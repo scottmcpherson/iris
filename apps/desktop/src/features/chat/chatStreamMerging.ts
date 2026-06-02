@@ -89,6 +89,91 @@ export function mergeStreamDelivery(
   return coalescePostStreamAttachments([...existing, assistantMessage]);
 }
 
+/**
+ * Merge a tool-progress delivery (source "hermes-tool-progress") into the live
+ * transcript. Tool activity is delivered out-of-band from the assistant text — one
+ * delivery per tool call, in execution order. We render each call as its own card
+ * appended at the tail rather than folding them all onto the turn's first assistant
+ * message (which grouped every card at the top, out of execution order). The next
+ * round's text stream then appends after it, so the live transcript interleaves
+ * tool → text → tool → text per round, matching the reopened/history view.
+ *
+ * Cards carry no clientRequestId, so a later text stream never folds its content
+ * into a tool card. They stay `running` until the round's stream finalizes — see
+ * `completeRunningToolCards`, which the delivery loop applies on a terminal delivery.
+ */
+export function mergeToolProgressDelivery(
+  existing: Message[],
+  delivery: HermesInboxMessage,
+): Message[] {
+  const toolEvents = streamToolEventsFromMetadata(delivery.metadata, delivery.id);
+  if (!toolEvents.length) return existing;
+  let next = existing;
+  for (const event of toolEvents) {
+    const key = event.callId || event.id;
+    const knownIndex = next.findIndex(
+      (message) =>
+        message.role === "assistant" &&
+        (message.streamEvents || []).some((current) => (current.callId || current.id) === key),
+    );
+    if (knownIndex !== -1) {
+      // Re-delivery of a known call (e.g. SSE + poll overlap): merge in place so the
+      // card updates rather than duplicating.
+      next = next.map((message, index) =>
+        index === knownIndex
+          ? { ...message, streamEvents: mergeStreamToolEvent(message.streamEvents || [], event) }
+          : message,
+      );
+      continue;
+    }
+    const card: Message = {
+      id: event.id || delivery.id,
+      role: "assistant",
+      content: "",
+      streaming: false,
+      streamEvents: [event],
+    };
+    // Keep the card ahead of a trailing in-flight "thinking" bubble. That placeholder
+    // is the round's answer-to-be — the text stream fills it IN PLACE (matched by
+    // clientRequestId), so appending the card after it would strand the card after its
+    // own round's text. Inserting before it preserves tool→text order, matching the
+    // reopened/history view. (Note: a leading system notice that carries the turn's
+    // clientRequestId — e.g. "No home channel is set" — fills this bubble first and
+    // defeats this; configuring a home channel avoids that notice.)
+    const tailIndex = next.length - 1;
+    const tail = next[tailIndex];
+    const beforeThinkingBubble =
+      !!tail &&
+      tail.role === "assistant" &&
+      tail.streaming === true &&
+      !tail.streamEvents?.length &&
+      (!tail.content.trim() || isAssistantThinkingPlaceholder(tail.content));
+    next = beforeThinkingBubble ? [...next.slice(0, tailIndex), card, tail] : [...next, card];
+  }
+  return next;
+}
+
+/**
+ * Flip any still-`running` tool cards to `completed`. Live tool cards are standalone
+ * messages with no stream of their own, so they can't settle via their own finalize;
+ * the delivery loop calls this on a turn's terminal delivery (each round's stream
+ * finalize settles that round's card; the final delivery settles any remainder).
+ */
+export function completeRunningToolCards(messages: Message[]): Message[] {
+  let changed = false;
+  const next = messages.map((message) => {
+    if (!message.streamEvents?.some((event) => event.status === "running")) return message;
+    changed = true;
+    return {
+      ...message,
+      streamEvents: message.streamEvents.map((event) =>
+        event.status === "running" ? { ...event, status: "completed" as const } : event,
+      ),
+    };
+  });
+  return changed ? next : messages;
+}
+
 export function mergeCompletedDelivery(
   existing: Message[],
   delivery: HermesInboxMessage,
