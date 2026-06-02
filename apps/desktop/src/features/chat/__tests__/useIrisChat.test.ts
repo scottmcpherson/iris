@@ -28,6 +28,7 @@ import {
   mergeCompletedDelivery,
   mergeMessageLists,
   mergeStreamDelivery,
+  mergeToolProgressDelivery,
   reconcileMessages,
 } from "../chatStreamMerging";
 import {
@@ -2401,5 +2402,87 @@ describe("reconcileMessages (history-authoritative, no reorder)", () => {
     // The old history-primary merge produced the reversed transcript (reminder first).
     const reversed = mergeMessageLists(history, local);
     expect(reversed[0].content).toBe("remind me in 1 minute");
+  });
+});
+
+describe("tool-progress deliveries (parity fix)", () => {
+  function toolProgressDelivery(
+    id: string,
+    toolName: string,
+    args: string,
+    clientRequestId = "client-1",
+  ): HermesInboxMessage {
+    return inboxMessage({
+      id,
+      source: "hermes-tool-progress",
+      content: `🔍 ${toolName}: "${args}"`,
+      metadata: {
+        toolProgress: true,
+        toolName,
+        arguments: args,
+        toolCallId: id,
+        clientRequestId,
+      },
+    });
+  }
+
+  it("attaches tool events to the in-flight turn without touching its text", () => {
+    const existing: Message[] = [
+      {
+        id: "stream-1",
+        role: "assistant",
+        content: "Working on it",
+        streaming: true,
+        streamMessageId: "stream-1",
+        clientRequestId: "client-1",
+      },
+    ];
+    const next = mergeToolProgressDelivery(
+      existing,
+      toolProgressDelivery("b:tool:0", "terminal", "ls -la"),
+      "client-1",
+    );
+    expect(next).toHaveLength(1);
+    // The streamed answer text is never overwritten by the tool line (the bug).
+    expect(next[0].content).toBe("Working on it");
+    expect(next[0].streaming).toBe(true);
+    expect(next[0].streamEvents).toHaveLength(1);
+    expect(next[0].streamEvents?.[0]).toMatchObject({ toolName: "terminal", status: "running" });
+  });
+
+  it("accumulates multiple tool calls and dedupes re-delivery by callId", () => {
+    const existing: Message[] = [
+      { id: "stream-1", role: "assistant", content: "x", streaming: true, clientRequestId: "client-1" },
+    ];
+    const afterFirst = mergeToolProgressDelivery(
+      existing,
+      toolProgressDelivery("b:tool:0", "terminal", "ls"),
+      "client-1",
+    );
+    const afterSecond = mergeToolProgressDelivery(
+      afterFirst,
+      toolProgressDelivery("b:tool:1", "browser", "example.com"),
+      "client-1",
+    );
+    expect(afterSecond[0].streamEvents?.map((event) => event.toolName)).toEqual(["terminal", "browser"]);
+    // Re-delivering the first line (same callId, e.g. SSE + polling) must not duplicate it.
+    const afterReplay = mergeToolProgressDelivery(
+      afterSecond,
+      toolProgressDelivery("b:tool:0", "terminal", "ls"),
+      "client-1",
+    );
+    expect(afterReplay[0].streamEvents).toHaveLength(2);
+  });
+
+  it("seeds a streaming placeholder when a tool fires before any assistant text", () => {
+    const next = mergeToolProgressDelivery([], toolProgressDelivery("b:tool:0", "terminal", "ls"), "client-1");
+    expect(next).toHaveLength(1);
+    expect(next[0]).toMatchObject({
+      role: "assistant",
+      content: "",
+      streaming: true,
+      clientRequestId: "client-1",
+    });
+    expect(next[0].streamEvents).toHaveLength(1);
   });
 });

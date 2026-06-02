@@ -37,6 +37,7 @@ import { AttachmentUploadError, formatPromptWithAttachments, uploadAttachmentsFo
 import { ASSISTANT_THINKING_TEXT, isAssistantThinkingPlaceholder } from "./assistantStatus";
 import type { PendingProfileSessionSelection, SendMessageOptions } from "./chatTypes";
 import {
+  booleanMetadata,
   isHiddenDeliveryMetadata,
   stringMetadata,
   toAppMessages,
@@ -46,6 +47,7 @@ import {
   mergeErrorDelivery,
   mergeCompletedDelivery,
   mergeStreamDelivery,
+  mergeToolProgressDelivery,
   reconcileMessages,
 } from "./chatStreamMerging";
 import {
@@ -1375,6 +1377,10 @@ export function useIrisChat({
         Boolean(delivery.metadata?.error);
       const isStreamDelivery = Boolean(streamMessageId);
       const isFinalStreamDelivery = isStreamDelivery && streamDeliveryFinalized(delivery.metadata);
+      const isToolProgress = !isStreamDelivery &&
+        (delivery.source === "hermes-tool-progress" ||
+          stringMetadata(delivery.metadata, "source") === "hermes-tool-progress" ||
+          booleanMetadata(delivery.metadata, "toolProgress") === true);
       const sessionId =
         sessionIdForActiveRequest(deliveryClientRequestId) ||
         (delivery.source === "hermes-cron" ? "" : sessionIdForActiveRequest(replyTo)) ||
@@ -1411,7 +1417,7 @@ export function useIrisChat({
         messagesBySessionRef.current,
         relatedSessionIds,
       );
-      const completesActiveStream = !isStreamDelivery &&
+      const completesActiveStream = !isStreamDelivery && !isToolProgress &&
         (
           deliveryCompletesActiveStream(existingBeforeMerge, delivery) ||
           Boolean(deliveryClientRequestId && existingBeforeMerge.some(
@@ -1422,6 +1428,22 @@ export function useIrisChat({
       handledDelivery = true;
       markApplied(delivery);
       delete pendingUnmappedDeliveryAttemptsRef.current[delivery.id];
+      if (isToolProgress) {
+        // Tool-progress deliveries attach tool cards to the in-flight assistant
+        // turn without touching its text and without completing the turn — so they
+        // skip the stream-completion / active-request-clearing logic below.
+        setMessagesBySession((current) => {
+          const freshRelatedSessionIds = sessionIdsForChatId(
+            delivery.chatId,
+            sessionId,
+            sessionChatIdsBySessionRef.current,
+          );
+          const existing = mergeRelatedSessionMessages(current, freshRelatedSessionIds);
+          const nextMessages = mergeToolProgressDelivery(existing, delivery, deliveryClientRequestId);
+          return setSessionMessages(current, freshRelatedSessionIds, sessionId, nextMessages);
+        });
+        continue;
+      }
       let postMergeMessages: Message[] | null = null;
       setMessagesBySession((current) => {
         const freshRelatedSessionIds = sessionIdsForChatId(

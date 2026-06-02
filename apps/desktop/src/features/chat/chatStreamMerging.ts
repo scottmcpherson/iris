@@ -89,6 +89,52 @@ export function mergeStreamDelivery(
   return coalescePostStreamAttachments([...existing, assistantMessage]);
 }
 
+/**
+ * Merge a tool-progress delivery (source "hermes-tool-progress") into the live
+ * transcript. Tool activity is delivered out-of-band from the assistant text, so
+ * we attach it to the in-flight assistant turn's `streamEvents` (deduped by
+ * callId) rather than its `content` — which the assembled text snapshots replace
+ * wholesale. The events stay `running` and are flipped to `completed` when the
+ * turn's stream finalizes (`completedStreamEvents`). If the tool fires before any
+ * assistant text, we seed a streaming placeholder keyed by clientRequestId so the
+ * later text stream attaches to (and finalizes) the same message.
+ */
+export function mergeToolProgressDelivery(
+  existing: Message[],
+  delivery: HermesInboxMessage,
+  clientRequestId: string,
+): Message[] {
+  const toolEvents = streamToolEventsFromMetadata(delivery.metadata, delivery.id);
+  if (!toolEvents.length) return existing;
+  const matchIndex = clientRequestId
+    ? existing.findIndex(
+        (message) => message.role === "assistant" && message.clientRequestId === clientRequestId,
+      )
+    : -1;
+  if (matchIndex !== -1) {
+    return existing.map((message, index) =>
+      index === matchIndex
+        ? {
+            ...message,
+            streamEvents: toolEvents.reduce(
+              (current, event) => mergeStreamToolEvent(current, event),
+              message.streamEvents || [],
+            ),
+          }
+        : message,
+    );
+  }
+  const placeholder: Message = {
+    id: delivery.id,
+    role: "assistant",
+    content: "",
+    streaming: true,
+    ...(clientRequestId ? { clientRequestId } : {}),
+    streamEvents: toolEvents,
+  };
+  return [...existing, placeholder];
+}
+
 export function mergeCompletedDelivery(
   existing: Message[],
   delivery: HermesInboxMessage,
