@@ -2506,6 +2506,31 @@ describe("tool-progress deliveries (live interleave)", () => {
     expect(next[1].streamEvents?.[0]).toMatchObject({ toolName: "terminal", status: "running" });
   });
 
+  it("inserts a tool card ahead of the in-flight thinking bubble (tool → text order)", () => {
+    // On send the app shows a streaming "thinking" bubble (clientRequestId C). Round 1's
+    // tool card must land BEFORE it, so when the text stream fills that bubble in place
+    // the card stays ahead of its own round's text rather than stranded after it.
+    const thinking: Message = {
+      id: "assistant-1",
+      role: "assistant",
+      content: ASSISTANT_THINKING_TEXT,
+      streaming: true,
+      clientRequestId: "C",
+    };
+    const existing: Message[] = [
+      { id: "user-1", role: "user", content: "go", clientRequestId: "C" },
+      thinking,
+    ];
+    const next = mergeToolProgressDelivery(existing, toolProgressDelivery("t1", "terminal", "round 1"));
+    expect(next.map((message) => (message.streamEvents?.length ? "card" : message.role))).toEqual([
+      "user",
+      "card",
+      "assistant",
+    ]);
+    // Placeholder identity preserved — the text stream fills it in place afterward.
+    expect(next[2]).toBe(thinking);
+  });
+
   it("interleaves tool cards with text in arrival order (tool, text, tool, text)", () => {
     let msgs: Message[] = [];
     msgs = mergeToolProgressDelivery(msgs, toolProgressDelivery("t1", "terminal", "round 1"));
@@ -2567,7 +2592,12 @@ describe("tool-progress deliveries (live interleave)", () => {
         },
       });
 
-    let msgs: Message[] = [];
+    // Start from the in-flight "thinking" bubble the app shows on send (clientRequestId C):
+    // round 1's text stream fills it in place, so the round-1 card must sit ahead of it.
+    let msgs: Message[] = [
+      { id: "user-1", role: "user", content: "go", clientRequestId: "C" },
+      { id: "assistant-1", role: "assistant", content: ASSISTANT_THINKING_TEXT, streaming: true, clientRequestId: "C" },
+    ];
     // Round 1: tool, then its text stream (round 1 carries the turn's clientRequestId).
     msgs = mergeToolProgressDelivery(msgs, toolProgressDelivery("t1", "terminal", "round 1"));
     msgs = mergeStreamDelivery(msgs, streamDelivery("s1", "Round 1: done.", "C"), "s1", false, "C");
@@ -2582,7 +2612,9 @@ describe("tool-progress deliveries (live interleave)", () => {
     );
 
     expect(
-      msgs.map((message) => (message.streamEvents?.length ? `tool:${message.streamEvents[0].status}` : message.content)),
+      msgs
+        .filter((message) => message.role !== "user")
+        .map((message) => (message.streamEvents?.length ? `tool:${message.streamEvents[0].status}` : message.content)),
     ).toEqual(["tool:completed", "Round 1: done.", "tool:completed", "Round 2: done."]);
     expect(msgs.flatMap((message) => message.streamEvents || []).every((event) => event.status === "completed")).toBe(true);
   });

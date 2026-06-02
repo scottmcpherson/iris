@@ -126,16 +126,29 @@ export function mergeToolProgressDelivery(
       );
       continue;
     }
-    next = [
-      ...next,
-      {
-        id: event.id || delivery.id,
-        role: "assistant",
-        content: "",
-        streaming: false,
-        streamEvents: [event],
-      },
-    ];
+    const card: Message = {
+      id: event.id || delivery.id,
+      role: "assistant",
+      content: "",
+      streaming: false,
+      streamEvents: [event],
+    };
+    // Keep the card ahead of a trailing in-flight "thinking" bubble. That placeholder
+    // is the round's answer-to-be — the text stream fills it IN PLACE (matched by
+    // clientRequestId), so appending the card after it would strand the card after its
+    // own round's text. Inserting before it preserves tool→text order, matching the
+    // reopened/history view. (Note: a leading system notice that carries the turn's
+    // clientRequestId — e.g. "No home channel is set" — fills this bubble first and
+    // defeats this; configuring a home channel avoids that notice.)
+    const tailIndex = next.length - 1;
+    const tail = next[tailIndex];
+    const beforeThinkingBubble =
+      !!tail &&
+      tail.role === "assistant" &&
+      tail.streaming === true &&
+      !tail.streamEvents?.length &&
+      (!tail.content.trim() || isAssistantThinkingPlaceholder(tail.content));
+    next = beforeThinkingBubble ? [...next.slice(0, tailIndex), card, tail] : [...next, card];
   }
   return next;
 }
