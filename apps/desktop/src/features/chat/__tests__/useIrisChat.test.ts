@@ -25,6 +25,7 @@ import type { HermesSession } from "../../../types/hermes";
 import {
   coalescePostStreamAttachments,
   deliveryCompletesActiveStream,
+  completeRunningToolCards,
   mergeCompletedDelivery,
   mergeMessageLists,
   mergeStreamDelivery,
@@ -1166,6 +1167,74 @@ describe("Iris chat inbox merging", () => {
     expect(canonical[1].content).toBe(
       "I created a simple test image for you:\n\nMEDIA:/tmp/test_image.svg\n\nNote: fallback SVG locally.",
     );
+  });
+
+  it("renders one completed card per round when an assistant turn carries prev-text + next-call (no reopen duplicates)", () => {
+    // Real multi-round shape: the agent emits each assistant turn as
+    // [previous round's text + THIS round's tool call] in one message, e.g. the
+    // "Round 1…" message also holds round 2's tool call. The reconstruction must
+    // attach each call to the round it belongs to — not render it shimmering on the
+    // prior turn's bubble AND again, completed, on the next.
+    const toolResult = (callId: string, round: number) => ({
+      id: `tool-${round}`,
+      sessionId: "session-1",
+      role: "tool" as const,
+      content: JSON.stringify({ output: `round ${round} tool call complete` }),
+      toolName: "terminal",
+      toolCallId: callId,
+      timestamp: round * 10 + 1,
+    });
+    const assistantTurn = (id: string, text: string, nextCallId: string | null, ts: number) => ({
+      id,
+      sessionId: "session-1",
+      role: "assistant" as const,
+      content: text,
+      toolName: "",
+      timestamp: ts,
+      ...(nextCallId
+        ? {
+            toolCalls: [
+              {
+                id: nextCallId,
+                call_id: nextCallId,
+                type: "function",
+                function: { name: "terminal", arguments: `{"command":"printf 'round ${nextCallId}'"}` },
+              },
+            ],
+          }
+        : {}),
+    });
+
+    const messages = toAppMessages([
+      { id: "user-1", sessionId: "session-1", role: "user", content: "do 3 rounds", toolName: "", timestamp: 1 },
+      assistantTurn("a-0", "", "call_1", 2), // round 1 call only
+      toolResult("call_1", 1),
+      assistantTurn("a-1", "Round 1: done.", "call_2", 3), // round 1 text + round 2 call
+      toolResult("call_2", 2),
+      assistantTurn("a-2", "Round 2: done.", "call_3", 4), // round 2 text + round 3 call
+      toolResult("call_3", 3),
+      assistantTurn("a-3", "Round 3: done.", null, 5), // round 3 text, no further call
+    ]);
+
+    const assistantCards = messages.filter(
+      (message) => message.role === "assistant" && (message.streamEvents?.length || 0) > 0,
+    );
+    // Exactly three assistant bubbles, each with exactly one tool card.
+    expect(assistantCards).toHaveLength(3);
+    for (const message of assistantCards) {
+      expect(message.streamEvents).toHaveLength(1);
+    }
+    // Each round's text owns its round's card, all completed — none stuck running.
+    expect(assistantCards.map((m) => m.content)).toEqual([
+      "Round 1: done.",
+      "Round 2: done.",
+      "Round 3: done.",
+    ]);
+    const allEvents = assistantCards.flatMap((m) => m.streamEvents || []);
+    expect(allEvents.map((e) => e.callId)).toEqual(["call_1", "call_2", "call_3"]);
+    expect(allEvents.every((e) => e.status === "completed")).toBe(true);
+    // No callId is rendered twice (the duplicate bug).
+    expect(new Set(allEvents.map((e) => e.callId)).size).toBe(allEvents.length);
   });
 
   it("preserves scheduled delivery bubbles when canonical history reloads without them", () => {
@@ -2405,84 +2474,116 @@ describe("reconcileMessages (history-authoritative, no reorder)", () => {
   });
 });
 
-describe("tool-progress deliveries (parity fix)", () => {
-  function toolProgressDelivery(
-    id: string,
-    toolName: string,
-    args: string,
-    clientRequestId = "client-1",
-  ): HermesInboxMessage {
+describe("tool-progress deliveries (live interleave)", () => {
+  function toolProgressDelivery(id: string, toolName: string, args: string): HermesInboxMessage {
     return inboxMessage({
       id,
       source: "hermes-tool-progress",
       content: `🔍 ${toolName}: "${args}"`,
-      metadata: {
-        toolProgress: true,
-        toolName,
-        arguments: args,
-        toolCallId: id,
-        clientRequestId,
-      },
+      metadata: { toolProgress: true, toolName, arguments: args, toolCallId: id },
     });
   }
 
-  it("attaches tool events to the in-flight turn without touching its text", () => {
+  it("appends each tool call as its own card without touching existing text", () => {
     const existing: Message[] = [
       {
         id: "stream-1",
         role: "assistant",
-        content: "Working on it",
-        streaming: true,
+        content: "Round 1: done.",
+        streaming: false,
         streamMessageId: "stream-1",
         clientRequestId: "client-1",
       },
     ];
-    const next = mergeToolProgressDelivery(
-      existing,
-      toolProgressDelivery("b:tool:0", "terminal", "ls -la"),
-      "client-1",
-    );
-    expect(next).toHaveLength(1);
-    // The streamed answer text is never overwritten by the tool line (the bug).
-    expect(next[0].content).toBe("Working on it");
-    expect(next[0].streaming).toBe(true);
-    expect(next[0].streamEvents).toHaveLength(1);
-    expect(next[0].streamEvents?.[0]).toMatchObject({ toolName: "terminal", status: "running" });
+    const next = mergeToolProgressDelivery(existing, toolProgressDelivery("b:tool:0", "terminal", "ls -la"));
+    expect(next).toHaveLength(2);
+    // Existing text bubble is untouched (no streamEvents folded onto it).
+    expect(next[0]).toMatchObject({ id: "stream-1", content: "Round 1: done." });
+    expect(next[0].streamEvents).toBeUndefined();
+    // New standalone tool card appended at the tail, running.
+    expect(next[1].content).toBe("");
+    expect(next[1].streamEvents).toHaveLength(1);
+    expect(next[1].streamEvents?.[0]).toMatchObject({ toolName: "terminal", status: "running" });
   });
 
-  it("accumulates multiple tool calls and dedupes re-delivery by callId", () => {
-    const existing: Message[] = [
-      { id: "stream-1", role: "assistant", content: "x", streaming: true, clientRequestId: "client-1" },
+  it("interleaves tool cards with text in arrival order (tool, text, tool, text)", () => {
+    let msgs: Message[] = [];
+    msgs = mergeToolProgressDelivery(msgs, toolProgressDelivery("t1", "terminal", "round 1"));
+    msgs = [...msgs, { id: "s1", role: "assistant", content: "Round 1: done.", streaming: false }];
+    msgs = mergeToolProgressDelivery(msgs, toolProgressDelivery("t2", "terminal", "round 2"));
+    msgs = [...msgs, { id: "s2", role: "assistant", content: "Round 2: done.", streaming: false }];
+    expect(
+      msgs.map((message) => (message.streamEvents?.length ? `tool:${message.streamEvents[0].toolName}` : message.content)),
+    ).toEqual(["tool:terminal", "Round 1: done.", "tool:terminal", "Round 2: done."]);
+  });
+
+  it("dedupes re-delivery of the same call by callId (no duplicate card)", () => {
+    let msgs = mergeToolProgressDelivery([], toolProgressDelivery("t1", "terminal", "ls"));
+    expect(msgs).toHaveLength(1);
+    // Same callId redelivered (SSE + poll overlap) → updated in place, not duplicated.
+    msgs = mergeToolProgressDelivery(msgs, toolProgressDelivery("t1", "terminal", "ls"));
+    expect(msgs).toHaveLength(1);
+    expect(msgs[0].streamEvents).toHaveLength(1);
+  });
+
+  it("completeRunningToolCards flips running cards to completed and preserves the rest", () => {
+    const messages: Message[] = [
+      {
+        id: "t1",
+        role: "assistant",
+        content: "",
+        streamEvents: [{ id: "t1", callId: "t1", toolName: "terminal", label: "terminal", status: "running" }],
+      },
+      { id: "s1", role: "assistant", content: "Round 1: done.", streaming: false },
+      {
+        id: "t2",
+        role: "assistant",
+        content: "",
+        streamEvents: [{ id: "t2", callId: "t2", toolName: "terminal", label: "terminal", status: "completed" }],
+      },
     ];
-    const afterFirst = mergeToolProgressDelivery(
-      existing,
-      toolProgressDelivery("b:tool:0", "terminal", "ls"),
-      "client-1",
-    );
-    const afterSecond = mergeToolProgressDelivery(
-      afterFirst,
-      toolProgressDelivery("b:tool:1", "browser", "example.com"),
-      "client-1",
-    );
-    expect(afterSecond[0].streamEvents?.map((event) => event.toolName)).toEqual(["terminal", "browser"]);
-    // Re-delivering the first line (same callId, e.g. SSE + polling) must not duplicate it.
-    const afterReplay = mergeToolProgressDelivery(
-      afterSecond,
-      toolProgressDelivery("b:tool:0", "terminal", "ls"),
-      "client-1",
-    );
-    expect(afterReplay[0].streamEvents).toHaveLength(2);
+    const next = completeRunningToolCards(messages);
+    expect(next[0].streamEvents?.[0].status).toBe("completed");
+    expect(next[2].streamEvents?.[0].status).toBe("completed");
+    // A message with no running events keeps its identity (no needless re-render).
+    expect(next[1]).toBe(messages[1]);
   });
 
-  it("seeds a streaming placeholder when a tool fires before any assistant text", () => {
-    const next = mergeToolProgressDelivery([], toolProgressDelivery("b:tool:0", "terminal", "ls"), "client-1");
-    expect(next).toHaveLength(1);
-    expect(next[0]).toMatchObject({
-      role: "assistant",
-      content: "",
-      streaming: true,
-      clientRequestId: "client-1",
-    });
-    expect(next[0].streamEvents).toHaveLength(1);
+  it("replays a real alternating delivery sequence into an interleaved, all-completed transcript", () => {
+    // Mirrors the actual gateway delivery order for "tool, text, ×N": each round is a
+    // tool-progress delivery followed by its text stream, and the gateway drops the
+    // clientRequestId on rounds after the first. Composing the real merge functions in
+    // that order must yield tool→text→tool→text with every card completed.
+    const streamDelivery = (streamId: string, content: string, crid: string) =>
+      inboxMessage({
+        id: `${streamId}:${content.length}`,
+        source: "hermes-gateway-stream",
+        content,
+        metadata: {
+          streamMessageId: streamId,
+          chunkOperation: "replace",
+          assembled: true,
+          ...(crid ? { clientRequestId: crid } : {}),
+        },
+      });
+
+    let msgs: Message[] = [];
+    // Round 1: tool, then its text stream (round 1 carries the turn's clientRequestId).
+    msgs = mergeToolProgressDelivery(msgs, toolProgressDelivery("t1", "terminal", "round 1"));
+    msgs = mergeStreamDelivery(msgs, streamDelivery("s1", "Round 1: done.", "C"), "s1", false, "C");
+    msgs = completeRunningToolCards(
+      mergeStreamDelivery(msgs, streamDelivery("s1", "Round 1: done.", "C"), "s1", true, "C"),
+    );
+    // Round 2: tool, then its text stream (gateway omits clientRequestId on later rounds).
+    msgs = mergeToolProgressDelivery(msgs, toolProgressDelivery("t2", "terminal", "round 2"));
+    msgs = mergeStreamDelivery(msgs, streamDelivery("s2", "Round 2: done.", ""), "s2", false, "");
+    msgs = completeRunningToolCards(
+      mergeStreamDelivery(msgs, streamDelivery("s2", "Round 2: done.", ""), "s2", true, ""),
+    );
+
+    expect(
+      msgs.map((message) => (message.streamEvents?.length ? `tool:${message.streamEvents[0].status}` : message.content)),
+    ).toEqual(["tool:completed", "Round 1: done.", "tool:completed", "Round 2: done."]);
+    expect(msgs.flatMap((message) => message.streamEvents || []).every((event) => event.status === "completed")).toBe(true);
   });
 });

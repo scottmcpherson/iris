@@ -91,48 +91,74 @@ export function mergeStreamDelivery(
 
 /**
  * Merge a tool-progress delivery (source "hermes-tool-progress") into the live
- * transcript. Tool activity is delivered out-of-band from the assistant text, so
- * we attach it to the in-flight assistant turn's `streamEvents` (deduped by
- * callId) rather than its `content` — which the assembled text snapshots replace
- * wholesale. The events stay `running` and are flipped to `completed` when the
- * turn's stream finalizes (`completedStreamEvents`). If the tool fires before any
- * assistant text, we seed a streaming placeholder keyed by clientRequestId so the
- * later text stream attaches to (and finalizes) the same message.
+ * transcript. Tool activity is delivered out-of-band from the assistant text — one
+ * delivery per tool call, in execution order. We render each call as its own card
+ * appended at the tail rather than folding them all onto the turn's first assistant
+ * message (which grouped every card at the top, out of execution order). The next
+ * round's text stream then appends after it, so the live transcript interleaves
+ * tool → text → tool → text per round, matching the reopened/history view.
+ *
+ * Cards carry no clientRequestId, so a later text stream never folds its content
+ * into a tool card. They stay `running` until the round's stream finalizes — see
+ * `completeRunningToolCards`, which the delivery loop applies on a terminal delivery.
  */
 export function mergeToolProgressDelivery(
   existing: Message[],
   delivery: HermesInboxMessage,
-  clientRequestId: string,
 ): Message[] {
   const toolEvents = streamToolEventsFromMetadata(delivery.metadata, delivery.id);
   if (!toolEvents.length) return existing;
-  const matchIndex = clientRequestId
-    ? existing.findIndex(
-        (message) => message.role === "assistant" && message.clientRequestId === clientRequestId,
-      )
-    : -1;
-  if (matchIndex !== -1) {
-    return existing.map((message, index) =>
-      index === matchIndex
-        ? {
-            ...message,
-            streamEvents: toolEvents.reduce(
-              (current, event) => mergeStreamToolEvent(current, event),
-              message.streamEvents || [],
-            ),
-          }
-        : message,
+  let next = existing;
+  for (const event of toolEvents) {
+    const key = event.callId || event.id;
+    const knownIndex = next.findIndex(
+      (message) =>
+        message.role === "assistant" &&
+        (message.streamEvents || []).some((current) => (current.callId || current.id) === key),
     );
+    if (knownIndex !== -1) {
+      // Re-delivery of a known call (e.g. SSE + poll overlap): merge in place so the
+      // card updates rather than duplicating.
+      next = next.map((message, index) =>
+        index === knownIndex
+          ? { ...message, streamEvents: mergeStreamToolEvent(message.streamEvents || [], event) }
+          : message,
+      );
+      continue;
+    }
+    next = [
+      ...next,
+      {
+        id: event.id || delivery.id,
+        role: "assistant",
+        content: "",
+        streaming: false,
+        streamEvents: [event],
+      },
+    ];
   }
-  const placeholder: Message = {
-    id: delivery.id,
-    role: "assistant",
-    content: "",
-    streaming: true,
-    ...(clientRequestId ? { clientRequestId } : {}),
-    streamEvents: toolEvents,
-  };
-  return [...existing, placeholder];
+  return next;
+}
+
+/**
+ * Flip any still-`running` tool cards to `completed`. Live tool cards are standalone
+ * messages with no stream of their own, so they can't settle via their own finalize;
+ * the delivery loop calls this on a turn's terminal delivery (each round's stream
+ * finalize settles that round's card; the final delivery settles any remainder).
+ */
+export function completeRunningToolCards(messages: Message[]): Message[] {
+  let changed = false;
+  const next = messages.map((message) => {
+    if (!message.streamEvents?.some((event) => event.status === "running")) return message;
+    changed = true;
+    return {
+      ...message,
+      streamEvents: message.streamEvents.map((event) =>
+        event.status === "running" ? { ...event, status: "completed" as const } : event,
+      ),
+    };
+  });
+  return changed ? next : messages;
 }
 
 export function mergeCompletedDelivery(

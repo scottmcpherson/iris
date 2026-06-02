@@ -20,24 +20,42 @@ export function toAppMessages(messages: HermesSessionMessage[]): Message[] {
       continue;
     }
 
+    // A tool call a message makes belongs to the NEXT round — its result streams in
+    // after this message — so it must not be attached to this message as a running
+    // card. That mis-attribution is what produced the reopen "duplicate": the agent
+    // emits one assistant turn carrying [previous round's text + this round's tool
+    // call], so the call was rendered shimmering on the prior bubble AND again,
+    // completed, once its result merged onto the next. Hold a message's own calls
+    // separately and attach only the EXISTING pending events (the prior round's
+    // completed call+result) to it.
+    let ownToolCalls: HermesStreamToolEvent[] = [];
     if (message.role === "assistant" && message.toolCalls?.length) {
-      pendingToolEvents = message.toolCalls.reduce(
-        (current, toolCall, index) =>
-          mergeStreamToolEvent(current, streamToolEventFromHistoryCall(message, toolCall, index)),
-        pendingToolEvents,
+      ownToolCalls = message.toolCalls.map((toolCall, index) =>
+        streamToolEventFromHistoryCall(message, toolCall, index),
       );
       if (!message.content.trim()) {
+        // Call-only assistant message: stage its calls for the next round, render nothing.
+        pendingToolEvents = ownToolCalls.reduce(
+          (current, event) => mergeStreamToolEvent(current, event),
+          pendingToolEvents,
+        );
         continue;
       }
     }
 
     if (message.role === "tool") {
+      // A tool result merges into its matching pending call (by callId), completing it.
       pendingToolEvents = mergeStreamToolEvent(pendingToolEvents, streamToolEventFromHistory(message));
       continue;
     }
 
     let appMessage = toAppMessage(message);
     if (appMessage.role === "assistant" && !appMessage.content.trim() && !appMessage.attachments?.length) {
+      // No visible body: carry forward any calls it staged rather than dropping them.
+      pendingToolEvents = ownToolCalls.reduce(
+        (current, event) => mergeStreamToolEvent(current, event),
+        pendingToolEvents,
+      );
       continue;
     }
     if (appMessage.role === "user") {
@@ -51,15 +69,16 @@ export function toAppMessages(messages: HermesSessionMessage[]): Message[] {
         ...appMessage,
         streamEvents: pendingToolEvents,
       });
-      pendingToolEvents = [];
+      // This message's own calls become the pending set for the next round.
+      pendingToolEvents = ownToolCalls;
       continue;
     }
 
     if (pendingToolEvents.length) {
       normalized.push(toolEventMessage(message.sessionId || message.id, pendingToolEvents));
-      pendingToolEvents = [];
     }
     normalized.push(appMessage);
+    pendingToolEvents = ownToolCalls;
   }
 
   if (pendingToolEvents.length) {

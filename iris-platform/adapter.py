@@ -145,6 +145,15 @@ class IrisPlatformAdapter(BasePlatformAdapter):
         self._active_client_request_ids_by_chat: dict[str, str] = {}
         self._active_client_request_id_updated_at: dict[str, float] = {}
         self._active_streams_by_client_request_id: dict[str, tuple[str, str]] = {}
+        # Per-chat "tool turn" fence: the clientRequestId of the in-flight user turn,
+        # kept alive for the WHOLE turn (seeded by the inbound message, refreshed by
+        # every stream delta via replyTo) so interleaved tool-progress — which carries
+        # no correlation of its own — can be attributed to it. Distinct from the
+        # stream fence above, which is intentionally cleared on each round's finalize
+        # so a multi-round turn's later text streams stay uncorrelated and render as
+        # separate messages instead of clobbering the first.
+        self._tool_turn_client_request_ids_by_chat: dict[str, str] = {}
+        self._tool_turn_updated_at: dict[str, float] = {}
         # Per tool-progress bubble: how many tool lines we've already forwarded as
         # tool-event deliveries (the gateway edits one message to append lines).
         self._tool_progress_lines: dict[str, int] = {}
@@ -232,20 +241,28 @@ class IrisPlatformAdapter(BasePlatformAdapter):
         if (
             not is_stream_preview
             and source == "hermes-gateway"
-            and client_request_id
             and self._looks_like_tool_progress(content)
         ):
             # Tool-progress bubble ("🔍 terminal: …"). Forward each tool line as its
             # own durable tool-event delivery instead of letting it fold into — and be
             # overwritten by — the streaming assistant message. Mirrors the
             # Telegram/Discord behavior where each tool call is a persistent message.
-            return await self._forward_tool_progress(
-                target,
-                content,
-                client_request_id=client_request_id,
-                reply_to=reply_to,
-                bubble_id=None,
-            )
+            #
+            # Tool-progress sends carry no clientRequestId/replyTo of their own. The
+            # stream fence is cleared on each round's finalize, so for a multi-round
+            # turn ("tool, text, tool, …") every round after the first would lose it;
+            # fall back to the longer-lived per-turn fence so each round's tool call is
+            # still attributed to the active turn. If neither is known, fall through to
+            # the normal delivery path rather than mint an uncorrelated tool event.
+            tool_client_request_id = client_request_id or self._fenced_tool_turn_client_request_id(target)
+            if tool_client_request_id:
+                return await self._forward_tool_progress(
+                    target,
+                    content,
+                    client_request_id=tool_client_request_id,
+                    reply_to=reply_to,
+                    bubble_id=None,
+                )
         visible_content = strip_stream_cursor(content) if is_stream_preview else content
         message_id = str(merged_metadata.pop("streamMessageId", "") or "").strip()
         if is_stream_preview and not message_id:
@@ -263,6 +280,9 @@ class IrisPlatformAdapter(BasePlatformAdapter):
                 self._touch_stream_state(message_id)
             if reply_to:
                 merged_metadata["replyTo"] = reply_to
+            # Keep the per-turn tool fence warm even on rounds where the gateway omits
+            # clientRequestId — it still sends replyTo (== the turn id).
+            self._set_tool_turn(target, client_request_id or reply_to)
 
         delivery_message_id = message_id or f"iris-delivery-{uuid.uuid4()}"
         body = {
@@ -323,6 +343,7 @@ class IrisPlatformAdapter(BasePlatformAdapter):
                 client_request_id=(
                     self._client_request_id_from_metadata(edit_metadata)
                     or self._fenced_active_client_request_id(target)
+                    or self._fenced_tool_turn_client_request_id(target)
                 ),
                 reply_to=str(edit_metadata.get("replyTo") or edit_metadata.get("reply_to") or ""),
                 bubble_id=stream_message_id,
@@ -365,6 +386,9 @@ class IrisPlatformAdapter(BasePlatformAdapter):
             self._active_client_request_ids_by_chat[target] = client_request_id
             self._active_client_request_id_updated_at[target] = time.time()
         reply_to = str(delivery_metadata.get("replyTo") or delivery_metadata.get("reply_to") or "")
+        # Refresh the per-turn tool fence (see __init__). replyTo is the stable turn id
+        # present on every round's stream even when the gateway omits clientRequestId.
+        self._set_tool_turn(target, client_request_id or reply_to)
         body = {
             "runtimeId": "runtime_local_hermes",
             "profile": self.profile,
@@ -431,6 +455,34 @@ class IrisPlatformAdapter(BasePlatformAdapter):
             return self._active_client_request_ids_by_chat.get(chat_id, "")
         return ""
 
+    def _set_tool_turn(self, chat_id: str, turn_id: str) -> None:
+        """Mark/refresh the active tool-progress turn for a chat (see __init__).
+
+        Unlike the stream fence, this entry is deliberately NOT cleared on a round's
+        finalize — a multi-round turn finalizes each round's sub-stream separately, and
+        clearing on the first would strand the rest of the turn's tool-progress. The
+        120s freshness window plus a new turn overwriting the entry bound staleness.
+        """
+        if not turn_id:
+            return
+        self._tool_turn_client_request_ids_by_chat[chat_id] = turn_id
+        self._tool_turn_updated_at[chat_id] = time.time()
+        while len(self._tool_turn_updated_at) > STREAM_STATE_MAX_ENTRIES:
+            oldest = min(self._tool_turn_updated_at, key=self._tool_turn_updated_at.get)
+            self._tool_turn_updated_at.pop(oldest, None)
+            self._tool_turn_client_request_ids_by_chat.pop(oldest, None)
+
+    def _fenced_tool_turn_client_request_id(self, chat_id: str) -> str:
+        updated_at = self._tool_turn_updated_at.get(chat_id, 0.0)
+        if updated_at and time.time() - updated_at <= ACTIVE_CLIENT_REQUEST_FENCE_SECONDS:
+            return self._tool_turn_client_request_ids_by_chat.get(chat_id, "")
+        return ""
+
+    def _clear_tool_turn(self, chat_id: str, turn_id: str) -> None:
+        if turn_id and self._tool_turn_client_request_ids_by_chat.get(chat_id) == turn_id:
+            self._tool_turn_client_request_ids_by_chat.pop(chat_id, None)
+            self._tool_turn_updated_at.pop(chat_id, None)
+
     def _touch_stream_state(self, stream_message_id: str) -> None:
         self._stream_state_updated_at[stream_message_id] = time.time()
 
@@ -471,6 +523,15 @@ class IrisPlatformAdapter(BasePlatformAdapter):
         for chat_id in stale_chats:
             self._active_client_request_ids_by_chat.pop(chat_id, None)
             self._active_client_request_id_updated_at.pop(chat_id, None)
+
+        stale_tool_turns = [
+            chat_id
+            for chat_id, updated_at in self._tool_turn_updated_at.items()
+            if now - updated_at > STREAM_STATE_TTL_SECONDS
+        ]
+        for chat_id in stale_tool_turns:
+            self._tool_turn_client_request_ids_by_chat.pop(chat_id, None)
+            self._tool_turn_updated_at.pop(chat_id, None)
 
         while len(self._stream_state_updated_at) > STREAM_STATE_MAX_ENTRIES:
             oldest_stream_id = min(self._stream_state_updated_at, key=self._stream_state_updated_at.get)
@@ -651,6 +712,8 @@ class IrisPlatformAdapter(BasePlatformAdapter):
                 if self._active_client_request_ids_by_chat.get(chat_id) == client_request_id:
                     self._active_client_request_ids_by_chat.pop(chat_id, None)
                     self._active_client_request_id_updated_at.pop(chat_id, None)
+                # Turn truly ended (terminal/error) — release the per-turn tool fence.
+                self._clear_tool_turn(chat_id, client_request_id)
 
     async def get_chat_info(self, chat_id: str) -> Dict[str, Any]:
         return {"name": chat_id or self.default_chat_id, "type": "iris"}
@@ -739,6 +802,9 @@ class IrisPlatformAdapter(BasePlatformAdapter):
             metadata = {**metadata, "clientRequestId": client_request_id}
             self._active_client_request_ids_by_chat[chat_id] = client_request_id
             self._active_client_request_id_updated_at[chat_id] = time.time()
+            # Seed the per-turn tool fence at turn start so the first tool call —
+            # which precedes any assistant stream — is attributed to this turn.
+            self._set_tool_turn(chat_id, client_request_id)
         source = SessionSource(
             platform=Platform("iris"),
             chat_id=chat_id,
@@ -826,6 +892,7 @@ class IrisPlatformAdapter(BasePlatformAdapter):
         if self._active_client_request_ids_by_chat.get(chat_id) == client_request_id:
             self._active_client_request_ids_by_chat.pop(chat_id, None)
             self._active_client_request_id_updated_at.pop(chat_id, None)
+        self._clear_tool_turn(chat_id, client_request_id)
         body = {
             "runtimeId": "runtime_local_hermes",
             "profile": self.profile,
